@@ -36,14 +36,14 @@ export function Sidebar() {
           const isActive = location === item.href;
           return (
             <Link key={item.name} href={item.href}>
-              <a className={`flex items-center space-x-3 p-3 rounded-lg transition-colors ${
+              <div className={`flex items-center space-x-3 p-3 rounded-lg transition-colors cursor-pointer ${
                 isActive 
                   ? 'bg-primary text-primary-foreground' 
                   : 'hover:bg-muted text-foreground'
               }`}>
                 <item.icon className="w-5 h-5" />
                 <span>{item.name}</span>
-              </a>
+              </div>
             </Link>
           );
         })}

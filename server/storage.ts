@@ -233,7 +233,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateKotTicket(id: number, ticket: Partial<InsertKotTicket>): Promise<KotTicket> {
-    const [updated] = await db.update(kotTickets).set(ticket).where(eq(kotTickets.id, id)).returning();
+    const updateData: any = { ...ticket };
+    if (ticket.items) {
+      updateData.items = ticket.items;
+    }
+    const [updated] = await db.update(kotTickets).set(updateData).where(eq(kotTickets.id, id)).returning();
     return updated;
   }
 

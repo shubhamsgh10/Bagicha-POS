@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { NewOrderModal } from "@/components/NewOrderModal";
 
 export default function Dashboard() {
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
@@ -288,6 +289,11 @@ export default function Dashboard() {
           </Card>
         </div>
       </main>
+
+      <NewOrderModal 
+        isOpen={showNewOrderModal} 
+        onClose={() => setShowNewOrderModal(false)} 
+      />
     </div>
   );
 }
