@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -5,8 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { AlertTriangle, Package, Plus, Edit } from "lucide-react";
+import { AddInventoryModal } from "@/components/AddInventoryModal";
 
 export default function Inventory() {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
   const { data: inventory, isLoading } = useQuery({
     queryKey: ['/api/inventory'],
   });
@@ -50,6 +54,21 @@ export default function Inventory() {
       default:
         return 'Unknown';
     }
+  };
+
+  const handleAddItem = () => {
+    setEditingItem(null);
+    setShowAddModal(true);
+  };
+
+  const handleEditItem = (item: any) => {
+    setEditingItem(item);
+    setShowAddModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowAddModal(false);
+    setEditingItem(null);
   };
 
   if (isLoading) {
@@ -152,7 +171,7 @@ export default function Inventory() {
         {/* Inventory Items */}
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-semibold">All Inventory Items</h2>
-          <Button>
+          <Button onClick={handleAddItem}>
             <Plus className="w-4 h-4 mr-2" />
             Add Item
           </Button>
@@ -170,7 +189,7 @@ export default function Inventory() {
                 <CardContent className="p-4">
                   <div className="flex justify-between items-start mb-3">
                     <h3 className="font-medium text-foreground">{item.itemName}</h3>
-                    <Button size="sm" variant="outline">
+                    <Button size="sm" variant="outline" onClick={() => handleEditItem(item)}>
                       <Edit className="w-3 h-3" />
                     </Button>
                   </div>
@@ -214,7 +233,7 @@ export default function Inventory() {
               <p className="text-muted-foreground mb-4">
                 Start tracking your inventory by adding items
               </p>
-              <Button>
+              <Button onClick={handleAddItem}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add First Item
               </Button>
@@ -222,6 +241,12 @@ export default function Inventory() {
           </Card>
         )}
       </main>
+
+      <AddInventoryModal
+        isOpen={showAddModal}
+        onClose={handleCloseModal}
+        editItem={editingItem}
+      />
     </div>
   );
 }

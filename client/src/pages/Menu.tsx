@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { MenuItemCard } from "@/components/ui/menu-item-card";
@@ -5,8 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Trash2 } from "lucide-react";
+import { AddMenuItemModal } from "@/components/AddMenuItemModal";
 
 export default function Menu() {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
   const { data: menuItems, isLoading } = useQuery({
     queryKey: ['/api/menu'],
   });
@@ -26,6 +30,21 @@ export default function Menu() {
   const getCategoryName = (categoryId: number) => {
     const category = categories?.find((cat: any) => cat.id === categoryId);
     return category?.name || 'Unknown Category';
+  };
+
+  const handleAddItem = () => {
+    setEditingItem(null);
+    setShowAddModal(true);
+  };
+
+  const handleEditItem = (item: any) => {
+    setEditingItem(item);
+    setShowAddModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowAddModal(false);
+    setEditingItem(null);
   };
 
   if (isLoading) {
@@ -64,7 +83,7 @@ export default function Menu() {
               {menuItems?.length || 0} items available
             </p>
           </div>
-          <Button>
+          <Button onClick={handleAddItem}>
             <Plus className="w-4 h-4 mr-2" />
             Add Menu Item
           </Button>
@@ -79,7 +98,7 @@ export default function Menu() {
                     {getCategoryName(item.categoryId)}
                   </Badge>
                   <div className="flex space-x-2">
-                    <Button size="sm" variant="outline">
+                    <Button size="sm" variant="outline" onClick={() => handleEditItem(item)}>
                       <Edit className="w-3 h-3" />
                     </Button>
                     <Button size="sm" variant="outline">
@@ -115,7 +134,7 @@ export default function Menu() {
               <p className="text-muted-foreground mb-4">
                 Get started by adding your first menu item
               </p>
-              <Button>
+              <Button onClick={handleAddItem}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add Menu Item
               </Button>
@@ -123,6 +142,12 @@ export default function Menu() {
           </Card>
         )}
       </main>
+
+      <AddMenuItemModal
+        isOpen={showAddModal}
+        onClose={handleCloseModal}
+        editItem={editingItem}
+      />
     </div>
   );
 }

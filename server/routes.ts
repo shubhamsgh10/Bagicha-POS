@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertOrderSchema, insertOrderItemSchema, insertKotTicketSchema, insertMenuItemSchema, insertCategorySchema } from "@shared/schema";
+import { insertOrderSchema, insertOrderItemSchema, insertKotTicketSchema, insertMenuItemSchema, insertCategorySchema, insertInventorySchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -90,7 +90,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Inventory
+  app.delete("/api/menu/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteMenuItem(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete menu item" });
+    }
+  });
+
+  // Inventory Management
   app.get("/api/inventory", async (req, res) => {
     try {
       const inventory = await storage.getInventory();
@@ -109,16 +119,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/inventory/:id", async (req, res) => {
+  app.post("/api/inventory", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { stock } = req.body;
-      const updatedItem = await storage.updateInventory(id, stock);
-      res.json(updatedItem);
+      const inventoryData = insertInventorySchema.parse(req.body);
+      const inventory = await storage.createInventoryItem(inventoryData);
+      res.json(inventory);
     } catch (error) {
       res.status(400).json({ error: "Invalid inventory data" });
     }
   });
+
+  app.put("/api/inventory/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { currentStock, ...inventoryData } = req.body;
+      
+      if (currentStock !== undefined) {
+        const inventory = await storage.updateInventory(id, parseFloat(currentStock));
+        res.json(inventory);
+      } else {
+        const inventory = await storage.updateInventoryItem(id, inventoryData);
+        res.json(inventory);
+      }
+    } catch (error) {
+      res.status(400).json({ error: "Invalid inventory data" });
+    }
+  });
+
+  app.delete("/api/inventory/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteInventoryItem(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete inventory item" });
+    }
+  });
+
+  // Continue with existing routes...
 
   // Orders
   app.get("/api/orders", async (req, res) => {
