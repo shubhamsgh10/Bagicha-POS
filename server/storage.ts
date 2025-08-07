@@ -239,7 +239,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createKotTicket(ticket: InsertKotTicket): Promise<KotTicket> {
-    const [newTicket] = await db.insert(kotTickets).values(ticket).returning();
+    let items = ticket.items;
+    if (items && !Array.isArray(items)) {
+      items = Array.from(items);
+    }
+    const fixedTicket = {
+      ...ticket,
+      items: Array.isArray(items) ? items : undefined,
+    };
+    const [newTicket] = await db.insert(kotTickets).values(fixedTicket).returning();
     return newTicket;
   }
 

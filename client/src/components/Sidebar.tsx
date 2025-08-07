@@ -25,7 +25,7 @@ export function Sidebar() {
   const [location] = useLocation();
 
   return (
-    <div className="w-64 bg-card shadow-lg flex flex-col">
+    <div className="w-64 bg-card shadow-lg flex flex-col sticky top-0 z-10">
       <div className="p-6 border-b border-border">
         <BagichaLogo />
         <p className="text-xs text-muted-foreground mt-1">Restaurant POS</p>

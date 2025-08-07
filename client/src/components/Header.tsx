@@ -28,7 +28,7 @@ export function Header({ title, description, onNewOrder }: HeaderProps) {
   };
 
   return (
-    <header className="bg-card shadow-sm border-b border-border px-6 py-4">
+    <header className="bg-card shadow-sm border-b border-border px-6 py-4 sticky top-0 z-10">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">{title}</h1>

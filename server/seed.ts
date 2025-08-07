@@ -83,13 +83,11 @@ async function seedDatabase() {
 }
 
 // Run seed function if file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  seedDatabase()
-    .then(() => process.exit(0))
-    .catch((error) => {
-      console.error("Error seeding database:", error);
-      process.exit(1);
-    });
-}
+seedDatabase()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error("Error seeding database:", error);
+    process.exit(1);
+  });
 
 export { seedDatabase };

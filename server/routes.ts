@@ -35,6 +35,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const categories = await storage.getCategories();
       res.json(categories);
     } catch (error) {
+      console.error(error);
       res.status(500).json({ error: "Failed to fetch categories" });
     }
   });
@@ -133,14 +134,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const { currentStock, ...inventoryData } = req.body;
-      
-      if (currentStock !== undefined) {
-        const inventory = await storage.updateInventory(id, parseFloat(currentStock));
-        res.json(inventory);
-      } else {
-        const inventory = await storage.updateInventoryItem(id, inventoryData);
-        res.json(inventory);
-      }
+      const inventory = await storage.updateInventoryItem(id, inventoryData);
+      res.json(inventory);
     } catch (error) {
       res.status(400).json({ error: "Invalid inventory data" });
     }

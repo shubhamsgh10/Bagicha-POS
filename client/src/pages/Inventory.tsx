@@ -8,14 +8,23 @@ import { Progress } from "@/components/ui/progress";
 import { AlertTriangle, Package, Plus, Edit } from "lucide-react";
 import { AddInventoryModal } from "@/components/AddInventoryModal";
 
+interface InventoryItem {
+  id: number;
+  itemName: string;
+  currentStock: string;
+  minStock: string;
+  unit: string;
+  lastRestocked: string;
+}
+
 export default function Inventory() {
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
-  const { data: inventory, isLoading } = useQuery({
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const { data: inventory = [], isLoading } = useQuery<InventoryItem[]>({
     queryKey: ['/api/inventory'],
   });
 
-  const { data: lowStockItems } = useQuery({
+  const { data: lowStockItems = [] } = useQuery<InventoryItem[]>({
     queryKey: ['/api/inventory/low-stock'],
   });
 
@@ -61,7 +70,7 @@ export default function Inventory() {
     setShowAddModal(true);
   };
 
-  const handleEditItem = (item: any) => {
+  const handleEditItem = (item: InventoryItem) => {
     setEditingItem(item);
     setShowAddModal(true);
   };
@@ -94,11 +103,10 @@ export default function Inventory() {
 
   return (
     <div className="flex-1 overflow-hidden">
-      <Header 
-        title="Inventory" 
+      <Header
+        title="Inventory"
         description="Track stock levels and manage inventory items"
       />
-
       <main className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -107,40 +115,37 @@ export default function Inventory() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Items</p>
-                  <p className="text-2xl font-bold">{inventory?.length || 0}</p>
+                  <p className="text-2xl font-bold">{inventory.length}</p>
                 </div>
                 <Package className="w-8 h-8 text-blue-500" />
               </div>
             </CardContent>
           </Card>
-          
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Low Stock Items</p>
-                  <p className="text-2xl font-bold text-red-500">{lowStockItems?.length || 0}</p>
+                  <p className="text-2xl font-bold text-red-500">{lowStockItems.length}</p>
                 </div>
                 <AlertTriangle className="w-8 h-8 text-red-500" />
               </div>
             </CardContent>
           </Card>
-          
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Actions Required</p>
-                  <p className="text-2xl font-bold text-orange-500">{lowStockItems?.length || 0}</p>
+                  <p className="text-2xl font-bold text-orange-500">{lowStockItems.length}</p>
                 </div>
                 <AlertTriangle className="w-8 h-8 text-orange-500" />
               </div>
             </CardContent>
           </Card>
         </div>
-
         {/* Low Stock Alert */}
-        {lowStockItems && lowStockItems.length > 0 && (
+        {lowStockItems.length > 0 && (
           <Card className="mb-6 border-red-200 bg-red-50">
             <CardHeader>
               <CardTitle className="text-red-800 flex items-center">
@@ -150,7 +155,7 @@ export default function Inventory() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {lowStockItems.map((item: any) => (
+                {lowStockItems.map((item) => (
                   <div key={item.id} className="flex items-center justify-between p-3 bg-white rounded-lg border">
                     <div>
                       <h4 className="font-medium">{item.itemName}</h4>
@@ -167,7 +172,6 @@ export default function Inventory() {
             </CardContent>
           </Card>
         )}
-
         {/* Inventory Items */}
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-semibold">All Inventory Items</h2>
@@ -176,14 +180,12 @@ export default function Inventory() {
             Add Item
           </Button>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {inventory?.map((item: any) => {
+          {inventory.map((item) => {
             const current = parseFloat(item.currentStock);
             const min = parseFloat(item.minStock);
             const status = getStockStatus(current, min);
             const stockLevel = getStockLevel(current, min);
-            
             return (
               <Card key={item.id} className="bg-card shadow-sm">
                 <CardContent className="p-4">
@@ -193,18 +195,15 @@ export default function Inventory() {
                       <Edit className="w-3 h-3" />
                     </Button>
                   </div>
-                  
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Current Stock</span>
                       <span className="font-medium">{current} {item.unit}</span>
                     </div>
-                    
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Min Stock</span>
                       <span className="font-medium">{min} {item.unit}</span>
                     </div>
-                    
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <span className="text-sm text-muted-foreground">Stock Level</span>
@@ -214,7 +213,6 @@ export default function Inventory() {
                       </div>
                       <Progress value={stockLevel} className="h-2" />
                     </div>
-                    
                     <div className="text-xs text-muted-foreground">
                       Last restocked: {new Date(item.lastRestocked).toLocaleDateString()}
                     </div>
@@ -224,8 +222,7 @@ export default function Inventory() {
             );
           })}
         </div>
-
-        {inventory?.length === 0 && (
+        {inventory.length === 0 && (
           <Card className="text-center py-12">
             <CardContent>
               <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -241,11 +238,10 @@ export default function Inventory() {
           </Card>
         )}
       </main>
-
       <AddInventoryModal
         isOpen={showAddModal}
         onClose={handleCloseModal}
-        editItem={editingItem}
+        editItem={editingItem || undefined}
       />
     </div>
   );

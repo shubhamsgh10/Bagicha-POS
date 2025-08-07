@@ -2,12 +2,12 @@ import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogDescription 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useEffect } from "react";
 
 const inventorySchema = z.object({
   itemName: z.string().min(1, "Item name is required"),
@@ -55,11 +56,32 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
     },
   });
 
+  useEffect(() => {
+    if (isOpen) {
+      if (editItem) {
+        form.reset(editItem);
+      } else {
+        form.reset({
+          itemName: "",
+          description: "",
+          currentStock: "",
+          minStock: "",
+          unit: "",
+          supplierName: "",
+          supplierContact: "",
+          costPerUnit: "",
+          expiryDate: "",
+        });
+      }
+    }
+  }, [isOpen, editItem, form]);
+
   const createInventoryMutation = useMutation({
     mutationFn: async (data: InventoryForm) => {
       const url = editItem ? `/api/inventory/${editItem.id}` : '/api/inventory';
       const method = editItem ? 'PUT' : 'POST';
-      return await apiRequest({ url, method, data });
+      const res = await apiRequest(method, url, data);
+      return await res.json();
     },
     onSuccess: () => {
       toast({
@@ -82,7 +104,8 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
 
   const deleteInventoryMutation = useMutation({
     mutationFn: async (id: number) => {
-      return await apiRequest({ url: `/api/inventory/${id}`, method: 'DELETE' });
+      const res = await apiRequest('DELETE', `/api/inventory/${id}`);
+      return await res.json();
     },
     onSuccess: () => {
       toast({
@@ -123,7 +146,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
             {editItem ? "Update the inventory item details" : "Add a new item to your inventory"}
           </DialogDescription>
         </DialogHeader>
-
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -137,12 +159,11 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 <p className="text-sm text-red-500">{form.formState.errors.itemName.message}</p>
               )}
             </div>
-
             <div>
               <Label htmlFor="unit">Unit *</Label>
-              <Select 
-                value={form.watch("unit")} 
-                onValueChange={(value) => form.setValue("unit", value)}
+              <Select
+                value={form.watch("unit")}
+                onValueChange={(value: string) => form.setValue("unit", value)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select unit" />
@@ -162,7 +183,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 <p className="text-sm text-red-500">{form.formState.errors.unit.message}</p>
               )}
             </div>
-
             <div>
               <Label htmlFor="currentStock">Current Stock *</Label>
               <Input
@@ -176,7 +196,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 <p className="text-sm text-red-500">{form.formState.errors.currentStock.message}</p>
               )}
             </div>
-
             <div>
               <Label htmlFor="minStock">Minimum Stock *</Label>
               <Input
@@ -190,7 +209,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 <p className="text-sm text-red-500">{form.formState.errors.minStock.message}</p>
               )}
             </div>
-
             <div>
               <Label htmlFor="costPerUnit">Cost per Unit (₹)</Label>
               <Input
@@ -201,7 +219,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 {...form.register("costPerUnit")}
               />
             </div>
-
             <div>
               <Label htmlFor="expiryDate">Expiry Date</Label>
               <Input
@@ -210,7 +227,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 {...form.register("expiryDate")}
               />
             </div>
-
             <div>
               <Label htmlFor="supplierName">Supplier Name</Label>
               <Input
@@ -219,7 +235,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 {...form.register("supplierName")}
               />
             </div>
-
             <div>
               <Label htmlFor="supplierContact">Supplier Contact</Label>
               <Input
@@ -229,7 +244,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
               />
             </div>
           </div>
-
           <div>
             <Label htmlFor="description">Description</Label>
             <Textarea
@@ -238,16 +252,14 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
               {...form.register("description")}
             />
           </div>
-
           <div className="flex justify-between">
             <div className="flex space-x-2">
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button type="button" onClick={onClose}>
                 Cancel
               </Button>
               {editItem && (
-                <Button 
-                  type="button" 
-                  variant="destructive" 
+                <Button
+                  type="button"
                   onClick={handleDelete}
                   disabled={deleteInventoryMutation.isPending}
                 >
@@ -255,14 +267,17 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 </Button>
               )}
             </div>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               disabled={createInventoryMutation.isPending}
             >
-              {createInventoryMutation.isPending ? 
-                (editItem ? "Updating..." : "Adding...") : 
-                (editItem ? "Update Item" : "Add Item")
-              }
+              {createInventoryMutation.isPending
+                ? editItem
+                  ? "Updating..."
+                  : "Adding..."
+                : editItem
+                ? "Update Item"
+                : "Add Item"}
             </Button>
           </div>
         </form>
