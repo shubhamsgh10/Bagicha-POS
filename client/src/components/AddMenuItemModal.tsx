@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useEffect } from "react";
 
 const menuItemSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -64,7 +65,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     mutationFn: async (data: MenuItemForm) => {
       const url = editItem ? `/api/menu/${editItem.id}` : '/api/menu';
       const method = editItem ? 'PUT' : 'POST';
-      return await apiRequest({ url, method, data });
+      return await apiRequest(method, url, data );
     },
     onSuccess: () => {
       toast({
@@ -114,6 +115,12 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       deleteMenuItemMutation.mutate(editItem.id);
     }
   };
+
+  useEffect(() => {
+    if (editItem) {
+      form.reset(editItem);
+    }
+  }, [editItem]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
