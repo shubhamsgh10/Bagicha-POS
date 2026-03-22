@@ -46,11 +46,18 @@ interface SizeOption {
   price: number;
 }
 
+interface AddonOption {
+  name: string;
+  price: number;
+}
+
 interface CartItem {
   cartKey: string;
   id: number;
   name: string;
-  price: number;
+  basePrice: number;
+  addons: AddonOption[];
+  totalPrice: number;
   quantity: number;
   specialInstructions?: string;
   size?: string;
@@ -65,9 +72,10 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
-  // Size picker state
-  const [sizePickerItem, setSizePickerItem] = useState<any | null>(null);
+  // Combined picker state (size + addons)
+  const [pickerItem, setPickerItem] = useState<any | null>(null);
   const [chosenSize, setChosenSize] = useState<SizeOption | null>(null);
+  const [chosenAddons, setChosenAddons] = useState<AddonOption[]>([]);
 
   const { toast } = useToast();
 
@@ -99,65 +107,106 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(amount);
 
-  // ── Cart helpers ────────────────────────────────────────────────────────────
+  // ── Picker helpers ───────────────────────────────────────────────────────────
 
-  const addToCart = (item: any, size?: string, sizePrice?: number) => {
-    const price = size !== undefined ? Number(sizePrice) : parseFloat(item.price);
-    const cartKey = size ? `${item.id}-${size}` : `${item.id}`;
+  const openPicker = (item: any) => {
+    setPickerItem(item);
+    setChosenSize(null);
+    setChosenAddons([]);
+  };
 
-    setCartItems((prev) => {
-      const existing = prev.find((c) => c.cartKey === cartKey);
+  const closePicker = () => {
+    setPickerItem(null);
+    setChosenSize(null);
+    setChosenAddons([]);
+  };
+
+  const toggleAddon = (addon: AddonOption) => {
+    setChosenAddons(prev => {
+      const exists = prev.some(a => a.name === addon.name);
+      return exists ? prev.filter(a => a.name !== addon.name) : [...prev, addon];
+    });
+  };
+
+  // Picker live total
+  const pickerHasSizes = pickerItem && Array.isArray(pickerItem.sizes) && pickerItem.sizes.length > 0;
+  const pickerBasePrice = pickerItem
+    ? (pickerHasSizes && chosenSize ? Number(chosenSize.price) : parseFloat(pickerItem.price || "0"))
+    : 0;
+  const pickerAddonTotal = chosenAddons.reduce((s, a) => s + Number(a.price), 0);
+  const pickerTotal = pickerBasePrice + pickerAddonTotal;
+
+  const confirmAndAdd = () => {
+    if (!pickerItem) return;
+    if (pickerHasSizes && !chosenSize) return;
+
+    const basePrice = pickerHasSizes ? Number(chosenSize!.price) : parseFloat(pickerItem.price || "0");
+    const addonTotal = chosenAddons.reduce((s, a) => s + Number(a.price), 0);
+    const totalPrice = basePrice + addonTotal;
+    const size = chosenSize?.size;
+    const sortedAddonNames = [...chosenAddons].map(a => a.name).sort().join(",");
+    const cartKey = `${pickerItem.id}-${size || ""}-${sortedAddonNames}`;
+
+    setCartItems(prev => {
+      const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) {
-        return prev.map((c) => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
+        return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
       }
-      return [...prev, { cartKey, id: item.id, name: item.name, price, quantity: 1, size }];
+      return [...prev, {
+        cartKey,
+        id: pickerItem.id,
+        name: pickerItem.name,
+        basePrice,
+        addons: chosenAddons,
+        totalPrice,
+        quantity: 1,
+        size,
+      }];
+    });
+
+    closePicker();
+  };
+
+  // ── Cart helpers ─────────────────────────────────────────────────────────────
+
+  const directAddItem = (item: any) => {
+    const basePrice = parseFloat(item.price || "0");
+    const cartKey = `${item.id}`;
+    setCartItems(prev => {
+      const existing = prev.find(c => c.cartKey === cartKey);
+      if (existing) {
+        return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], totalPrice: basePrice, quantity: 1 }];
     });
   };
 
   const removeFromCart = (cartKey: string) =>
-    setCartItems((prev) => prev.filter((c) => c.cartKey !== cartKey));
+    setCartItems(prev => prev.filter(c => c.cartKey !== cartKey));
 
   const updateQty = (cartKey: string, qty: number) => {
     if (qty <= 0) { removeFromCart(cartKey); return; }
-    setCartItems((prev) => prev.map((c) => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
+    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
   };
 
   const updateInstructions = (cartKey: string, instructions: string) =>
-    setCartItems((prev) => prev.map((c) => c.cartKey === cartKey ? { ...c, specialInstructions: instructions } : c));
+    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, specialInstructions: instructions } : c));
 
-  // ── Size picker actions ─────────────────────────────────────────────────────
-
-  const openSizePicker = (item: any) => {
-    setSizePickerItem(item);
-    setChosenSize(null);
-  };
-
-  const closeSizePicker = () => {
-    setSizePickerItem(null);
-    setChosenSize(null);
-  };
-
-  const confirmSizeAndAdd = () => {
-    if (!sizePickerItem || !chosenSize) return;
-    addToCart(sizePickerItem, chosenSize.size, chosenSize.price);
-    closeSizePicker();
-  };
-
-  // ── Totals ──────────────────────────────────────────────────────────────────
+  // ── Totals ───────────────────────────────────────────────────────────────────
 
   const totals = (() => {
-    const subtotal = cartItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    const subtotal = cartItems.reduce((s, i) => s + i.totalPrice * i.quantity, 0);
     const tax = subtotal * 0.18;
     return { subtotal, tax, total: subtotal + tax };
   })();
 
-  // ── Filter menu ─────────────────────────────────────────────────────────────
+  // ── Filter menu ──────────────────────────────────────────────────────────────
 
   const filteredItems = menuItems?.filter((item: any) =>
     selectedCategory === "all" || item.categoryId === parseInt(selectedCategory)
   );
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── Submit ───────────────────────────────────────────────────────────────────
 
   const onSubmit = (data: OrderForm) => {
     if (cartItems.length === 0) {
@@ -172,57 +221,104 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
       items: cartItems.map((c) => ({
         menuItemId: c.id,
         quantity: c.quantity,
-        price: c.price.toFixed(2),
+        price: c.totalPrice.toFixed(2),
         specialInstructions: c.specialInstructions || "",
         name: c.size ? `${c.name} (${c.size})` : c.name,
         size: c.size || null,
+        addons: c.addons,
       })),
     });
   };
 
-  // ── UI ──────────────────────────────────────────────────────────────────────
+  // ── UI ───────────────────────────────────────────────────────────────────────
 
   return (
     <>
-      {/* ── Size Picker Dialog ───────────────────────────────────────────────── */}
-      <Dialog open={!!sizePickerItem} onOpenChange={closeSizePicker}>
+      {/* ── Combined Size + Addon Picker ─────────────────────────────────────── */}
+      <Dialog open={!!pickerItem} onOpenChange={closePicker}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Select Size</DialogTitle>
-            <DialogDescription>{sizePickerItem?.name}</DialogDescription>
+            <DialogTitle>{pickerItem?.name}</DialogTitle>
+            <DialogDescription>Customize your order</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2 py-2">
-            {sizePickerItem?.sizes?.map((s: SizeOption) => {
-              const isChosen = chosenSize?.size === s.size;
-              return (
-                <label
-                  key={s.size}
-                  className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
-                    isChosen
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="radio"
-                      name="pizza-size"
-                      checked={isChosen}
-                      onChange={() => setChosenSize({ size: s.size, price: Number(s.price) })}
-                      className="accent-primary w-4 h-4"
-                    />
-                    <span className="font-medium">{s.size}</span>
-                  </div>
-                  <span className="font-semibold text-primary">{formatCurrency(Number(s.price))}</span>
-                </label>
-              );
-            })}
+          <div className="space-y-4 py-1">
+            {/* Size selection */}
+            {pickerHasSizes && (
+              <div>
+                <p className="font-medium text-sm mb-2">Select Size</p>
+                <div className="space-y-2">
+                  {pickerItem.sizes.map((s: SizeOption) => {
+                    const isChosen = chosenSize?.size === s.size;
+                    return (
+                      <label
+                        key={s.size}
+                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                          isChosen ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="radio"
+                            name="picker-size"
+                            checked={isChosen}
+                            onChange={() => setChosenSize({ size: s.size, price: Number(s.price) })}
+                            className="accent-primary w-4 h-4"
+                          />
+                          <span className="font-medium">{s.size}</span>
+                        </div>
+                        <span className="font-semibold text-primary">{formatCurrency(Number(s.price))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Addon selection */}
+            {pickerItem?.addonsEnabled && Array.isArray(pickerItem.addons) && pickerItem.addons.length > 0 && (
+              <div>
+                <p className="font-medium text-sm mb-2">Add Extras</p>
+                <div className="space-y-2">
+                  {pickerItem.addons.map((a: AddonOption) => {
+                    const isChecked = chosenAddons.some(ca => ca.name === a.name);
+                    return (
+                      <label
+                        key={a.name}
+                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                          isChecked ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleAddon({ name: a.name, price: Number(a.price) })}
+                            className="accent-primary w-4 h-4"
+                          />
+                          <span className="font-medium">{a.name}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-primary">+{formatCurrency(Number(a.price))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Live total */}
+            <div className="border-t pt-3 flex justify-between items-center">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="font-bold text-base">{formatCurrency(pickerTotal)}</span>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={closeSizePicker}>Cancel</Button>
-            <Button disabled={!chosenSize} onClick={confirmSizeAndAdd}>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={closePicker}>Cancel</Button>
+            <Button
+              disabled={!!(pickerHasSizes && !chosenSize)}
+              onClick={confirmAndAdd}
+            >
               Add to Order
             </Button>
           </div>
@@ -244,7 +340,7 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                 <TabsTrigger value="details">Order Details</TabsTrigger>
               </TabsList>
 
-              {/* ── Menu Tab ──────────────────────────────────────────────────── */}
+              {/* ── Menu Tab ───────────────────────────────────────────────────── */}
               <TabsContent value="menu" className="flex-1">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
 
@@ -267,6 +363,9 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {filteredItems?.map((item: any) => {
                           const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
+                          const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
+                          const needsPicker = hasSizes || hasAddons;
+
                           return (
                             <Card key={item.id} className="hover:shadow-md transition-shadow">
                               <CardContent className="p-4">
@@ -282,7 +381,6 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                                 )}
 
                                 {hasSizes ? (
-                                  /* Pizza: show size price list + Select Size button */
                                   <>
                                     <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
                                       {item.sizes.map((s: SizeOption) => (
@@ -298,23 +396,34 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                                       size="sm"
                                       className="w-full"
                                       disabled={!item.isAvailable}
-                                      onClick={() => openSizePicker(item)}
+                                      onClick={() => openPicker(item)}
                                     >
                                       Select Size & Add
                                     </Button>
                                   </>
                                 ) : (
-                                  /* Regular item */
                                   <div className="flex justify-between items-center">
-                                    <span className="font-semibold">{formatCurrency(parseFloat(item.price))}</span>
-                                    <Button
-                                      size="sm"
-                                      disabled={!item.isAvailable}
-                                      onClick={() => addToCart(item)}
-                                    >
-                                      <Plus className="w-4 h-4 mr-1" />
-                                      Add
-                                    </Button>
+                                    <span className="font-semibold text-sm">
+                                      {formatCurrency(parseFloat(item.price))}
+                                    </span>
+                                    {needsPicker ? (
+                                      <Button
+                                        size="sm"
+                                        disabled={!item.isAvailable}
+                                        onClick={() => openPicker(item)}
+                                      >
+                                        Customize
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        disabled={!item.isAvailable}
+                                        onClick={() => directAddItem(item)}
+                                      >
+                                        <Plus className="w-4 h-4 mr-1" />
+                                        Add
+                                      </Button>
+                                    )}
                                   </div>
                                 )}
                               </CardContent>
@@ -325,7 +434,7 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                     </ScrollArea>
                   </div>
 
-                  {/* Right: cart summary */}
+                  {/* Right: cart */}
                   <div className="lg:col-span-1">
                     <Card>
                       <CardContent className="p-4">
@@ -341,12 +450,16 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                             )}
                             {cartItems.map((item) => (
                               <div key={item.cartKey} className="border rounded-lg p-3">
-                                <div className="flex justify-between items-start mb-2">
-                                  <div>
-                                    <p className="font-medium text-sm">{item.name}</p>
-                                    {item.size && (
-                                      <p className="text-xs text-muted-foreground">{item.size}</p>
-                                    )}
+                                <div className="flex justify-between items-start mb-1">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-sm">
+                                      {item.name}{item.size ? ` (${item.size})` : ""}
+                                    </p>
+                                    {item.addons.map(a => (
+                                      <p key={a.name} className="text-xs text-muted-foreground">
+                                        + {a.name}
+                                      </p>
+                                    ))}
                                   </div>
                                   <Button size="sm" variant="ghost" onClick={() => removeFromCart(item.cartKey)}>
                                     <Trash2 className="w-3 h-3" />
@@ -363,7 +476,9 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                                       <Plus className="w-3 h-3" />
                                     </Button>
                                   </div>
-                                  <span className="font-medium text-sm">{formatCurrency(item.price * item.quantity)}</span>
+                                  <span className="font-medium text-sm">
+                                    {formatCurrency(item.totalPrice * item.quantity)}
+                                  </span>
                                 </div>
 
                                 <Input
@@ -399,7 +514,7 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
                 </div>
               </TabsContent>
 
-              {/* ── Order Details Tab ──────────────────────────────────────────── */}
+              {/* ── Order Details Tab ───────────────────────────────────────────── */}
               <TabsContent value="details" className="flex-1">
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

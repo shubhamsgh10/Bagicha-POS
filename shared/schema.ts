@@ -29,6 +29,8 @@ export const menuItems = pgTable("menu_items", {
   ingredients: text("ingredients").array(),
   image: text("image"),
   sizes: json("sizes").$type<Array<{ size: string; price: number }>>(),
+  addonsEnabled: boolean("addons_enabled").notNull().default(false),
+  addons: json("addons").$type<Array<{ name: string; price: number }>>(),
 });
 
 export const inventory = pgTable("inventory", {
