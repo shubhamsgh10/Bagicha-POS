@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useEffect, useState } from "react";
+import { Plus, X } from "lucide-react";
 
 const PIZZA_SIZES = ["Small", "Medium", "Large"] as const;
 const WOODFIRE_PIZZA = "Woodfire Pizza";
@@ -36,6 +37,11 @@ const menuItemSchema = z.object({
 
 type MenuItemForm = z.infer<typeof menuItemSchema>;
 
+interface AddonEntry {
+  name: string;
+  price: string;
+}
+
 interface AddMenuItemModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -49,6 +55,8 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     Medium: "",
     Large: "",
   });
+  const [addonsEnabled, setAddonsEnabled] = useState(false);
+  const [addonsList, setAddonsList] = useState<AddonEntry[]>([]);
 
   const form = useForm<MenuItemForm>({
     resolver: zodResolver(menuItemSchema),
@@ -88,6 +96,8 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       onClose();
       form.reset();
       setSizePrices({ Small: "", Medium: "", Large: "" });
+      setAddonsEnabled(false);
+      setAddonsList([]);
     },
     onError: (error: any) => {
       toast({
@@ -119,6 +129,19 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     },
   });
 
+  const addAddon = () => setAddonsList(prev => [...prev, { name: "", price: "" }]);
+
+  const removeAddon = (idx: number) =>
+    setAddonsList(prev => prev.filter((_, i) => i !== idx));
+
+  const updateAddon = (idx: number, field: keyof AddonEntry, value: string) =>
+    setAddonsList(prev => prev.map((a, i) => i === idx ? { ...a, [field]: value } : a));
+
+  const buildAddons = () =>
+    addonsList
+      .filter(a => a.name.trim())
+      .map(a => ({ name: a.name.trim(), price: parseFloat(a.price) || 0 }));
+
   const onSubmit = (data: MenuItemForm) => {
     if (isWoodfirePizza) {
       const missingPrices = PIZZA_SIZES.filter(s => !sizePrices[s] || isNaN(parseFloat(sizePrices[s])));
@@ -130,21 +153,26 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         });
         return;
       }
-
       const sizes = PIZZA_SIZES.map(s => ({ size: s, price: parseFloat(sizePrices[s]) }));
       const minPrice = Math.min(...sizes.map(s => s.price));
-
       createMenuItemMutation.mutate({
         ...data,
         price: minPrice.toString(),
         sizes,
+        addonsEnabled,
+        addons: buildAddons(),
       });
     } else {
       if (!data.price || isNaN(parseFloat(data.price)) || parseFloat(data.price) < 0) {
         toast({ title: "Invalid price", description: "Please enter a valid price", variant: "destructive" });
         return;
       }
-      createMenuItemMutation.mutate({ ...data, sizes: null });
+      createMenuItemMutation.mutate({
+        ...data,
+        sizes: null,
+        addonsEnabled,
+        addons: buildAddons(),
+      });
     }
   };
 
@@ -177,6 +205,13 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       } else {
         setSizePrices({ Small: "", Medium: "", Large: "" });
       }
+
+      setAddonsEnabled(editItem.addonsEnabled ?? false);
+      setAddonsList(
+        Array.isArray(editItem.addons)
+          ? editItem.addons.map((a: any) => ({ name: a.name, price: a.price.toString() }))
+          : []
+      );
     } else {
       form.reset({
         name: "",
@@ -190,12 +225,14 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         allergens: "",
       });
       setSizePrices({ Small: "", Medium: "", Large: "" });
+      setAddonsEnabled(false);
+      setAddonsList([]);
     }
   }, [editItem]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {editItem ? "Edit Menu Item" : "Add New Menu Item"}
@@ -311,6 +348,67 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
               placeholder="e.g., Nuts, Dairy, Gluten"
               {...form.register("allergens")}
             />
+          </div>
+
+          {/* Addons Section */}
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="addonsEnabled"
+                checked={addonsEnabled}
+                onCheckedChange={setAddonsEnabled}
+              />
+              <Label htmlFor="addonsEnabled">Enable Addons / Customizations</Label>
+            </div>
+
+            {addonsEnabled && (
+              <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+                <p className="text-sm text-muted-foreground">
+                  Add optional extras customers can choose when ordering
+                </p>
+
+                {addonsList.map((addon, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Input
+                      placeholder="Addon name (e.g. Extra Cheese)"
+                      value={addon.name}
+                      onChange={(e) => updateAddon(idx, "name", e.target.value)}
+                      className="flex-1"
+                    />
+                    <div className="flex items-center gap-1 w-28">
+                      <span className="text-sm text-muted-foreground">₹</span>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0"
+                        value={addon.price}
+                        onChange={(e) => updateAddon(idx, "price", e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeAddon(idx)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addAddon}
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Addon
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

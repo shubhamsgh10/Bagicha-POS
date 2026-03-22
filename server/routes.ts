@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertOrderSchema, insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema } from "@shared/schema";
+import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertOrderSchema } from "@shared/schema";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -217,6 +217,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!b.name || !b.categoryId) {
         return res.status(400).json({ error: "Name and category are required" });
       }
+      const addonsEnabled = b.addonsEnabled === true;
       const menuItem = await storage.createMenuItem({
         name: String(b.name).trim(),
         description: b.description ? String(b.description).trim() : null,
@@ -225,6 +226,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isAvailable: b.isAvailable !== false,
         preparationTime: Number(b.preparationTime) || 15,
         sizes: Array.isArray(b.sizes) ? b.sizes : null,
+        addonsEnabled,
+        addons: addonsEnabled && Array.isArray(b.addons) ? b.addons : [],
       } as any);
       res.json(menuItem);
     } catch (error) {
@@ -245,6 +248,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (b.isAvailable !== undefined)     updatePayload.isAvailable = b.isAvailable !== false;
       if (b.preparationTime !== undefined) updatePayload.preparationTime = Number(b.preparationTime) || 15;
       updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
+      updatePayload.addonsEnabled = b.addonsEnabled === true;
+      updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
       const menuItem = await storage.updateMenuItem(id, updatePayload);
       res.json(menuItem);
     } catch (error) {
@@ -352,7 +357,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
-      const orderData = insertOrderSchema.parse(req.body);
       const { items, ...orderInfo } = req.body;
 
       // Generate order number
@@ -376,11 +380,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create KOT ticket
       const kotNumber = `KOT${Date.now()}`;
-      const kotItems = items.map((item: any) => ({
-        name: item.name,
-        quantity: item.quantity,
-        instructions: item.specialInstructions
-      }));
+      const kotItems = items.map((item: any) => {
+        const addonLines = Array.isArray(item.addons) && item.addons.length > 0
+          ? item.addons.map((a: any) => `+ ${a.name}`).join(", ")
+          : "";
+        return {
+          name: item.name,
+          quantity: item.quantity,
+          instructions: [item.specialInstructions, addonLines].filter(Boolean).join(" | ") || undefined,
+        };
+      });
 
       await storage.createKotTicket({
         orderId: order.id,
