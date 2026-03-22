@@ -11,9 +11,11 @@ import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, data: Partial<InsertUser>): Promise<User>;
+  deleteUser(id: number): Promise<void>;
 
   // Categories
   getCategories(): Promise<Category[]>;
@@ -75,6 +77,9 @@ export interface IStorage {
     avgOrderValue: number;
     lowStockCount: number;
   }>;
+
+  // Reports
+  getTopSellingItems(limit?: number): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -82,6 +87,10 @@ export class DatabaseStorage implements IStorage {
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(users.username);
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
@@ -97,6 +106,10 @@ export class DatabaseStorage implements IStorage {
   async updateUser(id: number, data: Partial<InsertUser>): Promise<User> {
     const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
     return user;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   // Categories
@@ -341,6 +354,25 @@ export class DatabaseStorage implements IStorage {
       avgOrderValue,
       lowStockCount,
     };
+  }
+  async getTopSellingItems(limit: number = 10): Promise<Array<{ name: string; totalSold: number; revenue: number }>> {
+    const result = await db
+      .select({
+        name: menuItems.name,
+        totalSold: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
+        revenue: sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * ${orderItems.price}) as numeric)`,
+      })
+      .from(orderItems)
+      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .groupBy(menuItems.id, menuItems.name)
+      .orderBy(sql`sum(${orderItems.quantity}) desc`)
+      .limit(limit);
+
+    return result.map(r => ({
+      name: r.name,
+      totalSold: Number(r.totalSold),
+      revenue: Number(r.revenue),
+    }));
   }
 }
 

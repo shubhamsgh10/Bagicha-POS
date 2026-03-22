@@ -16,12 +16,11 @@ import {
   CreditCard,
   Package
 } from "lucide-react";
-import { useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { NewOrderModal } from "@/components/NewOrderModal";
+import { useLocation } from "wouter";
 
 export default function Dashboard() {
-  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+  const [, navigate] = useLocation();
   const { lastMessage } = useWebSocket('/ws');
 
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -45,7 +44,7 @@ export default function Dashboard() {
   });
 
   const openNewOrderModal = () => {
-    setShowNewOrderModal(true);
+    navigate("/pos");
   };
 
   const formatCurrency = (amount: number) => {
@@ -290,10 +289,6 @@ export default function Dashboard() {
         </div>
       </main>
 
-      <NewOrderModal 
-        isOpen={showNewOrderModal} 
-        onClose={() => setShowNewOrderModal(false)} 
-      />
     </div>
   );
 }
