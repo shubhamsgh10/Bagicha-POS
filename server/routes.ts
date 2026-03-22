@@ -92,8 +92,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.createUser({ username: "admin", password: hashed, role: "admin" });
       console.log("Created default admin user (username: admin, password: admin123)");
     }
-  } catch (err) {
-    console.error("Failed to ensure admin user:", err);
+  } catch (err: any) {
+    if (err.code === 'ENOTFOUND') {
+      console.error("\n❌ DATABASE CONNECTION FAILED");
+      console.error("   Cannot reach host:", err.hostname);
+      console.error("   The Supabase project may be deleted or paused.");
+      console.error("   → Create a new project at supabase.com or neon.tech");
+      console.error("   → Update DATABASE_URL in your .env file");
+      console.error("   → Run: npm run db:push\n");
+    } else {
+      console.error("Failed to ensure admin user:", err.message || err);
+    }
   }
 
   // ── Auth Routes ──────────────────────────────────────────────────────────────

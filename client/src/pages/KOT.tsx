@@ -177,7 +177,7 @@ export default function KOT() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Kitchen — KOT" description="Loading tickets..." />
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
@@ -193,13 +193,13 @@ export default function KOT() {
   const completed = getTicketsByStatus("completed");
 
   return (
-    <div className="flex-1 overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Kitchen — KOT"
         description={`${pending.length} pending · ${inProgress.length} cooking · ${completed.length} ready`}
       />
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
         <Tabs defaultValue="active">
           <TabsList className="grid w-full grid-cols-4 mb-6">
             <TabsTrigger value="all">All ({kotTickets?.length || 0})</TabsTrigger>

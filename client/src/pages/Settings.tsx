@@ -71,7 +71,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto custom-scrollbar">
+    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
     <div className="p-6 max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Settings</h1>

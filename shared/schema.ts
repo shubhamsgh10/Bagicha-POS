@@ -7,7 +7,7 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
-  role: text("role").notNull().default("staff"), // admin, manager, staff
+  role: text("role").notNull().default("staff"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -25,7 +25,7 @@ export const menuItems = pgTable("menu_items", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   categoryId: integer("category_id").notNull(),
   isAvailable: boolean("is_available").notNull().default(true),
-  preparationTime: integer("preparation_time").notNull().default(15), // minutes
+  preparationTime: integer("preparation_time").notNull().default(15),
   ingredients: text("ingredients").array(),
   image: text("image"),
   sizes: json("sizes").$type<Array<{ size: string; price: number }>>(),
@@ -38,7 +38,7 @@ export const inventory = pgTable("inventory", {
   itemName: text("item_name").notNull(),
   currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull(),
   minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull(), // kg, pcs, liters
+  unit: text("unit").notNull(),
   lastRestocked: timestamp("last_restocked").defaultNow(),
 });
 
@@ -47,16 +47,16 @@ export const orders = pgTable("orders", {
   orderNumber: text("order_number").notNull().unique(),
   customerName: text("customer_name"),
   customerPhone: text("customer_phone"),
-  orderType: text("order_type").notNull(), // dine-in, takeaway, delivery
+  orderType: text("order_type").notNull(),
   tableNumber: text("table_number"),
-  source: text("source").notNull().default("pos"), // pos, zomato, swiggy
+  source: text("source").notNull().default("pos"),
   sourceOrderId: text("source_order_id"),
-  status: text("status").notNull().default("pending"), // pending, preparing, ready, served, delivered, cancelled
+  status: text("status").notNull().default("pending"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull(),
   discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).default("0"),
-  paymentStatus: text("payment_status").notNull().default("pending"), // pending, paid, refunded
-  paymentMethod: text("payment_method"), // cash, card, upi, online
+  paymentStatus: text("payment_status").notNull().default("pending"),
+  paymentMethod: text("payment_method"),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -76,7 +76,7 @@ export const kotTickets = pgTable("kot_tickets", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(),
   kotNumber: text("kot_number").notNull().unique(),
-  status: text("status").notNull().default("pending"), // pending, in-progress, completed
+  status: text("status").notNull().default("pending"),
   printedAt: timestamp("printed_at").defaultNow(),
   completedAt: timestamp("completed_at"),
   items: json("items").$type<Array<{
@@ -88,7 +88,7 @@ export const kotTickets = pgTable("kot_tickets", {
 
 export const deliveryIntegrations = pgTable("delivery_integrations", {
   id: serial("id").primaryKey(),
-  platform: text("platform").notNull(), // zomato, swiggy, others
+  platform: text("platform").notNull(),
   isActive: boolean("is_active").notNull().default(true),
   apiKey: text("api_key"),
   webhookUrl: text("webhook_url"),
@@ -108,41 +108,22 @@ export const sales = pgTable("sales", {
 
 // Relations
 export const menuItemsRelations = relations(menuItems, ({ one, many }) => ({
-  category: one(categories, {
-    fields: [menuItems.categoryId],
-    references: [categories.id],
-  }),
+  category: one(categories, { fields: [menuItems.categoryId], references: [categories.id] }),
   orderItems: many(orderItems),
 }));
-
 export const categoriesRelations = relations(categories, ({ many }) => ({
   menuItems: many(menuItems),
 }));
-
 export const ordersRelations = relations(orders, ({ many, one }) => ({
   items: many(orderItems),
-  kotTicket: one(kotTickets, {
-    fields: [orders.id],
-    references: [kotTickets.orderId],
-  }),
+  kotTicket: one(kotTickets, { fields: [orders.id], references: [kotTickets.orderId] }),
 }));
-
 export const orderItemsRelations = relations(orderItems, ({ one }) => ({
-  order: one(orders, {
-    fields: [orderItems.orderId],
-    references: [orders.id],
-  }),
-  menuItem: one(menuItems, {
-    fields: [orderItems.menuItemId],
-    references: [menuItems.id],
-  }),
+  order: one(orders, { fields: [orderItems.orderId], references: [orders.id] }),
+  menuItem: one(menuItems, { fields: [orderItems.menuItemId], references: [menuItems.id] }),
 }));
-
 export const kotTicketsRelations = relations(kotTickets, ({ one }) => ({
-  order: one(orders, {
-    fields: [kotTickets.orderId],
-    references: [orders.id],
-  }),
+  order: one(orders, { fields: [kotTickets.orderId], references: [orders.id] }),
 }));
 
 // Zod schemas

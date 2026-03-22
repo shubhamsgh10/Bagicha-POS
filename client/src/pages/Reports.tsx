@@ -28,9 +28,9 @@ export default function Reports() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Reports" description="Loading reports..." />
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[...Array(4)].map((_, i) => (
               <Card key={i} className="animate-pulse">
@@ -48,13 +48,13 @@ export default function Reports() {
   }
 
   return (
-    <div className="flex-1 overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <Header 
         title="Reports" 
         description="Analytics and insights for your restaurant performance"
       />
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-xl font-semibold">Sales Analytics</h2>

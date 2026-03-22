@@ -45,9 +45,9 @@ export default function Orders() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Orders" description="Loading orders..." />
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
           <div className="animate-pulse space-y-4">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="h-20 bg-muted rounded-lg"></div>
@@ -68,7 +68,7 @@ export default function Orders() {
   };
 
   return (
-    <div className="flex-1 overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Order History"
         description="View and manage all restaurant orders"
@@ -82,7 +82,7 @@ export default function Orders() {
         </Button>
       </div>
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar px-6 pt-4 pb-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-6 pt-4 pb-6">
         <Tabs defaultValue="all" className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="all">All Orders</TabsTrigger>

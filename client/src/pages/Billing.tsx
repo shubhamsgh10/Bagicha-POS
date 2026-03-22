@@ -155,7 +155,7 @@ export default function Billing() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Billing" description="Loading..." />
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           {[...Array(4)].map((_, i) => (
@@ -167,13 +167,13 @@ export default function Billing() {
   }
 
   return (
-    <div className="flex-1 overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Billing"
         description={`${orders?.length || 0} orders pending payment`}
       />
 
-      <main className="flex-1 overflow-y-auto custom-scrollbar p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
         {orders?.length === 0 ? (
           <div className="text-center py-20">
             <DollarSign className="w-14 h-14 text-muted-foreground mx-auto mb-4 opacity-30" />
