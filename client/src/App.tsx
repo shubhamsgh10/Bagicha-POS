@@ -43,7 +43,7 @@ function Router() {
   return (
     <div className="flex h-screen w-screen bg-background overflow-hidden">
       <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/pos" component={POS} />

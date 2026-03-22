@@ -85,9 +85,9 @@ export default function Menu() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Menu" description="Loading menu items..." />
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
               <Card key={i} className="animate-pulse">
@@ -111,7 +111,7 @@ export default function Menu() {
         description="Manage your restaurant menu items and categories"
       />
 
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto p-6">
         <div className="mb-6 flex justify-between items-center">
           <div>
             <h2 className="text-xl font-semibold">Menu Items</h2>
