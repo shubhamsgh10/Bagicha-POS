@@ -26,6 +26,7 @@ interface MenuItem {
   isVegetarian?: boolean;
   isSpicy?: boolean;
   allergens?: string;
+  sizes?: Array<{ size: string; price: number }>;
 }
 
 export default function Menu() {
@@ -145,9 +146,20 @@ export default function Menu() {
                 <h3 className="font-medium text-foreground mb-2">{item.name}</h3>
                 <p className="text-sm text-muted-foreground mb-2">{item.description}</p>
                 <div className="flex justify-between items-center">
-                  <span className="text-lg font-semibold text-foreground">
-                    {formatCurrency(parseFloat(item.price))}
-                  </span>
+                  {item.sizes && item.sizes.length > 0 ? (
+                    <div className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-foreground">
+                      {item.sizes.map((s) => (
+                        <span key={s.size}>
+                          <span className="text-muted-foreground">{s.size}</span>{" "}
+                          <span className="font-semibold">{formatCurrency(s.price)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-lg font-semibold text-foreground">
+                      {formatCurrency(parseFloat(item.price))}
+                    </span>
+                  )}
                   <Badge variant={item.isAvailable ? "default" : "destructive"}>
                     {item.isAvailable ? "Available" : "Out of Stock"}
                   </Badge>

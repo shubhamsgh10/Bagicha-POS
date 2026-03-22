@@ -28,6 +28,7 @@ export const menuItems = pgTable("menu_items", {
   preparationTime: integer("preparation_time").notNull().default(15), // minutes
   ingredients: text("ingredients").array(),
   image: text("image"),
+  sizes: json("sizes").$type<Array<{ size: string; price: number }>>(),
 });
 
 export const inventory = pgTable("inventory", {
@@ -66,6 +67,7 @@ export const orderItems = pgTable("order_items", {
   quantity: integer("quantity").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   specialInstructions: text("special_instructions"),
+  size: text("size"),
 });
 
 export const kotTickets = pgTable("kot_tickets", {
