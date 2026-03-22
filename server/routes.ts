@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertOrderSchema, insertOrderItemSchema, insertKotTicketSchema, insertMenuItemSchema, insertCategorySchema, insertInventorySchema } from "@shared/schema";
+import { insertOrderSchema, insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema } from "@shared/schema";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -213,22 +213,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/menu", requireAuth, async (req, res) => {
     try {
-      const menuItemData = insertMenuItemSchema.parse(req.body);
-      const menuItem = await storage.createMenuItem(menuItemData);
+      const b = req.body;
+      if (!b.name || !b.categoryId) {
+        return res.status(400).json({ error: "Name and category are required" });
+      }
+      const menuItem = await storage.createMenuItem({
+        name: String(b.name).trim(),
+        description: b.description ? String(b.description).trim() : null,
+        price: String(b.price ?? "0"),
+        categoryId: Number(b.categoryId),
+        isAvailable: b.isAvailable !== false,
+        preparationTime: Number(b.preparationTime) || 15,
+        sizes: Array.isArray(b.sizes) ? b.sizes : null,
+      } as any);
       res.json(menuItem);
     } catch (error) {
-      res.status(400).json({ error: "Invalid menu item data" });
+      console.error("Create menu item error:", error);
+      res.status(500).json({ error: "Failed to create menu item" });
     }
   });
 
   app.put("/api/menu/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const menuItemData = insertMenuItemSchema.partial().parse(req.body);
-      const menuItem = await storage.updateMenuItem(id, menuItemData);
+      const b = req.body;
+      const updatePayload: any = {};
+      if (b.name !== undefined)            updatePayload.name = String(b.name).trim();
+      if (b.description !== undefined)     updatePayload.description = b.description ? String(b.description).trim() : null;
+      if (b.price !== undefined)           updatePayload.price = String(b.price);
+      if (b.categoryId !== undefined)      updatePayload.categoryId = Number(b.categoryId);
+      if (b.isAvailable !== undefined)     updatePayload.isAvailable = b.isAvailable !== false;
+      if (b.preparationTime !== undefined) updatePayload.preparationTime = Number(b.preparationTime) || 15;
+      updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
+      const menuItem = await storage.updateMenuItem(id, updatePayload);
       res.json(menuItem);
     } catch (error) {
-      res.status(400).json({ error: "Invalid menu item data" });
+      console.error("Update menu item error:", error);
+      res.status(500).json({ error: "Failed to update menu item" });
     }
   });
 
