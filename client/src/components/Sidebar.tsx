@@ -2,8 +2,6 @@ import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
 import {
   LayoutDashboard,
-  ShoppingCart,
-  Menu,
   Package,
   FileText,
   CreditCard,
@@ -11,19 +9,31 @@ import {
   User,
   LogOut,
   Settings,
+  MonitorSmartphone,
+  History,
+  ChefHat,
+  UtensilsCrossed,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 
-const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Orders", href: "/orders", icon: ShoppingCart },
-  { name: "Menu", href: "/menu", icon: Menu },
-  { name: "Inventory", href: "/inventory", icon: Package },
-  { name: "KOT", href: "/kot", icon: FileText },
-  { name: "Billing", href: "/billing", icon: CreditCard },
-  { name: "Reports", href: "/reports", icon: BarChart3 },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: any;
+  roles?: string[];
+}
+
+const navigation: NavItem[] = [
+  { name: "Dashboard",  href: "/",         icon: LayoutDashboard },
+  { name: "POS",        href: "/pos",       icon: MonitorSmartphone, roles: ["admin", "manager", "cashier", "staff"] },
+  { name: "Orders",     href: "/orders",    icon: History,           roles: ["admin", "manager", "cashier", "staff"] },
+  { name: "Menu",       href: "/menu",      icon: UtensilsCrossed,   roles: ["admin", "manager"] },
+  { name: "Inventory",  href: "/inventory", icon: Package,           roles: ["admin", "manager"] },
+  { name: "KOT",        href: "/kot",       icon: ChefHat,           roles: ["admin", "manager", "kitchen", "staff"] },
+  { name: "Billing",    href: "/billing",   icon: CreditCard,        roles: ["admin", "manager", "cashier", "staff"] },
+  { name: "Reports",    href: "/reports",   icon: BarChart3,         roles: ["admin", "manager"] },
 ];
 
 export function Sidebar() {
@@ -40,56 +50,101 @@ export function Sidebar() {
     }
   };
 
-  const roleLabel = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : "";
+  const role = user?.role ?? "staff";
+  const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+
+  const visibleNav = navigation.filter((item) => {
+    if (!item.roles) return true;
+    return item.roles.includes(role);
+  });
+
+  const isActive = (href: string) => {
+    if (href === "/") return location === "/";
+    return location === href;
+  };
 
   return (
-    <div className="w-64 bg-card shadow-lg flex flex-col sticky top-0 z-10">
-      <div className="p-6 border-b border-border">
+    <div className="w-56 bg-card shadow-lg flex flex-col sticky top-0 z-10 shrink-0 h-screen border-r border-border">
+      {/* Logo */}
+      <div className="p-4 border-b border-border">
         <BagichaLogo />
-        <p className="text-xs text-muted-foreground mt-1">Restaurant POS</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Restaurant POS</p>
       </div>
 
-      <nav className="flex-1 p-4 space-y-2">
-        {navigation.map((item) => {
-          const isActive = location === item.href;
+      {/* Navigation */}
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        {visibleNav.map((item) => {
+          const active = isActive(item.href);
           return (
             <Link key={item.name} href={item.href}>
-              <div className={`flex items-center space-x-3 p-3 rounded-lg transition-colors cursor-pointer ${
-                isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-muted text-foreground'
-              }`}>
-                <item.icon className="w-5 h-5" />
-                <span>{item.name}</span>
+              <div
+                className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer ${
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "hover:bg-muted text-foreground"
+                }`}
+              >
+                <item.icon className="w-4 h-4 shrink-0" />
+                <span className="text-sm font-medium">{item.name}</span>
               </div>
             </Link>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-border space-y-2">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-            <User className="w-4 h-4 text-primary-foreground" />
+      {/* Bottom section */}
+      <div className="p-2 border-t border-border space-y-0.5">
+        {/* User info */}
+        <div className="flex items-center space-x-2.5 px-2 py-2 mb-0.5">
+          <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center shrink-0">
+            <User className="w-3.5 h-3.5 text-primary-foreground" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">{user?.username ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">{roleLabel}</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-medium text-foreground truncate">{user?.username ?? "—"}</p>
+              <p className="text-xs text-muted-foreground">{roleLabel}</p>
+            </div>
           </div>
         </div>
-        <Link href="/admin">
-          <div className={`flex items-center space-x-2 w-full p-2 rounded-lg text-sm transition-colors cursor-pointer ${location === "/admin" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-            <Settings className="w-4 h-4" />
-            <span>Admin Panel</span>
-          </div>
-        </Link>
+
+        {/* Admin Panel — admin only */}
+        {role === "admin" && (
+          <Link href="/admin">
+            <div
+              className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
+                isActive("/admin")
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <User className="w-4 h-4 shrink-0" />
+              <span>Admin Panel</span>
+            </div>
+          </Link>
+        )}
+
+        {/* Settings — admin only */}
+        {role === "admin" && (
+          <Link href="/settings">
+            <div
+              className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
+                isActive("/settings")
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Settings</span>
+            </div>
+          </Link>
+        )}
+
+        {/* Logout */}
         <button
           onClick={handleLogout}
-          className="flex items-center space-x-2 w-full p-2 rounded-lg text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          className="flex items-center space-x-2 w-full px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className="w-4 h-4 shrink-0" />
           <span>Sign out</span>
         </button>
       </div>

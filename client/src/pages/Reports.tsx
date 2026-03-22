@@ -20,24 +20,11 @@ export default function Reports() {
     }).format(amount);
   };
 
-  // Mock data for charts
-  const salesData = [
-    { name: 'Mon', sales: 12000 },
-    { name: 'Tue', sales: 19000 },
-    { name: 'Wed', sales: 15000 },
-    { name: 'Thu', sales: 22000 },
-    { name: 'Fri', sales: 28000 },
-    { name: 'Sat', sales: 35000 },
-    { name: 'Sun', sales: 31000 },
-  ];
+  const { data: weeklyData = [] } = useQuery<any[]>({ queryKey: ['/api/reports/weekly'] });
+  const { data: topItemsData = [] } = useQuery<any[]>({ queryKey: ['/api/reports/top-items'] });
 
-  const topItems = [
-    { name: 'Butter Chicken', sold: 45, revenue: 14400 },
-    { name: 'Biryani', sold: 38, revenue: 10640 },
-    { name: 'Paneer Tikka', sold: 32, revenue: 8000 },
-    { name: 'Dal Makhani', sold: 28, revenue: 5040 },
-    { name: 'Naan', sold: 52, revenue: 2600 },
-  ];
+  const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales }));
+  const topItems = topItemsData.map((d: any) => ({ name: d.name, sold: d.totalSold, revenue: d.revenue }));
 
   if (isLoading) {
     return (

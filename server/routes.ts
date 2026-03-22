@@ -7,6 +7,7 @@ import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, ins
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
+import { getSettings, saveSettings } from "./settingsStore";
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -62,6 +63,13 @@ function requireAuth(req: any, res: any, next: any) {
   res.status(401).json({ message: "Unauthorized" });
 }
 
+// Middleware to require admin role
+function requireAdmin(req: any, res: any, next: any) {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+  if (req.user?.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+  next();
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
@@ -88,7 +96,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.error("Failed to ensure admin user:", err);
   }
 
-  // Auth Routes
+  // ── Auth Routes ──────────────────────────────────────────────────────────────
+
   app.post("/api/auth/login", (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
@@ -115,7 +124,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(safeUser);
   });
 
-  // Update username
   app.put("/api/auth/profile", requireAuth, async (req, res) => {
     try {
       const { username } = req.body;
@@ -136,7 +144,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Change password
   app.put("/api/auth/password", requireAuth, async (req, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
@@ -160,7 +167,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Dashboard Stats
+  // ── User Management (Admin only) ──────────────────────────────────────────────
+
+  app.get("/api/users", requireAdmin, async (req, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      const safeUsers = allUsers.map(({ password, ...u }) => u);
+      res.json(safeUsers);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/users", requireAdmin, async (req, res) => {
+    try {
+      const { username, password, role } = req.body;
+      if (!username || !password) return res.status(400).json({ message: "Username and password are required" });
+      if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+      const existing = await storage.getUserByUsername(username.trim());
+      if (existing) return res.status(409).json({ message: "Username already taken" });
+      const hashed = await hashPassword(password);
+      const user = await storage.createUser({
+        username: username.trim(),
+        password: hashed,
+        role: role || "staff",
+      });
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err) {
+      console.error("Create user error:", err);
+      res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
+  app.put("/api/users/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const currentUser = req.user as any;
+      const { role, username, password } = req.body;
+      const updateData: any = {};
+      if (role) updateData.role = role;
+      if (username) {
+        const existing = await storage.getUserByUsername(username.trim());
+        if (existing && existing.id !== id) return res.status(409).json({ message: "Username already taken" });
+        updateData.username = username.trim();
+      }
+      if (password) {
+        if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+        updateData.password = await hashPassword(password);
+      }
+      const updated = await storage.updateUser(id, updateData);
+      const { password: _, ...safeUser } = updated;
+      res.json(safeUser);
+    } catch (err) {
+      console.error("Update user error:", err);
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const currentUser = req.user as any;
+      if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete your own account" });
+      await storage.deleteUser(id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
+  // ── Settings ──────────────────────────────────────────────────────────────────
+
+  app.get("/api/settings", requireAuth, (req, res) => {
+    try {
+      res.json(getSettings());
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch settings" });
+    }
+  });
+
+  app.put("/api/settings", requireAdmin, (req, res) => {
+    try {
+      const updated = saveSettings(req.body);
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to save settings" });
+    }
+  });
+
+  // ── Dashboard Stats ───────────────────────────────────────────────────────────
+
   app.get("/api/dashboard/stats", requireAuth, async (req, res) => {
     try {
       const stats = await storage.getDashboardStats();
@@ -170,7 +267,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Categories
+  // ── Categories ────────────────────────────────────────────────────────────────
+
   app.get("/api/categories", requireAuth, async (req, res) => {
     try {
       const categories = await storage.getCategories();
@@ -191,7 +289,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Menu Items
+  app.put("/api/categories/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, description } = req.body;
+      if (!name) return res.status(400).json({ error: "Name is required" });
+      const updated = await storage.updateCategory(id, { name, description });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update category" });
+    }
+  });
+
+  app.delete("/api/categories/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteCategory(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // ── Menu Items ────────────────────────────────────────────────────────────────
+
   app.get("/api/menu", requireAuth, async (req, res) => {
     try {
       const menuItems = await storage.getMenuItems();
@@ -268,7 +389,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Inventory Management
+  // ── Inventory ─────────────────────────────────────────────────────────────────
+
   app.get("/api/inventory", requireAuth, async (req, res) => {
     try {
       const inventory = await storage.getInventory();
@@ -300,8 +422,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/inventory/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { currentStock, ...inventoryData } = req.body;
-      const inventory = await storage.updateInventoryItem(id, inventoryData);
+      const inventory = await storage.updateInventoryItem(id, req.body);
       res.json(inventory);
     } catch (error) {
       res.status(400).json({ error: "Invalid inventory data" });
@@ -318,11 +439,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Orders
+  // ── Orders ────────────────────────────────────────────────────────────────────
+
   app.get("/api/orders", requireAuth, async (req, res) => {
     try {
       const { status, startDate, endDate } = req.query;
-
       let orders;
       if (status) {
         orders = await storage.getOrdersByStatus(status as string);
@@ -334,7 +455,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         orders = await storage.getOrders();
       }
-
       res.json(orders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch orders" });
@@ -345,9 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
-      if (!order) {
-        return res.status(404).json({ error: "Order not found" });
-      }
+      if (!order) return res.status(404).json({ error: "Order not found" });
       const items = await storage.getOrderItems(id);
       res.json({ ...order, items });
     } catch (error) {
@@ -358,14 +476,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
       const { items, ...orderInfo } = req.body;
-
-      // Generate order number
       const orderNumber = `ORD${Date.now()}`;
-
-      const order = await storage.createOrder({
-        ...orderInfo,
-        orderNumber,
-      });
+      const order = await storage.createOrder({ ...orderInfo, orderNumber });
 
       // Create order items
       if (items && items.length > 0) {
@@ -380,7 +492,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create KOT ticket
       const kotNumber = `KOT${Date.now()}`;
-      const kotItems = items.map((item: any) => {
+      const kotItems = (items || []).map((item: any) => {
         const addonLines = Array.isArray(item.addons) && item.addons.length > 0
           ? item.addons.map((a: any) => `+ ${a.name}`).join(", ")
           : "";
@@ -391,21 +503,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
-      await storage.createKotTicket({
-        orderId: order.id,
-        kotNumber,
-        items: kotItems,
-      });
+      await storage.createKotTicket({ orderId: order.id, kotNumber, items: kotItems });
 
-      broadcast({
-        type: 'NEW_ORDER',
-        order: order,
-        items: items
-      });
-
+      broadcast({ type: 'NEW_ORDER', order, items });
       res.json(order);
     } catch (error) {
-      console.error(error);
+      console.error("Create order error:", error);
       res.status(400).json({ error: "Invalid order data" });
     }
   });
@@ -415,30 +518,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const id = parseInt(req.params.id);
       const orderData = insertOrderSchema.partial().parse(req.body);
       const order = await storage.updateOrder(id, orderData);
-
-      broadcast({
-        type: 'ORDER_UPDATE',
-        order: order
-      });
-
+      broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
     } catch (error) {
       res.status(400).json({ error: "Invalid order data" });
     }
   });
 
-  // KOT Tickets
+  // Process payment for an order
+  app.post("/api/orders/:id/payment", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { paymentMethod } = req.body;
+      const order = await storage.updateOrder(id, {
+        paymentStatus: "paid",
+        paymentMethod: paymentMethod || "cash",
+        status: "served",
+      } as any);
+      broadcast({ type: 'ORDER_UPDATE', order });
+      res.json(order);
+    } catch (error) {
+      console.error("Payment error:", error);
+      res.status(500).json({ error: "Failed to process payment" });
+    }
+  });
+
+  // ── KOT Tickets ───────────────────────────────────────────────────────────────
+
   app.get("/api/kot", requireAuth, async (req, res) => {
     try {
       const { status } = req.query;
-
-      let tickets;
-      if (status) {
-        tickets = await storage.getKotTicketsByStatus(status as string);
-      } else {
-        tickets = await storage.getKotTickets();
-      }
-
+      const tickets = status
+        ? await storage.getKotTicketsByStatus(status as string)
+        : await storage.getKotTickets();
       res.json(tickets);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch KOT tickets" });
@@ -449,31 +561,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
-
       const updateData: any = { status };
-      if (status === 'completed') {
-        updateData.completedAt = new Date();
-      }
-
+      if (status === 'completed') updateData.completedAt = new Date();
       const ticket = await storage.updateKotTicket(id, updateData);
 
-      broadcast({
-        type: 'KOT_UPDATE',
-        ticket: ticket
-      });
+      // When KOT is completed, update the associated order to "ready"
+      if (status === 'completed' && ticket.orderId) {
+        await storage.updateOrder(ticket.orderId, { status: "ready" } as any);
+      }
+      // When KOT starts (in-progress), update order to "preparing"
+      if (status === 'in-progress' && ticket.orderId) {
+        await storage.updateOrder(ticket.orderId, { status: "preparing" } as any);
+      }
 
+      broadcast({ type: 'KOT_UPDATE', ticket });
       res.json(ticket);
     } catch (error) {
       res.status(400).json({ error: "Invalid KOT data" });
     }
   });
 
-  // Delivery Platform Integration
+  // ── Delivery Platform Integration ─────────────────────────────────────────────
+
   app.post("/api/delivery/webhook/:platform", async (req, res) => {
     try {
       const platform = req.params.platform;
       const webhookData = req.body;
-
       console.log(`Received webhook from ${platform}:`, webhookData);
 
       if (webhookData.event === 'order_created') {
@@ -490,27 +603,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymentStatus: 'paid',
           paymentMethod: 'online',
         };
-
         const order = await storage.createOrder(orderData);
-
-        broadcast({
-          type: 'NEW_DELIVERY_ORDER',
-          order: order,
-          platform: platform
-        });
+        broadcast({ type: 'NEW_DELIVERY_ORDER', order, platform });
       }
-
       res.json({ success: true });
     } catch (error) {
       res.status(400).json({ error: "Webhook processing failed" });
     }
   });
 
-  // Reports
+  // ── Reports ───────────────────────────────────────────────────────────────────
+
+  app.get("/api/reports/weekly", requireAuth, async (req, res) => {
+    try {
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      const start = new Date();
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+
+      const allOrders = await storage.getOrdersByDateRange(start, end);
+
+      const days: { name: string; date: string; sales: number; orders: number }[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        days.push({
+          name: d.toLocaleDateString("en-IN", { weekday: "short" }),
+          date: d.toISOString().slice(0, 10),
+          sales: 0,
+          orders: 0,
+        });
+      }
+
+      for (const order of allOrders) {
+        const orderDate = new Date(order.createdAt!).toISOString().slice(0, 10);
+        const day = days.find(d => d.date === orderDate);
+        if (day) {
+          day.sales += parseFloat(order.totalAmount);
+          day.orders += 1;
+        }
+      }
+
+      res.json(days);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to generate weekly report" });
+    }
+  });
+
+  app.get("/api/reports/top-items", requireAuth, async (req, res) => {
+    try {
+      const topItems = await storage.getTopSellingItems(10);
+      res.json(topItems);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get top items" });
+    }
+  });
+
   app.get("/api/reports/sales", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-
       let orders;
       if (startDate && endDate) {
         orders = await storage.getOrdersByDateRange(
@@ -525,18 +677,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orders = await storage.getOrdersByDateRange(today, tomorrow);
       }
 
-      const totalSales = orders.reduce((sum, order) =>
-        sum + parseFloat(order.totalAmount), 0
-      );
-
-      const report = {
+      const totalSales = orders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0);
+      res.json({
         totalOrders: orders.length,
         totalSales,
         avgOrderValue: orders.length > 0 ? totalSales / orders.length : 0,
-        orders: orders
-      };
-
-      res.json(report);
+        orders,
+      });
     } catch (error) {
       res.status(500).json({ error: "Failed to generate sales report" });
     }
