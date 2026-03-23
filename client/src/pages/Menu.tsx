@@ -105,7 +105,7 @@ export default function Menu() {
   }
 
   return (
-    <div className="flex-1">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Menu"
         description="Manage your restaurant menu items and categories"
