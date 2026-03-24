@@ -70,6 +70,9 @@ export interface IStorage {
   createSales(sales: InsertSales): Promise<Sales>;
   updateSales(id: number, sales: Partial<InsertSales>): Promise<Sales>;
 
+  // Sold Today
+  getSoldToday(): Promise<Record<number, number>>;
+
   // Dashboard Stats
   getDashboardStats(): Promise<{
     todaySales: number;
@@ -312,6 +315,30 @@ export class DatabaseStorage implements IStorage {
   async updateSales(id: number, salesData: Partial<InsertSales>): Promise<Sales> {
     const [updated] = await db.update(sales).set(salesData).where(eq(sales.id, id)).returning();
     return updated;
+  }
+
+  // Sold Today
+  async getSoldToday(): Promise<Record<number, number>> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const result = await db
+      .select({
+        menuItemId: orderItems.menuItemId,
+        totalSold: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .groupBy(orderItems.menuItemId);
+
+    const counts: Record<number, number> = {};
+    for (const row of result) {
+      counts[row.menuItemId] = Number(row.totalSold);
+    }
+    return counts;
   }
 
   // Dashboard Stats
