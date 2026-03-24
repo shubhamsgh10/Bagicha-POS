@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, RefreshCw } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, RefreshCw, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -55,6 +55,7 @@ interface CartItem {
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
 export default function POS() {
+  const [, navigate] = useLocation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
@@ -136,6 +137,10 @@ export default function POS() {
       setCartItems([]);
       setDiscount(0);
       form.reset({ orderType: "dine-in", paymentMethod: "cash" });
+      // Return to table view after placing order for a table
+      if (preselectedTableId) {
+        navigate("/tables");
+      }
     },
     onError: (error: any) => {
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
@@ -154,6 +159,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/menu/sold-today"] });
+      navigate("/tables");
     },
     onError: (error: any) => {
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
@@ -319,8 +325,35 @@ export default function POS() {
 
   // ── UI ───────────────────────────────────────────────────────────────────────
 
+  const tableLabel = preselectedTableName || (preselectedTableId ? `Table ${preselectedTableId}` : null);
+
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
+
+      {/* ── Top Bar: Back button + table name ─────────────────────────────────── */}
+      <div className="shrink-0 flex items-center gap-3 px-3 py-2 border-b bg-card">
+        <button
+          onClick={() => navigate("/tables")}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Tables
+        </button>
+        {tableLabel && (
+          <>
+            <span className="text-muted-foreground text-sm">/</span>
+            <span className="text-sm font-semibold text-foreground">{tableLabel}</span>
+          </>
+        )}
+        {isEditMode && (
+          <span className="ml-auto text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full font-medium">
+            Editing live order
+          </span>
+        )}
+      </div>
+
+      {/* ── Main POS row ──────────────────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
 
       {/* ── Add-new-item Picker Dialog ───────────────────────────────────────── */}
       <Dialog open={!!pickerItem} onOpenChange={closePicker}>
@@ -689,6 +722,7 @@ export default function POS() {
             </Button>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

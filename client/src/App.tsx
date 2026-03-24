@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -20,8 +20,12 @@ import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
+// Routes that should show the full-screen table view (no sidebar)
+const TABLE_ROUTES = ["/", "/tables"];
+
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -41,14 +45,19 @@ function Router() {
     );
   }
 
+  // ── Full-screen Table View (no sidebar) ──────────────────────────────────
+  if (TABLE_ROUTES.includes(location)) {
+    return <Tables />;
+  }
+
+  // ── All other pages: sidebar layout ─────────────────────────────────────
   return (
     <div className="flex h-screen w-screen bg-background overflow-hidden">
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
         <Switch>
-          <Route path="/" component={Dashboard} />
+          <Route path="/dashboard" component={Dashboard} />
           <Route path="/pos" component={POS} />
-          <Route path="/tables" component={Tables} />
           <Route path="/orders" component={Orders} />
           <Route path="/menu" component={Menu} />
           <Route path="/inventory" component={Inventory} />
