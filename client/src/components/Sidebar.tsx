@@ -27,9 +27,8 @@ interface NavItem {
 }
 
 const navigation: NavItem[] = [
-  { name: "Dashboard",  href: "/",         icon: LayoutDashboard },
+  { name: "Dashboard",  href: "/dashboard", icon: LayoutDashboard },
   { name: "POS",        href: "/pos",       icon: MonitorSmartphone, roles: ["admin", "manager", "cashier", "staff"] },
-  { name: "Tables",     href: "/tables",    icon: LayoutGrid,        roles: ["admin", "manager", "cashier", "staff"] },
   { name: "Orders",     href: "/orders",    icon: History,           roles: ["admin", "manager", "cashier", "staff"] },
   { name: "Menu",       href: "/menu",      icon: UtensilsCrossed,   roles: ["admin", "manager"] },
   { name: "Inventory",  href: "/inventory", icon: Package,           roles: ["admin", "manager"] },
@@ -60,10 +59,7 @@ export function Sidebar() {
     return item.roles.includes(role);
   });
 
-  const isActive = (href: string) => {
-    if (href === "/") return location === "/";
-    return location === href;
-  };
+  const isActive = (href: string) => location === href;
 
   return (
     <div className="w-56 bg-card shadow-lg flex flex-col sticky top-0 z-10 shrink-0 h-screen border-r border-border">
@@ -96,6 +92,13 @@ export function Sidebar() {
 
       {/* Bottom section */}
       <div className="p-2 border-t border-border space-y-0.5">
+        {/* Table View quick link */}
+        <Link href="/tables">
+          <div className="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer text-foreground hover:bg-muted">
+            <LayoutGrid className="w-4 h-4 shrink-0" />
+            <span className="text-sm font-medium">Table View</span>
+          </div>
+        </Link>
         {/* User info */}
         <div className="flex items-center space-x-2.5 px-2 py-2 mb-0.5">
           <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center shrink-0">

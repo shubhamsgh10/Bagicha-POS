@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Header } from "@/components/Header";
+import { BagichaLogo } from "@/components/BagichaLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -10,10 +10,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Edit2, Trash2, Users, ArrowRightLeft, X } from "lucide-react";
+import {
+  Plus, Edit2, Trash2, Users, ArrowRightLeft, X,
+  RefreshCw, LogOut, LayoutDashboard, Truck, ShoppingBag,
+} from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Table {
   id: number;
@@ -22,10 +26,10 @@ interface Table {
   status: "free" | "running" | "billed";
   currentOrderId?: number | null;
   section: string;
+  runningTotal?: number;
 }
 
-const SECTIONS = [
-  { value: "all",     label: "All" },
+const SECTION_OPTIONS = [
   { value: "inner",   label: "Inner" },
   { value: "outer",   label: "Outer" },
   { value: "vip",     label: "VIP" },
@@ -33,27 +37,57 @@ const SECTIONS = [
   { value: "hall",    label: "Hall" },
 ];
 
-const SECTION_OPTIONS = SECTIONS.filter(s => s.value !== "all");
-
+// Petpooja-style status colours
 const statusConfig = {
-  free:    { label: "Free",    bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-500", text: "text-emerald-600" },
-  running: { label: "Running", bg: "bg-red-500/10",     border: "border-red-500/30",     dot: "bg-red-500",     text: "text-red-600" },
-  billed:  { label: "Billed",  bg: "bg-blue-500/10",    border: "border-blue-500/30",    dot: "bg-blue-500",    text: "text-blue-600" },
+  free: {
+    bg: "bg-white dark:bg-zinc-900",
+    border: "border-dashed border-2 border-zinc-300 dark:border-zinc-600",
+    nameText: "text-zinc-700 dark:text-zinc-300",
+    subText: "text-zinc-400 dark:text-zinc-500",
+  },
+  running: {
+    bg: "bg-blue-100 dark:bg-blue-950/50",
+    border: "border border-blue-300 dark:border-blue-700",
+    nameText: "text-blue-900 dark:text-blue-100",
+    subText: "text-blue-600 dark:text-blue-400",
+  },
+  billed: {
+    bg: "bg-yellow-100 dark:bg-yellow-950/50",
+    border: "border border-yellow-300 dark:border-yellow-700",
+    nameText: "text-yellow-900 dark:text-yellow-100",
+    subText: "text-yellow-600 dark:text-yellow-400",
+  },
 };
+
+const fmt = (n: number) => `₹${n.toFixed(0)}`;
+
+function groupBySection(tables: Table[]): Record<string, Table[]> {
+  return tables.reduce((acc, t) => {
+    const k = t.section || "inner";
+    acc[k] = acc[k] ? [...acc[k], t] : [t];
+    return acc;
+  }, {} as Record<string, Table[]>);
+}
+
+function sectionLabel(s: string) {
+  return SECTION_OPTIONS.find(x => x.value === s)?.label
+    ?? (s.charAt(0).toUpperCase() + s.slice(1));
+}
 
 export default function Tables() {
   const [, navigate] = useLocation();
+  const { user, logout } = useAuth();
   const { toast } = useToast();
-  const [activeSection, setActiveSection] = useState("all");
+
   const [showAdd, setShowAdd] = useState(false);
   const [editTable, setEditTable] = useState<Table | null>(null);
   const [shiftFrom, setShiftFrom] = useState<Table | null>(null);
   const [form, setForm] = useState({ name: "", capacity: "4", section: "inner" });
 
-  const { data: tables = [], isLoading } = useQuery<Table[]>({
+  const { data: tables = [], isLoading, refetch } = useQuery<Table[]>({
     queryKey: ["/api/tables"],
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 8000,
   });
 
   const createMutation = useMutation({
@@ -88,26 +122,27 @@ export default function Tables() {
   });
 
   const shiftMutation = useMutation({
-    mutationFn: ({ fromId, toId }: any) => apiRequest("POST", `/api/tables/${fromId}/shift`, { toTableId: toId }),
+    mutationFn: ({ fromId, toId }: any) =>
+      apiRequest("POST", `/api/tables/${fromId}/shift`, { toTableId: toId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
-      toast({ title: "Order shifted successfully" });
+      toast({ title: "Order shifted" });
       setShiftFrom(null);
     },
-    onError: (e: any) => toast({ title: e.message || "Failed to shift table", variant: "destructive" }),
+    onError: (e: any) =>
+      toast({ title: e.message || "Failed to shift", variant: "destructive" }),
   });
 
-  // Filter tables by active section tab
-  const visibleTables = activeSection === "all"
-    ? tables
-    : tables.filter(t => t.section === activeSection);
+  const grouped = groupBySection(tables);
+  const sectionOrder = [
+    "inner", "outer", "vip", "terrace", "hall",
+    ...Object.keys(grouped).filter(
+      k => !["inner", "outer", "vip", "terrace", "hall"].includes(k)
+    ),
+  ].filter(k => grouped[k]);
 
-  const freeTables = tables.filter(t => t.status === "free");
+  const freeTables  = tables.filter(t => t.status === "free");
   const runningTables = tables.filter(t => t.status === "running");
-
-  // Tabs: show only "All" + sections that have at least one table (plus the predefined ones)
-  const usedSections = new Set(tables.map(t => t.section));
-  const visibleTabs = SECTIONS.filter(s => s.value === "all" || usedSections.has(s.value));
 
   const handleTableClick = (table: Table) => {
     if (shiftFrom) {
@@ -120,7 +155,9 @@ export default function Tables() {
       return;
     }
     if (table.status === "running" && table.currentOrderId) {
-      navigate(`/pos?tableId=${table.id}&orderId=${table.currentOrderId}`);
+      navigate(
+        `/pos?tableId=${table.id}&orderId=${table.currentOrderId}&tableName=${encodeURIComponent(table.name)}`
+      );
     } else if (table.status === "free") {
       navigate(`/pos?tableId=${table.id}&tableName=${encodeURIComponent(table.name)}`);
     }
@@ -134,7 +171,11 @@ export default function Tables() {
         data: { name: form.name, capacity: Number(form.capacity), section: form.section },
       });
     } else {
-      createMutation.mutate({ name: form.name, capacity: Number(form.capacity), section: form.section });
+      createMutation.mutate({
+        name: form.name,
+        capacity: Number(form.capacity),
+        section: form.section,
+      });
     }
   };
 
@@ -154,170 +195,286 @@ export default function Tables() {
     if (confirm(`Delete table "${table.name}"?`)) deleteMutation.mutate(table.id);
   };
 
-  const sectionLabel = (s: string) =>
-    SECTIONS.find(x => x.value === s)?.label ?? s.charAt(0).toUpperCase() + s.slice(1);
+  const handleLogout = async () => {
+    try {
+      await logout();
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    } catch {
+      toast({ title: "Logout failed", variant: "destructive" });
+    }
+  };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <Header title="Tables" description="Manage dine-in tables and seating" />
+    <div className="h-screen w-screen flex flex-col bg-background overflow-hidden">
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-5">
-        {/* Summary Bar */}
-        <div className="flex items-center gap-3 mb-4 flex-wrap">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="text-sm font-medium text-emerald-600">{freeTables.length} Free</span>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/20">
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            <span className="text-sm font-medium text-red-600">{runningTables.length} Running</span>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {shiftFrom && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 text-sm font-medium">
-                <ArrowRightLeft className="w-3.5 h-3.5" />
-                Shifting from {shiftFrom.name} — tap a free table
-                <button onClick={() => setShiftFrom(null)}><X className="w-3.5 h-3.5" /></button>
-              </div>
-            )}
-            <Button
-              onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: activeSection === "all" ? "inner" : activeSection }); setShowAdd(true); }}
-              size="sm"
-            >
-              <Plus className="w-4 h-4 mr-1" /> Add Table
-            </Button>
-          </div>
+      {/* ── Top Nav Bar (Petpooja style) ───────────────────────────────────────── */}
+      <header className="shrink-0 h-14 bg-card border-b border-border flex items-center px-4 gap-3 shadow-sm">
+        {/* Logo */}
+        <div className="flex items-center gap-3 shrink-0">
+          <BagichaLogo size="sm" />
         </div>
 
-        {/* Section Tabs */}
-        {visibleTabs.length > 1 && (
-          <div className="flex gap-1.5 mb-5 overflow-x-auto pb-1">
-            {visibleTabs.map(tab => (
-              <button
-                key={tab.value}
-                onClick={() => setActiveSection(tab.value)}
-                className={`relative px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap select-none ${
-                  activeSection === tab.value
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                {tab.label}
-                {tab.value !== "all" && (
-                  <span className={`ml-1.5 text-xs ${activeSection === tab.value ? "opacity-70" : "opacity-50"}`}>
-                    ({tables.filter(t => t.section === tab.value).length})
-                  </span>
-                )}
-                {activeSection === tab.value && (
-                  <motion.div
-                    layoutId="section-tab-indicator"
-                    className="absolute inset-0 rounded-xl bg-primary -z-10"
-                    transition={{ type: "spring", stiffness: 400, damping: 35 }}
-                  />
-                )}
-              </button>
-            ))}
+        <div className="w-px h-6 bg-border mx-1 shrink-0" />
+
+        {/* Title */}
+        <span className="text-base font-bold text-foreground tracking-tight shrink-0">
+          Table View
+        </span>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Shift banner */}
+        {shiftFrom && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-400/30 text-amber-600 text-sm font-medium">
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            Shifting {shiftFrom.name} — click a free table
+            <button
+              onClick={() => setShiftFrom(null)}
+              className="hover:text-amber-800 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
-        {/* Table Grid */}
+        {/* Action buttons */}
+        <button
+          onClick={() => refetch()}
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => navigate("/pos")}
+          className="gap-1.5"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          New Order
+        </Button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 hidden sm:flex"
+          onClick={() => navigate("/pos?orderType=delivery")}
+        >
+          <Truck className="w-3.5 h-3.5" />
+          Delivery
+        </Button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 hidden sm:flex"
+          onClick={() => navigate("/pos?orderType=takeaway")}
+        >
+          <ShoppingBag className="w-3.5 h-3.5" />
+          Take Away
+        </Button>
+
+        <div className="w-px h-6 bg-border mx-1 shrink-0" />
+
+        <button
+          onClick={() => navigate("/dashboard")}
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          title="Dashboard"
+        >
+          <LayoutDashboard className="w-4 h-4" />
+        </button>
+
+        {/* User + Logout */}
+        <div className="flex items-center gap-2 pl-1">
+          <div className="hidden sm:flex flex-col text-right">
+            <span className="text-xs font-semibold text-foreground leading-none">
+              {user?.username ?? "—"}
+            </span>
+            <span className="text-[10px] text-muted-foreground capitalize mt-0.5">
+              {user?.role ?? "staff"}
+            </span>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+            title="Sign out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      </header>
+
+      {/* ── Sub-bar: stats + legend + add button ──────────────────────────────── */}
+      <div className="shrink-0 h-10 bg-card/50 border-b border-border/50 flex items-center px-5 gap-4">
+        {/* Status legend */}
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded border-2 border-dashed border-zinc-400 bg-white dark:bg-zinc-900 inline-block" />
+            Free ({freeTables.length})
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded bg-blue-200 dark:bg-blue-900 border border-blue-400 inline-block" />
+            Running ({runningTables.length})
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded bg-yellow-200 dark:bg-yellow-900 border border-yellow-400 inline-block" />
+            Billed ({tables.filter(t => t.status === "billed").length})
+          </span>
+        </div>
+
+        <div className="flex-1" />
+
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs gap-1"
+          onClick={() => {
+            setEditTable(null);
+            setForm({ name: "", capacity: "4", section: "inner" });
+            setShowAdd(true);
+          }}
+        >
+          <Plus className="w-3 h-3" />
+          Add Table
+        </Button>
+      </div>
+
+      {/* ── Table Grid ─────────────────────────────────────────────────────────── */}
+      <main className="flex-1 overflow-y-auto p-5 space-y-8">
         {isLoading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="h-36 rounded-2xl bg-muted animate-pulse" />
+          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
+            {[...Array(16)].map((_, i) => (
+              <div key={i} className="h-20 rounded-xl bg-muted animate-pulse" />
             ))}
           </div>
         ) : tables.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="flex flex-col items-center justify-center h-full py-24 text-center">
             <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
               <Users className="w-8 h-8 text-muted-foreground" />
             </div>
             <p className="text-lg font-semibold mb-1">No tables yet</p>
-            <p className="text-muted-foreground text-sm mb-4">Add tables to start managing dine-in orders</p>
-            <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4 mr-1" /> Add First Table</Button>
-          </div>
-        ) : visibleTables.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-muted-foreground text-sm">No tables in {sectionLabel(activeSection)} section</p>
+            <p className="text-muted-foreground text-sm mb-4">
+              Add tables to start managing dine-in orders
+            </p>
             <Button
-              size="sm"
-              variant="outline"
-              className="mt-3"
-              onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: activeSection }); setShowAdd(true); }}
+              onClick={() => setShowAdd(true)}
             >
-              <Plus className="w-3.5 h-3.5 mr-1" /> Add table here
+              <Plus className="w-4 h-4 mr-1" /> Add First Table
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            <AnimatePresence mode="popLayout">
-              {visibleTables.map((table, i) => {
-                const cfg = statusConfig[table.status] || statusConfig.free;
-                const isShiftTarget = shiftFrom && shiftFrom.id !== table.id;
-                return (
-                  <motion.div
-                    key={table.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
-                    transition={{ delay: i * 0.04, duration: 0.22 }}
-                    whileHover={{ scale: 1.04, transition: { duration: 0.15 } }}
-                    onClick={() => handleTableClick(table)}
-                    className={`relative rounded-2xl border p-4 cursor-pointer select-none transition-all group ${cfg.bg} ${cfg.border} ${
-                      isShiftTarget && table.status === "free" ? "ring-2 ring-amber-400 ring-offset-1" : ""
-                    } ${shiftFrom?.id === table.id ? "ring-2 ring-primary ring-offset-1" : ""}`}
-                  >
-                    {/* Action buttons */}
-                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                      <button
-                        className="w-6 h-6 rounded-lg bg-background/80 flex items-center justify-center hover:bg-background shadow-sm"
-                        onClick={(e) => openEdit(e, table)}
-                      >
-                        <Edit2 className="w-3 h-3 text-muted-foreground" />
-                      </button>
-                      <button
-                        className="w-6 h-6 rounded-lg bg-background/80 flex items-center justify-center hover:bg-background shadow-sm"
-                        onClick={(e) => handleDelete(e, table)}
-                      >
-                        <Trash2 className="w-3 h-3 text-muted-foreground" />
-                      </button>
-                    </div>
+          sectionOrder.map(section => (
+            <div key={section}>
+              {/* Section heading */}
+              <div className="flex items-center gap-3 mb-3">
+                <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">
+                  {sectionLabel(section)}
+                </h2>
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground">
+                  {grouped[section].filter(t => t.status === "running").length} running
+                  {" · "}
+                  {grouped[section].length} tables
+                </span>
+              </div>
 
-                    <div className="flex items-center gap-1.5 mb-3">
-                      <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                      <span className={`text-xs font-medium ${cfg.text}`}>{cfg.label}</span>
-                    </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 gap-3">
+                <AnimatePresence mode="popLayout">
+                  {grouped[section].map((table, i) => {
+                    const cfg = statusConfig[table.status] || statusConfig.free;
+                    const isShiftSource = shiftFrom?.id === table.id;
+                    const isShiftTarget =
+                      !!shiftFrom && shiftFrom.id !== table.id && table.status === "free";
 
-                    <p className="text-base font-bold text-foreground mb-1 truncate">{table.name}</p>
-                    <div className="flex items-center gap-1 text-muted-foreground mb-1">
-                      <Users className="w-3 h-3" />
-                      <span className="text-xs">{table.capacity} seats</span>
-                    </div>
-                    {activeSection === "all" && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-background/60 text-muted-foreground font-medium capitalize">
-                        {sectionLabel(table.section)}
-                      </span>
-                    )}
-
-                    {table.status === "running" && (
-                      <button
-                        className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-amber-600 bg-amber-500/10 rounded-lg py-1 hover:bg-amber-500/20 transition-colors"
-                        onClick={(e) => { e.stopPropagation(); setShiftFrom(table); }}
+                    return (
+                      <motion.div
+                        key={table.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.88 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.85 }}
+                        transition={{ delay: i * 0.025, duration: 0.18 }}
+                        whileHover={{ scale: 1.06, transition: { duration: 0.1 } }}
+                        onClick={() => handleTableClick(table)}
+                        className={`
+                          relative rounded-xl cursor-pointer select-none group
+                          ${cfg.bg} ${cfg.border}
+                          ${isShiftTarget ? "ring-2 ring-amber-400 ring-offset-1" : ""}
+                          ${isShiftSource ? "ring-2 ring-primary ring-offset-1" : ""}
+                        `}
                       >
-                        <ArrowRightLeft className="w-3 h-3" /> Shift
-                      </button>
-                    )}
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
+                        {/* Main content */}
+                        <div className="p-2.5 min-h-[72px] flex flex-col justify-between">
+                          <div>
+                            <p className={`text-sm font-bold leading-tight truncate ${cfg.nameText}`}>
+                              {table.name}
+                            </p>
+                            {table.status === "running" && table.runningTotal != null && (
+                              <p className={`text-xs font-semibold mt-0.5 ${cfg.subText}`}>
+                                {fmt(table.runningTotal)}
+                              </p>
+                            )}
+                            {table.status === "free" && (
+                              <p className={`text-xs mt-0.5 flex items-center gap-0.5 ${cfg.subText}`}>
+                                <Users className="w-2.5 h-2.5" />
+                                {table.capacity}
+                              </p>
+                            )}
+                            {table.status === "billed" && (
+                              <p className={`text-xs font-medium mt-0.5 ${cfg.subText}`}>
+                                Bill printed
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Hover action bar */}
+                        <div
+                          className="px-2 pb-2 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          {table.status === "running" && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setShiftFrom(table); }}
+                              className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-blue-200 dark:hover:bg-blue-900 text-blue-600 transition-colors"
+                              title="Shift table"
+                            >
+                              <ArrowRightLeft className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button
+                            onClick={e => openEdit(e, table)}
+                            className="w-6 h-6 rounded-md bg-black/5 dark:bg-white/10 flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/20 transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-3 h-3 text-zinc-600 dark:text-zinc-300" />
+                          </button>
+                          <button
+                            onClick={e => handleDelete(e, table)}
+                            className="w-6 h-6 rounded-md bg-black/5 dark:bg-white/10 flex items-center justify-center hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3 h-3 text-zinc-600 dark:text-zinc-300" />
+                          </button>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </div>
+            </div>
+          ))
         )}
       </main>
 
-      {/* Add/Edit Dialog */}
-      <Dialog open={showAdd} onOpenChange={(o) => { if (!o) { setShowAdd(false); setEditTable(null); } }}>
+      {/* ── Add / Edit Table Dialog ────────────────────────────────────────────── */}
+      <Dialog
+        open={showAdd}
+        onOpenChange={o => { if (!o) { setShowAdd(false); setEditTable(null); } }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{editTable ? "Edit Table" : "Add New Table"}</DialogTitle>
@@ -326,10 +483,11 @@ export default function Tables() {
             <div>
               <label className="text-sm font-medium mb-1.5 block">Table Name</label>
               <Input
-                placeholder="e.g. T1, Family1, Terrace"
+                placeholder="e.g. T1, Family 1, VIP 1"
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                 onKeyDown={e => e.key === "Enter" && handleSave()}
+                autoFocus
               />
             </div>
             <div>
@@ -337,29 +495,44 @@ export default function Tables() {
               <Input
                 type="number"
                 min="1"
-                max="20"
+                max="50"
                 value={form.capacity}
                 onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))}
               />
             </div>
             <div>
               <label className="text-sm font-medium mb-1.5 block">Section</label>
-              <Select value={form.section} onValueChange={v => setForm(f => ({ ...f, section: v }))}>
+              <Select
+                value={form.section}
+                onValueChange={v => setForm(f => ({ ...f, section: v }))}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select section" />
                 </SelectTrigger>
                 <SelectContent>
                   {SECTION_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={() => { setShowAdd(false); setEditTable(null); }}>Cancel</Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setShowAdd(false); setEditTable(null); }}
+              >
+                Cancel
+              </Button>
               <Button
                 className="flex-1"
-                disabled={!form.name.trim() || createMutation.isPending || updateMutation.isPending}
+                disabled={
+                  !form.name.trim() ||
+                  createMutation.isPending ||
+                  updateMutation.isPending
+                }
                 onClick={handleSave}
               >
                 {editTable ? "Save Changes" : "Add Table"}

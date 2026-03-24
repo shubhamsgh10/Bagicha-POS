@@ -66,7 +66,7 @@ export interface IStorage {
   updateDeliveryIntegration(id: number, integration: Partial<InsertDeliveryIntegration>): Promise<DeliveryIntegration>;
 
   // Tables
-  getTables(): Promise<Table[]>;
+  getTables(): Promise<(Table & { runningTotal?: number })[]>;
   getTableById(id: number): Promise<Table | undefined>;
   createTable(table: InsertTable): Promise<Table>;
   updateTable(id: number, data: Partial<InsertTable>): Promise<Table>;
@@ -322,8 +322,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Tables
-  async getTables(): Promise<Table[]> {
-    return await db.select().from(tables).orderBy(tables.name);
+  async getTables(): Promise<(Table & { runningTotal?: number })[]> {
+    const rows = await db
+      .select({
+        id: tables.id,
+        name: tables.name,
+        capacity: tables.capacity,
+        status: tables.status,
+        currentOrderId: tables.currentOrderId,
+        section: tables.section,
+        runningTotal: orders.totalAmount,
+      })
+      .from(tables)
+      .leftJoin(orders, eq(tables.currentOrderId, orders.id))
+      .orderBy(tables.name);
+    return rows.map(r => ({
+      ...r,
+      runningTotal: r.runningTotal != null ? Number(r.runningTotal) : undefined,
+    }));
   }
 
   async getTableById(id: number): Promise<Table | undefined> {
