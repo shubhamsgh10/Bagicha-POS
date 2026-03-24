@@ -331,6 +331,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/menu/sold-today", requireAuth, async (req, res) => {
+    try {
+      const soldToday = await storage.getSoldToday();
+      console.log("[sold-today] result:", JSON.stringify(soldToday));
+      res.json(soldToday);
+    } catch (error) {
+      console.error("[sold-today] error:", error);
+      res.status(500).json({ error: "Failed to fetch sold today stats" });
+    }
+  });
+
   app.get("/api/menu/category/:categoryId", requireAuth, async (req, res) => {
     try {
       const categoryId = parseInt(req.params.categoryId);
@@ -496,6 +507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderId: order.id,
           });
           await storage.createOrderItem(orderItemData);
+          console.log(`[order] saved orderItem menuItemId=${orderItemData.menuItemId} qty=${orderItemData.quantity}`);
         }
       }
 

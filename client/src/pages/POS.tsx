@@ -82,6 +82,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/menu/sold-today"] });
       setCartItems([]);
       setDiscount(0);
       form.reset({ orderType: "dine-in", paymentMethod: "cash" });
