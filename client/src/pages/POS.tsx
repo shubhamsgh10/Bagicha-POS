@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -22,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Minus, X, ShoppingCart, Search, Trash2 } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -41,11 +42,11 @@ interface SizeOption { size: string; price: number; }
 interface AddonOption { name: string; price: number; }
 interface CartItem {
   cartKey: string;
-  id: number;
+  id: number;          // menuItemId
   name: string;
   basePrice: number;
   addons: AddonOption[];
-  totalPrice: number;
+  totalPrice: number;  // per-unit price including addons
   quantity: number;
   specialInstructions?: string;
   size?: string;
@@ -55,25 +56,73 @@ const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
 export default function POS() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [discount, setDiscount] = useState(0);
 
-  // Picker state (size + addons)
+  // Picker state — for adding new items
   const [pickerItem, setPickerItem] = useState<any | null>(null);
   const [chosenSize, setChosenSize] = useState<SizeOption | null>(null);
   const [chosenAddons, setChosenAddons] = useState<AddonOption[]>([]);
 
+  // Edit picker — for editing an existing cart item
+  const [editCartKey, setEditCartKey] = useState<string | null>(null);
+  const [editPickerItem, setEditPickerItem] = useState<any | null>(null);
+  const [editChosenSize, setEditChosenSize] = useState<SizeOption | null>(null);
+  const [editChosenAddons, setEditChosenAddons] = useState<AddonOption[]>([]);
+
+  // URL params
+  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const preselectedTableId = urlParams.get("tableId") ? Number(urlParams.get("tableId")) : null;
+  const preselectedTableName = urlParams.get("tableName") ? decodeURIComponent(urlParams.get("tableName") || "") : null;
+  const editOrderId = urlParams.get("orderId") ? Number(urlParams.get("orderId")) : null;
+
   const { toast } = useToast();
   const form = useForm<OrderForm>({
     resolver: zodResolver(orderSchema),
-    defaultValues: { orderType: "dine-in", paymentMethod: "cash" },
+    defaultValues: { orderType: editOrderId ? "dine-in" : "dine-in", paymentMethod: "cash" },
   });
 
   const { data: categories } = useQuery<any[]>({ queryKey: ["/api/categories"] });
   const { data: menuItems } = useQuery<any[]>({ queryKey: ["/api/menu"] });
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
   const taxRate = (settings?.taxRate ?? 18) / 100;
+
+  // Fetch existing order when in edit mode
+  const { data: existingOrder } = useQuery<any>({
+    queryKey: ["/api/orders", String(editOrderId)],
+    enabled: !!editOrderId,
+    staleTime: 0,
+  });
+
+  // Load existing order items into cart (only once)
+  useEffect(() => {
+    if (!editOrderId || !existingOrder || !menuItems || cartLoaded) return;
+    const loadedItems: CartItem[] = (existingOrder.items || []).map((item: any) => {
+      const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
+      const name = menuItem?.name || "Unknown Item";
+      const price = parseFloat(item.price);
+      return {
+        cartKey: `db-${item.id}-${item.menuItemId}`,
+        id: item.menuItemId,
+        name,
+        basePrice: price,
+        addons: [],
+        totalPrice: price,
+        size: item.size || undefined,
+        quantity: item.quantity,
+        specialInstructions: item.specialInstructions || undefined,
+      };
+    });
+    setCartItems(loadedItems);
+    setCartLoaded(true);
+    if (existingOrder.discountAmount) {
+      setDiscount(parseFloat(existingOrder.discountAmount) || 0);
+    }
+  }, [existingOrder, menuItems, editOrderId, cartLoaded]);
+
+  // ── Create order mutation ────────────────────────────────────────────────────
 
   const createOrderMutation = useMutation({
     mutationFn: async (data: any) => apiRequest("POST", "/api/orders", data),
@@ -82,6 +131,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/menu/sold-today"] });
       setCartItems([]);
       setDiscount(0);
@@ -92,7 +142,25 @@ export default function POS() {
     },
   });
 
-  // ── Picker helpers ──────────────────────────────────────────────────────────
+  // ── Update order mutation (edit mode) ────────────────────────────────────────
+
+  const updateOrderMutation = useMutation({
+    mutationFn: async (data: any) => apiRequest("PUT", `/api/orders/${editOrderId}/items`, data),
+    onSuccess: () => {
+      toast({ title: "Order Updated!", description: "Changes saved and kitchen notified for new items" });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(editOrderId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/menu/sold-today"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
+    },
+  });
+
+  // ── Add-new-item Picker helpers ─────────────────────────────────────────────
 
   const openPicker = (item: any) => {
     setPickerItem(item);
@@ -130,7 +198,54 @@ export default function POS() {
     closePicker();
   };
 
-  // ── Cart helpers ────────────────────────────────────────────────────────────
+  // ── Edit-existing-cart-item Picker helpers ───────────────────────────────────
+
+  const openEditPicker = (cartItem: CartItem) => {
+    const menuItem = menuItems?.find((m: any) => m.id === cartItem.id);
+    if (!menuItem) return;
+    setEditCartKey(cartItem.cartKey);
+    setEditPickerItem(menuItem);
+    // Pre-select size if cart item has one
+    if (cartItem.size && menuItem.sizes) {
+      const matchedSize = menuItem.sizes.find((s: any) => s.size === cartItem.size);
+      if (matchedSize) setEditChosenSize({ size: matchedSize.size, price: Number(matchedSize.price) });
+      else setEditChosenSize(null);
+    } else {
+      setEditChosenSize(null);
+    }
+    setEditChosenAddons([...cartItem.addons]);
+  };
+  const closeEditPicker = () => { setEditCartKey(null); setEditPickerItem(null); setEditChosenSize(null); setEditChosenAddons([]); };
+
+  const toggleEditAddon = (addon: AddonOption) => {
+    setEditChosenAddons(prev =>
+      prev.some(a => a.name === addon.name)
+        ? prev.filter(a => a.name !== addon.name)
+        : [...prev, addon]
+    );
+  };
+
+  const editPickerHasSizes = editPickerItem && Array.isArray(editPickerItem.sizes) && editPickerItem.sizes.length > 0;
+  const editBasePrice = editPickerHasSizes && editChosenSize ? Number(editChosenSize.price) : parseFloat(editPickerItem?.price || "0");
+  const editPickerTotal = editBasePrice + editChosenAddons.reduce((s, a) => s + Number(a.price), 0);
+
+  const confirmEdit = () => {
+    if (!editCartKey || !editPickerItem) return;
+    if (editPickerHasSizes && !editChosenSize) return;
+    const basePrice = editPickerHasSizes ? Number(editChosenSize!.price) : parseFloat(editPickerItem.price || "0");
+    const addonTotal = editChosenAddons.reduce((s, a) => s + Number(a.price), 0);
+    const totalPrice = basePrice + addonTotal;
+    const size = editChosenSize?.size;
+    setCartItems(prev =>
+      prev.map(c => c.cartKey === editCartKey
+        ? { ...c, basePrice, addons: editChosenAddons, totalPrice, size }
+        : c
+      )
+    );
+    closeEditPicker();
+  };
+
+  // ── Cart helpers ─────────────────────────────────────────────────────────────
 
   const directAddItem = (item: any) => {
     const basePrice = parseFloat(item.price || "0");
@@ -148,7 +263,7 @@ export default function POS() {
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
   };
 
-  // ── Filter ──────────────────────────────────────────────────────────────────
+  // ── Filter ───────────────────────────────────────────────────────────────────
 
   const filteredItems = menuItems?.filter((item: any) => {
     const matchCat = selectedCategory === "all" || item.categoryId === selectedCategory;
@@ -156,7 +271,7 @@ export default function POS() {
     return matchCat && matchSearch;
   });
 
-  // ── Totals ──────────────────────────────────────────────────────────────────
+  // ── Totals ───────────────────────────────────────────────────────────────────
 
   const subtotal = cartItems.reduce((s, i) => s + i.totalPrice * i.quantity, 0);
   const discountAmt = Math.min(discount, subtotal);
@@ -164,33 +279,50 @@ export default function POS() {
   const tax = taxable * taxRate;
   const total = taxable + tax;
 
+  // ── Submit ───────────────────────────────────────────────────────────────────
+
   const onSubmit = (data: OrderForm) => {
     if (cartItems.length === 0) {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
       return;
     }
-    createOrderMutation.mutate({
-      ...data,
-      totalAmount: total.toFixed(2),
-      taxAmount: tax.toFixed(2),
-      discountAmount: discountAmt.toFixed(2),
-      items: cartItems.map(c => ({
-        menuItemId: c.id,
-        quantity: c.quantity,
-        price: c.totalPrice.toFixed(2),
-        specialInstructions: c.specialInstructions || "",
-        name: c.size ? `${c.name} (${c.size})` : c.name,
-        size: c.size || null,
-        addons: c.addons,
-      })),
-    });
+
+    const itemsPayload = cartItems.map(c => ({
+      menuItemId: c.id,
+      quantity: c.quantity,
+      price: c.totalPrice.toFixed(2),
+      specialInstructions: c.specialInstructions || "",
+      name: c.size ? `${c.name} (${c.size})` : c.name,
+      size: c.size || null,
+      addons: c.addons,
+    }));
+
+    if (editOrderId) {
+      updateOrderMutation.mutate({
+        items: itemsPayload,
+        discountAmount: discountAmt.toFixed(2),
+      });
+    } else {
+      createOrderMutation.mutate({
+        ...data,
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: discountAmt.toFixed(2),
+        ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
+        items: itemsPayload,
+      });
+    }
   };
 
-  // ── UI ──────────────────────────────────────────────────────────────────────
+  const isPending = createOrderMutation.isPending || updateOrderMutation.isPending;
+  const isEditMode = !!editOrderId;
+
+  // ── UI ───────────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* ── Picker Dialog ───────────────────────────────────────────────────── */}
+
+      {/* ── Add-new-item Picker Dialog ───────────────────────────────────────── */}
       <Dialog open={!!pickerItem} onOpenChange={closePicker}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -243,9 +375,65 @@ export default function POS() {
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={closePicker}>Cancel</Button>
-            <Button disabled={!!(pickerHasSizes && !chosenSize)} onClick={confirmAndAdd}>
-              Add to Cart
-            </Button>
+            <Button disabled={!!(pickerHasSizes && !chosenSize)} onClick={confirmAndAdd}>Add to Cart</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit-cart-item Picker Dialog ─────────────────────────────────────── */}
+      <Dialog open={!!editPickerItem} onOpenChange={closeEditPicker}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit: {editPickerItem?.name}</DialogTitle>
+            <DialogDescription>Change size or extras for this item</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            {editPickerHasSizes && (
+              <div>
+                <p className="font-medium text-sm mb-2">Size</p>
+                <div className="space-y-2">
+                  {editPickerItem.sizes.map((s: SizeOption) => {
+                    const isChosen = editChosenSize?.size === s.size;
+                    return (
+                      <label key={s.size} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${isChosen ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>
+                        <div className="flex items-center gap-3">
+                          <input type="radio" name="edit-size" checked={isChosen} onChange={() => setEditChosenSize({ size: s.size, price: Number(s.price) })} className="accent-primary w-4 h-4" />
+                          <span className="font-medium">{s.size}</span>
+                        </div>
+                        <span className="font-semibold text-primary">{fmt(Number(s.price))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {editPickerItem?.addonsEnabled && Array.isArray(editPickerItem.addons) && editPickerItem.addons.length > 0 && (
+              <div>
+                <p className="font-medium text-sm mb-2">Extras</p>
+                <div className="space-y-2">
+                  {editPickerItem.addons.map((a: AddonOption) => {
+                    const isChecked = editChosenAddons.some(ca => ca.name === a.name);
+                    return (
+                      <label key={a.name} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${isChecked ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>
+                        <div className="flex items-center gap-3">
+                          <input type="checkbox" checked={isChecked} onChange={() => toggleEditAddon({ name: a.name, price: Number(a.price) })} className="accent-primary w-4 h-4" />
+                          <span className="font-medium">{a.name}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-primary">+{fmt(Number(a.price))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="border-t pt-3 flex justify-between items-center">
+              <span className="text-sm text-muted-foreground">Unit Total</span>
+              <span className="font-bold text-base">{fmt(editPickerTotal)}</span>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={closeEditPicker}>Cancel</Button>
+            <Button disabled={!!(editPickerHasSizes && !editChosenSize)} onClick={confirmEdit}>Save Changes</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -332,12 +520,8 @@ export default function POS() {
                     )}
                     <div className="flex items-center gap-1 mt-1.5">
                       {!isAvailable && <Badge variant="destructive" className="text-xs py-0 px-1">Unavailable</Badge>}
-                      {hasAddons && isAvailable && (
-                        <span className="text-xs text-muted-foreground">Customizable</span>
-                      )}
-                      {needsPicker && isAvailable && (
-                        <span className="ml-auto text-xs text-primary font-medium">Tap to select</span>
-                      )}
+                      {hasAddons && isAvailable && <span className="text-xs text-muted-foreground">Customizable</span>}
+                      {needsPicker && isAvailable && <span className="ml-auto text-xs text-primary font-medium">Tap to select</span>}
                     </div>
                   </button>
                 );
@@ -349,28 +533,45 @@ export default function POS() {
 
       {/* ── RIGHT: Cart ─────────────────────────────────────────────────────── */}
       <div className="w-80 shrink-0 border-l bg-card flex flex-col overflow-hidden">
-        {/* Order info header */}
+        {/* Header */}
         <div className="p-3 border-b space-y-2 shrink-0">
           <h3 className="font-semibold flex items-center gap-2 text-sm">
             <ShoppingCart className="w-4 h-4" />
-            New Order
+            {isEditMode
+              ? <span className="flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-500" />
+                  {preselectedTableName ? `Editing: ${preselectedTableName}` : `Editing Order #${editOrderId}`}
+                </span>
+              : preselectedTableName ? `Table: ${preselectedTableName}` : "New Order"
+            }
             {cartItems.length > 0 && (
-              <Badge className="ml-auto text-xs" variant="secondary">{cartItems.length} items</Badge>
+              <Badge className="ml-auto text-xs" variant={isEditMode ? "outline" : "secondary"}>
+                {cartItems.length} items
+              </Badge>
             )}
           </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={form.watch("orderType")} onValueChange={(v) => form.setValue("orderType", v as any)}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dine-in">Dine In</SelectItem>
-                <SelectItem value="takeaway">Takeaway</SelectItem>
-                <SelectItem value="delivery">Delivery</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input placeholder="Table #" {...form.register("tableNumber")} className="h-8 text-xs" />
-          </div>
-          <Input placeholder="Customer name (optional)" {...form.register("customerName")} className="h-8 text-xs" />
-          <Input placeholder="Phone (optional)" {...form.register("customerPhone")} className="h-8 text-xs" />
+          {!isEditMode && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={form.watch("orderType")} onValueChange={(v) => form.setValue("orderType", v as any)}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="dine-in">Dine In</SelectItem>
+                    <SelectItem value="takeaway">Takeaway</SelectItem>
+                    <SelectItem value="delivery">Delivery</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input placeholder="Table #" {...form.register("tableNumber")} className="h-8 text-xs" />
+              </div>
+              <Input placeholder="Customer name (optional)" {...form.register("customerName")} className="h-8 text-xs" />
+              <Input placeholder="Phone (optional)" {...form.register("customerPhone")} className="h-8 text-xs" />
+            </>
+          )}
+          {isEditMode && (
+            <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 rounded-lg px-2.5 py-1.5 border border-amber-200 dark:border-amber-900/30">
+              Editing live order · New items will be sent to kitchen
+            </p>
+          )}
         </div>
 
         {/* Cart items */}
@@ -379,7 +580,7 @@ export default function POS() {
             {cartItems.length === 0 && (
               <div className="text-center text-muted-foreground py-12">
                 <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                <p className="text-sm">Tap items to add to cart</p>
+                <p className="text-sm">{isEditMode ? "Loading order..." : "Tap items to add to cart"}</p>
               </div>
             )}
             {cartItems.map((item) => (
@@ -393,12 +594,21 @@ export default function POS() {
                       <p key={a.name} className="text-xs text-muted-foreground">+ {a.name}</p>
                     ))}
                   </div>
-                  <button
-                    onClick={() => removeFromCart(item.cartKey)}
-                    className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => openEditPicker(item)}
+                      className="w-6 h-6 rounded-md border bg-background flex items-center justify-center hover:bg-muted transition-colors"
+                      title="Edit item"
+                    >
+                      <Edit2 className="w-3 h-3 text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={() => removeFromCart(item.cartKey)}
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1">
@@ -417,7 +627,7 @@ export default function POS() {
           </div>
         </ScrollArea>
 
-        {/* Totals + Place Order */}
+        {/* Totals + Action */}
         <div className="border-t p-3 space-y-2 shrink-0">
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Subtotal</span>
@@ -443,27 +653,32 @@ export default function POS() {
             <span>Total</span>
             <span className="text-primary">{fmt(total)}</span>
           </div>
-          <Select value={form.watch("paymentMethod")} onValueChange={(v) => form.setValue("paymentMethod", v as any)}>
-            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Payment method" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="cash">Cash</SelectItem>
-              <SelectItem value="card">Card</SelectItem>
-              <SelectItem value="upi">UPI</SelectItem>
-              <SelectItem value="online">Online</SelectItem>
-            </SelectContent>
-          </Select>
+          {!isEditMode && (
+            <Select value={form.watch("paymentMethod")} onValueChange={(v) => form.setValue("paymentMethod", v as any)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Payment method" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="upi">UPI</SelectItem>
+                <SelectItem value="online">Online</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           <Button
             className="w-full font-semibold"
-            disabled={cartItems.length === 0 || createOrderMutation.isPending}
-            onClick={form.handleSubmit(onSubmit)}
+            variant={isEditMode ? "default" : "default"}
+            disabled={cartItems.length === 0 || isPending}
+            onClick={isEditMode ? () => onSubmit(form.getValues()) : form.handleSubmit(onSubmit)}
           >
-            {createOrderMutation.isPending
-              ? "Placing Order..."
+            {isPending
+              ? (isEditMode ? "Saving..." : "Placing Order...")
               : cartItems.length === 0
                 ? "Add Items to Order"
-                : `Place Order · ${fmt(total)}`}
+                : isEditMode
+                  ? `Save Changes · ${fmt(total)}`
+                  : `Place Order · ${fmt(total)}`}
           </Button>
-          {cartItems.length > 0 && (
+          {cartItems.length > 0 && !isEditMode && (
             <Button
               variant="ghost"
               size="sm"

@@ -14,6 +14,7 @@ import Billing from "@/pages/Billing";
 import Reports from "@/pages/Reports";
 import Admin from "@/pages/Admin";
 import Settings from "@/pages/Settings";
+import Tables from "@/pages/Tables";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
@@ -47,6 +48,7 @@ function Router() {
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/pos" component={POS} />
+          <Route path="/tables" component={Tables} />
           <Route path="/orders" component={Orders} />
           <Route path="/menu" component={Menu} />
           <Route path="/inventory" component={Inventory} />

@@ -276,6 +276,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/dashboard/sales-chart", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getSalesChart();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sales chart" });
+    }
+  });
+
+  app.get("/api/dashboard/category-sales", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getCategorySales();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch category sales" });
+    }
+  });
+
+  app.get("/api/dashboard/top-items", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getDashboardTopItems();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch top items" });
+    }
+  });
+
   // ── Categories ────────────────────────────────────────────────────────────────
 
   app.get("/api/categories", requireAuth, async (req, res) => {
@@ -317,6 +344,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // ── Tables ───────────────────────────────────────────────────────────────────
+
+  app.get("/api/tables", requireAuth, async (req, res) => {
+    try {
+      const allTables = await storage.getTables();
+      res.json(allTables);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch tables" });
+    }
+  });
+
+  app.post("/api/tables", requireAuth, async (req, res) => {
+    try {
+      const { name, capacity, section } = req.body;
+      if (!name) return res.status(400).json({ error: "Table name is required" });
+      const table = await storage.createTable({
+        name: String(name).trim(),
+        capacity: Number(capacity) || 4,
+        section: String(section || "inner"),
+      });
+      res.json(table);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create table" });
+    }
+  });
+
+  app.put("/api/tables/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, capacity, section } = req.body;
+      const data: any = {};
+      if (name !== undefined) data.name = String(name).trim();
+      if (capacity !== undefined) data.capacity = Number(capacity);
+      if (section !== undefined) data.section = String(section);
+      const table = await storage.updateTable(id, data);
+      res.json(table);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update table" });
+    }
+  });
+
+  app.delete("/api/tables/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTable(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete table" });
+    }
+  });
+
+  app.post("/api/tables/:id/shift", requireAuth, async (req, res) => {
+    try {
+      const fromTableId = parseInt(req.params.id);
+      const { toTableId } = req.body;
+      if (!toTableId) return res.status(400).json({ error: "toTableId is required" });
+      const fromTable = await storage.getTableById(fromTableId);
+      if (!fromTable || !fromTable.currentOrderId) return res.status(400).json({ error: "No active order on this table" });
+      const toTable = await storage.getTableById(Number(toTableId));
+      if (!toTable) return res.status(400).json({ error: "Target table not found" });
+      if (toTable.status !== "free") return res.status(400).json({ error: "Target table is not free" });
+      // Move order to new table
+      await storage.updateOrder(fromTable.currentOrderId, { tableId: Number(toTableId), tableNumber: toTable.name } as any);
+      await storage.updateTableStatus(Number(toTableId), "running", fromTable.currentOrderId);
+      await storage.updateTableStatus(fromTableId, "free", null);
+      broadcast({ type: 'TABLE_UPDATE' });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Shift table error:", error);
+      res.status(500).json({ error: "Failed to shift table" });
     }
   });
 
@@ -526,11 +626,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.createKotTicket({ orderId: order.id, kotNumber, items: kotItems });
 
+      // Update table status if dine-in
+      if (orderInfo.tableId) {
+        await storage.updateTableStatus(Number(orderInfo.tableId), "running", order.id);
+        broadcast({ type: 'TABLE_UPDATE' });
+      }
       broadcast({ type: 'NEW_ORDER', order, items });
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
       res.status(400).json({ error: "Invalid order data" });
+    }
+  });
+
+  app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { items, discountAmount } = req.body;
+
+      // Snapshot existing items BEFORE replacing (for delta KOT)
+      const existingItems = await storage.getOrderItems(id);
+      const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
+
+      // Replace all order items
+      await storage.deleteOrderItemsByOrderId(id);
+      for (const item of items) {
+        await storage.createOrderItem({
+          orderId: id,
+          menuItemId: Number(item.menuItemId),
+          quantity: Number(item.quantity),
+          price: String(item.price),
+          specialInstructions: item.specialInstructions || "",
+          size: item.size || null,
+        });
+      }
+
+      // Recalculate totals
+      const settings = getSettings();
+      const taxRate = ((settings as any)?.taxRate ?? 18) / 100;
+      const subtotal = items.reduce((s: number, i: any) => s + parseFloat(i.price) * Number(i.quantity), 0);
+      const discount = parseFloat(discountAmount || "0");
+      const taxable = subtotal - discount;
+      const tax = taxable * taxRate;
+      const total = taxable + tax;
+
+      const order = await storage.updateOrder(id, {
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: discount.toFixed(2),
+      } as any);
+
+      // Delta KOT — only print items newly added to this order
+      const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
+      if (newItems.length > 0) {
+        const kotNumber = `KOT${Date.now()}`;
+        const kotItems = newItems.map((item: any) => ({
+          name: item.name,
+          quantity: Number(item.quantity),
+          instructions: item.specialInstructions || undefined,
+        }));
+        await storage.createKotTicket({ orderId: id, kotNumber, items: kotItems });
+        broadcast({ type: "KOT_UPDATE", action: "created" });
+      }
+
+      broadcast({ type: "ORDER_UPDATE", order });
+      res.json(order);
+    } catch (error) {
+      console.error("Update order items error:", error);
+      res.status(500).json({ error: "Failed to update order items" });
     }
   });
 
@@ -556,6 +719,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: paymentMethod || "cash",
         status: "served",
       } as any);
+      // Free the table if dine-in
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+        broadcast({ type: 'TABLE_UPDATE' });
+      }
       broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
     } catch (error) {

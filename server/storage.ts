@@ -1,9 +1,9 @@
-import { 
-  users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales,
+import {
+  users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
   type User, type InsertUser, type Category, type InsertCategory, type MenuItem, type InsertMenuItem,
   type Inventory, type InsertInventory, type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
   type KotTicket, type InsertKotTicket, type DeliveryIntegration, type InsertDeliveryIntegration,
-  type Sales, type InsertSales
+  type Sales, type InsertSales, type Table, type InsertTable
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
@@ -52,6 +52,7 @@ export interface IStorage {
   createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
   updateOrderItem(id: number, item: Partial<InsertOrderItem>): Promise<OrderItem>;
   deleteOrderItem(id: number): Promise<void>;
+  deleteOrderItemsByOrderId(orderId: number): Promise<void>;
 
   // KOT Tickets
   getKotTickets(): Promise<KotTicket[]>;
@@ -63,6 +64,14 @@ export interface IStorage {
   getDeliveryIntegrations(): Promise<DeliveryIntegration[]>;
   createDeliveryIntegration(integration: InsertDeliveryIntegration): Promise<DeliveryIntegration>;
   updateDeliveryIntegration(id: number, integration: Partial<InsertDeliveryIntegration>): Promise<DeliveryIntegration>;
+
+  // Tables
+  getTables(): Promise<Table[]>;
+  getTableById(id: number): Promise<Table | undefined>;
+  createTable(table: InsertTable): Promise<Table>;
+  updateTable(id: number, data: Partial<InsertTable>): Promise<Table>;
+  deleteTable(id: number): Promise<void>;
+  updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table>;
 
   // Sales
   getSales(): Promise<Sales[]>;
@@ -78,8 +87,19 @@ export interface IStorage {
     todaySales: number;
     todayOrders: number;
     avgOrderValue: number;
+    activeOrders: number;
+    totalRevenue: number;
     lowStockCount: number;
+    topItem: string;
+    innerRunning: number;
+    outerRunning: number;
+    totalTables: number;
   }>;
+
+  // Dashboard Charts
+  getSalesChart(): Promise<Array<{ date: string; total: number }>>;
+  getCategorySales(): Promise<Array<{ category: string; total: number }>>;
+  getDashboardTopItems(limit?: number): Promise<Array<{ name: string; qty: number }>>;
 
   // Reports
   getTopSellingItems(limit?: number): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
@@ -251,6 +271,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(orderItems).where(eq(orderItems.id, id));
   }
 
+  async deleteOrderItemsByOrderId(orderId: number): Promise<void> {
+    await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
+  }
+
   // KOT Tickets
   async getKotTickets(): Promise<KotTicket[]> {
     return await db.select().from(kotTickets).orderBy(desc(kotTickets.printedAt));
@@ -294,6 +318,37 @@ export class DatabaseStorage implements IStorage {
 
   async updateDeliveryIntegration(id: number, integration: Partial<InsertDeliveryIntegration>): Promise<DeliveryIntegration> {
     const [updated] = await db.update(deliveryIntegrations).set(integration).where(eq(deliveryIntegrations.id, id)).returning();
+    return updated;
+  }
+
+  // Tables
+  async getTables(): Promise<Table[]> {
+    return await db.select().from(tables).orderBy(tables.name);
+  }
+
+  async getTableById(id: number): Promise<Table | undefined> {
+    const [table] = await db.select().from(tables).where(eq(tables.id, id));
+    return table || undefined;
+  }
+
+  async createTable(table: InsertTable): Promise<Table> {
+    const [newTable] = await db.insert(tables).values(table).returning();
+    return newTable;
+  }
+
+  async updateTable(id: number, data: Partial<InsertTable>): Promise<Table> {
+    const [updated] = await db.update(tables).set(data).where(eq(tables.id, id)).returning();
+    return updated;
+  }
+
+  async deleteTable(id: number): Promise<void> {
+    await db.delete(tables).where(eq(tables.id, id));
+  }
+
+  async updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table> {
+    const updateData: any = { status };
+    if (currentOrderId !== undefined) updateData.currentOrderId = currentOrderId;
+    const [updated] = await db.update(tables).set(updateData).where(eq(tables.id, id)).returning();
     return updated;
   }
 
@@ -346,23 +401,35 @@ export class DatabaseStorage implements IStorage {
     todaySales: number;
     todayOrders: number;
     avgOrderValue: number;
+    activeOrders: number;
+    totalRevenue: number;
     lowStockCount: number;
+    topItem: string;
+    innerRunning: number;
+    outerRunning: number;
+    totalTables: number;
   }> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const [todayOrdersResult] = await db.select({
+    const [todayResult] = await db.select({
       count: sql<number>`count(*)`,
-      total: sql<number>`sum(${orders.totalAmount})`
+      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0)`
     }).from(orders).where(
-      and(
-        gte(orders.createdAt, today),
-        lte(orders.createdAt, tomorrow),
-        eq(orders.status, 'served')
-      )
+      and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow))
     );
+
+    const [activeResult] = await db.select({
+      count: sql<number>`count(*)`
+    }).from(orders).where(
+      sql`${orders.status} NOT IN ('served', 'cancelled')`
+    );
+
+    const [revenueResult] = await db.select({
+      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0)`
+    }).from(orders);
 
     const [lowStockResult] = await db.select({
       count: sql<number>`count(*)`
@@ -370,18 +437,120 @@ export class DatabaseStorage implements IStorage {
       sql`${inventory.currentStock} <= ${inventory.minStock}`
     );
 
-    const todayOrders = todayOrdersResult?.count || 0;
-    const todaySales = todayOrdersResult?.total || 0;
-    const avgOrderValue = todayOrders > 0 ? todaySales / todayOrders : 0;
-    const lowStockCount = lowStockResult?.count || 0;
+    const topItemRows = await db
+      .select({
+        name: menuItems.name,
+        qty: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .groupBy(menuItems.id, menuItems.name)
+      .orderBy(sql`sum(${orderItems.quantity}) desc`)
+      .limit(1);
+
+    const todayOrders = Number(todayResult?.count || 0);
+    const todaySales = Number(todayResult?.total || 0);
+
+    // Section-level table stats
+    const allTables = await db.select().from(tables);
+    const innerRunning = allTables.filter(t => t.section === 'inner' && t.status === 'running').length;
+    const outerRunning = allTables.filter(t => t.section === 'outer' && t.status === 'running').length;
 
     return {
       todaySales,
       todayOrders,
-      avgOrderValue,
-      lowStockCount,
+      avgOrderValue: todayOrders > 0 ? todaySales / todayOrders : 0,
+      activeOrders: Number(activeResult?.count || 0),
+      totalRevenue: Number(revenueResult?.total || 0),
+      lowStockCount: Number(lowStockResult?.count || 0),
+      topItem: topItemRows[0]?.name || '—',
+      innerRunning,
+      outerRunning,
+      totalTables: allTables.length,
     };
   }
+
+  // Dashboard Charts
+  async getSalesChart(): Promise<Array<{ date: string; total: number }>> {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = new Date();
+    start.setDate(start.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+
+    const allOrders = await db.select({
+      createdAt: orders.createdAt,
+      totalAmount: orders.totalAmount,
+    }).from(orders).where(
+      and(gte(orders.createdAt, start), lte(orders.createdAt, end))
+    );
+
+    const days: Array<{ date: string; dateKey: string; total: number }> = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push({
+        date: d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' }),
+        dateKey: d.toISOString().slice(0, 10),
+        total: 0,
+      });
+    }
+
+    for (const order of allOrders) {
+      const dateKey = new Date(order.createdAt!).toISOString().slice(0, 10);
+      const day = days.find(d => d.dateKey === dateKey);
+      if (day) day.total += parseFloat(order.totalAmount);
+    }
+
+    return days.map(({ date, total }) => ({ date, total }));
+  }
+
+  async getCategorySales(): Promise<Array<{ category: string; total: number }>> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const result = await db
+      .select({
+        category: categories.name,
+        total: sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) as numeric)`,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .innerJoin(categories, eq(menuItems.categoryId, categories.id))
+      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .groupBy(categories.id, categories.name)
+      .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`);
+
+    return result.map(r => ({ category: r.category, total: Number(r.total) }));
+  }
+
+  async getDashboardTopItems(limit: number = 8): Promise<Array<{ name: string; qty: number }>> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const result = await db
+      .select({
+        name: menuItems.name,
+        qty: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .groupBy(menuItems.id, menuItems.name)
+      .orderBy(sql`sum(${orderItems.quantity}) desc`)
+      .limit(limit);
+
+    return result.map(r => ({ name: r.name, qty: Number(r.qty) }));
+  }
+
   async getTopSellingItems(limit: number = 10): Promise<Array<{ name: string; totalSold: number; revenue: number }>> {
     const result = await db
       .select({
