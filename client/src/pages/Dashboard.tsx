@@ -1,294 +1,304 @@
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { Header } from "@/components/Header";
-import { StatCard } from "@/components/ui/stat-card";
-import { OrderCard } from "@/components/ui/order-card";
-import { MenuItemCard } from "@/components/ui/menu-item-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { 
-  DollarSign, 
-  ShoppingCart, 
-  TrendingUp, 
-  AlertTriangle,
-  Plus,
-  FileText,
-  CreditCard,
-  Package
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import {
+  IndianRupee, ShoppingBag, Clock, TrendingUp, AlertTriangle, Star, LayoutGrid,
 } from "lucide-react";
-import { useWebSocket } from "@/hooks/useWebSocket";
 import { useLocation } from "wouter";
+
+const fmt = (n: number) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(n);
+
+const PALETTE = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6'];
+
+const cardAnim = {
+  hidden: { opacity: 0, y: 16 },
+  visible: (i: number) => ({
+    opacity: 1, y: 0,
+    transition: { delay: i * 0.07, duration: 0.35, ease: 'easeOut' },
+  }),
+};
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card border border-border rounded-xl px-3 py-2 shadow-lg text-xs">
+      <p className="text-muted-foreground mb-1">{label}</p>
+      {payload.map((p: any, i: number) => (
+        <p key={i} className="font-semibold text-foreground">
+          {p.name === 'total' ? fmt(p.value) : `${p.value} sold`}
+        </p>
+      ))}
+    </div>
+  );
+};
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
-  const { lastMessage } = useWebSocket('/ws');
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats } = useQuery<any>({
     queryKey: ['/api/dashboard/stats'],
-    refetchInterval: 30000, // Refetch every 30 seconds
+    staleTime: 0,
+    refetchInterval: 5000,
   });
 
-  const { data: orders, isLoading: ordersLoading } = useQuery({
-    queryKey: ['/api/orders'],
-    select: (data) => data.slice(0, 5), // Get latest 5 orders
+  const { data: salesChart = [] } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/sales-chart'],
+    staleTime: 0,
+    refetchInterval: 5000,
   });
 
-  const { data: menuItems } = useQuery({
-    queryKey: ['/api/menu'],
-    select: (data) => data.slice(0, 4), // Get first 4 menu items
+  const { data: categorySales = [] } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/category-sales'],
+    staleTime: 0,
+    refetchInterval: 5000,
   });
 
-  const { data: kotTickets } = useQuery({
-    queryKey: ['/api/kot'],
-    select: (data) => data.filter((ticket: any) => ticket.status !== 'completed').slice(0, 3),
+  const { data: topItems = [] } = useQuery<any[]>({
+    queryKey: ['/api/dashboard/top-items'],
+    staleTime: 0,
+    refetchInterval: 5000,
   });
 
-  const openNewOrderModal = () => {
-    navigate("/pos");
-  };
+  const { data: lowStockItems = [] } = useQuery<any[]>({
+    queryKey: ['/api/inventory/low-stock'],
+    staleTime: 0,
+    refetchInterval: 10000,
+  });
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', { 
-      style: 'currency', 
-      currency: 'INR',
-      minimumFractionDigits: 0
-    }).format(amount);
-  };
-
-  const getKotStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'bg-red-500';
-      case 'in-progress':
-        return 'bg-yellow-500';
-      case 'completed':
-        return 'bg-green-500';
-      default:
-        return 'bg-gray-500';
-    }
-  };
-
-  const getKotStatusText = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'Urgent';
-      case 'in-progress':
-        return 'Cooking';
-      case 'completed':
-        return 'Ready';
-      default:
-        return status;
-    }
-  };
-
-  if (statsLoading) {
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header 
-          title="Dashboard" 
-          description="Loading..." 
-          onNewOrder={openNewOrderModal}
-        />
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <Card key={i} className="bg-card shadow-sm">
-                <CardContent className="p-6">
-                  <div className="animate-pulse space-y-2">
-                    <div className="h-4 bg-muted rounded w-3/4"></div>
-                    <div className="h-8 bg-muted rounded w-1/2"></div>
-                    <div className="h-3 bg-muted rounded w-2/3"></div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const statCards = [
+    {
+      label: "Today's Sales",
+      value: fmt(stats?.todaySales || 0),
+      sub: `${stats?.todayOrders || 0} orders placed`,
+      icon: IndianRupee,
+      gradient: 'from-violet-500 to-purple-600',
+      bg: 'bg-violet-500/10',
+    },
+    {
+      label: 'Orders Today',
+      value: String(stats?.todayOrders || 0),
+      sub: `Avg ${fmt(stats?.avgOrderValue || 0)} / order`,
+      icon: ShoppingBag,
+      gradient: 'from-blue-500 to-cyan-500',
+      bg: 'bg-blue-500/10',
+    },
+    {
+      label: 'Active Orders',
+      value: String(stats?.activeOrders || 0),
+      sub: 'Pending / preparing',
+      icon: Clock,
+      gradient: 'from-amber-500 to-orange-500',
+      bg: 'bg-amber-500/10',
+    },
+    {
+      label: 'Total Revenue',
+      value: fmt(stats?.totalRevenue || 0),
+      sub: 'All time',
+      icon: TrendingUp,
+      gradient: 'from-emerald-500 to-green-500',
+      bg: 'bg-emerald-500/10',
+    },
+    {
+      label: 'Low Stock',
+      value: String(stats?.lowStockCount || 0),
+      sub: stats?.lowStockCount > 0 ? 'Needs attention' : 'All good',
+      icon: AlertTriangle,
+      gradient: stats?.lowStockCount > 0 ? 'from-red-500 to-rose-600' : 'from-green-500 to-emerald-500',
+      bg: stats?.lowStockCount > 0 ? 'bg-red-500/10' : 'bg-green-500/10',
+    },
+    {
+      label: 'Top Item Today',
+      value: stats?.topItem || '—',
+      sub: 'Best seller',
+      icon: Star,
+      gradient: 'from-pink-500 to-rose-500',
+      bg: 'bg-pink-500/10',
+    },
+    {
+      label: 'Inner Running',
+      value: String(stats?.innerRunning || 0),
+      sub: `of ${stats?.totalTables || 0} total tables`,
+      icon: LayoutGrid,
+      gradient: 'from-indigo-500 to-blue-500',
+      bg: 'bg-indigo-500/10',
+    },
+    {
+      label: 'Outer Running',
+      value: String(stats?.outerRunning || 0),
+      sub: `of ${stats?.totalTables || 0} total tables`,
+      icon: LayoutGrid,
+      gradient: 'from-teal-500 to-cyan-500',
+      bg: 'bg-teal-500/10',
+    },
+  ];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <Header 
-        title="Dashboard" 
-        description="Welcome back! Here's what's happening at Bagicha today."
-        onNewOrder={openNewOrderModal}
+      <Header
+        title="Dashboard"
+        description="Live analytics · refreshes every 5s"
+        onNewOrder={() => navigate('/pos')}
       />
 
-      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <StatCard
-            title="Today's Sales"
-            value={formatCurrency(stats?.todaySales || 0)}
-            change="+12% from yesterday"
-            icon={DollarSign}
-            color="success"
-          />
-          <StatCard
-            title="Orders Today"
-            value={stats?.todayOrders?.toString() || '0'}
-            change="+8% from yesterday"
-            icon={ShoppingCart}
-            color="blue"
-          />
-          <StatCard
-            title="Average Order"
-            value={formatCurrency(stats?.avgOrderValue || 0)}
-            change="+5% from yesterday"
-            icon={TrendingUp}
-            color="secondary"
-          />
-          <StatCard
-            title="Low Stock Items"
-            value={stats?.lowStockCount?.toString() || '0'}
-            change="Needs attention"
-            icon={AlertTriangle}
-            color="warning"
-          />
+      <main className="min-h-0 flex-1 overflow-y-auto p-5 space-y-5">
+
+        {/* ── Stat Cards ── */}
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+          {statCards.map((card, i) => (
+            <motion.div
+              key={card.label}
+              custom={i}
+              initial="hidden"
+              animate="visible"
+              variants={cardAnim}
+              whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
+              className={`rounded-2xl p-4 border border-border/40 shadow-sm ${card.bg}`}
+            >
+              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
+                <card.icon className="w-4 h-4 text-white" />
+              </div>
+              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
+              <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
+            </motion.div>
+          ))}
         </div>
 
-        {/* Main Dashboard Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recent Orders */}
-          <div className="lg:col-span-2">
-            <Card className="bg-card shadow-sm">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg font-semibold">Recent Orders</CardTitle>
-                  <Button variant="ghost" size="sm" className="text-primary">
-                    View all
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {ordersLoading ? (
-                  <div className="space-y-4">
-                    {[...Array(3)].map((_, i) => (
-                      <div key={i} className="animate-pulse flex items-center space-x-4 p-4 bg-muted rounded-lg">
-                        <div className="w-10 h-10 bg-muted-foreground/20 rounded-full"></div>
-                        <div className="flex-1 space-y-2">
-                          <div className="h-4 bg-muted-foreground/20 rounded w-3/4"></div>
-                          <div className="h-3 bg-muted-foreground/20 rounded w-1/2"></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {orders?.map((order: any) => (
-                      <OrderCard
-                        key={order.id}
-                        orderNumber={order.orderNumber}
-                        customerName={order.customerName}
-                        items="Order items"
-                        amount={formatCurrency(parseFloat(order.totalAmount))}
-                        status={order.status}
-                        source={order.source}
-                        tableNumber={order.tableNumber}
-                      />
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+        {/* ── Row 1: Sales Line + Category Pie ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45, duration: 0.4 }}
+            className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+          >
+            <p className="text-sm font-semibold mb-4">Sales — Last 7 Days</p>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={salesChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.6} />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${v}`} width={55} />
+                <Tooltip content={<CustomTooltip />} />
+                <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2.5}
+                  dot={{ fill: '#6366f1', r: 3, strokeWidth: 0 }}
+                  activeDot={{ r: 5, strokeWidth: 2, stroke: '#fff' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </motion.div>
 
-          {/* Quick Actions & KOT */}
-          <div className="space-y-6">
-            {/* Quick Actions */}
-            <Card className="bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-lg font-semibold">Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button 
-                    onClick={openNewOrderModal}
-                    className="touch-button p-4 h-auto flex-col space-y-2"
-                  >
-                    <Plus className="w-6 h-6" />
-                    <span className="text-sm font-medium">New Order</span>
-                  </Button>
-                  <Button 
-                    variant="secondary"
-                    className="touch-button p-4 h-auto flex-col space-y-2"
-                  >
-                    <FileText className="w-6 h-6" />
-                    <span className="text-sm font-medium">Print KOT</span>
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    className="touch-button p-4 h-auto flex-col space-y-2"
-                  >
-                    <CreditCard className="w-6 h-6" />
-                    <span className="text-sm font-medium">Process Payment</span>
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    className="touch-button p-4 h-auto flex-col space-y-2"
-                  >
-                    <Package className="w-6 h-6" />
-                    <span className="text-sm font-medium">Check Inventory</span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Kitchen Orders */}
-            <Card className="bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-lg font-semibold">Kitchen Orders</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {kotTickets?.map((ticket: any) => (
-                    <div key={ticket.id} className={`flex items-center justify-between p-3 rounded-lg border-l-4 ${
-                      ticket.status === 'pending' ? 'bg-red-50 border-red-500' :
-                      ticket.status === 'in-progress' ? 'bg-yellow-50 border-yellow-500' :
-                      'bg-green-50 border-green-500'
-                    }`}>
-                      <div>
-                        <p className="font-medium text-foreground">{ticket.kotNumber}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {new Date(ticket.printedAt).toLocaleTimeString()}
-                        </p>
-                      </div>
-                      <Badge className={`${getKotStatusColor(ticket.status)} text-white px-2 py-1 text-xs`}>
-                        {getKotStatusText(ticket.status)}
-                      </Badge>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.55, duration: 0.4 }}
+            className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+          >
+            <p className="text-sm font-semibold mb-3">Sales by Category</p>
+            {categorySales.length === 0 ? (
+              <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">No sales today</div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={150}>
+                  <PieChart>
+                    <Pie data={categorySales} dataKey="total" nameKey="category"
+                      cx="50%" cy="50%" outerRadius={65} innerRadius={32} paddingAngle={3}>
+                      {categorySales.map((_: any, idx: number) => (
+                        <Cell key={idx} fill={PALETTE[idx % PALETTE.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<CustomTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-1.5 mt-3">
+                  {categorySales.slice(0, 5).map((c: any, idx: number) => (
+                    <div key={c.category} className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: PALETTE[idx % PALETTE.length] }} />
+                        <span className="text-muted-foreground truncate">{c.category}</span>
+                      </span>
+                      <span className="font-semibold ml-2 flex-shrink-0">{fmt(c.total)}</span>
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </>
+            )}
+          </motion.div>
         </div>
 
-        {/* Popular Menu Items */}
-        <div className="mt-8">
-          <Card className="bg-card shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold">Popular Menu Items</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {menuItems?.map((item: any) => (
-                  <MenuItemCard
+        {/* ── Row 2: Top Items Bar + Low Stock ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.65, duration: 0.4 }}
+            className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+          >
+            <p className="text-sm font-semibold mb-4">Top Items Today</p>
+            {topItems.length === 0 ? (
+              <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">No sales today</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={topItems} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.6} vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
+                    angle={-25} textAnchor="end" interval={0} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="qty" name="qty" radius={[6, 6, 0, 0]} maxBarSize={40}>
+                    {topItems.map((_: any, idx: number) => (
+                      <Cell key={idx} fill={PALETTE[idx % PALETTE.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.75, duration: 0.4 }}
+            className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Low Stock Alerts</p>
+              {lowStockItems.length > 0 && (
+                <span className="text-[11px] bg-red-500/10 text-red-500 px-2 py-0.5 rounded-full font-medium">
+                  {lowStockItems.length} items
+                </span>
+              )}
+            </div>
+            {lowStockItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[170px] text-center gap-2">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                  <span className="text-emerald-500 text-xl font-bold">✓</span>
+                </div>
+                <p className="text-sm text-muted-foreground">All items in stock</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                {lowStockItems.map((item: any) => (
+                  <motion.div
                     key={item.id}
-                    id={item.id}
-                    name={item.name}
-                    price={formatCurrency(parseFloat(item.price))}
-                    soldToday={Math.floor(Math.random() * 30) + 5} // Mock data for demo
-                  />
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-red-500/5 border border-red-500/15"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{item.itemName}</p>
+                      <p className="text-[11px] text-muted-foreground">Min: {item.minStock} {item.unit}</p>
+                    </div>
+                    <span className="text-sm font-bold text-red-500 ml-2 flex-shrink-0">
+                      {item.currentStock} {item.unit}
+                    </span>
+                  </motion.div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </motion.div>
         </div>
-      </main>
 
+      </main>
     </div>
   );
 }

@@ -49,6 +49,7 @@ export const orders = pgTable("orders", {
   customerPhone: text("customer_phone"),
   orderType: text("order_type").notNull(),
   tableNumber: text("table_number"),
+  tableId: integer("table_id"),
   source: text("source").notNull().default("pos"),
   sourceOrderId: text("source_order_id"),
   status: text("status").notNull().default("pending"),
@@ -106,6 +107,15 @@ export const sales = pgTable("sales", {
   onlineSales: decimal("online_sales", { precision: 10, scale: 2 }).notNull(),
 });
 
+export const tables = pgTable("tables", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  capacity: integer("capacity").notNull().default(4),
+  status: text("status").notNull().default("free"), // free | running | billed
+  currentOrderId: integer("current_order_id"),
+  section: text("section").notNull().default("inner"), // inner | outer | vip | terrace | hall | ...
+});
+
 // Relations
 export const menuItemsRelations = relations(menuItems, ({ one, many }) => ({
   category: one(categories, { fields: [menuItems.categoryId], references: [categories.id] }),
@@ -136,6 +146,7 @@ export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: t
 export const insertKotTicketSchema = createInsertSchema(kotTickets).omit({ id: true, printedAt: true, completedAt: true });
 export const insertDeliveryIntegrationSchema = createInsertSchema(deliveryIntegrations).omit({ id: true });
 export const insertSalesSchema = createInsertSchema(sales).omit({ id: true, date: true });
+export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
 
 // Types
 export type User = typeof users.$inferSelect;
@@ -156,3 +167,5 @@ export type DeliveryIntegration = typeof deliveryIntegrations.$inferSelect;
 export type InsertDeliveryIntegration = z.infer<typeof insertDeliveryIntegrationSchema>;
 export type Sales = typeof sales.$inferSelect;
 export type InsertSales = z.infer<typeof insertSalesSchema>;
+export type Table = typeof tables.$inferSelect;
+export type InsertTable = z.infer<typeof insertTableSchema>;

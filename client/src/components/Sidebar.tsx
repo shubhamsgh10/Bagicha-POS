@@ -13,6 +13,7 @@ import {
   History,
   ChefHat,
   UtensilsCrossed,
+  LayoutGrid,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +29,7 @@ interface NavItem {
 const navigation: NavItem[] = [
   { name: "Dashboard",  href: "/",         icon: LayoutDashboard },
   { name: "POS",        href: "/pos",       icon: MonitorSmartphone, roles: ["admin", "manager", "cashier", "staff"] },
+  { name: "Tables",     href: "/tables",    icon: LayoutGrid,        roles: ["admin", "manager", "cashier", "staff"] },
   { name: "Orders",     href: "/orders",    icon: History,           roles: ["admin", "manager", "cashier", "staff"] },
   { name: "Menu",       href: "/menu",      icon: UtensilsCrossed,   roles: ["admin", "manager"] },
   { name: "Inventory",  href: "/inventory", icon: Package,           roles: ["admin", "manager"] },
