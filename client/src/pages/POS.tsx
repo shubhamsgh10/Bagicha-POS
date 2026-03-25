@@ -122,7 +122,7 @@ export default function POS() {
   const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [discount, setDiscount] = useState(0);
+  const [discountPercent, setDiscountPercent] = useState(0);
 
   // Unified modifier modal state (handles both add-new and edit-existing)
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -337,9 +337,8 @@ export default function POS() {
     });
     setCartItems(loadedItems);
     setCartLoaded(true);
-    if (existingOrder.discountAmount) {
-      setDiscount(parseFloat(existingOrder.discountAmount) || 0);
-    }
+    // Discount is now stored as %; existing orders reset to 0 since we stored rupees before
+    setDiscountPercent(0);
   }, [existingOrder, menuItems, activeOrderId, cartLoaded]);
 
   // ── Create order mutation ────────────────────────────────────────────────────
@@ -369,16 +368,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
         printBill(order, [], settings);
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "E-bill sent to customer" });
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current });
@@ -412,16 +411,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         printBill(order, existingOrder?.items || [], settings);
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "E-bill sent to customer" });
-        setCartItems([]); setDiscount(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current });
@@ -551,7 +550,7 @@ export default function POS() {
   // ── Totals ───────────────────────────────────────────────────────────────────
 
   const subtotal = cartItems.reduce((s, i) => s + i.totalPrice * i.quantity, 0);
-  const discountAmt = Math.min(discount, subtotal);
+  const discountAmt = subtotal * Math.min(discountPercent, 100) / 100;
   const taxable = subtotal - discountAmt;
   const tax = taxable * taxRate;
   const total = taxable + tax;
@@ -617,7 +616,7 @@ export default function POS() {
   const handleSaveEBill  = () => { submitModeRef.current = "save-ebill"; triggerSubmit(); };
   const handleSettle     = () => { submitModeRef.current = "settle";     triggerSubmit(); };
 
-  const handleComplimentary = () => requirePin("Complimentary (100% Discount)", () => setDiscount(subtotal));
+  const handleComplimentary = () => requirePin("Complimentary (100% Discount)", () => setDiscountPercent(100));
 
   const handleShortCode = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || !shortCode.trim()) return;
@@ -873,7 +872,7 @@ export default function POS() {
 
           {/* New Order */}
           <button
-            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscount(0); })}
+            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
             className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors shrink-0"
           >
             + New Order
@@ -1251,7 +1250,7 @@ export default function POS() {
             </div>
             {hasItems && (
               <button
-                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscount(0); })}
+                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
                 className="text-[10px] text-gray-400 hover:text-green-500 transition-colors"
               >
                 Clear all
@@ -1338,24 +1337,30 @@ export default function POS() {
               <span className="font-medium text-gray-700">{fmt(subtotal)}</span>
             </div>
             <div className="flex items-center gap-1 text-xs">
-              <span className="text-gray-500 flex-1">Discount</span>
+              <span className="text-gray-500 flex-1">
+                Discount
+                {discountAmt > 0 && (
+                  <span className="text-green-600 ml-1">(-{fmt(discountAmt)})</span>
+                )}
+              </span>
               <div className="flex items-center gap-1">
                 <input
                   ref={discountInputRef}
                   type="number"
                   min="0"
-                  value={discount || ""}
+                  max="100"
+                  value={discountPercent || ""}
                   onFocus={() => {
                     if (isLocked()) {
                       discountInputRef.current?.blur();
                       requirePin("Edit Discount", () => setTimeout(() => discountInputRef.current?.focus(), 50));
                     }
                   }}
-                  onChange={(e) => setDiscount(Math.max(0, parseFloat(e.target.value) || 0))}
+                  onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                   placeholder="0"
-                  className="w-16 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
+                  className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
                 />
-                <span className="text-gray-400 text-[10px]">₹</span>
+                <span className="text-gray-400 text-[10px]">%</span>
               </div>
             </div>
             <div className="flex justify-between text-xs text-gray-500">
