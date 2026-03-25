@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { BagichaLogo } from "@/components/BagichaLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,13 +10,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit2, Trash2, Users, ArrowRightLeft, X,
-  RefreshCw, LogOut, BarChart2, Truck, ShoppingBag,
+  Plus, Edit2, Trash2, Users, ArrowRightLeft,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { useAuth } from "@/hooks/useAuth";
 
 interface Table {
   id: number;
@@ -76,7 +73,6 @@ function sectionLabel(s: string) {
 
 export default function Tables() {
   const [, navigate] = useLocation();
-  const { user, logout } = useAuth();
   const { toast } = useToast();
 
   const [showAdd, setShowAdd] = useState(false);
@@ -84,7 +80,7 @@ export default function Tables() {
   const [shiftFrom, setShiftFrom] = useState<Table | null>(null);
   const [form, setForm] = useState({ name: "", capacity: "4", section: "inner" });
 
-  const { data: tables = [], isLoading, refetch } = useQuery<Table[]>({
+  const { data: tables = [], isLoading } = useQuery<Table[]>({
     queryKey: ["/api/tables"],
     staleTime: 0,
     refetchInterval: 5000,
@@ -206,119 +202,8 @@ export default function Tables() {
     if (confirm(`Delete table "${table.name}"?`)) deleteMutation.mutate(table.id);
   };
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-    } catch {
-      toast({ title: "Logout failed", variant: "destructive" });
-    }
-  };
-
   return (
-    <div className="h-screen w-screen flex flex-col bg-background overflow-hidden">
-
-      {/* ── Top Nav Bar (Petpooja style) ───────────────────────────────────────── */}
-      <header className="shrink-0 h-14 bg-card border-b border-border flex items-center px-4 gap-3 shadow-sm">
-        {/* Logo */}
-        <div className="flex items-center gap-3 shrink-0">
-          <BagichaLogo size="sm" />
-        </div>
-
-        <div className="w-px h-6 bg-border mx-1 shrink-0" />
-
-        {/* Title */}
-        <span className="text-base font-bold text-foreground tracking-tight shrink-0">
-          Table View
-        </span>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Shift banner */}
-        {shiftFrom && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-400/30 text-amber-600 text-sm font-medium">
-            <ArrowRightLeft className="w-3.5 h-3.5" />
-            Shifting {shiftFrom.name} — click a free table
-            <button
-              onClick={() => setShiftFrom(null)}
-              className="hover:text-amber-800 transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* Action buttons */}
-        <button
-          onClick={() => refetch()}
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          title="Refresh"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => navigate("/pos")}
-          className="gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          New Order
-        </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 hidden sm:flex"
-          onClick={() => navigate("/pos?orderType=delivery")}
-        >
-          <Truck className="w-3.5 h-3.5" />
-          Delivery
-        </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 hidden sm:flex"
-          onClick={() => navigate("/pos?orderType=takeaway")}
-        >
-          <ShoppingBag className="w-3.5 h-3.5" />
-          Take Away
-        </Button>
-
-        <div className="w-px h-6 bg-border mx-1 shrink-0" />
-
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => navigate("/live-analytics")}
-          className="gap-1.5 h-8 text-xs"
-        >
-          <BarChart2 className="w-3.5 h-3.5" />
-          Live Analytics
-        </Button>
-
-        {/* User + Logout */}
-        <div className="flex items-center gap-2 pl-1">
-          <div className="hidden sm:flex flex-col text-right">
-            <span className="text-xs font-semibold text-foreground leading-none">
-              {user?.username ?? "—"}
-            </span>
-            <span className="text-[10px] text-muted-foreground capitalize mt-0.5">
-              {user?.role ?? "staff"}
-            </span>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-            title="Sign out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
+    <div className="h-full flex flex-col bg-background overflow-hidden">
 
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
       <div className="shrink-0 bg-muted/30 border-b border-border/50 flex items-center px-4 gap-2 py-2 flex-wrap">
@@ -377,7 +262,7 @@ export default function Tables() {
       </div>
 
       {/* ── Table Grid ─────────────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto p-5 space-y-8">
+      <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-8">
         {isLoading ? (
           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
             {[...Array(16)].map((_, i) => (

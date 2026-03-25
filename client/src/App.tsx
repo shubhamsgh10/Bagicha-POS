@@ -3,7 +3,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Sidebar } from "@/components/Sidebar";
+import { TopNav } from "@/components/TopNav";
 import Dashboard from "@/pages/Dashboard";
 import POS from "@/pages/POS";
 import Orders from "@/pages/Orders";
@@ -18,9 +18,6 @@ import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
-
-// Routes that should show full-screen (no sidebar)
-const NO_SIDEBAR_ROUTES = ["/", "/tables", "/live-analytics"];
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -44,26 +41,27 @@ function Router() {
     );
   }
 
-  // ── Full-screen pages (no sidebar) ──────────────────────────────────────
-  if (NO_SIDEBAR_ROUTES.includes(location)) {
-    if (location === "/live-analytics") return <LiveAnalytics />;
-    return <Tables />;
+  // POS is completely full-screen — has its own header
+  if (location.startsWith("/pos")) {
+    return <POS />;
   }
 
-  // ── All other pages: sidebar layout ─────────────────────────────────────
+  // All other pages: TopNav + page content (no sidebar)
   return (
-    <div className="flex h-screen w-screen bg-background overflow-hidden">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+    <div className="flex flex-col h-full w-screen bg-background overflow-hidden">
+      <TopNav />
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         <Switch>
-          <Route path="/dashboard" component={Dashboard} />
-          <Route path="/pos" component={POS} />
-          <Route path="/orders" component={Orders} />
-          <Route path="/menu" component={Menu} />
-          <Route path="/inventory" component={Inventory} />
-          <Route path="/reports" component={Reports} />
-          <Route path="/admin" component={Admin} />
-          <Route path="/settings" component={Settings} />
+          <Route path="/"               component={Tables} />
+          <Route path="/tables"         component={Tables} />
+          <Route path="/dashboard"      component={Dashboard} />
+          <Route path="/orders"         component={Orders} />
+          <Route path="/menu"           component={Menu} />
+          <Route path="/inventory"      component={Inventory} />
+          <Route path="/reports"        component={Reports} />
+          <Route path="/admin"          component={Admin} />
+          <Route path="/settings"       component={Settings} />
+          <Route path="/live-analytics" component={LiveAnalytics} />
           <Route component={NotFound} />
         </Switch>
       </div>
