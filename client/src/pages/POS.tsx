@@ -159,14 +159,8 @@ export default function POS() {
   }, []);
 
   // ── Leave confirmation ────────────────────────────────────────────────────────
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-
   const handleBackToTables = () => {
-    if (cartItems.length > 0) {
-      setShowLeaveConfirm(true);
-    } else {
-      navigate("/tables");
-    }
+    navigate("/tables");
   };
 
   // ── Table Actions state ───────────────────────────────────────────────────────
@@ -670,7 +664,7 @@ export default function POS() {
   const modalVariantBlocked = modalVariantGroups.some(g => g.required && !modal?.variants[g.group]);
 
   return (
-    <div className="flex flex-col h-full bg-gray-100 overflow-hidden" onClick={() => showActionsMenu && setShowActionsMenu(false)}>
+    <div className="flex flex-col h-screen bg-gray-100 overflow-hidden" onClick={() => showActionsMenu && setShowActionsMenu(false)}>
 
       {/* ── Manager PIN Guard ─────────────────────────────────────────────────── */}
       {pinRequest && (
@@ -681,21 +675,6 @@ export default function POS() {
         />
       )}
 
-      {/* ── Leave Confirmation Dialog ─────────────────────────────────────────── */}
-      <Dialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Leave POS?</DialogTitle>
-            <DialogDescription>
-              You have {cartItems.length} unsaved item{cartItems.length !== 1 ? "s" : ""} in your cart. Going back will discard them.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setShowLeaveConfirm(false)}>Stay Here</Button>
-            <Button variant="destructive" onClick={() => navigate("/tables")}>Leave Anyway</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* ── Move Table Dialog ────────────────────────────────────────────────── */}
       <Dialog open={showMoveDialog} onOpenChange={setShowMoveDialog}>
@@ -1175,7 +1154,7 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            MAIN: Category | Items | Billing
       ════════════════════════════════════════════════════════════════════════ */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* ── LEFT: Category sidebar ─────────────────────────────────────────── */}
         <div className="w-[130px] shrink-0 bg-white border-r flex flex-col overflow-hidden">
