@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Edit2, Trash2, Users, ArrowRightLeft, X,
-  RefreshCw, LogOut, LayoutDashboard, Truck, ShoppingBag,
+  RefreshCw, LogOut, BarChart2, Truck, ShoppingBag,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -87,7 +87,18 @@ export default function Tables() {
   const { data: tables = [], isLoading, refetch } = useQuery<Table[]>({
     queryKey: ["/api/tables"],
     staleTime: 0,
-    refetchInterval: 8000,
+    refetchInterval: 5000,
+  });
+
+  const { data: liveStatus } = useQuery<{
+    runningTables: number;
+    freeTables: number;
+    activeOrders: number;
+    todaySales: number;
+  }>({
+    queryKey: ["/api/live-status"],
+    staleTime: 0,
+    refetchInterval: 5000,
   });
 
   const createMutation = useMutation({
@@ -279,13 +290,15 @@ export default function Tables() {
 
         <div className="w-px h-6 bg-border mx-1 shrink-0" />
 
-        <button
-          onClick={() => navigate("/dashboard")}
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          title="Dashboard"
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => navigate("/live-analytics")}
+          className="gap-1.5 h-8 text-xs"
         >
-          <LayoutDashboard className="w-4 h-4" />
-        </button>
+          <BarChart2 className="w-3.5 h-3.5" />
+          Live Analytics
+        </Button>
 
         {/* User + Logout */}
         <div className="flex items-center gap-2 pl-1">
@@ -307,21 +320,42 @@ export default function Tables() {
         </div>
       </header>
 
-      {/* ── Sub-bar: stats + legend + add button ──────────────────────────────── */}
-      <div className="shrink-0 h-10 bg-card/50 border-b border-border/50 flex items-center px-5 gap-4">
-        {/* Status legend */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded border-2 border-dashed border-zinc-400 bg-white dark:bg-zinc-900 inline-block" />
-            Free ({freeTables.length})
+      {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
+      <div className="shrink-0 bg-muted/30 border-b border-border/50 flex items-center px-4 gap-2 py-2 flex-wrap">
+
+        {/* Running Tables */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+          <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+          <span className="text-xs text-red-600 dark:text-red-400 font-medium">Running</span>
+          <span className="text-sm font-bold text-red-700 dark:text-red-300 min-w-[1ch] text-center">
+            {liveStatus?.runningTables ?? runningTables.length}
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-blue-200 dark:bg-blue-900 border border-blue-400 inline-block" />
-            Running ({runningTables.length})
+        </div>
+
+        {/* Free Tables */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Free</span>
+          <span className="text-sm font-bold text-emerald-700 dark:text-emerald-300 min-w-[1ch] text-center">
+            {liveStatus?.freeTables ?? freeTables.length}
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded bg-yellow-200 dark:bg-yellow-900 border border-yellow-400 inline-block" />
-            Billed ({tables.filter(t => t.status === "billed").length})
+        </div>
+
+        {/* Active Orders */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+          <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+          <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Orders</span>
+          <span className="text-sm font-bold text-blue-700 dark:text-blue-300 min-w-[1ch] text-center">
+            {liveStatus?.activeOrders ?? 0}
+          </span>
+        </div>
+
+        {/* Today Sales */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800">
+          <span className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
+          <span className="text-xs text-violet-600 dark:text-violet-400 font-medium">Sales</span>
+          <span className="text-sm font-bold text-violet-700 dark:text-violet-300">
+            ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
           </span>
         </div>
 
@@ -330,7 +364,7 @@ export default function Tables() {
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 text-xs gap-1"
+          className="h-7 text-xs gap-1 shrink-0"
           onClick={() => {
             setEditTable(null);
             setForm({ name: "", capacity: "4", section: "inner" });

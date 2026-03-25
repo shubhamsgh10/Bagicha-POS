@@ -8,6 +8,7 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   role: text("role").notNull().default("staff"),
+  pin: text("pin"), // 4-6 digit PIN for manager authorization
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -31,6 +32,8 @@ export const menuItems = pgTable("menu_items", {
   sizes: json("sizes").$type<Array<{ size: string; price: number }>>(),
   addonsEnabled: boolean("addons_enabled").notNull().default(false),
   addons: json("addons").$type<Array<{ name: string; price: number }>>(),
+  variants: json("variants").$type<Array<{ group: string; options: Array<{ name: string; price?: number }>; required?: boolean }>>(),
+  notesAllowed: boolean("notes_allowed").notNull().default(true),
 });
 
 export const inventory = pgTable("inventory", {

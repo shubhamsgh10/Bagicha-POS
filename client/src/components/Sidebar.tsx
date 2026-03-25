@@ -1,23 +1,20 @@
 import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
 import {
-  LayoutDashboard,
   Package,
-  FileText,
-  CreditCard,
   BarChart3,
   User,
   LogOut,
   Settings,
   MonitorSmartphone,
   History,
-  ChefHat,
   UtensilsCrossed,
   LayoutGrid,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
 
 interface NavItem {
   name: string;
@@ -27,20 +24,24 @@ interface NavItem {
 }
 
 const navigation: NavItem[] = [
-  { name: "Dashboard",  href: "/dashboard", icon: LayoutDashboard },
-  { name: "POS",        href: "/pos",       icon: MonitorSmartphone, roles: ["admin", "manager", "cashier", "staff"] },
-  { name: "Orders",     href: "/orders",    icon: History,           roles: ["admin", "manager", "cashier", "staff"] },
-  { name: "Menu",       href: "/menu",      icon: UtensilsCrossed,   roles: ["admin", "manager"] },
-  { name: "Inventory",  href: "/inventory", icon: Package,           roles: ["admin", "manager"] },
-  { name: "KOT",        href: "/kot",       icon: ChefHat,           roles: ["admin", "manager", "kitchen", "staff"] },
-  { name: "Billing",    href: "/billing",   icon: CreditCard,        roles: ["admin", "manager", "cashier", "staff"] },
-  { name: "Reports",    href: "/reports",   icon: BarChart3,         roles: ["admin", "manager"] },
+  { name: "POS",       href: "/pos",       icon: MonitorSmartphone, roles: ["admin", "manager", "cashier", "staff", "captain"] },
+  { name: "Orders",    href: "/orders",    icon: History,           roles: ["admin", "manager", "cashier", "staff", "captain"] },
+  { name: "Menu",      href: "/menu",      icon: UtensilsCrossed,   roles: ["admin", "manager"] },
+  { name: "Inventory", href: "/inventory", icon: Package,           roles: ["admin", "manager"] },
+  { name: "Reports",   href: "/reports",   icon: BarChart3,         roles: ["admin", "manager"] },
 ];
 
 export function Sidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { toast } = useToast();
+
+  const { data: liveStatus } = useQuery<any>({
+    queryKey: ["/api/live-status"],
+    staleTime: 0,
+    refetchInterval: 5000,
+  });
+  const activeOrders: number = liveStatus?.activeOrders ?? 0;
 
   const handleLogout = async () => {
     try {
@@ -73,6 +74,7 @@ export function Sidebar() {
       <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
         {visibleNav.map((item) => {
           const active = isActive(item.href);
+          const badge = item.href === "/orders" && activeOrders > 0 ? activeOrders : null;
           return (
             <Link key={item.name} href={item.href}>
               <div
@@ -83,7 +85,16 @@ export function Sidebar() {
                 }`}
               >
                 <item.icon className="w-4 h-4 shrink-0" />
-                <span className="text-sm font-medium">{item.name}</span>
+                <span className="text-sm font-medium flex-1">{item.name}</span>
+                {badge !== null && (
+                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                    active
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-primary text-primary-foreground"
+                  }`}>
+                    {badge}
+                  </span>
+                )}
               </div>
             </Link>
           );
