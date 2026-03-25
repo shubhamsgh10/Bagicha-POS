@@ -9,19 +9,18 @@ import POS from "@/pages/POS";
 import Orders from "@/pages/Orders";
 import Menu from "@/pages/Menu";
 import Inventory from "@/pages/Inventory";
-import KOT from "@/pages/KOT";
-import Billing from "@/pages/Billing";
 import Reports from "@/pages/Reports";
 import Admin from "@/pages/Admin";
 import Settings from "@/pages/Settings";
 import Tables from "@/pages/Tables";
+import LiveAnalytics from "@/pages/LiveAnalytics";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
-// Routes that should show the full-screen table view (no sidebar)
-const TABLE_ROUTES = ["/", "/tables"];
+// Routes that should show full-screen (no sidebar)
+const NO_SIDEBAR_ROUTES = ["/", "/tables", "/live-analytics"];
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -45,8 +44,9 @@ function Router() {
     );
   }
 
-  // ── Full-screen Table View (no sidebar) ──────────────────────────────────
-  if (TABLE_ROUTES.includes(location)) {
+  // ── Full-screen pages (no sidebar) ──────────────────────────────────────
+  if (NO_SIDEBAR_ROUTES.includes(location)) {
+    if (location === "/live-analytics") return <LiveAnalytics />;
     return <Tables />;
   }
 
@@ -61,8 +61,6 @@ function Router() {
           <Route path="/orders" component={Orders} />
           <Route path="/menu" component={Menu} />
           <Route path="/inventory" component={Inventory} />
-          <Route path="/kot" component={KOT} />
-          <Route path="/billing" component={Billing} />
           <Route path="/reports" component={Reports} />
           <Route path="/admin" component={Admin} />
           <Route path="/settings" component={Settings} />

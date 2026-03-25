@@ -176,12 +176,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Manager PIN verification ───────────────────────────────────────────────────
+
+  app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
+    try {
+      const { pin } = req.body;
+      if (!pin) return res.status(400).json({ valid: false });
+      const allUsers = await storage.getUsers();
+      const match = allUsers.find(
+        (u) => (u.role === "manager" || u.role === "admin") && u.pin === String(pin)
+      );
+      res.json({ valid: !!match });
+    } catch (err) {
+      console.error("Verify PIN error:", err);
+      res.status(500).json({ valid: false });
+    }
+  });
+
+  // Update PIN for a user (admin sets PIN for managers)
+  app.put("/api/users/:id/pin", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { pin } = req.body;
+      if (pin && !/^\d{4,6}$/.test(String(pin))) {
+        return res.status(400).json({ message: "PIN must be 4-6 digits" });
+      }
+      const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
+      const { password: _, ...safeUser } = updated;
+      res.json(safeUser);
+    } catch (err) {
+      console.error("Update PIN error:", err);
+      res.status(500).json({ message: "Failed to update PIN" });
+    }
+  });
+
   // ── User Management (Admin only) ──────────────────────────────────────────────
 
   app.get("/api/users", requireAdmin, async (req, res) => {
     try {
       const allUsers = await storage.getUsers();
-      const safeUsers = allUsers.map(({ password, ...u }) => u);
+      const safeUsers = allUsers.map(({ password, pin, ...u }) => ({ ...u, pin: !!pin }));
       res.json(safeUsers);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch users" });
@@ -201,8 +235,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: hashed,
         role: role || "staff",
       });
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
+      const { password: _, pin, ...safeUser } = user;
+      res.json({ ...safeUser, pin: !!pin });
     } catch (err) {
       console.error("Create user error:", err);
       res.status(500).json({ message: "Failed to create user" });
@@ -213,9 +247,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const currentUser = req.user as any;
-      const { role, username, password } = req.body;
+      const { role, username, password, pin } = req.body;
       const updateData: any = {};
       if (role) updateData.role = role;
+      if (pin !== undefined) {
+        if (pin && !/^\d{4,6}$/.test(String(pin))) {
+          return res.status(400).json({ message: "PIN must be 4-6 digits" });
+        }
+        updateData.pin = pin ? String(pin) : null;
+      }
       if (username) {
         const existing = await storage.getUserByUsername(username.trim());
         if (existing && existing.id !== id) return res.status(409).json({ message: "Username already taken" });
@@ -226,8 +266,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.password = await hashPassword(password);
       }
       const updated = await storage.updateUser(id, updateData);
-      const { password: _, ...safeUser } = updated;
-      res.json(safeUser);
+      const { password: _, pin: updatedPin, ...safeUser } = updated;
+      res.json({ ...safeUser, pin: !!updatedPin });
     } catch (err) {
       console.error("Update user error:", err);
       res.status(500).json({ message: "Failed to update user" });
@@ -344,6 +384,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // ── Live Status ──────────────────────────────────────────────────────────────
+
+  app.get("/api/live-status", requireAuth, async (req, res) => {
+    try {
+      const allTables = await storage.getTables();
+      const runningTables = allTables.filter(t => t.status === "running").length;
+      const freeTables    = allTables.filter(t => t.status === "free").length;
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const allOrders = await storage.getOrders();
+      const activeOrders = allOrders.filter(
+        o => o.status !== "served" && o.status !== "cancelled"
+      ).length;
+      const todaySales = allOrders
+        .filter(o => {
+          const d = new Date(o.createdAt);
+          return d >= today && d < tomorrow;
+        })
+        .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
+
+      res.json({ runningTables, freeTables, activeOrders, todaySales });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch live status" });
     }
   });
 
@@ -581,6 +651,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get held orders (must come before /:id route)
+  app.get("/api/orders/hold", requireAuth, async (req, res) => {
+    try {
+      const orders = await storage.getOrdersByStatus("hold");
+      const withItems = await Promise.all(
+        orders.map(async (o) => {
+          const items = await storage.getOrderItems(o.id);
+          return { ...o, items };
+        })
+      );
+      res.json(withItems);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch held orders" });
+    }
+  });
+
   app.get("/api/orders/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -732,6 +818,173 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Table Action: Hold Order ──────────────────────────────────────────────────
+  app.put("/api/orders/:id/hold", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      // Free the table
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      // Mark order as held and clear table association
+      await storage.updateOrder(id, { status: "hold", tableId: null, tableNumber: null } as any);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to hold order" });
+    }
+  });
+
+  // ── Table Action: Cancel Order ────────────────────────────────────────────────
+  app.put("/api/orders/:id/cancel", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      await storage.updateOrder(id, { status: "cancelled" } as any);
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to cancel order" });
+    }
+  });
+
+  // ── Table Action: Move Table ──────────────────────────────────────────────────
+  app.put("/api/orders/:id/move-table", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { newTableId, newTableName } = req.body;
+      if (!newTableId) return res.status(400).json({ error: "newTableId required" });
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      // Free old table
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      // Update order with new table
+      await storage.updateOrder(id, { tableId: newTableId, tableNumber: newTableName || String(newTableId) } as any);
+      // Set new table to running
+      await storage.updateTableStatus(newTableId, "running", id);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to move table" });
+    }
+  });
+
+  // ── Table Action: Merge Tables ────────────────────────────────────────────────
+  // Merges sourceOrderId items INTO targetOrderId, frees source table
+  app.post("/api/orders/merge", requireAuth, async (req, res) => {
+    try {
+      const { targetOrderId, sourceOrderId } = req.body;
+      if (!targetOrderId || !sourceOrderId) return res.status(400).json({ error: "targetOrderId and sourceOrderId required" });
+      const targetOrder = await storage.getOrderById(targetOrderId);
+      const sourceOrder = await storage.getOrderById(sourceOrderId);
+      if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
+      // Copy source items into target order
+      const sourceItems = await storage.getOrderItems(sourceOrderId);
+      for (const item of sourceItems) {
+        await storage.createOrderItem({
+          orderId: targetOrderId,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+        } as any);
+      }
+      // Recalculate target order totals (18% tax fallback)
+      const allItems = await storage.getOrderItems(targetOrderId);
+      const subtotal = allItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const discount = parseFloat((targetOrder as any).discountAmount || "0");
+      const taxable = subtotal - discount;
+      const tax = taxable * 0.18;
+      await storage.updateOrder(targetOrderId, {
+        totalAmount: (taxable + tax).toFixed(2),
+        taxAmount: tax.toFixed(2),
+      } as any);
+      // Free source table and delete source order
+      if ((sourceOrder as any).tableId) {
+        await storage.updateTableStatus(Number((sourceOrder as any).tableId), "free", null);
+      }
+      await storage.deleteOrderItemsByOrderId(sourceOrderId);
+      await storage.deleteOrder(sourceOrderId);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Merge error:", error);
+      res.status(500).json({ error: "Failed to merge orders" });
+    }
+  });
+
+  // ── Table Action: Split Bill ──────────────────────────────────────────────────
+  // Splits selected item IDs from an order into a new standalone order
+  app.post("/api/orders/:id/split", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { itemIds } = req.body; // array of orderItem IDs to split out
+      if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: "itemIds required" });
+      const sourceOrder = await storage.getOrderById(id);
+      if (!sourceOrder) return res.status(404).json({ error: "Order not found" });
+      const allItems = await storage.getOrderItems(id);
+      const splitItems = allItems.filter((i) => itemIds.includes(i.id));
+      if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
+      // Calculate new order total
+      const subtotal = splitItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const tax = subtotal * 0.18;
+      const total = subtotal + tax;
+      // Create new split order (takeaway, no table)
+      const newOrder = await storage.createOrder({
+        orderNumber: `ORD${Date.now()}`,
+        orderType: "dine-in",
+        status: "pending",
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: "0",
+        paymentStatus: "pending",
+        customerName: (sourceOrder as any).customerName || null,
+        customerPhone: (sourceOrder as any).customerPhone || null,
+        notes: `Split from ${(sourceOrder as any).orderNumber}`,
+      } as any);
+      // Move split items to new order, delete from source
+      for (const item of splitItems) {
+        await storage.createOrderItem({
+          orderId: newOrder.id,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+        } as any);
+        await storage.deleteOrderItem(item.id);
+      }
+      // Recalculate source order total
+      const remaining = await storage.getOrderItems(id);
+      const srcSubtotal = remaining.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const srcDiscount = parseFloat((sourceOrder as any).discountAmount || "0");
+      const srcTaxable = srcSubtotal - srcDiscount;
+      const srcTax = srcTaxable * 0.18;
+      await storage.updateOrder(id, {
+        totalAmount: (srcTaxable + srcTax).toFixed(2),
+        taxAmount: srcTax.toFixed(2),
+      } as any);
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true, newOrderId: newOrder.id });
+    } catch (error) {
+      console.error("Split error:", error);
+      res.status(500).json({ error: "Failed to split order" });
+    }
+  });
+
   // ── KOT Tickets ───────────────────────────────────────────────────────────────
 
   app.get("/api/kot", requireAuth, async (req, res) => {
@@ -767,6 +1020,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(ticket);
     } catch (error) {
       res.status(400).json({ error: "Invalid KOT data" });
+    }
+  });
+
+  // ── KOT Running Count ─────────────────────────────────────────────────────────
+
+  app.get("/api/kot/running", requireAuth, async (req, res) => {
+    try {
+      const pending = await storage.getKotTicketsByStatus("pending");
+      const inProgress = await storage.getKotTicketsByStatus("in-progress");
+      res.json({ count: pending.length + inProgress.length });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch KOT count" });
     }
   });
 
