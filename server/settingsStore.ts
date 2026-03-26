@@ -13,6 +13,7 @@ export interface RestaurantSettings {
   currency: string;
   currencySymbol: string;
   footerNote: string;
+  posRoleTimeout: number; // minutes before elevated role reverts to staff; 0 = never
 }
 
 const DEFAULT_SETTINGS: RestaurantSettings = {
@@ -25,6 +26,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   currency: "INR",
   currencySymbol: "₹",
   footerNote: "Thank you for dining with us!",
+  posRoleTimeout: 2,
 };
 
 export function getSettings(): RestaurantSettings {

@@ -89,6 +89,13 @@ function UsersTab() {
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [editRole, setEditRole] = useState("");
 
+  // PIN-only dialog state
+  const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
+  const [pinDialogMode, setPinDialogMode] = useState<"set" | "remove">("set");
+  const [newPin, setNewPin] = useState("");
+  const [newPinConfirm, setNewPinConfirm] = useState("");
+  const [pinDialogError, setPinDialogError] = useState("");
+
   const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
   const newUserForm = useForm<NewUserForm>({
@@ -110,8 +117,16 @@ function UsersTab() {
   });
 
   const updateRoleMutation = useMutation({
+<<<<<<< Updated upstream
     mutationFn: async ({ id, role }: { id: number; role: string }) =>
       apiRequest("PUT", `/api/users/${id}`, { role }),
+=======
+    mutationFn: async ({ id, role, pin }: { id: number; role: string; pin?: string | null }) => {
+      const body: any = { role };
+      if (pin !== undefined) body.pin = pin;
+      return apiRequest("PUT", `/api/users/${id}`, body);
+    },
+>>>>>>> Stashed changes
     onSuccess: () => {
       toast({ title: "Role updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -133,13 +148,76 @@ function UsersTab() {
     },
   });
 
+  const setPinMutation = useMutation({
+    mutationFn: async ({ id, pin }: { id: number; pin: string | null }) =>
+      apiRequest("PUT", `/api/users/${id}/pin`, { pin }),
+    onSuccess: () => {
+      toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      setPinDialogUser(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update PIN", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const resetAllPinsMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/users/reset-all-pins", {}),
+    onSuccess: () => {
+      toast({ title: "All PINs cleared", description: "You can now set fresh PINs for each user." });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to reset PINs", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const openPinDialog = (user: any, mode: "set" | "remove") => {
+    setPinDialogUser(user);
+    setPinDialogMode(mode);
+    setNewPin("");
+    setNewPinConfirm("");
+    setPinDialogError("");
+  };
+
+  const handlePinSave = () => {
+    if (pinDialogMode === "remove") {
+      setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
+      return;
+    }
+    if (newPin.length !== 4) {
+      setPinDialogError("PIN must be exactly 4 digits");
+      return;
+    }
+    if (newPin !== newPinConfirm) {
+      setPinDialogError("PINs do not match");
+      return;
+    }
+    setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">{users?.length || 0} users in the system</p>
-        <Button size="sm" onClick={() => setShowAddUser(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add User
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive border-red-200 hover:bg-red-50"
+            disabled={resetAllPinsMutation.isPending}
+            onClick={() => {
+              if (confirm("Clear ALL PINs for every user? You will need to set them again.")) {
+                resetAllPinsMutation.mutate();
+              }
+            }}
+          >
+            {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Resetting...</> : "Reset All PINs"}
+          </Button>
+          <Button size="sm" onClick={() => setShowAddUser(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add User
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -161,10 +239,36 @@ function UsersTab() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[u.role] || roleColors.staff}`}>
                   {u.role}
                 </span>
+<<<<<<< Updated upstream
+=======
+                {(u.role === "manager" || u.role === "admin") && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[11px] px-2 gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                      onClick={() => openPinDialog(u, "set")}
+                    >
+                      <Shield className="w-3 h-3" />
+                      {u.pin ? "Change PIN" : "Set PIN"}
+                    </Button>
+                    {u.pin && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-[11px] px-2 gap-1 text-destructive border-red-200 hover:bg-red-50"
+                        onClick={() => openPinDialog(u, "remove")}
+                      >
+                        Remove PIN
+                      </Button>
+                    )}
+                  </>
+                )}
+>>>>>>> Stashed changes
                 {u.id !== currentUser?.id && (
                   <>
                     <Button
@@ -241,7 +345,88 @@ function UsersTab() {
         </DialogContent>
       </Dialog>
 
+<<<<<<< Updated upstream
       {/* Edit Role Dialog */}
+=======
+      {/* PIN Set/Change/Remove Dialog */}
+      <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-blue-600" />
+              {pinDialogMode === "remove" ? "Remove PIN" : pinDialogUser?.pin ? "Change PIN" : "Set PIN"}
+            </DialogTitle>
+            <DialogDescription>
+              {pinDialogMode === "remove"
+                ? `Remove the PIN for "${pinDialogUser?.username}". They won't be able to authorise protected POS actions.`
+                : `${pinDialogUser?.pin ? "Change" : "Set a"} 4-digit PIN for "${pinDialogUser?.username}".`}
+            </DialogDescription>
+          </DialogHeader>
+          {pinDialogMode === "remove" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">Are you sure you want to remove this user's PIN?</p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
+                <Button
+                  variant="destructive"
+                  disabled={setPinMutation.isPending}
+                  onClick={handlePinSave}
+                >
+                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Removing...</> : "Remove PIN"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>New PIN</Label>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  placeholder="4 digits"
+                  value={newPin}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "");
+                    setNewPin(v);
+                    setPinDialogError("");
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Confirm PIN</Label>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  placeholder="Re-enter PIN"
+                  value={newPinConfirm}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "");
+                    setNewPinConfirm(v);
+                    setPinDialogError("");
+                  }}
+                />
+              </div>
+              {pinDialogError && <p className="text-xs text-destructive">{pinDialogError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
+                <Button
+                  disabled={setPinMutation.isPending || !newPin}
+                  onClick={handlePinSave}
+                >
+                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save PIN"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Dialog */}
+>>>>>>> Stashed changes
       <Dialog open={!!editingUser} onOpenChange={() => setEditingUser(null)}>
         <DialogContent>
           <DialogHeader>
@@ -264,7 +449,50 @@ function UsersTab() {
               <p><strong>kitchen</strong> – KOT view only</p>
               <p><strong>staff</strong> – Basic access</p>
             </div>
+<<<<<<< Updated upstream
             <div className="flex justify-end gap-2">
+=======
+
+            {/* PIN field — shown for manager / admin */}
+            {(editRole === "manager" || editRole === "admin") && (
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-green-600" />
+                  <Label className="text-xs font-semibold uppercase text-muted-foreground">Manager PIN</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  4–6 digit PIN used to authorise protected POS actions (cancel order, discounts, etc.).
+                  {editingUser?.pin ? " Currently set." : " Not set yet."}
+                </p>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder={editingUser?.pin ? "Enter new PIN to change, leave blank to keep" : "Enter 4–6 digit PIN"}
+                  value={editPin}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "");
+                    setEditPin(v);
+                    setEditPinError(v && v.length !== 4 ? "PIN must be exactly 4 digits" : "");
+                  }}
+                  className="h-8"
+                />
+                {editPinError && <p className="text-xs text-destructive">{editPinError}</p>}
+                {editingUser?.pin && !editPin && (
+                  <button
+                    type="button"
+                    className="text-xs text-destructive hover:underline"
+                    onClick={() => setEditPin("__clear__")}
+                  >
+                    Remove PIN
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+>>>>>>> Stashed changes
               <Button variant="outline" onClick={() => setEditingUser(null)}>Cancel</Button>
               <Button
                 disabled={updateRoleMutation.isPending}

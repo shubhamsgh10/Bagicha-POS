@@ -176,6 +176,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+<<<<<<< Updated upstream
+=======
+  // ── Manager PIN verification ───────────────────────────────────────────────────
+
+  app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
+    try {
+      const { pin, requiredRole } = req.body;
+      if (!pin) return res.status(400).json({ valid: false });
+      const allUsers = await storage.getUsers();
+      // requiredRole="admin"   → only admin PINs accepted  (manager doing restricted action)
+      // requiredRole="manager" → manager OR admin PIN accepted (staff doing restricted action / switching to manager)
+      // default                → manager or admin (backwards-compat)
+      const match = requiredRole === "admin"
+        ? allUsers.find((u) => u.role === "admin" && u.pin === String(pin))
+        : allUsers.find((u) => (u.role === "manager" || u.role === "admin") && u.pin === String(pin));
+      res.json({ valid: !!match });
+    } catch (err) {
+      console.error("Verify PIN error:", err);
+      res.status(500).json({ valid: false });
+    }
+  });
+
+  // Reset all PINs (admin only)
+  app.post("/api/users/reset-all-pins", requireAdmin, async (req, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      await Promise.all(allUsers.map((u) => storage.updateUser(u.id, { pin: null })));
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Reset all PINs error:", err);
+      res.status(500).json({ message: "Failed to reset PINs" });
+    }
+  });
+
+  // Update PIN for a user (admin sets PIN for managers)
+  app.put("/api/users/:id/pin", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { pin } = req.body;
+      if (pin && !/^\d{4}$/.test(String(pin))) {
+        return res.status(400).json({ message: "PIN must be 4-6 digits" });
+      }
+      const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
+      const { password: _, ...safeUser } = updated;
+      res.json(safeUser);
+    } catch (err) {
+      console.error("Update PIN error:", err);
+      res.status(500).json({ message: "Failed to update PIN" });
+    }
+  });
+
+>>>>>>> Stashed changes
   // ── User Management (Admin only) ──────────────────────────────────────────────
 
   app.get("/api/users", requireAdmin, async (req, res) => {
@@ -216,6 +268,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { role, username, password } = req.body;
       const updateData: any = {};
       if (role) updateData.role = role;
+<<<<<<< Updated upstream
+=======
+      if (pin !== undefined) {
+        if (pin && !/^\d{4}$/.test(String(pin))) {
+          return res.status(400).json({ message: "PIN must be 4-6 digits" });
+        }
+        updateData.pin = pin ? String(pin) : null;
+      }
+>>>>>>> Stashed changes
       if (username) {
         const existing = await storage.getUserByUsername(username.trim());
         if (existing && existing.id !== id) return res.status(409).json({ message: "Username already taken" });
