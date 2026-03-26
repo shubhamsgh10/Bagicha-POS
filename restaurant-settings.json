@@ -1,0 +1,12 @@
+{
+  "restaurantName": "Bagicha Restaurant",
+  "address": "",
+  "phone": "",
+  "email": "",
+  "gstNumber": "",
+  "taxRate": 18,
+  "currency": "INR",
+  "currencySymbol": "₹",
+  "footerNote": "Thank you for dining with us!",
+  "posRoleTimeout": 2
+}

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, Store, Receipt, MapPin, Phone } from "lucide-react";
+import { Loader2, Store, Receipt, ShieldCheck } from "lucide-react";
 
 interface RestaurantSettings {
   restaurantName: string;
@@ -19,6 +19,7 @@ interface RestaurantSettings {
   currency: string;
   currencySymbol: string;
   footerNote: string;
+  posRoleTimeout: number;
 }
 
 export default function Settings() {
@@ -34,6 +35,7 @@ export default function Settings() {
     currency: "INR",
     currencySymbol: "₹",
     footerNote: "Thank you for dining with us!",
+    posRoleTimeout: 2,
   });
 
   const { data: settings, isLoading } = useQuery<RestaurantSettings>({
@@ -186,6 +188,50 @@ export default function Settings() {
               placeholder="Thank you for dining with us!"
             />
             <p className="text-xs text-muted-foreground">This message will appear at the bottom of every printed bill</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* POS Access Control */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-primary" />
+            <CardTitle className="text-base">POS Access Control</CardTitle>
+          </div>
+          <CardDescription>
+            Configure how long elevated roles (Manager / Admin) stay active on the POS before auto-reverting
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Auto-revert elevated role after</Label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: 0,  label: "Never"   },
+                { value: 1,  label: "1 min"   },
+                { value: 2,  label: "2 min"   },
+                { value: 5,  label: "5 min"   },
+                { value: 10, label: "10 min"  },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => set("posRoleTimeout", opt.value)}
+                  className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    formData.posRoleTimeout === opt.value
+                      ? "bg-primary text-white border-primary"
+                      : "border-gray-200 text-gray-600 hover:border-primary hover:text-primary"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              When a manager or admin elevates their role on the POS, it will automatically revert back after this time.
+              Set to <strong>Never</strong> to require manual lock only.
+            </p>
           </div>
         </CardContent>
       </Card>
