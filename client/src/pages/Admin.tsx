@@ -88,6 +88,8 @@ function UsersTab() {
   const [showAddUser, setShowAddUser] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [editRole, setEditRole] = useState("");
+  const [editPin, setEditPin] = useState("");
+  const [editPinError, setEditPinError] = useState("");
 
   // PIN-only dialog state
   const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
@@ -118,15 +120,15 @@ function UsersTab() {
   });
 
   const updateRoleMutation = useMutation({
-    mutationFn: async ({ id, role }: { id: number; role: string }) =>
-      apiRequest("PUT", `/api/users/${id}`, { role }),
+    mutationFn: async ({ id, role, pin }: { id: number; role: string; pin?: string | null }) =>
+      apiRequest("PUT", `/api/users/${id}`, { role, pin: pin ?? null }),
     onSuccess: () => {
-      toast({ title: "Role updated" });
+      toast({ title: "User updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       setEditingUser(null);
     },
     onError: (err: any) => {
-      toast({ title: "Failed to update role", description: parseError(err), variant: "destructive" });
+      toast({ title: "Failed to update user", description: parseError(err), variant: "destructive" });
     },
   });
 
@@ -274,7 +276,7 @@ function UsersTab() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => { setEditingUser(u); setEditRole(u.role); }}
+                      onClick={() => { setEditingUser(u); setEditRole(u.role); setEditPin(""); setEditPinError(""); }}
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </Button>
@@ -426,32 +428,78 @@ function UsersTab() {
       <Dialog open={!!editingUser} onOpenChange={() => setEditingUser(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Change Role for {editingUser?.username}</DialogTitle>
-            <DialogDescription>Select a new role for this user</DialogDescription>
+            <DialogTitle>Edit User: {editingUser?.username}</DialogTitle>
+            <DialogDescription>Change role and set a manager PIN for protected actions</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <Select value={editRole} onValueChange={setEditRole}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {ROLES.map(r => (
-                  <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p><strong>admin</strong> – Full access to all features</p>
-              <p><strong>manager</strong> – Menu, orders, inventory, reports</p>
-              <p><strong>cashier</strong> – POS, orders, billing</p>
-              <p><strong>kitchen</strong> – KOT view only</p>
-              <p><strong>staff</strong> – Basic access</p>
+            {/* Role selector */}
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Role</Label>
+              <Select value={editRole} onValueChange={setEditRole}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLES.map(r => (
+                    <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground space-y-0.5 pt-1">
+                <p><strong>admin</strong> – Full access · <strong>manager</strong> – Menu/orders/reports</p>
+                <p><strong>cashier</strong> – POS/billing · <strong>staff</strong> – Basic access</p>
+              </div>
             </div>
-            <div className="flex justify-end gap-2">
+
+            {/* PIN field — shown for manager / admin */}
+            {(editRole === "manager" || editRole === "admin") && (
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-green-600" />
+                  <Label className="text-xs font-semibold uppercase text-muted-foreground">Manager PIN</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  4–6 digit PIN used to authorise protected POS actions (cancel order, discounts, etc.).
+                  {editingUser?.pin ? " Currently set." : " Not set yet."}
+                </p>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder={editingUser?.pin ? "Enter new PIN to change, leave blank to keep" : "Enter 4–6 digit PIN"}
+                  value={editPin}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "");
+                    setEditPin(v);
+                    setEditPinError(v && (v.length < 4 || v.length > 6) ? "PIN must be 4–6 digits" : "");
+                  }}
+                  className="h-8"
+                />
+                {editPinError && <p className="text-xs text-destructive">{editPinError}</p>}
+                {editingUser?.pin && !editPin && (
+                  <button
+                    type="button"
+                    className="text-xs text-destructive hover:underline"
+                    onClick={() => setEditPin("__clear__")}
+                  >
+                    Remove PIN
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setEditingUser(null)}>Cancel</Button>
               <Button
-                disabled={updateRoleMutation.isPending}
-                onClick={() => updateRoleMutation.mutate({ id: editingUser.id, role: editRole })}
+                disabled={updateRoleMutation.isPending || !!editPinError}
+                onClick={() => {
+                  const pinValue = editPin === "__clear__" ? null : (editPin || null);
+                  // Only send pin if explicitly set or cleared
+                  const updatePayload: any = { id: editingUser.id, role: editRole };
+                  if (editPin !== "") updatePayload.pin = pinValue;
+                  updateRoleMutation.mutate(updatePayload);
+                }}
               >
-                {updateRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Role"}
+                {updateRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save"}
               </Button>
             </div>
           </div>

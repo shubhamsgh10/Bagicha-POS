@@ -208,6 +208,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+
   // Update PIN for a user (admin sets PIN for managers)
   app.put("/api/users/:id/pin", requireAdmin, async (req, res) => {
     try {
@@ -230,7 +231,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/users", requireAdmin, async (req, res) => {
     try {
       const allUsers = await storage.getUsers();
-      const safeUsers = allUsers.map(({ password, ...u }) => u);
+      const safeUsers = allUsers.map(({ password, pin, ...u }) => ({ ...u, pin: !!pin }));
       res.json(safeUsers);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch users" });
@@ -250,8 +251,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: hashed,
         role: role || "staff",
       });
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
+      const { password: _, pin, ...safeUser } = user;
+      res.json({ ...safeUser, pin: !!pin });
     } catch (err) {
       console.error("Create user error:", err);
       res.status(500).json({ message: "Failed to create user" });
@@ -281,8 +282,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.password = await hashPassword(password);
       }
       const updated = await storage.updateUser(id, updateData);
-      const { password: _, ...safeUser } = updated;
-      res.json(safeUser);
+      const { password: _, pin: updatedPin, ...safeUser } = updated;
+      res.json({ ...safeUser, pin: !!updatedPin });
     } catch (err) {
       console.error("Update user error:", err);
       res.status(500).json({ message: "Failed to update user" });
@@ -331,6 +332,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/dashboard/sales-chart", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getSalesChart();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sales chart" });
+    }
+  });
+
+  app.get("/api/dashboard/category-sales", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getCategorySales();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch category sales" });
+    }
+  });
+
+  app.get("/api/dashboard/top-items", requireAuth, async (req, res) => {
+    try {
+      const data = await storage.getDashboardTopItems();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch top items" });
+    }
+  });
+
   // ── Categories ────────────────────────────────────────────────────────────────
 
   app.get("/api/categories", requireAuth, async (req, res) => {
@@ -375,6 +403,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Live Status ──────────────────────────────────────────────────────────────
+
+  app.get("/api/live-status", requireAuth, async (req, res) => {
+    try {
+      const allTables = await storage.getTables();
+      const runningTables = allTables.filter(t => t.status === "running").length;
+      const freeTables    = allTables.filter(t => t.status === "free").length;
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const allOrders = await storage.getOrders();
+      const activeOrders = allOrders.filter(
+        o => o.status !== "served" && o.status !== "cancelled"
+      ).length;
+      const todaySales = allOrders
+        .filter(o => {
+          const d = new Date(o.createdAt);
+          return d >= today && d < tomorrow;
+        })
+        .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
+
+      res.json({ runningTables, freeTables, activeOrders, todaySales });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch live status" });
+    }
+  });
+
+  // ── Tables ───────────────────────────────────────────────────────────────────
+
+  app.get("/api/tables", requireAuth, async (req, res) => {
+    try {
+      const allTables = await storage.getTables();
+      res.json(allTables);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch tables" });
+    }
+  });
+
+  app.post("/api/tables", requireAuth, async (req, res) => {
+    try {
+      const { name, capacity, section } = req.body;
+      if (!name) return res.status(400).json({ error: "Table name is required" });
+      const table = await storage.createTable({
+        name: String(name).trim(),
+        capacity: Number(capacity) || 4,
+        section: String(section || "inner"),
+      });
+      res.json(table);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create table" });
+    }
+  });
+
+  app.put("/api/tables/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, capacity, section } = req.body;
+      const data: any = {};
+      if (name !== undefined) data.name = String(name).trim();
+      if (capacity !== undefined) data.capacity = Number(capacity);
+      if (section !== undefined) data.section = String(section);
+      const table = await storage.updateTable(id, data);
+      res.json(table);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update table" });
+    }
+  });
+
+  app.delete("/api/tables/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTable(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete table" });
+    }
+  });
+
+  app.post("/api/tables/:id/shift", requireAuth, async (req, res) => {
+    try {
+      const fromTableId = parseInt(req.params.id);
+      const { toTableId } = req.body;
+      if (!toTableId) return res.status(400).json({ error: "toTableId is required" });
+      const fromTable = await storage.getTableById(fromTableId);
+      if (!fromTable || !fromTable.currentOrderId) return res.status(400).json({ error: "No active order on this table" });
+      const toTable = await storage.getTableById(Number(toTableId));
+      if (!toTable) return res.status(400).json({ error: "Target table not found" });
+      if (toTable.status !== "free") return res.status(400).json({ error: "Target table is not free" });
+      // Move order to new table
+      await storage.updateOrder(fromTable.currentOrderId, { tableId: Number(toTableId), tableNumber: toTable.name } as any);
+      await storage.updateTableStatus(Number(toTableId), "running", fromTable.currentOrderId);
+      await storage.updateTableStatus(fromTableId, "free", null);
+      broadcast({ type: 'TABLE_UPDATE' });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Shift table error:", error);
+      res.status(500).json({ error: "Failed to shift table" });
+    }
+  });
+
   // ── Menu Items ────────────────────────────────────────────────────────────────
 
   app.get("/api/menu", requireAuth, async (req, res) => {
@@ -383,6 +514,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(menuItems);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch menu items" });
+    }
+  });
+
+  app.get("/api/menu/sold-today", requireAuth, async (req, res) => {
+    try {
+      const soldToday = await storage.getSoldToday();
+      console.log("[sold-today] result:", JSON.stringify(soldToday));
+      res.json(soldToday);
+    } catch (error) {
+      console.error("[sold-today] error:", error);
+      res.status(500).json({ error: "Failed to fetch sold today stats" });
     }
   });
 
@@ -525,6 +667,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get held orders (must come before /:id route)
+  app.get("/api/orders/hold", requireAuth, async (req, res) => {
+    try {
+      const orders = await storage.getOrdersByStatus("hold");
+      const withItems = await Promise.all(
+        orders.map(async (o) => {
+          const items = await storage.getOrderItems(o.id);
+          return { ...o, items };
+        })
+      );
+      res.json(withItems);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch held orders" });
+    }
+  });
+
   app.get("/api/orders/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -551,6 +709,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderId: order.id,
           });
           await storage.createOrderItem(orderItemData);
+          console.log(`[order] saved orderItem menuItemId=${orderItemData.menuItemId} qty=${orderItemData.quantity}`);
         }
       }
 
@@ -569,11 +728,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.createKotTicket({ orderId: order.id, kotNumber, items: kotItems });
 
+      // Update table status if dine-in
+      if (orderInfo.tableId) {
+        await storage.updateTableStatus(Number(orderInfo.tableId), "running", order.id);
+        broadcast({ type: 'TABLE_UPDATE' });
+      }
       broadcast({ type: 'NEW_ORDER', order, items });
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
       res.status(400).json({ error: "Invalid order data" });
+    }
+  });
+
+  app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { items, discountAmount } = req.body;
+
+      // Snapshot existing items BEFORE replacing (for delta KOT)
+      const existingItems = await storage.getOrderItems(id);
+      const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
+
+      // Replace all order items
+      await storage.deleteOrderItemsByOrderId(id);
+      for (const item of items) {
+        await storage.createOrderItem({
+          orderId: id,
+          menuItemId: Number(item.menuItemId),
+          quantity: Number(item.quantity),
+          price: String(item.price),
+          specialInstructions: item.specialInstructions || "",
+          size: item.size || null,
+        });
+      }
+
+      // Recalculate totals
+      const settings = getSettings();
+      const taxRate = ((settings as any)?.taxRate ?? 18) / 100;
+      const subtotal = items.reduce((s: number, i: any) => s + parseFloat(i.price) * Number(i.quantity), 0);
+      const discount = parseFloat(discountAmount || "0");
+      const taxable = subtotal - discount;
+      const tax = taxable * taxRate;
+      const total = taxable + tax;
+
+      const order = await storage.updateOrder(id, {
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: discount.toFixed(2),
+      } as any);
+
+      // Delta KOT — only print items newly added to this order
+      const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
+      if (newItems.length > 0) {
+        const kotNumber = `KOT${Date.now()}`;
+        const kotItems = newItems.map((item: any) => ({
+          name: item.name,
+          quantity: Number(item.quantity),
+          instructions: item.specialInstructions || undefined,
+        }));
+        await storage.createKotTicket({ orderId: id, kotNumber, items: kotItems });
+        broadcast({ type: "KOT_UPDATE", action: "created" });
+      }
+
+      broadcast({ type: "ORDER_UPDATE", order });
+      res.json(order);
+    } catch (error) {
+      console.error("Update order items error:", error);
+      res.status(500).json({ error: "Failed to update order items" });
     }
   });
 
@@ -599,11 +821,183 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: paymentMethod || "cash",
         status: "served",
       } as any);
+      // Free the table if dine-in
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+        broadcast({ type: 'TABLE_UPDATE' });
+      }
       broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
     } catch (error) {
       console.error("Payment error:", error);
       res.status(500).json({ error: "Failed to process payment" });
+    }
+  });
+
+  // ── Table Action: Hold Order ──────────────────────────────────────────────────
+  app.put("/api/orders/:id/hold", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      // Free the table
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      // Mark order as held and clear table association
+      await storage.updateOrder(id, { status: "hold", tableId: null, tableNumber: null } as any);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to hold order" });
+    }
+  });
+
+  // ── Table Action: Cancel Order ────────────────────────────────────────────────
+  app.put("/api/orders/:id/cancel", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      await storage.updateOrder(id, { status: "cancelled" } as any);
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to cancel order" });
+    }
+  });
+
+  // ── Table Action: Move Table ──────────────────────────────────────────────────
+  app.put("/api/orders/:id/move-table", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { newTableId, newTableName } = req.body;
+      if (!newTableId) return res.status(400).json({ error: "newTableId required" });
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      // Free old table
+      if ((order as any).tableId) {
+        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      // Update order with new table
+      await storage.updateOrder(id, { tableId: newTableId, tableNumber: newTableName || String(newTableId) } as any);
+      // Set new table to running
+      await storage.updateTableStatus(newTableId, "running", id);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to move table" });
+    }
+  });
+
+  // ── Table Action: Merge Tables ────────────────────────────────────────────────
+  // Merges sourceOrderId items INTO targetOrderId, frees source table
+  app.post("/api/orders/merge", requireAuth, async (req, res) => {
+    try {
+      const { targetOrderId, sourceOrderId } = req.body;
+      if (!targetOrderId || !sourceOrderId) return res.status(400).json({ error: "targetOrderId and sourceOrderId required" });
+      const targetOrder = await storage.getOrderById(targetOrderId);
+      const sourceOrder = await storage.getOrderById(sourceOrderId);
+      if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
+      // Copy source items into target order
+      const sourceItems = await storage.getOrderItems(sourceOrderId);
+      for (const item of sourceItems) {
+        await storage.createOrderItem({
+          orderId: targetOrderId,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+        } as any);
+      }
+      // Recalculate target order totals (18% tax fallback)
+      const allItems = await storage.getOrderItems(targetOrderId);
+      const subtotal = allItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const discount = parseFloat((targetOrder as any).discountAmount || "0");
+      const taxable = subtotal - discount;
+      const tax = taxable * 0.18;
+      await storage.updateOrder(targetOrderId, {
+        totalAmount: (taxable + tax).toFixed(2),
+        taxAmount: tax.toFixed(2),
+      } as any);
+      // Free source table and delete source order
+      if ((sourceOrder as any).tableId) {
+        await storage.updateTableStatus(Number((sourceOrder as any).tableId), "free", null);
+      }
+      await storage.deleteOrderItemsByOrderId(sourceOrderId);
+      await storage.deleteOrder(sourceOrderId);
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Merge error:", error);
+      res.status(500).json({ error: "Failed to merge orders" });
+    }
+  });
+
+  // ── Table Action: Split Bill ──────────────────────────────────────────────────
+  // Splits selected item IDs from an order into a new standalone order
+  app.post("/api/orders/:id/split", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { itemIds } = req.body; // array of orderItem IDs to split out
+      if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: "itemIds required" });
+      const sourceOrder = await storage.getOrderById(id);
+      if (!sourceOrder) return res.status(404).json({ error: "Order not found" });
+      const allItems = await storage.getOrderItems(id);
+      const splitItems = allItems.filter((i) => itemIds.includes(i.id));
+      if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
+      // Calculate new order total
+      const subtotal = splitItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const tax = subtotal * 0.18;
+      const total = subtotal + tax;
+      // Create new split order (takeaway, no table)
+      const newOrder = await storage.createOrder({
+        orderNumber: `ORD${Date.now()}`,
+        orderType: "dine-in",
+        status: "pending",
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: "0",
+        paymentStatus: "pending",
+        customerName: (sourceOrder as any).customerName || null,
+        customerPhone: (sourceOrder as any).customerPhone || null,
+        notes: `Split from ${(sourceOrder as any).orderNumber}`,
+      } as any);
+      // Move split items to new order, delete from source
+      for (const item of splitItems) {
+        await storage.createOrderItem({
+          orderId: newOrder.id,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+        } as any);
+        await storage.deleteOrderItem(item.id);
+      }
+      // Recalculate source order total
+      const remaining = await storage.getOrderItems(id);
+      const srcSubtotal = remaining.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const srcDiscount = parseFloat((sourceOrder as any).discountAmount || "0");
+      const srcTaxable = srcSubtotal - srcDiscount;
+      const srcTax = srcTaxable * 0.18;
+      await storage.updateOrder(id, {
+        totalAmount: (srcTaxable + srcTax).toFixed(2),
+        taxAmount: srcTax.toFixed(2),
+      } as any);
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true, newOrderId: newOrder.id });
+    } catch (error) {
+      console.error("Split error:", error);
+      res.status(500).json({ error: "Failed to split order" });
     }
   });
 
@@ -642,6 +1036,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(ticket);
     } catch (error) {
       res.status(400).json({ error: "Invalid KOT data" });
+    }
+  });
+
+  // ── KOT Running Count ─────────────────────────────────────────────────────────
+
+  app.get("/api/kot/running", requireAuth, async (req, res) => {
+    try {
+      const pending = await storage.getKotTicketsByStatus("pending");
+      const inProgress = await storage.getKotTicketsByStatus("in-progress");
+      res.json({ count: pending.length + inProgress.length });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch KOT count" });
     }
   });
 

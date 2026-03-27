@@ -40,6 +40,12 @@ export default function Menu() {
     queryKey: ['/api/categories'],
   });
 
+  const { data: soldToday = {} } = useQuery<Record<number, number>>({
+    queryKey: ['/api/menu/sold-today'],
+    staleTime: 0,
+    refetchInterval: 30000,
+  });
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
@@ -167,7 +173,7 @@ export default function Menu() {
 
                 <div className="mt-3 flex justify-between items-center text-sm text-muted-foreground">
                   <span>Prep time: {item.preparationTime}min</span>
-                  <span>Sold: {Math.floor(Math.random() * 50)} today</span>
+                  <span>Sold: {soldToday[item.id] ?? 0} today</span>
                 </div>
               </CardContent>
             </Card>
