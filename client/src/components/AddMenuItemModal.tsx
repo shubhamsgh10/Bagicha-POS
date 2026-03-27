@@ -25,6 +25,7 @@ const WOODFIRE_PIZZA = "Woodfire Pizza";
 
 const menuItemSchema = z.object({
   name: z.string().min(1, "Name is required"),
+  shortCode: z.string().optional(),
   description: z.string().optional(),
   price: z.string().default("0"),
   categoryId: z.number().min(1, "Category is required"),
@@ -62,6 +63,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     resolver: zodResolver(menuItemSchema),
     defaultValues: {
       name: editItem?.name || "",
+      shortCode: editItem?.shortCode || "",
       description: editItem?.description || "",
       price: editItem?.price || "0",
       categoryId: editItem?.categoryId || 0,
@@ -186,6 +188,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     if (editItem) {
       form.reset({
         name: editItem.name || "",
+        shortCode: editItem.shortCode || "",
         description: editItem.description || "",
         price: editItem.price || "0",
         categoryId: editItem.categoryId || 0,
@@ -215,6 +218,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     } else {
       form.reset({
         name: "",
+        shortCode: "",
         description: "",
         price: "0",
         categoryId: 0,
@@ -254,6 +258,23 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
               {form.formState.errors.name && (
                 <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>
               )}
+              <div className="mt-2">
+                <Label htmlFor="shortCode" className="text-xs text-muted-foreground">
+                  Short Code <span className="font-normal">(for quick POS search)</span>
+                </Label>
+                <Input
+                  id="shortCode"
+                  placeholder="e.g. HPP, TM, PIZZA1"
+                  className="mt-1 uppercase"
+                  {...form.register("shortCode", {
+                    setValueAs: (v) => v?.toUpperCase() || "",
+                  })}
+                  onChange={(e) => form.setValue("shortCode", e.target.value.toUpperCase())}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Type this code in POS short code box + Enter to instantly add item
+                </p>
+              </div>
             </div>
 
             {isWoodfirePizza ? (
