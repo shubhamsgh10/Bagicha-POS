@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { BagichaLogo } from "@/components/BagichaLogo";
 import {
@@ -46,8 +47,31 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
+// ── Sliding Glass Panel ───────────────────────────────────────────────────────
+function SlidingGlassPanel({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ height: 0, opacity: 0, y: -10 }}
+          animate={{ height: "auto", opacity: 1, y: 0 }}
+          exit={{ height: 0, opacity: 0, y: -10 }}
+          transition={{ duration: 0.25, ease: "easeInOut" }}
+          className="overflow-hidden"
+        >
+          <div className="backdrop-blur-md bg-white/60 dark:bg-black/40 border border-white/30 shadow-lg rounded-2xl p-4 mt-2">
+            {children}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function LiveAnalytics() {
   const [, navigate] = useLocation();
+  const [openCard, setOpenCard] = useState<string | null>(null);
+  const toggleCard = (id: string) => setOpenCard(prev => (prev === id ? null : id));
   const now = new Date();
 
   const { data: stats } = useQuery<any>({
@@ -80,8 +104,27 @@ export default function LiveAnalytics() {
     refetchInterval: 10000,
   });
 
+  const { data: allOrders = [] } = useQuery<any[]>({
+    queryKey: ["/api/orders"],
+    staleTime: 0,
+    refetchInterval: 5000,
+  });
+
+  const { data: allTables = [] } = useQuery<any[]>({
+    queryKey: ["/api/tables"],
+    staleTime: 0,
+    refetchInterval: 5000,
+  });
+
+  const todayStr = now.toDateString();
+  const todayOrders = allOrders.filter((o: any) => new Date(o.createdAt).toDateString() === todayStr);
+  const activeOrdersList = allOrders.filter((o: any) => o.status === "pending" || o.status === "preparing");
+  const innerTables = allTables.filter((t: any) => t.section?.toLowerCase() === "inner" && t.status === "occupied");
+  const outerTables = allTables.filter((t: any) => t.section?.toLowerCase() === "outer" && t.status === "occupied");
+
   const statCards = [
     {
+      id: "today-sales",
       label: "Today's Sales",
       value: fmt(stats?.todaySales || 0),
       sub: `${stats?.todayOrders || 0} orders placed`,
@@ -90,6 +133,7 @@ export default function LiveAnalytics() {
       bg: "bg-violet-500/10",
     },
     {
+      id: "orders-today",
       label: "Orders Today",
       value: String(stats?.todayOrders || 0),
       sub: `Avg ${fmt(stats?.avgOrderValue || 0)} / order`,
@@ -98,6 +142,7 @@ export default function LiveAnalytics() {
       bg: "bg-blue-500/10",
     },
     {
+      id: "active-orders",
       label: "Active Orders",
       value: String(stats?.activeOrders || 0),
       sub: "Pending / preparing",
@@ -106,6 +151,7 @@ export default function LiveAnalytics() {
       bg: "bg-amber-500/10",
     },
     {
+      id: "total-revenue",
       label: "Total Revenue",
       value: fmt(stats?.totalRevenue || 0),
       sub: "All time",
@@ -114,6 +160,7 @@ export default function LiveAnalytics() {
       bg: "bg-emerald-500/10",
     },
     {
+      id: "low-stock",
       label: "Low Stock",
       value: String(stats?.lowStockCount || 0),
       sub: stats?.lowStockCount > 0 ? "Needs attention" : "All good",
@@ -125,6 +172,7 @@ export default function LiveAnalytics() {
       bg: stats?.lowStockCount > 0 ? "bg-red-500/10" : "bg-green-500/10",
     },
     {
+      id: "top-item",
       label: "Top Item Today",
       value: stats?.topItem || "—",
       sub: "Best seller",
@@ -133,6 +181,7 @@ export default function LiveAnalytics() {
       bg: "bg-pink-500/10",
     },
     {
+      id: "inner-running",
       label: "Inner Running",
       value: String(stats?.innerRunning || 0),
       sub: `of ${stats?.totalTables || 0} total tables`,
@@ -141,6 +190,7 @@ export default function LiveAnalytics() {
       bg: "bg-indigo-500/10",
     },
     {
+      id: "outer-running",
       label: "Outer Running",
       value: String(stats?.outerRunning || 0),
       sub: `of ${stats?.totalTables || 0} total tables`,
@@ -203,8 +253,14 @@ export default function LiveAnalytics() {
               initial="hidden"
               animate="visible"
               variants={cardAnim}
-              whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
-              className={`rounded-2xl p-4 border border-border/40 shadow-sm ${card.bg}`}
+              whileHover={{ scale: 1.02, transition: { duration: 0.15 } }}
+              onClick={() => toggleCard(card.id)}
+              className={`rounded-2xl p-4 border shadow-sm cursor-pointer transition-shadow select-none
+                ${card.bg}
+                ${openCard === card.id
+                  ? "border-white/50 shadow-md ring-2 ring-white/30"
+                  : "border-border/40 hover:shadow-md"
+                }`}
             >
               <div
                 className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}
@@ -223,6 +279,135 @@ export default function LiveAnalytics() {
             </motion.div>
           ))}
         </div>
+
+        {/* ── Sliding Glass Panel ── */}
+        <SlidingGlassPanel isOpen={openCard !== null}>
+          {openCard === "today-sales" || openCard === "orders-today" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                {openCard === "today-sales" ? "Today's Orders" : "Orders Today"}
+              </p>
+              {todayOrders.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No orders today yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                  {todayOrders.map((o: any) => (
+                    <div key={o.id} className="flex items-center justify-between bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                      <div>
+                        <p className="text-xs font-semibold">{o.orderNumber}</p>
+                        <p className="text-[11px] text-muted-foreground capitalize">{o.orderType?.replace("-", " ")} {o.tableNumber ? `· Table ${o.tableNumber}` : ""}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-green-700">{fmt(parseFloat(o.totalAmount || "0"))}</p>
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                          o.status === "served" || o.status === "delivered" ? "bg-green-100 text-green-700" :
+                          o.status === "cancelled" ? "bg-gray-100 text-gray-600" : "bg-amber-100 text-amber-700"
+                        }`}>{o.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : openCard === "active-orders" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Orders — Pending &amp; Preparing</p>
+              {activeOrdersList.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active orders right now.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                  {activeOrdersList.map((o: any) => (
+                    <div key={o.id} className="flex items-center justify-between bg-amber-50/60 rounded-xl px-3 py-2 border border-amber-200/50">
+                      <div>
+                        <p className="text-xs font-semibold">{o.orderNumber}</p>
+                        <p className="text-[11px] text-muted-foreground">{o.tableNumber ? `Table ${o.tableNumber}` : o.orderType}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold">{fmt(parseFloat(o.totalAmount || "0"))}</p>
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 capitalize">{o.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : openCard === "total-revenue" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by Category</p>
+              {categorySales.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No sales data available.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {categorySales.map((c: any, idx: number) => (
+                    <div key={c.category} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="w-2 h-2 rounded-full" style={{ background: PALETTE[idx % PALETTE.length] }} />
+                        <p className="text-[11px] font-medium text-muted-foreground truncate">{c.category}</p>
+                      </div>
+                      <p className="text-sm font-bold text-foreground">{fmt(c.total)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : openCard === "low-stock" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Low Stock Items</p>
+              {lowStockItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">All items are well stocked.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                  {lowStockItems.map((item: any) => (
+                    <div key={item.id} className="flex items-center justify-between bg-red-50/60 rounded-xl px-3 py-2 border border-red-200/50">
+                      <div>
+                        <p className="text-xs font-semibold">{item.itemName}</p>
+                        <p className="text-[11px] text-muted-foreground">Min: {item.minStock} {item.unit}</p>
+                      </div>
+                      <span className="text-sm font-bold text-red-500">{item.currentStock} {item.unit}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : openCard === "top-item" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Top Items Today</p>
+              {topItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No sales data today.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {topItems.map((item: any, idx: number) => (
+                    <div key={item.name} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: PALETTE[idx % PALETTE.length] }}>{idx + 1}</span>
+                        <p className="text-[11px] font-medium truncate">{item.name}</p>
+                      </div>
+                      <p className="text-sm font-bold">{item.qty} <span className="text-[11px] font-normal text-muted-foreground">sold</span></p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : openCard === "inner-running" || openCard === "outer-running" ? (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                {openCard === "inner-running" ? "Inner" : "Outer"} — Occupied Tables
+              </p>
+              {(openCard === "inner-running" ? innerTables : outerTables).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No occupied tables in this section.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {(openCard === "inner-running" ? innerTables : outerTables).map((t: any) => (
+                    <div key={t.id} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40 min-w-[100px]">
+                      <p className="text-xs font-bold">Table {t.tableNumber}</p>
+                      <p className="text-[11px] text-muted-foreground capitalize">{t.status}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </SlidingGlassPanel>
 
         {/* ── Sales Line + Category Pie ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

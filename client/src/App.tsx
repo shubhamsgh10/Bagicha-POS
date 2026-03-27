@@ -14,6 +14,7 @@ import Admin from "@/pages/Admin";
 import Settings from "@/pages/Settings";
 import Tables from "@/pages/Tables";
 import LiveAnalytics from "@/pages/LiveAnalytics";
+import KOT from "@/pages/KOT";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
@@ -62,6 +63,7 @@ function Router() {
           <Route path="/admin"          component={Admin} />
           <Route path="/settings"       component={Settings} />
           <Route path="/live-analytics" component={LiveAnalytics} />
+          <Route path="/kot"            component={KOT} />
           <Route component={NotFound} />
         </Switch>
       </div>

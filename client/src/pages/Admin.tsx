@@ -28,7 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, User, KeyRound, Users, Tag, Plus, Trash2, Edit2, Shield,
+  Loader2, User, KeyRound, Users, Tag, Plus, Trash2, Edit2, Shield, ShieldCheck,
 } from "lucide-react";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -80,24 +80,12 @@ function parseError(err: any): string {
   return raw || "Something went wrong";
 }
 
-// ── Users Tab ─────────────────────────────────────────────────────────────────
+// ── Users Tab (username & password management only) ───────────────────────────
 
 function UsersTab() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
   const [showAddUser, setShowAddUser] = useState(false);
-  const [editingUser, setEditingUser] = useState<any | null>(null);
-  const [editRole, setEditRole] = useState("");
-  const [editPin, setEditPin] = useState("");
-  const [editPinError, setEditPinError] = useState("");
-
-  // PIN-only dialog state
-  const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
-  const [pinDialogMode, setPinDialogMode] = useState<"set" | "remove">("set");
-  const [newPin, setNewPin] = useState("");
-  const [newPinConfirm, setNewPinConfirm] = useState("");
-  const [pinDialogError, setPinDialogError] = useState("");
-  const [resetConfirm, setResetConfirm] = useState(false);
 
   const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
@@ -119,19 +107,6 @@ function UsersTab() {
     },
   });
 
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ id, role, pin }: { id: number; role: string; pin?: string | null }) =>
-      apiRequest("PUT", `/api/users/${id}`, { role, pin: pin ?? null }),
-    onSuccess: () => {
-      toast({ title: "User updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setEditingUser(null);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update user", description: parseError(err), variant: "destructive" });
-    },
-  });
-
   const deleteUserMutation = useMutation({
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
     onSuccess: () => {
@@ -143,86 +118,13 @@ function UsersTab() {
     },
   });
 
-  const setPinMutation = useMutation({
-    mutationFn: async ({ id, pin }: { id: number; pin: string | null }) =>
-      apiRequest("PUT", `/api/users/${id}/pin`, { pin }),
-    onSuccess: () => {
-      toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setPinDialogUser(null);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update PIN", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const resetAllPinsMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/users/reset-all-pins", {}),
-    onSuccess: () => {
-      toast({ title: "All PINs cleared", description: "You can now set fresh PINs for each user." });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to reset PINs", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const openPinDialog = (user: any, mode: "set" | "remove") => {
-    setPinDialogUser(user);
-    setPinDialogMode(mode);
-    setNewPin("");
-    setNewPinConfirm("");
-    setPinDialogError("");
-  };
-
-  const handlePinSave = () => {
-    if (pinDialogMode === "remove") {
-      setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
-      return;
-    }
-    if (newPin.length !== 4) {
-      setPinDialogError("PIN must be exactly 4 digits");
-      return;
-    }
-    if (newPin !== newPinConfirm) {
-      setPinDialogError("PINs do not match");
-      return;
-    }
-    setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">{users?.length || 0} users in the system</p>
-        <div className="flex gap-2">
-          {resetConfirm ? (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={resetAllPinsMutation.isPending}
-                onClick={() => { setResetConfirm(false); resetAllPinsMutation.mutate(); }}
-              >
-                {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Resetting...</> : "Yes, Reset"}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive border-red-200 hover:bg-red-50"
-              onClick={() => setResetConfirm(true)}
-            >
-              Reset All PINs
-            </Button>
-          )}
-          <Button size="sm" onClick={() => setShowAddUser(true)}>
-            <Plus className="w-4 h-4 mr-1" /> Add User
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => setShowAddUser(true)}>
+          <Plus className="w-4 h-4 mr-1" /> Add User
+        </Button>
       </div>
 
       {isLoading ? (
@@ -244,56 +146,23 @@ function UsersTab() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 flex-wrap justify-end">
+              <div className="flex items-center gap-2">
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[u.role] || roleColors.staff}`}>
                   {u.role}
                 </span>
-                {(u.role === "manager" || u.role === "admin") && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-[11px] px-2 gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                      onClick={() => openPinDialog(u, "set")}
-                    >
-                      <Shield className="w-3 h-3" />
-                      {u.pin ? "Change PIN" : "Set PIN"}
-                    </Button>
-                    {u.pin && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-[11px] px-2 gap-1 text-destructive border-red-200 hover:bg-red-50"
-                        onClick={() => openPinDialog(u, "remove")}
-                      >
-                        Remove PIN
-                      </Button>
-                    )}
-                  </>
-                )}
-                {u.id !== currentUser?.id && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => { setEditingUser(u); setEditRole(u.role); setEditPin(""); setEditPinError(""); }}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => {
-                        if (confirm(`Delete user "${u.username}"?`)) deleteUserMutation.mutate(u.id);
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </>
-                )}
-                {u.id === currentUser?.id && (
+                {u.id === currentUser?.id ? (
                   <Badge variant="outline" className="text-xs">You</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => {
+                      if (confirm(`Delete user "${u.username}"?`)) deleteUserMutation.mutate(u.id);
+                    }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 )}
               </div>
             </div>
@@ -306,7 +175,7 @@ function UsersTab() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add New User</DialogTitle>
-            <DialogDescription>Create a new user account with a specific role</DialogDescription>
+            <DialogDescription>Create a new user account</DialogDescription>
           </DialogHeader>
           <form onSubmit={newUserForm.handleSubmit((d) => createUserMutation.mutate(d))} className="space-y-4">
             <div className="space-y-2">
@@ -324,7 +193,7 @@ function UsersTab() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Role</Label>
+              <Label>Initial Role</Label>
               <Select
                 value={newUserForm.watch("role")}
                 onValueChange={(v) => newUserForm.setValue("role", v as any)}
@@ -346,8 +215,197 @@ function UsersTab() {
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
 
-      {/* PIN Set/Change/Remove Dialog */}
+// ── Roles Tab ─────────────────────────────────────────────────────────────────
+
+function RolesTab() {
+  const { toast } = useToast();
+  const { user: currentUser } = useAuth();
+  const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
+  const [pinDialogMode, setPinDialogMode] = useState<"set" | "remove">("set");
+  const [newPin, setNewPin] = useState("");
+  const [newPinConfirm, setNewPinConfirm] = useState("");
+  const [pinDialogError, setPinDialogError] = useState("");
+  const [resetConfirm, setResetConfirm] = useState(false);
+
+  const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: async ({ id, role }: { id: number; role: string }) =>
+      apiRequest("PUT", `/api/users/${id}`, { role }),
+    onSuccess: () => {
+      toast({ title: "Role updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update role", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const setPinMutation = useMutation({
+    mutationFn: async ({ id, pin }: { id: number; pin: string | null }) =>
+      apiRequest("PUT", `/api/users/${id}/pin`, { pin }),
+    onSuccess: () => {
+      toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      setPinDialogUser(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update PIN", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const resetAllPinsMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/users/reset-all-pins", {}),
+    onSuccess: () => {
+      toast({ title: "All PINs cleared" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      setResetConfirm(false);
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to reset PINs", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const openPinDialog = (user: any, mode: "set" | "remove") => {
+    setPinDialogUser(user);
+    setPinDialogMode(mode);
+    setNewPin("");
+    setNewPinConfirm("");
+    setPinDialogError("");
+  };
+
+  const handlePinSave = () => {
+    if (pinDialogMode === "remove") {
+      setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
+      return;
+    }
+    if (newPin.length !== 4) { setPinDialogError("PIN must be exactly 4 digits"); return; }
+    if (newPin !== newPinConfirm) { setPinDialogError("PINs do not match"); return; }
+    setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
+  };
+
+  const roleDescriptions: Record<string, string> = {
+    admin: "Full access to all features",
+    manager: "Menu, orders, reports & POS",
+    cashier: "POS & billing only",
+    kitchen: "KOT & kitchen display",
+    staff: "Basic POS access",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-muted-foreground">Assign roles and manage POS PINs for each user</p>
+        {resetConfirm ? (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
+            <Button size="sm" variant="destructive" disabled={resetAllPinsMutation.isPending}
+              onClick={() => resetAllPinsMutation.mutate()}>
+              {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Resetting...</> : "Yes, Reset"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <Button size="sm" variant="outline" className="text-destructive border-red-200 hover:bg-red-50"
+            onClick={() => setResetConfirm(true)}>
+            Reset All PINs
+          </Button>
+        )}
+      </div>
+
+      {/* Role legend */}
+      <Card className="bg-muted/30">
+        <CardContent className="pt-4 pb-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Role Permissions</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {ROLES.map(r => (
+              <div key={r} className="flex items-start gap-2">
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5 ${roleColors[r]}`}>{r}</span>
+                <span className="text-xs text-muted-foreground">{roleDescriptions[r]}</span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-muted rounded-lg animate-pulse" />)}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {users?.map((u: any) => (
+            <div key={u.id} className="border rounded-lg p-4 bg-card space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center">
+                    <User className="w-4 h-4 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">{u.username}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {u.pin ? <span className="text-green-600 flex items-center gap-1"><Shield className="w-3 h-3" />PIN set</span> : <span className="text-muted-foreground">No PIN</span>}
+                    </p>
+                  </div>
+                </div>
+                {u.id === currentUser?.id && <Badge variant="outline" className="text-xs">You</Badge>}
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Role selector */}
+                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                  <Label className="text-xs text-muted-foreground shrink-0">Role:</Label>
+                  <Select
+                    value={u.role}
+                    onValueChange={(v) => updateRoleMutation.mutate({ id: u.id, role: v })}
+                    disabled={u.id === currentUser?.id}
+                  >
+                    <SelectTrigger className="h-8 text-xs flex-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map(r => (
+                        <SelectItem key={r} value={r} className="text-xs capitalize">{r}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* PIN buttons — only for manager/admin */}
+                {(u.role === "manager" || u.role === "admin") && (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                      onClick={() => openPinDialog(u, "set")}
+                    >
+                      <Shield className="w-3 h-3" />
+                      {u.pin ? "Change PIN" : "Set PIN"}
+                    </Button>
+                    {u.pin && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs gap-1 text-destructive border-red-200 hover:bg-red-50"
+                        onClick={() => openPinDialog(u, "remove")}
+                      >
+                        Remove PIN
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* PIN Dialog */}
       <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -357,7 +415,7 @@ function UsersTab() {
             </DialogTitle>
             <DialogDescription>
               {pinDialogMode === "remove"
-                ? `Remove the PIN for "${pinDialogUser?.username}". They won't be able to authorise protected POS actions.`
+                ? `Remove the PIN for "${pinDialogUser?.username}".`
                 : `${pinDialogUser?.pin ? "Change" : "Set a"} 4-digit PIN for "${pinDialogUser?.username}".`}
             </DialogDescription>
           </DialogHeader>
@@ -366,12 +424,8 @@ function UsersTab() {
               <p className="text-sm text-muted-foreground">Are you sure you want to remove this user's PIN?</p>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button
-                  variant="destructive"
-                  disabled={setPinMutation.isPending}
-                  onClick={handlePinSave}
-                >
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Removing...</> : "Remove PIN"}
+                <Button variant="destructive" disabled={setPinMutation.isPending} onClick={handlePinSave}>
+                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Removing...</> : "Remove PIN"}
                 </Button>
               </div>
             </div>
@@ -379,130 +433,23 @@ function UsersTab() {
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>New PIN</Label>
-                <Input
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={4}
-                  placeholder="4 digits"
-                  value={newPin}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, "");
-                    setNewPin(v);
-                    setPinDialogError("");
-                  }}
-                />
+                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="4 digits"
+                  value={newPin} onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
               </div>
               <div className="space-y-2">
                 <Label>Confirm PIN</Label>
-                <Input
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={4}
-                  placeholder="Re-enter PIN"
-                  value={newPinConfirm}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, "");
-                    setNewPinConfirm(v);
-                    setPinDialogError("");
-                  }}
-                />
+                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="Re-enter PIN"
+                  value={newPinConfirm} onChange={(e) => { setNewPinConfirm(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
               </div>
               {pinDialogError && <p className="text-xs text-destructive">{pinDialogError}</p>}
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button
-                  disabled={setPinMutation.isPending || !newPin}
-                  onClick={handlePinSave}
-                >
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save PIN"}
+                <Button disabled={setPinMutation.isPending || !newPin} onClick={handlePinSave}>
+                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : "Save PIN"}
                 </Button>
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit User Dialog */}
-      <Dialog open={!!editingUser} onOpenChange={() => setEditingUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit User: {editingUser?.username}</DialogTitle>
-            <DialogDescription>Change role and set a manager PIN for protected actions</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Role selector */}
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase text-muted-foreground">Role</Label>
-              <Select value={editRole} onValueChange={setEditRole}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map(r => (
-                    <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="text-xs text-muted-foreground space-y-0.5 pt-1">
-                <p><strong>admin</strong> – Full access · <strong>manager</strong> – Menu/orders/reports</p>
-                <p><strong>cashier</strong> – POS/billing · <strong>staff</strong> – Basic access</p>
-              </div>
-            </div>
-
-            {/* PIN field — shown for manager / admin */}
-            {(editRole === "manager" || editRole === "admin") && (
-              <div className="space-y-2 border-t pt-4">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-green-600" />
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">Manager PIN</Label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  4–6 digit PIN used to authorise protected POS actions (cancel order, discounts, etc.).
-                  {editingUser?.pin ? " Currently set." : " Not set yet."}
-                </p>
-                <Input
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder={editingUser?.pin ? "Enter new PIN to change, leave blank to keep" : "Enter 4–6 digit PIN"}
-                  value={editPin}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, "");
-                    setEditPin(v);
-                    setEditPinError(v && (v.length < 4 || v.length > 6) ? "PIN must be 4–6 digits" : "");
-                  }}
-                  className="h-8"
-                />
-                {editPinError && <p className="text-xs text-destructive">{editPinError}</p>}
-                {editingUser?.pin && !editPin && (
-                  <button
-                    type="button"
-                    className="text-xs text-destructive hover:underline"
-                    onClick={() => setEditPin("__clear__")}
-                  >
-                    Remove PIN
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setEditingUser(null)}>Cancel</Button>
-              <Button
-                disabled={updateRoleMutation.isPending || !!editPinError}
-                onClick={() => {
-                  const pinValue = editPin === "__clear__" ? null : (editPin || null);
-                  // Only send pin if explicitly set or cleared
-                  const updatePayload: any = { id: editingUser.id, role: editRole };
-                  if (editPin !== "") updatePayload.pin = pinValue;
-                  updateRoleMutation.mutate(updatePayload);
-                }}
-              >
-                {updateRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save"}
-              </Button>
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
     </div>
@@ -728,8 +675,9 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue={isAdmin ? "users" : "profile"}>
-        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"}`}>
+        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-5" : "grid-cols-2"}`}>
           {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
           {isAdmin && <TabsTrigger value="categories"><Tag className="w-4 h-4 mr-1.5" />Categories</TabsTrigger>}
           <TabsTrigger value="profile"><User className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
@@ -739,6 +687,13 @@ export default function Admin() {
         {isAdmin && (
           <TabsContent value="users" className="mt-6">
             <UsersTab />
+          </TabsContent>
+        )}
+
+        {/* Roles Tab */}
+        {isAdmin && (
+          <TabsContent value="roles" className="mt-6">
+            <RolesTab />
           </TabsContent>
         )}
 
