@@ -342,9 +342,11 @@ export default function POS() {
       };
     });
     setCartItems(loadedItems);
-    setCartLoaded(true);
-    // Discount is now stored as %; existing orders reset to 0 since we stored rupees before
     setDiscountPercent(0);
+    // Pre-fill customer details — always sync with DB value
+    form.setValue("customerName", existingOrder.customerName || "");
+    form.setValue("customerPhone", existingOrder.customerPhone || "");
+    setCartLoaded(true);
   }, [existingOrder, menuItems, activeOrderId, cartLoaded]);
 
   // ── Create order mutation ────────────────────────────────────────────────────
@@ -592,6 +594,8 @@ export default function POS() {
         orderId: activeOrderId,
         items: itemsPayload,
         discountAmount: discountAmt.toFixed(2),
+        customerName: data.customerName || "",
+        customerPhone: data.customerPhone || "",
       });
     } else {
       createOrderMutation.mutate({
@@ -965,6 +969,13 @@ export default function POS() {
             className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 shrink-0"
           />
 
+          {/* Customer phone */}
+          <input
+            placeholder="Phone number"
+            {...form.register("customerPhone")}
+            className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 shrink-0"
+          />
+
           {/* Table Actions */}
           <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
             <button
@@ -1307,8 +1318,6 @@ export default function POS() {
               <span className="text-[10px] font-semibold text-gray-500 uppercase w-12 text-right">Amt</span>
             </div>
           )}
-          <span className="text-xs text-muted-foreground shrink-0">{filteredItems?.length || 0} items</span>
-
           <ScrollArea className="flex-1">
             <div className="p-3 space-y-2">
               {cartItems.length === 0 && (

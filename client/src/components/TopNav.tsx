@@ -10,6 +10,7 @@ import {
   User,
   Settings,
   LogOut,
+  ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { queryClient } from "@/lib/queryClient";
@@ -25,6 +26,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Tables",    href: "/tables",        icon: LayoutGrid },
   { label: "Orders",    href: "/orders",         icon: History },
+  { label: "KOT",       href: "/kot",            icon: ClipboardList },
   { label: "Menu",      href: "/menu",           icon: UtensilsCrossed, roles: ["admin", "manager"] },
   { label: "Inventory", href: "/inventory",      icon: Package,         roles: ["admin", "manager"] },
   { label: "Reports",   href: "/reports",        icon: BarChart3,       roles: ["admin", "manager"] },

@@ -31,7 +31,7 @@ export default function Settings() {
     phone: "",
     email: "",
     gstNumber: "",
-    taxRate: 18,
+    taxRate: 5,
     currency: "INR",
     currencySymbol: "₹",
     footerNote: "Thank you for dining with us!",

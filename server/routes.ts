@@ -688,7 +688,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      const items = await storage.getOrderItems(id);
+      const rawItems = await storage.getOrderItems(id);
+      // Build name map from all referenced menu items in one batch
+      const menuItemIds = Array.from(new Set(rawItems.map((i: any) => i.menuItemId)));
+      const menuNameMap: Record<number, string> = {};
+      await Promise.all(
+        menuItemIds.map(async (mid: any) => {
+          const m = await storage.getMenuItemById(mid);
+          if (m) menuNameMap[m.id] = m.name;
+        })
+      );
+      const items = rawItems.map((item: any) => ({
+        ...item,
+        name: menuNameMap[item.menuItemId] || "Deleted Item",
+      }));
       res.json({ ...order, items });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch order" });
@@ -744,7 +757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { items, discountAmount } = req.body;
+      const { items, discountAmount, customerName, customerPhone } = req.body;
 
       // Snapshot existing items BEFORE replacing (for delta KOT)
       const existingItems = await storage.getOrderItems(id);
@@ -776,6 +789,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalAmount: total.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: discount.toFixed(2),
+        ...(customerName !== undefined ? { customerName: customerName || null } : {}),
+        ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);
 
       // Delta KOT — only print items newly added to this order
