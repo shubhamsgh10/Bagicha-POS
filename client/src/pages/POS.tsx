@@ -12,8 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock } from "lucide-react";
@@ -38,20 +36,20 @@ type OrderForm = z.infer<typeof orderSchema>;
 
 interface SizeOption { size: string; price: number; }
 interface AddonOption { name: string; price: number; }
+interface VariantOption { name: string; price?: number; }
+interface VariantGroup { group: string; options: VariantOption[]; required?: boolean; }
 interface CartItem {
   cartKey: string;
   id: number;
   name: string;
   basePrice: number;
   addons: AddonOption[];
+  variants: Record<string, string>; // group → chosen option name
+  notes: string;
   totalPrice: number;
   quantity: number;
-  specialInstructions?: string;
   size?: string;
-  variants?: Record<string, string>;
-  notes?: string;
 }
-interface VariantGroup { group: string; required?: boolean; options: { name: string; price: number }[] }
 interface ModalState {
   item: any;
   cartKey: string | null;
@@ -65,8 +63,65 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
+function printBill(order: any, items: any[] = [], settings?: any) {
+  const win = window.open("", "_blank", "width=450,height=700");
+  if (!win) return;
+  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
+  const discount = parseFloat(order.discountAmount || "0");
+  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
+  const address = settings?.address || "";
+  const phone = settings?.phone || "";
+  const gstNumber = settings?.gstNumber || "";
+  const footerNote = settings?.footerNote || "Thank you for dining with us!";
+  win.document.write(`<html><head><title>Bill - ${order.orderNumber}</title>
+    <style>body{font-family:monospace;font-size:13px;margin:0;padding:16px;}h2{text-align:center;font-size:20px;margin:0 0 4px;}.center{text-align:center;}.divider{border-top:1px dashed #000;margin:10px 0;}.row{display:flex;justify-content:space-between;padding:2px 0;}.bold{font-weight:bold;}.large{font-size:16px;}.footer{text-align:center;margin-top:16px;font-size:12px;}</style>
+    </head><body>
+    <h2>${restaurantName.toUpperCase()}</h2>
+    ${address ? `<div class="center" style="font-size:11px">${address}</div>` : ""}
+    ${phone ? `<div class="center" style="font-size:11px">Ph: ${phone}</div>` : ""}
+    ${gstNumber ? `<div class="center" style="font-size:11px">GSTIN: ${gstNumber}</div>` : ""}
+    <div style="margin-bottom:8px"></div>
+    <div class="divider"></div>
+    <div class="row"><span>Order #</span><span class="bold">${order.orderNumber}</span></div>
+    <div class="row"><span>Type</span><span>${order.orderType}</span></div>
+    ${order.tableNumber ? `<div class="row"><span>Table</span><span>${order.tableNumber}</span></div>` : ""}
+    ${order.customerName ? `<div class="row"><span>Customer</span><span>${order.customerName}</span></div>` : ""}
+    <div class="row"><span>Date</span><span>${new Date(order.createdAt || Date.now()).toLocaleString()}</span></div>
+    <div class="divider"></div>
+    <div class="bold" style="margin-bottom:6px">ITEMS</div>
+    ${items.length > 0 ? items.map((item: any) => `<div class="row"><span>${item.name || "Item"} × ${item.quantity}</span><span>₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</span></div>`).join("") : "<div>—</div>"}
+    <div class="divider"></div>
+    <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
+    ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
+    <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount || "0").toFixed(0)}</span></div>
+    <div class="divider"></div>
+    <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
+    <div class="row" style="margin-top:4px"><span>Payment</span><span>${order.paymentMethod || "—"}</span></div>
+    <div class="footer"><div class="divider">${footerNote}<br>Please visit again</div></div>
+    </body></html>`);
+  win.document.close(); win.focus(); win.print(); win.close();
+}
+
+function printKOTSlip(items: any[], tableLabel: string | null) {
+  const win = window.open("", "_blank", "width=300,height=400");
+  if (!win) return;
+  win.document.write(`<html><head><title>KOT</title>
+    <style>body{font-family:monospace;font-size:14px;padding:12px;}h3{text-align:center;margin:0 0 8px;}.row{display:flex;justify-content:space-between;}.divider{border-top:1px dashed #000;margin:8px 0;}.bold{font-weight:bold;}</style>
+    </head><body>
+    <h3>KITCHEN ORDER TICKET</h3>
+    ${tableLabel ? `<div class="row"><span>Table:</span><span class="bold">${tableLabel}</span></div>` : ""}
+    <div class="row"><span>Time:</span><span>${new Date().toLocaleTimeString()}</span></div>
+    <div class="divider"></div>
+    ${items.map(i => `<div class="row bold"><span>${i.name}${i.size ? ` (${i.size})` : ""}</span><span>× ${i.quantity}</span></div>${i.addons?.length ? i.addons.map((a: any) => `<div style="font-size:11px;padding-left:8px">+ ${a.name}</div>`).join("") : ""}${i.variants && Object.keys(i.variants).length ? Object.entries(i.variants).map(([g,v]: any) => `<div style="font-size:11px;padding-left:8px;color:#444">▸ ${g}: ${v}</div>`).join("") : ""}${i.notes ? `<div style="font-size:11px;padding-left:8px;font-style:italic;color:#555">📝 ${i.notes}</div>` : ""}`).join("")}
+    <div class="divider"></div>
+    </body></html>`);
+  win.document.close(); win.focus(); win.print(); win.close();
+}
+
 export default function POS() {
+  const [, navigate] = useLocation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [discountPercent, setDiscountPercent] = useState(0);
@@ -95,8 +150,6 @@ export default function POS() {
   const [shortCode, setShortCode] = useState("");
   // Discount input ref (for re-focus after PIN unlock)
   const discountInputRef = useRef<HTMLInputElement>(null);
-
-  const [, navigate] = useLocation();
 
   // ── Role switcher + permission system ────────────────────────────────────────
   const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRole();
@@ -253,7 +306,7 @@ export default function POS() {
   const { toast } = useToast();
   const form = useForm<OrderForm>({
     resolver: zodResolver(orderSchema),
-    defaultValues: { orderType: "dine-in", paymentMethod: "cash" },
+    defaultValues: { orderType: editOrderId ? "dine-in" : "dine-in", paymentMethod: "cash" },
   });
 
   const { data: categories } = useQuery<any[]>({ queryKey: ["/api/categories"] });
@@ -261,67 +314,172 @@ export default function POS() {
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
   const taxRate = (settings?.taxRate ?? 18) / 100;
 
+  // Fetch existing order when in edit mode (uses activeOrderId so it updates after KOT creates order)
   const { data: existingOrder } = useQuery<any>({
     queryKey: ["/api/orders", String(activeOrderId)],
     enabled: !!activeOrderId,
+    staleTime: 0,
   });
 
+  // Load existing order items into cart (only once)
+  useEffect(() => {
+    if (!activeOrderId || !existingOrder || !menuItems || cartLoaded) return;
+    const loadedItems: CartItem[] = (existingOrder.items || []).map((item: any) => {
+      const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
+      const name = menuItem?.name || "Unknown Item";
+      const price = parseFloat(item.price);
+      return {
+        cartKey: `db-${item.id}-${item.menuItemId}`,
+        id: item.menuItemId,
+        name,
+        basePrice: price,
+        addons: [],
+        variants: {},
+        notes: item.specialInstructions || "",
+        totalPrice: price,
+        size: item.size || undefined,
+        quantity: item.quantity,
+      };
+    });
+    setCartItems(loadedItems);
+    setCartLoaded(true);
+    // Discount is now stored as %; existing orders reset to 0 since we stored rupees before
+    setDiscountPercent(0);
+  }, [existingOrder, menuItems, activeOrderId, cartLoaded]);
+
+  // ── Create order mutation ────────────────────────────────────────────────────
+
   const createOrderMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest("POST", "/api/orders", data),
-    onSuccess: () => {
-      toast({ title: "Order Placed!", description: "Order created and sent to kitchen" });
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/orders", data);
+      return res.json();
+    },
+    onSuccess: (order: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
-      setCartItems([]);
-      setDiscountPercent(0);
-      form.reset({ orderType: "dine-in", paymentMethod: "cash" });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
+
+      const mode = submitModeRef.current;
+      if (mode === "kot") {
+        toast({ title: "KOT sent!", description: "Order created and sent to kitchen" });
+        setActiveOrderId(order.id);
+        setCartLoaded(false); // allow reload of cart from new order
+      } else if (mode === "kot-print") {
+        toast({ title: "KOT sent!" });
+        setActiveOrderId(order.id);
+        setCartLoaded(false);
+        printKOTSlip(cartItems, tableLabel);
+      } else if (mode === "save") {
+        toast({ title: "Order saved!" });
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "save-print") {
+        toast({ title: "Order saved!" });
+        printBill(order, [], settings);
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "save-ebill") {
+        toast({ title: "Order saved!", description: "E-bill sent to customer" });
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "settle") {
+        settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current });
+      }
     },
     onError: (error: any) => {
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
     },
   });
 
+  // ── Update order mutation (edit mode) ────────────────────────────────────────
+
   const updateOrderMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest("PUT", `/api/orders/${activeOrderId}`, data),
-    onSuccess: () => {
-      toast({ title: "Order updated" });
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("PUT", `/api/orders/${data.orderId}/items`, data);
+      return res.json();
+    },
+    onSuccess: (order: any, vars: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(vars.orderId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
+      const mode = submitModeRef.current;
+      if (mode === "kot") {
+        toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
+      } else if (mode === "kot-print") {
+        toast({ title: "KOT sent!" });
+        printKOTSlip(cartItems, tableLabel);
+      } else if (mode === "save") {
+        toast({ title: "Order updated!" });
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "save-print") {
+        toast({ title: "Order updated!" });
+        printBill(order, existingOrder?.items || [], settings);
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "save-ebill") {
+        toast({ title: "Order updated!", description: "E-bill sent to customer" });
+        setCartItems([]); setDiscountPercent(0);
+        navigate("/tables");
+      } else if (mode === "settle") {
+        settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current });
+      }
     },
     onError: (error: any) => {
-      toast({ title: "Failed to update order", description: error.message, variant: "destructive" });
+      toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
     },
   });
 
+  // ── Settle / payment mutation ─────────────────────────────────────────────
+
   const settleMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest("POST", `/api/orders/${activeOrderId}/settle`, data),
-    onSuccess: () => {
-      toast({ title: "Order settled!" });
+    mutationFn: async ({ orderId, paymentMethod }: { orderId: number; paymentMethod: string; order?: any }) => {
+      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, { paymentMethod });
+      return res.json();
+    },
+    onSuccess: (settled: any, vars: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+      const billOrder = vars.order || settled;
+      printBill(billOrder, existingOrder?.items || [], settings);
+      toast({ title: "Payment complete!", description: "Bill printed" });
       navigate("/tables");
     },
     onError: (error: any) => {
-      toast({ title: "Failed to settle", description: error.message, variant: "destructive" });
+      toast({ title: "Settlement failed", description: error.message || "Something went wrong", variant: "destructive" });
     },
   });
 
-  // ── Modal helpers ──────────────────────────────────────────────────────────
+  // ── Unified modifier modal helpers ──────────────────────────────────────────
 
   const openPicker = (item: any) => {
     setModal({ item, cartKey: null, isEdit: false, size: null, addons: [], variants: {}, notes: "", qty: 1 });
   };
 
   const openEditPicker = (cartItem: CartItem) => {
-    const item = menuItems?.find((m: any) => m.id === cartItem.id) || { id: cartItem.id, name: cartItem.name, price: cartItem.basePrice.toString(), sizes: [], addons: [] };
+    const menuItem = menuItems?.find((m: any) => m.id === cartItem.id);
+    if (!menuItem) return;
+    let size: SizeOption | null = null;
+    if (cartItem.size && menuItem.sizes) {
+      const matched = menuItem.sizes.find((s: any) => s.size === cartItem.size);
+      if (matched) size = { size: matched.size, price: Number(matched.price) };
+    }
     setModal({
-      item,
-      cartKey: cartItem.cartKey,
+      item: menuItem,
       isEdit: true,
-      size: cartItem.size ? { size: cartItem.size, price: cartItem.basePrice } : null,
-      addons: cartItem.addons,
-      variants: cartItem.variants || {},
+      cartKey: cartItem.cartKey,
+      size,
+      addons: [...cartItem.addons],
+      variants: { ...cartItem.variants },
       notes: cartItem.notes || "",
       qty: cartItem.quantity,
     });
@@ -329,37 +487,47 @@ export default function POS() {
 
   const confirmModal = () => {
     if (!modal) return;
-    const { item, cartKey, isEdit, size, addons, variants, notes, qty } = modal;
+    const { item, isEdit, cartKey, size, addons, variants, notes, qty } = modal;
     const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
     if (hasSizes && !size) return;
-    const basePrice = hasSizes && size ? Number(size.price) : parseFloat(item.price || "0");
+
     const variantGroups: VariantGroup[] = Array.isArray(item.variants) ? item.variants : [];
-    const addonTotal = addons.reduce((s: number, a: AddonOption) => s + Number(a.price), 0);
+    const missingRequired = variantGroups.find(g => g.required && !variants[g.group]);
+    if (missingRequired) {
+      toast({ title: `Please select ${missingRequired.group}`, variant: "destructive" });
+      return;
+    }
+
+    const basePrice = hasSizes ? Number(size!.price) : parseFloat(item.price || "0");
+    const addonTotal = addons.reduce((s, a) => s + Number(a.price), 0);
     const variantTotal = variantGroups.reduce((s, g) => {
-      const opt = g.options.find(o => o.name === variants[g.group]);
+      const chosen = variants[g.group];
+      const opt = g.options.find(o => o.name === chosen);
       return s + Number(opt?.price || 0);
     }, 0);
     const totalPrice = basePrice + addonTotal + variantTotal;
+    const sizePart = size?.size || "";
+    const addonPart = [...addons].map(a => a.name).sort().join(",");
+    const variantPart = Object.values(variants).join("-");
+    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}`;
+    const uniqueKey = notes ? `${mergeKey}-${Date.now()}` : mergeKey;
 
-    if (isEdit && cartKey) {
+    if (isEdit) {
       setCartItems(prev => prev.map(c => c.cartKey === cartKey
-        ? { ...c, basePrice, addons, totalPrice, quantity: qty, size: size?.size, variants, notes, specialInstructions: notes }
+        ? { ...c, basePrice, addons, variants, notes, totalPrice, size: sizePart || undefined, quantity: qty }
         : c
       ));
     } else {
-      const sortedAddonNames = [...addons].map(a => a.name).sort().join(",");
-      const variantStr = Object.entries(variants).sort().map(([k, v]) => `${k}:${v}`).join(",");
-      const newCartKey = `${item.id}-${size?.size || ""}-${sortedAddonNames}-${variantStr}`;
       setCartItems(prev => {
-        const existing = prev.find(c => c.cartKey === newCartKey);
-        if (existing) return prev.map(c => c.cartKey === newCartKey ? { ...c, quantity: c.quantity + qty } : c);
-        return [...prev, { cartKey: newCartKey, id: item.id, name: item.name, basePrice, addons, totalPrice, quantity: qty, size: size?.size, variants, notes, specialInstructions: notes }];
+        const existing = !notes ? prev.find(c => c.cartKey === mergeKey) : null;
+        if (existing) return prev.map(c => c.cartKey === mergeKey ? { ...c, quantity: c.quantity + qty } : c);
+        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined }];
       });
     }
     setModal(null);
   };
 
-  // ── Cart helpers ────────────────────────────────────────────────────────────
+  // ── Cart helpers ─────────────────────────────────────────────────────────────
 
   const directAddItem = (item: any) => {
     const basePrice = parseFloat(item.price || "0");
@@ -367,7 +535,7 @@ export default function POS() {
     setCartItems(prev => {
       const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], totalPrice: basePrice, quantity: 1 }];
+      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1 }];
     });
   };
 
@@ -377,7 +545,7 @@ export default function POS() {
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
   };
 
-  // ── Filter ──────────────────────────────────────────────────────────────────
+  // ── Filter ───────────────────────────────────────────────────────────────────
 
   const filteredItems = menuItems?.filter((item: any) => {
     const matchCat = selectedCategory === "all" || item.categoryId === selectedCategory;
@@ -385,42 +553,55 @@ export default function POS() {
     return matchCat && matchSearch;
   });
 
-  // ── Totals ──────────────────────────────────────────────────────────────────
+  // ── Totals ───────────────────────────────────────────────────────────────────
 
   const subtotal = cartItems.reduce((s, i) => s + i.totalPrice * i.quantity, 0);
-  const discount = subtotal * discountPercent / 100;
-  const discountAmt = Math.min(discount, subtotal);
+  const discountAmt = subtotal * Math.min(discountPercent, 100) / 100;
   const taxable = subtotal - discountAmt;
   const tax = taxable * taxRate;
   const total = taxable + tax;
+
+  // ── Submit ───────────────────────────────────────────────────────────────────
 
   const onSubmit = (data: OrderForm) => {
     if (cartItems.length === 0) {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
       return;
     }
-    const payload = {
-      ...data,
-      totalAmount: total.toFixed(2),
-      taxAmount: tax.toFixed(2),
-      discountAmount: discountAmt.toFixed(2),
-      paymentMethod: paymentMethodRef.current,
-      items: cartItems.map(c => ({
-        menuItemId: c.id,
-        quantity: c.quantity,
-        price: c.totalPrice.toFixed(2),
-        specialInstructions: c.specialInstructions || "",
-        name: c.size ? `${c.name} (${c.size})` : c.name,
-        size: c.size || null,
-        addons: c.addons,
-      })),
+
+    const buildInstructions = (c: CartItem) => {
+      const parts: string[] = [];
+      const variantEntries = Object.entries(c.variants);
+      if (variantEntries.length) parts.push(variantEntries.map(([g, v]) => `${g}: ${v}`).join(", "));
+      if (c.notes) parts.push(`Note: ${c.notes}`);
+      return parts.join(" | ");
     };
-    if (submitModeRef.current === "settle") {
-      settleMutation.mutate({ paymentMethod: paymentMethodRef.current, isPaid });
-    } else if (activeOrderId) {
-      updateOrderMutation.mutate(payload);
+
+    const itemsPayload = cartItems.map(c => ({
+      menuItemId: c.id,
+      quantity: c.quantity,
+      price: c.totalPrice.toFixed(2),
+      specialInstructions: buildInstructions(c),
+      name: c.size ? `${c.name} (${c.size})` : c.name,
+      size: c.size || null,
+      addons: c.addons,
+    }));
+
+    if (activeOrderId) {
+      updateOrderMutation.mutate({
+        orderId: activeOrderId,
+        items: itemsPayload,
+        discountAmount: discountAmt.toFixed(2),
+      });
     } else {
-      createOrderMutation.mutate(payload);
+      createOrderMutation.mutate({
+        ...data,
+        totalAmount: total.toFixed(2),
+        taxAmount: tax.toFixed(2),
+        discountAmount: discountAmt.toFixed(2),
+        ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
+        items: itemsPayload,
+      });
     }
   };
 
@@ -451,6 +632,7 @@ export default function POS() {
     const go = () => { submitModeRef.current = "save-ebill"; triggerSubmit(); };
     isStaff ? requirePin("Save & E-Bill", go) : go();
   };
+
 
   const handleComplimentary = () => requirePin("Complimentary (100% Discount)", () => setDiscountPercent(100));
 
@@ -517,26 +699,99 @@ export default function POS() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Move Table</DialogTitle>
-            <DialogDescription>Select a free table to move this order to</DialogDescription>
+            <DialogDescription>Select a free table to move this order to.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {freeTables.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No free tables available</p>
-            ) : (
-              freeTables.map((t: any) => (
-                <button
-                  key={t.id}
-                  disabled={actionLoading}
-                  onClick={() => handleMoveTable(t)}
-                  className="w-full text-left px-4 py-3 rounded-lg border hover:border-green-500 hover:bg-green-50 transition-colors text-sm font-medium"
-                >
-                  {t.name}
-                </button>
-              ))
+          <div className="space-y-2 max-h-64 overflow-y-auto py-1">
+            {freeTables.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">No free tables available</p>
             )}
+            {freeTables.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => handleMoveTable(t)}
+                disabled={actionLoading}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border hover:border-primary hover:bg-primary/5 transition-colors text-sm"
+              >
+                <span className="font-medium">{t.name}</span>
+                <span className="text-xs text-muted-foreground capitalize">{t.section} · {t.capacity} seats</span>
+              </button>
+            ))}
           </div>
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => setShowMoveDialog(false)}>Cancel</Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Merge Table Dialog ───────────────────────────────────────────────── */}
+      <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Merge Table</DialogTitle>
+            <DialogDescription>Select a running table to merge into this order.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-64 overflow-y-auto py-1">
+            {runningTables.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">No other running tables</p>
+            )}
+            {runningTables.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => handleMergeTable(t)}
+                disabled={actionLoading || !t.currentOrderId}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-blue-200 hover:border-primary hover:bg-primary/5 transition-colors text-sm"
+              >
+                <span className="font-medium">{t.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t.runningTotal ? `₹${t.runningTotal}` : ""} · {t.section}
+                </span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Split Bill Dialog ────────────────────────────────────────────────── */}
+      <Dialog open={showSplitDialog} onOpenChange={setShowSplitDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Split Bill</DialogTitle>
+            <DialogDescription>Select items to split into a separate order.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-64 overflow-y-auto py-1">
+            {(existingOrder?.items || []).length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">No saved items to split</p>
+            )}
+            {(existingOrder?.items || []).map((item: any) => {
+              const menuItem = menuItems?.find((m: any) => m.id === item.menuItemId);
+              const name = menuItem?.name || `Item #${item.menuItemId}`;
+              const checked = splitSelectedIds.includes(item.id);
+              return (
+                <label
+                  key={item.id}
+                  className={`flex items-center justify-between px-4 py-3 rounded-xl border cursor-pointer transition-colors ${
+                    checked ? "border-primary bg-primary/5" : "hover:border-primary/50"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSplitItem(item.id)}
+                      className="accent-primary w-4 h-4"
+                    />
+                    <span className="text-sm font-medium">{name}{item.size ? ` (${item.size})` : ""}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">×{item.quantity} · ₹{parseFloat(item.price) * item.quantity}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowSplitDialog(false)}>Cancel</Button>
+            <Button
+              disabled={splitSelectedIds.length === 0 || actionLoading}
+              onClick={handleSplitBill}
+            >
+              Split {splitSelectedIds.length > 0 ? `(${splitSelectedIds.length})` : ""}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -946,7 +1201,11 @@ export default function POS() {
           <div className="flex-1 overflow-y-auto py-1">
             <button
               onClick={() => setSelectedCategory("all")}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${selectedCategory === "all" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-foreground"}`}
+              className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-l-[3px] ${
+                selectedCategory === "all"
+                  ? "border-green-600 bg-green-50 text-green-700"
+                  : "border-transparent text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              }`}
             >
               All Items
             </button>
@@ -954,7 +1213,11 @@ export default function POS() {
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${selectedCategory === cat.id ? "bg-primary text-primary-foreground" : "hover:bg-muted text-foreground"}`}
+                className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-l-[3px] ${
+                  selectedCategory === cat.id
+                    ? "border-green-600 bg-green-50 text-green-700"
+                    : "border-transparent text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                }`}
               >
                 {cat.name}
               </button>

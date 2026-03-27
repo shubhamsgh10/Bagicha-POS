@@ -57,6 +57,17 @@
     @apply border-border;
   }
 
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
     font-family: 'Roboto', sans-serif;

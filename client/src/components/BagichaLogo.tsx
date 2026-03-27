@@ -1,31 +1,34 @@
-import { Leaf } from "lucide-react";
-
 interface BagichaLogoProps {
   size?: "sm" | "md" | "lg";
   showIcon?: boolean;
 }
 
 export function BagichaLogo({ size = "md", showIcon = true }: BagichaLogoProps) {
-  const sizeClasses = {
+  const textSizes = {
     sm: "text-lg",
     md: "text-xl",
-    lg: "text-2xl"
+    lg: "text-2xl",
   };
 
-  const iconSizes = {
-    sm: "w-5 h-5",
-    md: "w-6 h-6",
-    lg: "w-8 h-8"
+  const imgSizes = {
+    sm: 32,
+    md: 38,
+    lg: 48,
   };
 
   return (
-    <div className="flex items-center space-x-2">
+    <div className="flex items-center gap-2">
       {showIcon && (
-        <div className="bg-primary rounded-lg p-1.5">
-          <Leaf className={`${iconSizes[size]} text-white`} />
-        </div>
+        <img
+          src="/bagicha-logo.png"
+          alt="Bagicha logo"
+          width={imgSizes[size]}
+          height={imgSizes[size]}
+          className="shrink-0"
+          style={{ objectFit: "contain", mixBlendMode: "multiply" }}
+        />
       )}
-      <div className={`bagicha-logo ${sizeClasses[size]}`}>
+      <div className={`bagicha-logo ${textSizes[size]}`}>
         <span className="bag">BAG</span>
         <span className="icha">ICHA</span>
       </div>
