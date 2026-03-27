@@ -176,8 +176,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-<<<<<<< Updated upstream
-=======
   // ── Manager PIN verification ───────────────────────────────────────────────────
 
   app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
@@ -227,7 +225,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
->>>>>>> Stashed changes
   // ── User Management (Admin only) ──────────────────────────────────────────────
 
   app.get("/api/users", requireAdmin, async (req, res) => {
@@ -265,18 +262,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const currentUser = req.user as any;
-      const { role, username, password } = req.body;
+      const { role, username, password, pin } = req.body;
       const updateData: any = {};
       if (role) updateData.role = role;
-<<<<<<< Updated upstream
-=======
       if (pin !== undefined) {
-        if (pin && !/^\d{4}$/.test(String(pin))) {
+        if (pin && !/^\d{4,6}$/.test(String(pin))) {
           return res.status(400).json({ message: "PIN must be 4-6 digits" });
         }
         updateData.pin = pin ? String(pin) : null;
       }
->>>>>>> Stashed changes
       if (username) {
         const existing = await storage.getUserByUsername(username.trim());
         if (existing && existing.id !== id) return res.status(409).json({ message: "Username already taken" });
