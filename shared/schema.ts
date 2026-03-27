@@ -34,6 +34,7 @@ export const menuItems = pgTable("menu_items", {
   addons: json("addons").$type<Array<{ name: string; price: number }>>(),
   variants: json("variants").$type<Array<{ group: string; options: Array<{ name: string; price?: number }>; required?: boolean }>>(),
   notesAllowed: boolean("notes_allowed").notNull().default(true),
+  shortCode: text("short_code"),
 });
 
 export const inventory = pgTable("inventory", {

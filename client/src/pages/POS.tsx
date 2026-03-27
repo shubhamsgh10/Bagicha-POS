@@ -102,6 +102,47 @@ function printBill(order: any, items: any[] = [], settings?: any) {
   win.document.close(); win.focus(); win.print(); win.close();
 }
 
+function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetWindow?: Window | null) {
+  const phone = order.customerPhone?.replace(/\D/g, "");
+  if (!phone) {
+    if (targetWindow) targetWindow.close();
+    return false;
+  }
+  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
+  const address = settings?.address ? `\n${settings.address}` : "";
+  const itemLines = items.length > 0
+    ? items.map((i: any) => `  • ${i.name || "Item"} × ${i.quantity}  ₹${(parseFloat(i.price) * i.quantity).toFixed(0)}`).join("\n")
+    : "";
+  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
+  const discount = parseFloat(order.discountAmount || "0");
+  const tax = parseFloat(order.taxAmount || "0");
+  const total = parseFloat(order.totalAmount);
+  const lines = [
+    `🧾 *${restaurantName}*${address}`,
+    ``,
+    `Order: *${order.orderNumber}*`,
+    order.tableNumber ? `Table: ${order.tableNumber}` : null,
+    order.customerName ? `Name: ${order.customerName}` : null,
+    ``,
+    `*ITEMS*`,
+    itemLines,
+    ``,
+    `Subtotal: ₹${subtotal.toFixed(0)}`,
+    discount > 0 ? `Discount: -₹${discount.toFixed(0)}` : null,
+    `Tax: ₹${tax.toFixed(0)}`,
+    `*TOTAL: ₹${total.toFixed(0)}*`,
+    ``,
+    settings?.footerNote || "Thank you for dining with us!",
+  ].filter(l => l !== null).join("\n");
+  const url = `https://wa.me/${phone.startsWith("91") ? phone : "91" + phone}?text=${encodeURIComponent(lines)}`;
+  if (targetWindow) {
+    targetWindow.location.href = url;
+  } else {
+    window.open(url, "_blank");
+  }
+  return true;
+}
+
 function printKOTSlip(items: any[], tableLabel: string | null) {
   const win = window.open("", "_blank", "width=300,height=400");
   if (!win) return;
@@ -125,6 +166,8 @@ export default function POS() {
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [discountPercent, setDiscountPercent] = useState(0);
+  const [serviceCharge, setServiceCharge] = useState(0);
+  const [containerCharge, setContainerCharge] = useState(0);
 
   // Unified modifier modal state (handles both add-new and edit-existing)
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -376,16 +419,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
         printBill(order, [], settings);
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
-        toast({ title: "Order saved!", description: "E-bill sent to customer" });
-        setCartItems([]); setDiscountPercent(0);
+        toast({ title: "Order saved!", description: "WhatsApp bill sent" });
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current });
@@ -419,16 +462,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         printBill(order, existingOrder?.items || [], settings);
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
-        toast({ title: "Order updated!", description: "E-bill sent to customer" });
-        setCartItems([]); setDiscountPercent(0);
+        toast({ title: "Order updated!", description: "WhatsApp bill sent" });
+        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current });
@@ -562,6 +605,10 @@ export default function POS() {
   const taxable = subtotal - discountAmt;
   const tax = taxable * taxRate;
   const total = taxable + tax;
+  const currentOrderType = form.watch("orderType");
+  const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
+  const appliedContainerCharge = isDeliveryOrPickup ? containerCharge : 0;
+  const grandTotal = total + serviceCharge + appliedContainerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
 
@@ -600,7 +647,7 @@ export default function POS() {
     } else {
       createOrderMutation.mutate({
         ...data,
-        totalAmount: total.toFixed(2),
+        totalAmount: grandTotal.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: discountAmt.toFixed(2),
         ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
@@ -633,7 +680,41 @@ export default function POS() {
     isStaff ? requirePin("Save & Print Bill", go) : go();
   };
   const handleSaveEBill = () => {
-    const go = () => { submitModeRef.current = "save-ebill"; triggerSubmit(); };
+    const go = () => {
+      // Build and open WhatsApp URL right here — synchronous with user click, browser never blocks it
+      const formData = form.getValues();
+      const rawPhone = formData.customerPhone?.replace(/\D/g, "");
+      if (!rawPhone) {
+        toast({ title: "No phone number", description: "Enter a customer phone number first", variant: "destructive" });
+        return;
+      }
+      const rName = settings?.restaurantName || "Bagicha Restaurant";
+      const addr = settings?.address ? `\n${settings.address}` : "";
+      const itemLines = cartItems.map(c => `  • ${c.name} × ${c.quantity}  ₹${(c.totalPrice * c.quantity).toFixed(0)}`).join("\n");
+      const msgLines = [
+        `🧾 *${rName}*${addr}`,
+        ``,
+        existingOrder?.orderNumber ? `Order: *${existingOrder.orderNumber}*` : null,
+        formData.tableNumber ? `Table: ${formData.tableNumber}` : null,
+        formData.customerName ? `Name: ${formData.customerName}` : null,
+        ``,
+        `*ITEMS*`,
+        itemLines || "—",
+        ``,
+        `Subtotal: ₹${subtotal.toFixed(0)}`,
+        discountAmt > 0 ? `Discount: -₹${discountAmt.toFixed(0)}` : null,
+        `Tax: ₹${tax.toFixed(0)}`,
+        serviceCharge > 0 ? `Service Charge: ₹${serviceCharge.toFixed(0)}` : null,
+        appliedContainerCharge > 0 ? `Container Charge: ₹${appliedContainerCharge.toFixed(0)}` : null,
+        `*TOTAL: ₹${grandTotal.toFixed(0)}*`,
+        ``,
+        settings?.footerNote || "Thank you for dining with us!",
+      ].filter(l => l !== null).join("\n");
+      const phone = rawPhone.startsWith("91") ? rawPhone : "91" + rawPhone;
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msgLines)}`, "_blank");
+      submitModeRef.current = "save-ebill";
+      triggerSubmit();
+    };
     isStaff ? requirePin("Save & E-Bill", go) : go();
   };
 
@@ -908,7 +989,7 @@ export default function POS() {
           {/* New Order — admin only */}
           <button
             disabled={!can("newOrder")}
-            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
+            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0); })}
             className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
           >
             + New Order
@@ -1300,7 +1381,7 @@ export default function POS() {
             {hasItems && (
               <button
                 disabled={activeRole === "staff"}
-                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
+                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0); })}
                 className="text-[10px] text-gray-400 hover:text-green-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
               >
                 Clear all
@@ -1429,9 +1510,39 @@ export default function POS() {
               <span>Tax ({settings?.taxRate ?? 18}%)</span>
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
+            {/* Service Charge — always visible */}
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-gray-500 flex-1">Service Charge</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={serviceCharge || ""}
+                onChange={(e) => setServiceCharge(Math.max(0, parseFloat(e.target.value) || 0))}
+                placeholder="0"
+                className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
+              />
+              <span className="text-gray-400 text-[10px]">₹</span>
+            </div>
+            {/* Container Charge — delivery & pickup only */}
+            {isDeliveryOrPickup && (
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-gray-500 flex-1">Container Charge</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={containerCharge || ""}
+                  onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="0"
+                  className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
+                />
+                <span className="text-gray-400 text-[10px]">₹</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1.5 mt-0.5">
               <span className="text-gray-800">Total</span>
-              <span className="text-green-600 text-base">{fmt(total)}</span>
+              <span className="text-green-600 text-base">{fmt(grandTotal)}</span>
             </div>
           </div>
 
