@@ -95,6 +95,7 @@ function UsersTab() {
   const [newPin, setNewPin] = useState("");
   const [newPinConfirm, setNewPinConfirm] = useState("");
   const [pinDialogError, setPinDialogError] = useState("");
+  const [resetConfirm, setResetConfirm] = useState(false);
 
   const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
@@ -117,16 +118,8 @@ function UsersTab() {
   });
 
   const updateRoleMutation = useMutation({
-<<<<<<< Updated upstream
     mutationFn: async ({ id, role }: { id: number; role: string }) =>
       apiRequest("PUT", `/api/users/${id}`, { role }),
-=======
-    mutationFn: async ({ id, role, pin }: { id: number; role: string; pin?: string | null }) => {
-      const body: any = { role };
-      if (pin !== undefined) body.pin = pin;
-      return apiRequest("PUT", `/api/users/${id}`, body);
-    },
->>>>>>> Stashed changes
     onSuccess: () => {
       toast({ title: "Role updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -201,19 +194,29 @@ function UsersTab() {
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">{users?.length || 0} users in the system</p>
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-destructive border-red-200 hover:bg-red-50"
-            disabled={resetAllPinsMutation.isPending}
-            onClick={() => {
-              if (confirm("Clear ALL PINs for every user? You will need to set them again.")) {
-                resetAllPinsMutation.mutate();
-              }
-            }}
-          >
-            {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Resetting...</> : "Reset All PINs"}
-          </Button>
+          {resetConfirm ? (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={resetAllPinsMutation.isPending}
+                onClick={() => { setResetConfirm(false); resetAllPinsMutation.mutate(); }}
+              >
+                {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Resetting...</> : "Yes, Reset"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive border-red-200 hover:bg-red-50"
+              onClick={() => setResetConfirm(true)}
+            >
+              Reset All PINs
+            </Button>
+          )}
           <Button size="sm" onClick={() => setShowAddUser(true)}>
             <Plus className="w-4 h-4 mr-1" /> Add User
           </Button>
@@ -243,8 +246,6 @@ function UsersTab() {
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[u.role] || roleColors.staff}`}>
                   {u.role}
                 </span>
-<<<<<<< Updated upstream
-=======
                 {(u.role === "manager" || u.role === "admin") && (
                   <>
                     <Button
@@ -268,7 +269,6 @@ function UsersTab() {
                     )}
                   </>
                 )}
->>>>>>> Stashed changes
                 {u.id !== currentUser?.id && (
                   <>
                     <Button
@@ -345,9 +345,6 @@ function UsersTab() {
         </DialogContent>
       </Dialog>
 
-<<<<<<< Updated upstream
-      {/* Edit Role Dialog */}
-=======
       {/* PIN Set/Change/Remove Dialog */}
       <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
         <DialogContent className="max-w-sm">
@@ -426,7 +423,6 @@ function UsersTab() {
       </Dialog>
 
       {/* Edit User Dialog */}
->>>>>>> Stashed changes
       <Dialog open={!!editingUser} onOpenChange={() => setEditingUser(null)}>
         <DialogContent>
           <DialogHeader>
@@ -449,50 +445,7 @@ function UsersTab() {
               <p><strong>kitchen</strong> – KOT view only</p>
               <p><strong>staff</strong> – Basic access</p>
             </div>
-<<<<<<< Updated upstream
             <div className="flex justify-end gap-2">
-=======
-
-            {/* PIN field — shown for manager / admin */}
-            {(editRole === "manager" || editRole === "admin") && (
-              <div className="space-y-2 border-t pt-4">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-green-600" />
-                  <Label className="text-xs font-semibold uppercase text-muted-foreground">Manager PIN</Label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  4–6 digit PIN used to authorise protected POS actions (cancel order, discounts, etc.).
-                  {editingUser?.pin ? " Currently set." : " Not set yet."}
-                </p>
-                <Input
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder={editingUser?.pin ? "Enter new PIN to change, leave blank to keep" : "Enter 4–6 digit PIN"}
-                  value={editPin}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, "");
-                    setEditPin(v);
-                    setEditPinError(v && v.length !== 4 ? "PIN must be exactly 4 digits" : "");
-                  }}
-                  className="h-8"
-                />
-                {editPinError && <p className="text-xs text-destructive">{editPinError}</p>}
-                {editingUser?.pin && !editPin && (
-                  <button
-                    type="button"
-                    className="text-xs text-destructive hover:underline"
-                    onClick={() => setEditPin("__clear__")}
-                  >
-                    Remove PIN
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
->>>>>>> Stashed changes
               <Button variant="outline" onClick={() => setEditingUser(null)}>Cancel</Button>
               <Button
                 disabled={updateRoleMutation.isPending}

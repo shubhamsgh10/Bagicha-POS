@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,18 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-<<<<<<< Updated upstream
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Plus, Minus, X, ShoppingCart, Search, Trash2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-=======
 
 import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -35,7 +23,7 @@ import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRole } from "@/hooks/useActiveRole";
 import { usePermission } from "@/hooks/usePermission";
->>>>>>> Stashed changes
+import { useLocation } from "wouter";
 
 const orderSchema = z.object({
   customerName: z.string().optional(),
@@ -60,6 +48,19 @@ interface CartItem {
   quantity: number;
   specialInstructions?: string;
   size?: string;
+  variants?: Record<string, string>;
+  notes?: string;
+}
+interface VariantGroup { group: string; required?: boolean; options: { name: string; price: number }[] }
+interface ModalState {
+  item: any;
+  cartKey: string | null;
+  isEdit: boolean;
+  size: SizeOption | null;
+  addons: AddonOption[];
+  variants: Record<string, string>;
+  notes: string;
+  qty: number;
 }
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
@@ -68,14 +69,8 @@ export default function POS() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [discount, setDiscount] = useState(0);
+  const [discountPercent, setDiscountPercent] = useState(0);
 
-<<<<<<< Updated upstream
-  // Picker state (size + addons)
-  const [pickerItem, setPickerItem] = useState<any | null>(null);
-  const [chosenSize, setChosenSize] = useState<SizeOption | null>(null);
-  const [chosenAddons, setChosenAddons] = useState<AddonOption[]>([]);
-=======
   // Unified modifier modal state (handles both add-new and edit-existing)
   const [modal, setModal] = useState<ModalState | null>(null);
 
@@ -100,6 +95,8 @@ export default function POS() {
   const [shortCode, setShortCode] = useState("");
   // Discount input ref (for re-focus after PIN unlock)
   const discountInputRef = useRef<HTMLInputElement>(null);
+
+  const [, navigate] = useLocation();
 
   // ── Role switcher + permission system ────────────────────────────────────────
   const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRole();
@@ -252,7 +249,6 @@ export default function POS() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
->>>>>>> Stashed changes
 
   const { toast } = useToast();
   const form = useForm<OrderForm>({
@@ -265,6 +261,11 @@ export default function POS() {
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
   const taxRate = (settings?.taxRate ?? 18) / 100;
 
+  const { data: existingOrder } = useQuery<any>({
+    queryKey: ["/api/orders", String(activeOrderId)],
+    enabled: !!activeOrderId,
+  });
+
   const createOrderMutation = useMutation({
     mutationFn: async (data: any) => apiRequest("POST", "/api/orders", data),
     onSuccess: () => {
@@ -273,7 +274,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
       setCartItems([]);
-      setDiscount(0);
+      setDiscountPercent(0);
       form.reset({ orderType: "dine-in", paymentMethod: "cash" });
     },
     onError: (error: any) => {
@@ -281,42 +282,81 @@ export default function POS() {
     },
   });
 
-  // ── Picker helpers ──────────────────────────────────────────────────────────
+  const updateOrderMutation = useMutation({
+    mutationFn: async (data: any) => apiRequest("PUT", `/api/orders/${activeOrderId}`, data),
+    onSuccess: () => {
+      toast({ title: "Order updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to update order", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const settleMutation = useMutation({
+    mutationFn: async (data: any) => apiRequest("POST", `/api/orders/${activeOrderId}/settle`, data),
+    onSuccess: () => {
+      toast({ title: "Order settled!" });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      navigate("/tables");
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to settle", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // ── Modal helpers ──────────────────────────────────────────────────────────
 
   const openPicker = (item: any) => {
-    setPickerItem(item);
-    setChosenSize(null);
-    setChosenAddons([]);
-  };
-  const closePicker = () => { setPickerItem(null); setChosenSize(null); setChosenAddons([]); };
-
-  const toggleAddon = (addon: AddonOption) => {
-    setChosenAddons(prev =>
-      prev.some(a => a.name === addon.name)
-        ? prev.filter(a => a.name !== addon.name)
-        : [...prev, addon]
-    );
+    setModal({ item, cartKey: null, isEdit: false, size: null, addons: [], variants: {}, notes: "", qty: 1 });
   };
 
-  const pickerHasSizes = pickerItem && Array.isArray(pickerItem.sizes) && pickerItem.sizes.length > 0;
-  const pickerBasePrice = pickerHasSizes && chosenSize ? Number(chosenSize.price) : parseFloat(pickerItem?.price || "0");
-  const pickerTotal = pickerBasePrice + chosenAddons.reduce((s, a) => s + Number(a.price), 0);
-
-  const confirmAndAdd = () => {
-    if (!pickerItem || (pickerHasSizes && !chosenSize)) return;
-    const basePrice = pickerHasSizes ? Number(chosenSize!.price) : parseFloat(pickerItem.price || "0");
-    const addonTotal = chosenAddons.reduce((s, a) => s + Number(a.price), 0);
-    const totalPrice = basePrice + addonTotal;
-    const size = chosenSize?.size;
-    const sortedAddonNames = [...chosenAddons].map(a => a.name).sort().join(",");
-    const cartKey = `${pickerItem.id}-${size || ""}-${sortedAddonNames}`;
-
-    setCartItems(prev => {
-      const existing = prev.find(c => c.cartKey === cartKey);
-      if (existing) return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { cartKey, id: pickerItem.id, name: pickerItem.name, basePrice, addons: chosenAddons, totalPrice, quantity: 1, size }];
+  const openEditPicker = (cartItem: CartItem) => {
+    const item = menuItems?.find((m: any) => m.id === cartItem.id) || { id: cartItem.id, name: cartItem.name, price: cartItem.basePrice.toString(), sizes: [], addons: [] };
+    setModal({
+      item,
+      cartKey: cartItem.cartKey,
+      isEdit: true,
+      size: cartItem.size ? { size: cartItem.size, price: cartItem.basePrice } : null,
+      addons: cartItem.addons,
+      variants: cartItem.variants || {},
+      notes: cartItem.notes || "",
+      qty: cartItem.quantity,
     });
-    closePicker();
+  };
+
+  const confirmModal = () => {
+    if (!modal) return;
+    const { item, cartKey, isEdit, size, addons, variants, notes, qty } = modal;
+    const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
+    if (hasSizes && !size) return;
+    const basePrice = hasSizes && size ? Number(size.price) : parseFloat(item.price || "0");
+    const variantGroups: VariantGroup[] = Array.isArray(item.variants) ? item.variants : [];
+    const addonTotal = addons.reduce((s: number, a: AddonOption) => s + Number(a.price), 0);
+    const variantTotal = variantGroups.reduce((s, g) => {
+      const opt = g.options.find(o => o.name === variants[g.group]);
+      return s + Number(opt?.price || 0);
+    }, 0);
+    const totalPrice = basePrice + addonTotal + variantTotal;
+
+    if (isEdit && cartKey) {
+      setCartItems(prev => prev.map(c => c.cartKey === cartKey
+        ? { ...c, basePrice, addons, totalPrice, quantity: qty, size: size?.size, variants, notes, specialInstructions: notes }
+        : c
+      ));
+    } else {
+      const sortedAddonNames = [...addons].map(a => a.name).sort().join(",");
+      const variantStr = Object.entries(variants).sort().map(([k, v]) => `${k}:${v}`).join(",");
+      const newCartKey = `${item.id}-${size?.size || ""}-${sortedAddonNames}-${variantStr}`;
+      setCartItems(prev => {
+        const existing = prev.find(c => c.cartKey === newCartKey);
+        if (existing) return prev.map(c => c.cartKey === newCartKey ? { ...c, quantity: c.quantity + qty } : c);
+        return [...prev, { cartKey: newCartKey, id: item.id, name: item.name, basePrice, addons, totalPrice, quantity: qty, size: size?.size, variants, notes, specialInstructions: notes }];
+      });
+    }
+    setModal(null);
   };
 
   // ── Cart helpers ────────────────────────────────────────────────────────────
@@ -348,6 +388,7 @@ export default function POS() {
   // ── Totals ──────────────────────────────────────────────────────────────────
 
   const subtotal = cartItems.reduce((s, i) => s + i.totalPrice * i.quantity, 0);
+  const discount = subtotal * discountPercent / 100;
   const discountAmt = Math.min(discount, subtotal);
   const taxable = subtotal - discountAmt;
   const tax = taxable * taxRate;
@@ -358,11 +399,12 @@ export default function POS() {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
       return;
     }
-    createOrderMutation.mutate({
+    const payload = {
       ...data,
       totalAmount: total.toFixed(2),
       taxAmount: tax.toFixed(2),
       discountAmount: discountAmt.toFixed(2),
+      paymentMethod: paymentMethodRef.current,
       items: cartItems.map(c => ({
         menuItemId: c.id,
         quantity: c.quantity,
@@ -372,17 +414,16 @@ export default function POS() {
         size: c.size || null,
         addons: c.addons,
       })),
-    });
+    };
+    if (submitModeRef.current === "settle") {
+      settleMutation.mutate({ paymentMethod: paymentMethodRef.current, isPaid });
+    } else if (activeOrderId) {
+      updateOrderMutation.mutate(payload);
+    } else {
+      createOrderMutation.mutate(payload);
+    }
   };
 
-<<<<<<< Updated upstream
-  // ── UI ──────────────────────────────────────────────────────────────────────
-
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* ── Picker Dialog ───────────────────────────────────────────────────── */}
-      <Dialog open={!!pickerItem} onOpenChange={closePicker}>
-=======
   const isPending = createOrderMutation.isPending || updateOrderMutation.isPending || settleMutation.isPending;
   const isEditMode = !!activeOrderId;
 
@@ -473,72 +514,33 @@ export default function POS() {
 
       {/* ── Move Table Dialog ────────────────────────────────────────────────── */}
       <Dialog open={showMoveDialog} onOpenChange={setShowMoveDialog}>
->>>>>>> Stashed changes
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{pickerItem?.name}</DialogTitle>
-            <DialogDescription>Customize your order</DialogDescription>
+            <DialogTitle>Move Table</DialogTitle>
+            <DialogDescription>Select a free table to move this order to</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-1">
-            {pickerHasSizes && (
-              <div>
-                <p className="font-medium text-sm mb-2">Select Size</p>
-                <div className="space-y-2">
-                  {pickerItem.sizes.map((s: SizeOption) => {
-                    const isChosen = chosenSize?.size === s.size;
-                    return (
-                      <label key={s.size} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${isChosen ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>
-                        <div className="flex items-center gap-3">
-                          <input type="radio" name="picker-size" checked={isChosen} onChange={() => setChosenSize({ size: s.size, price: Number(s.price) })} className="accent-primary w-4 h-4" />
-                          <span className="font-medium">{s.size}</span>
-                        </div>
-                        <span className="font-semibold text-primary">{fmt(Number(s.price))}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {freeTables.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No free tables available</p>
+            ) : (
+              freeTables.map((t: any) => (
+                <button
+                  key={t.id}
+                  disabled={actionLoading}
+                  onClick={() => handleMoveTable(t)}
+                  className="w-full text-left px-4 py-3 rounded-lg border hover:border-green-500 hover:bg-green-50 transition-colors text-sm font-medium"
+                >
+                  {t.name}
+                </button>
+              ))
             )}
-            {pickerItem?.addonsEnabled && Array.isArray(pickerItem.addons) && pickerItem.addons.length > 0 && (
-              <div>
-                <p className="font-medium text-sm mb-2">Add Extras</p>
-                <div className="space-y-2">
-                  {pickerItem.addons.map((a: AddonOption) => {
-                    const isChecked = chosenAddons.some(ca => ca.name === a.name);
-                    return (
-                      <label key={a.name} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${isChecked ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>
-                        <div className="flex items-center gap-3">
-                          <input type="checkbox" checked={isChecked} onChange={() => toggleAddon({ name: a.name, price: Number(a.price) })} className="accent-primary w-4 h-4" />
-                          <span className="font-medium">{a.name}</span>
-                        </div>
-                        <span className="text-sm font-semibold text-primary">+{fmt(Number(a.price))}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <div className="border-t pt-3 flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">Total</span>
-              <span className="font-bold text-base">{fmt(pickerTotal)}</span>
-            </div>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={closePicker}>Cancel</Button>
-            <Button disabled={!!(pickerHasSizes && !chosenSize)} onClick={confirmAndAdd}>
-              Add to Cart
-            </Button>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={() => setShowMoveDialog(false)}>Cancel</Button>
           </div>
         </DialogContent>
       </Dialog>
 
-<<<<<<< Updated upstream
-      {/* ── LEFT: Category Panel ─────────────────────────────────────────────── */}
-      <div className="w-44 border-r bg-muted/20 flex flex-col shrink-0 overflow-hidden">
-        <div className="p-3 border-b font-semibold text-sm bg-card shrink-0">Categories</div>
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-1">
-=======
       {/* ── Hold Order Confirm ───────────────────────────────────────────────── */}
       <Dialog open={showHoldConfirm} onOpenChange={setShowHoldConfirm}>
         <DialogContent className="max-w-sm">
@@ -942,7 +944,6 @@ export default function POS() {
             <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Categories</span>
           </div>
           <div className="flex-1 overflow-y-auto py-1">
->>>>>>> Stashed changes
             <button
               onClick={() => setSelectedCategory("all")}
               className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${selectedCategory === "all" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-foreground"}`}
@@ -959,25 +960,8 @@ export default function POS() {
               </button>
             ))}
           </div>
-        </ScrollArea>
-      </div>
+        </div>
 
-<<<<<<< Updated upstream
-      {/* ── CENTER: Menu Items ───────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="p-3 border-b bg-card flex items-center gap-2 shrink-0">
-          <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-          <Input
-            placeholder="Search menu items..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="border-0 p-0 h-8 focus-visible:ring-0 shadow-none"
-          />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="text-muted-foreground hover:text-foreground shrink-0">
-              <X className="w-4 h-4" />
-            </button>
-=======
         {/* ── CENTER: Items grid ──────────────────────────────────────────────── */}
         <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
           <ScrollArea className="flex-1">
@@ -1059,204 +1043,81 @@ export default function POS() {
               <span className="text-[10px] font-semibold text-gray-500 uppercase w-10 text-right">Rate</span>
               <span className="text-[10px] font-semibold text-gray-500 uppercase w-12 text-right">Amt</span>
             </div>
->>>>>>> Stashed changes
           )}
           <span className="text-xs text-muted-foreground shrink-0">{filteredItems?.length || 0} items</span>
-        </div>
 
-        <ScrollArea className="flex-1">
-          <div className="p-3">
-            {filteredItems?.length === 0 && (
-              <div className="text-center text-muted-foreground py-16 text-sm">No items found</div>
-            )}
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
-              {filteredItems?.map((item: any) => {
-                const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
-                const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
-                const needsPicker = hasSizes || hasAddons;
-                const isAvailable = item.isAvailable !== false;
-
-                return (
-                  <button
-                    key={item.id}
-                    disabled={!isAvailable}
-                    onClick={() => isAvailable && (needsPicker ? openPicker(item) : directAddItem(item))}
-                    className={`text-left border rounded-xl p-3 transition-all bg-card ${
-                      isAvailable
-                        ? "hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer active:scale-95"
-                        : "opacity-40 cursor-not-allowed"
-                    }`}
-                  >
-                    <div className="font-semibold text-sm mb-1 leading-tight line-clamp-2">{item.name}</div>
-                    {item.description && (
-                      <div className="text-xs text-muted-foreground mb-2 line-clamp-2">{item.description}</div>
-                    )}
-                    {hasSizes ? (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {item.sizes.map((s: SizeOption) => (
-                          <span key={s.size} className="text-xs bg-muted px-1.5 py-0.5 rounded-md font-medium">
-                            {s.size} {fmt(Number(s.price))}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="font-bold text-primary text-sm mt-1">{fmt(parseFloat(item.price || "0"))}</div>
-                    )}
-                    <div className="flex items-center gap-1 mt-1.5">
-                      {!isAvailable && <Badge variant="destructive" className="text-xs py-0 px-1">Unavailable</Badge>}
-                      {hasAddons && isAvailable && (
-                        <span className="text-xs text-muted-foreground">Customizable</span>
-                      )}
-                      {needsPicker && isAvailable && (
-                        <span className="ml-auto text-xs text-primary font-medium">Tap to select</span>
+          <ScrollArea className="flex-1">
+            <div className="p-3 space-y-2">
+              {cartItems.length === 0 && (
+                <div className="text-center text-muted-foreground py-12">
+                  <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                  <p className="text-sm">Tap items to add to cart</p>
+                </div>
+              )}
+              {cartItems.map((item) => (
+                <div key={item.cartKey} className="border rounded-lg p-2.5 bg-background">
+                  <div className="flex justify-between items-start gap-1">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium leading-tight">
+                        {item.name}{item.size ? ` (${item.size})` : ""}
+                      </p>
+                      {item.addons.map(a => (
+                        <p key={a.name} className="text-xs text-muted-foreground">+ {a.name}</p>
+                      ))}
+                      {Object.entries(item.variants || {}).map(([g, v]) => (
+                        <div key={g} className="text-[10px] text-purple-600">▸ {g}: {v}</div>
+                      ))}
+                      {item.notes && (
+                        <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
                     </div>
-                  </button>
-                );
-              })}
+                    {/* Qty controls — free for all roles */}
+                    <div className="flex items-center gap-0.5 w-14 justify-center">
+                      <button
+                        onClick={() => updateQty(item.cartKey, item.quantity - 1)}
+                        className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
+                      >
+                        <Minus className="w-2.5 h-2.5" />
+                      </button>
+                      <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
+                      <button
+                        onClick={() => updateQty(item.cartKey, item.quantity + 1)}
+                        className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                    {/* Unit price */}
+                    <div className="w-10 text-right text-[10px] text-gray-500">{fmt(item.totalPrice)}</div>
+                    {/* Line total + remove */}
+                    <div className="w-12 flex items-center justify-end gap-0.5">
+                      <span className="text-xs font-bold text-gray-800">{fmt(item.totalPrice * item.quantity)}</span>
+                    </div>
+                    <button
+                      onClick={() => removeFromCart(item.cartKey)}
+                      className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {/* Edit / remove — PIN required for manager (admin PIN) and staff (manager PIN) */}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <button onClick={() => requirePin("Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5">
+                      <Edit2 className="w-2.5 h-2.5" />
+                      Edit
+                      {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                    </button>
+                    <button onClick={() => requirePin("Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5">
+                      <Trash2 className="w-2.5 h-2.5" />
+                      Remove
+                      {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        </ScrollArea>
-      </div>
+          </ScrollArea>
 
-      {/* ── RIGHT: Cart ─────────────────────────────────────────────────────── */}
-      <div className="w-80 shrink-0 border-l bg-card flex flex-col overflow-hidden">
-        {/* Order info header */}
-        <div className="p-3 border-b space-y-2 shrink-0">
-          <h3 className="font-semibold flex items-center gap-2 text-sm">
-            <ShoppingCart className="w-4 h-4" />
-            New Order
-            {cartItems.length > 0 && (
-              <Badge className="ml-auto text-xs" variant="secondary">{cartItems.length} items</Badge>
-            )}
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={form.watch("orderType")} onValueChange={(v) => form.setValue("orderType", v as any)}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dine-in">Dine In</SelectItem>
-                <SelectItem value="takeaway">Takeaway</SelectItem>
-                <SelectItem value="delivery">Delivery</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input placeholder="Table #" {...form.register("tableNumber")} className="h-8 text-xs" />
-          </div>
-          <Input placeholder="Customer name (optional)" {...form.register("customerName")} className="h-8 text-xs" />
-          <Input placeholder="Phone (optional)" {...form.register("customerPhone")} className="h-8 text-xs" />
-        </div>
-
-        {/* Cart items */}
-        <ScrollArea className="flex-1">
-          <div className="p-3 space-y-2">
-            {cartItems.length === 0 && (
-              <div className="text-center text-muted-foreground py-12">
-                <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                <p className="text-sm">Tap items to add to cart</p>
-              </div>
-            )}
-            {cartItems.map((item) => (
-              <div key={item.cartKey} className="border rounded-lg p-2.5 bg-background">
-                <div className="flex justify-between items-start gap-1">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium leading-tight">
-                      {item.name}{item.size ? ` (${item.size})` : ""}
-                    </p>
-                    {item.addons.map(a => (
-                      <p key={a.name} className="text-xs text-muted-foreground">+ {a.name}</p>
-                    ))}
-<<<<<<< Updated upstream
-=======
-                    {Object.entries(item.variants).map(([g, v]) => (
-                      <div key={g} className="text-[10px] text-purple-600">▸ {g}: {v}</div>
-                    ))}
-                    {item.notes && (
-                      <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
-                    )}
-                  </div>
-                  {/* Qty controls — free for all roles */}
-                  <div className="flex items-center gap-0.5 w-14 justify-center">
-                    <button
-                      onClick={() => updateQty(item.cartKey, item.quantity - 1)}
-                      className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
-                    >
-                      <Minus className="w-2.5 h-2.5" />
-                    </button>
-                    <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
-                    <button
-                      onClick={() => updateQty(item.cartKey, item.quantity + 1)}
-                      className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
-                    >
-                      <Plus className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
-                  {/* Unit price */}
-                  <div className="w-10 text-right text-[10px] text-gray-500">{fmt(item.totalPrice)}</div>
-                  {/* Line total + remove */}
-                  <div className="w-12 flex items-center justify-end gap-0.5">
-                    <span className="text-xs font-bold text-gray-800">{fmt(item.totalPrice * item.quantity)}</span>
->>>>>>> Stashed changes
-                  </div>
-                  <button
-                    onClick={() => removeFromCart(item.cartKey)}
-                    className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-<<<<<<< Updated upstream
-                <div className="flex items-center justify-between mt-2">
-                  <div className="flex items-center gap-1">
-                    <Button size="sm" variant="outline" className="h-6 w-6 p-0 rounded-full" onClick={() => updateQty(item.cartKey, item.quantity - 1)}>
-                      <Minus className="w-3 h-3" />
-                    </Button>
-                    <span className="text-sm font-medium w-6 text-center">{item.quantity}</span>
-                    <Button size="sm" variant="outline" className="h-6 w-6 p-0 rounded-full" onClick={() => updateQty(item.cartKey, item.quantity + 1)}>
-                      <Plus className="w-3 h-3" />
-                    </Button>
-                  </div>
-                  <span className="text-sm font-bold">{fmt(item.totalPrice * item.quantity)}</span>
-=======
-                {/* Edit / remove — PIN required for manager (admin PIN) and staff (manager PIN) */}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <button onClick={() => requirePin("Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5">
-                    <Edit2 className="w-2.5 h-2.5" />
-                    Edit
-                    {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
-                  </button>
-                  <button onClick={() => requirePin("Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5">
-                    <Trash2 className="w-2.5 h-2.5" />
-                    Remove
-                    {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
-                  </button>
->>>>>>> Stashed changes
-                </div>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-
-<<<<<<< Updated upstream
-        {/* Totals + Place Order */}
-        <div className="border-t p-3 space-y-2 shrink-0">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Subtotal</span>
-            <span>{fmt(subtotal)}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground flex-1">Discount (₹)</span>
-            <Input
-              type="number"
-              min="0"
-              value={discount || ""}
-              onChange={(e) => setDiscount(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="h-7 text-xs w-24 text-right"
-              placeholder="0"
-            />
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Tax ({settings?.taxRate ?? 18}%)</span>
-            <span>{fmt(tax)}</span>
-=======
           {/* Totals */}
           <div className="border-t px-3 py-2 space-y-1 shrink-0 bg-gray-50">
             <div className="flex justify-between text-xs text-gray-500">
@@ -1434,43 +1295,7 @@ export default function POS() {
                 {settleMutation.isPending ? "Settling..." : "Settle"}
               </button>
             </div>
->>>>>>> Stashed changes
           </div>
-          <Separator />
-          <div className="flex justify-between font-bold text-base">
-            <span>Total</span>
-            <span className="text-primary">{fmt(total)}</span>
-          </div>
-          <Select value={form.watch("paymentMethod")} onValueChange={(v) => form.setValue("paymentMethod", v as any)}>
-            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Payment method" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="cash">Cash</SelectItem>
-              <SelectItem value="card">Card</SelectItem>
-              <SelectItem value="upi">UPI</SelectItem>
-              <SelectItem value="online">Online</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            className="w-full font-semibold"
-            disabled={cartItems.length === 0 || createOrderMutation.isPending}
-            onClick={form.handleSubmit(onSubmit)}
-          >
-            {createOrderMutation.isPending
-              ? "Placing Order..."
-              : cartItems.length === 0
-                ? "Add Items to Order"
-                : `Place Order · ${fmt(total)}`}
-          </Button>
-          {cartItems.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-xs text-muted-foreground"
-              onClick={() => { setCartItems([]); setDiscount(0); }}
-            >
-              Clear Cart
-            </Button>
-          )}
         </div>
       </div>
     </div>

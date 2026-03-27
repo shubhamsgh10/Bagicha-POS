@@ -208,11 +208,11 @@ export default function Settings() {
             <Label>Auto-revert elevated role after</Label>
             <div className="flex flex-wrap gap-2">
               {[
-                { value: 0,  label: "Never"   },
-                { value: 1,  label: "1 min"   },
-                { value: 2,  label: "2 min"   },
-                { value: 5,  label: "5 min"   },
-                { value: 10, label: "10 min"  },
+                { value: 0,  label: "Never"  },
+                { value: 1,  label: "1 min"  },
+                { value: 2,  label: "2 min"  },
+                { value: 5,  label: "5 min"  },
+                { value: 10, label: "10 min" },
               ].map((opt) => (
                 <button
                   key={opt.value}
