@@ -50,7 +50,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen w-screen flex items-center justify-center bg-background">
+    <div className="min-h-full w-full flex items-center justify-center">
       <div className="w-full max-w-sm px-4">
         <div className="flex flex-col items-center mb-8">
           <BagichaLogo />
@@ -93,13 +93,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Signing in...
-                  </>
-                ) : (
-                  "Sign in"
-                )}
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Signing in...</>
+                ) : "Sign in"}
               </Button>
             </form>
 

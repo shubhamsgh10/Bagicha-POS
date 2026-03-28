@@ -56,7 +56,7 @@ export function TopNav() {
   };
 
   return (
-    <header className="shrink-0 h-14 bg-white border-b border-gray-200 flex items-center px-3 gap-2 shadow-sm z-50">
+    <header className="shrink-0 h-14 bg-white/80 backdrop-blur-xl border-b border-black/5 flex items-center px-3 gap-2 shadow-sm z-50">
       {/* Logo */}
       <div className="flex items-center gap-2 shrink-0">
         <BagichaLogo size="sm" />
@@ -75,9 +75,9 @@ export function TopNav() {
               <div
                 className={`
                   flex flex-col items-center justify-center gap-0.5 px-3 py-1.5
-                  rounded-lg cursor-pointer transition-colors select-none min-w-[56px]
+                  rounded-lg cursor-pointer transition-all duration-150 select-none min-w-[56px]
                   ${active
-                    ? "bg-green-600 text-white"
+                    ? "bg-gradient-to-br from-emerald-500 to-green-500 text-white shadow-sm"
                     : "text-gray-500 hover:bg-gray-100 hover:text-gray-800"}
                 `}
               >
@@ -104,7 +104,7 @@ export function TopNav() {
         <button
           onClick={handleLogout}
           title="Logout"
-          className="flex flex-col items-center justify-center gap-0.5 px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+          className="flex flex-col items-center justify-center gap-0.5 px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all duration-150"
         >
           <LogOut className="w-[18px] h-[18px]" />
           <span className="text-[9px] font-semibold leading-none">Logout</span>

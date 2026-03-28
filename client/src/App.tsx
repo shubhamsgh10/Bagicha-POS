@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopNav } from "@/components/TopNav";
+import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import POS from "@/pages/POS";
 import Orders from "@/pages/Orders";
@@ -15,6 +16,7 @@ import Settings from "@/pages/Settings";
 import Tables from "@/pages/Tables";
 import LiveAnalytics from "@/pages/LiveAnalytics";
 import KOT from "@/pages/KOT";
+import MobilePOS from "@/pages/MobilePOS";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
@@ -26,7 +28,7 @@ function Router() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
+      <div className="flex h-full w-full items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -42,16 +44,16 @@ function Router() {
     );
   }
 
-  // POS is completely full-screen — has its own header
-  if (location.startsWith("/pos")) {
-    return <POS />;
-  }
+  // Full-screen routes — no TopNav
+  if (location.startsWith("/pos")) return <POS />;
+  if (location.startsWith("/mobile-pos")) return <MobilePOS />;
 
   // All other pages: TopNav + page content (no sidebar)
   return (
-    <div className="flex flex-col h-full w-screen bg-background overflow-hidden">
+    <div className="flex flex-col h-full w-full overflow-hidden">
       <TopNav />
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      {/* app-page-content — strips light bg from page roots so dark AppLayout bg shows through */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden app-page-content">
         <Switch>
           <Route path="/"               component={Tables} />
           <Route path="/tables"         component={Tables} />
@@ -76,7 +78,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <Router />
+        <AppLayout>
+          <Router />
+        </AppLayout>
       </TooltipProvider>
     </QueryClientProvider>
   );

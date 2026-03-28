@@ -1,24 +1,17 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { Header } from "@/components/Header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { DollarSign, TrendingUp, ShoppingCart, Users, Download, Calendar } from "lucide-react";
 
 export default function Reports() {
-  const { data: salesReport, isLoading } = useQuery({
+  const { data: salesReport, isLoading } = useQuery<any>({
     queryKey: ['/api/reports/sales'],
   });
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', { 
-      style: 'currency', 
-      currency: 'INR',
-      minimumFractionDigits: 0
-    }).format(amount);
-  };
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(amount);
 
   const { data: weeklyData = [] } = useQuery<any[]>({ queryKey: ['/api/reports/weekly'] });
   const { data: topItemsData = [] } = useQuery<any[]>({ queryKey: ['/api/reports/top-items'] });
@@ -26,203 +19,197 @@ export default function Reports() {
   const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales }));
   const topItems = topItemsData.map((d: any) => ({ name: d.name, sold: d.totalSold, revenue: d.revenue }));
 
+  const [activeTab, setActiveTab] = useState("sales");
+
   if (isLoading) {
     return (
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
         <Header title="Reports" description="Loading reports..." />
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <Card key={i} className="animate-pulse">
-                <CardContent className="p-4">
-                  <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
-                  <div className="h-8 bg-muted rounded w-1/2 mb-3"></div>
-                  <div className="h-3 bg-muted rounded w-2/3"></div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-32 rounded-2xl bg-white/40 border border-white/30 backdrop-blur-sm animate-pulse" />
+          ))}
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <Header 
-        title="Reports" 
-        description="Analytics and insights for your restaurant performance"
-      />
+  const statCards = [
+    { label: "Total Sales", value: formatCurrency(salesReport?.totalSales || 0), sub: "+15% from yesterday", icon: <DollarSign className="w-7 h-7 text-emerald-500" />, subColor: "text-emerald-600" },
+    { label: "Total Orders", value: salesReport?.totalOrders || 0, sub: "+8% from yesterday", icon: <ShoppingCart className="w-7 h-7 text-blue-500" />, subColor: "text-emerald-600" },
+    { label: "Average Order", value: formatCurrency(salesReport?.avgOrderValue || 0), sub: "+3% from yesterday", icon: <TrendingUp className="w-7 h-7 text-orange-500" />, subColor: "text-emerald-600" },
+    { label: "Customers", value: 47, sub: "+12% from yesterday", icon: <Users className="w-7 h-7 text-purple-500" />, subColor: "text-emerald-600" },
+  ];
 
-      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
-        <div className="flex justify-between items-center mb-6">
+  const tabs = [
+    { id: "sales", label: "Sales Chart" },
+    { id: "items", label: "Top Items" },
+    { id: "orders", label: "Order Details" },
+  ];
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+      <Header title="Reports" description="Analytics and insights for your restaurant performance" />
+
+      <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        {/* Toolbar */}
+        <div className="mb-6 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold">Sales Analytics</h2>
-            <p className="text-muted-foreground">Today's performance overview</p>
+            <h2 className="text-xl font-semibold text-gray-800">Sales Analytics</h2>
+            <p className="text-sm text-gray-500">Today's performance overview</p>
           </div>
-          <div className="flex space-x-2">
-            <Button variant="outline" size="sm">
-              <Calendar className="w-4 h-4 mr-2" />
-              Date Range
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
+          <div className="flex gap-2">
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
+                         bg-white/50 backdrop-blur-sm border border-white/40 text-gray-600
+                         hover:bg-white/70 transition-all"
+            >
+              <Calendar className="w-4 h-4" /> Date Range
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
+                         bg-white/50 backdrop-blur-sm border border-white/40 text-gray-600
+                         hover:bg-white/70 transition-all"
+            >
+              <Download className="w-4 h-4" /> Export
+            </motion.button>
           </div>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+          {statCards.map((card, i) => (
+            <motion.div
+              key={card.label}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05, duration: 0.2 }}
+              className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5
+                         hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
+                         transition-all duration-200"
+            >
+              <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Sales</p>
-                  <p className="text-2xl font-bold">
-                    {formatCurrency(salesReport?.totalSales || 0)}
-                  </p>
-                  <p className="text-green-600 text-sm">+15% from yesterday</p>
+                  <p className="text-sm text-gray-500">{card.label}</p>
+                  <p className="text-2xl font-bold text-gray-800 mt-0.5">{card.value}</p>
+                  <p className={`text-xs mt-1 ${card.subColor}`}>{card.sub}</p>
                 </div>
-                <DollarSign className="w-8 h-8 text-green-500" />
+                {card.icon}
               </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Orders</p>
-                  <p className="text-2xl font-bold">{salesReport?.totalOrders || 0}</p>
-                  <p className="text-green-600 text-sm">+8% from yesterday</p>
-                </div>
-                <ShoppingCart className="w-8 h-8 text-blue-500" />
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Average Order</p>
-                  <p className="text-2xl font-bold">
-                    {formatCurrency(salesReport?.avgOrderValue || 0)}
-                  </p>
-                  <p className="text-green-600 text-sm">+3% from yesterday</p>
-                </div>
-                <TrendingUp className="w-8 h-8 text-orange-500" />
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Customers</p>
-                  <p className="text-2xl font-bold">47</p>
-                  <p className="text-green-600 text-sm">+12% from yesterday</p>
-                </div>
-                <Users className="w-8 h-8 text-purple-500" />
-              </div>
-            </CardContent>
-          </Card>
+            </motion.div>
+          ))}
         </div>
 
-        <Tabs defaultValue="sales" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="sales">Sales Chart</TabsTrigger>
-            <TabsTrigger value="items">Top Items</TabsTrigger>
-            <TabsTrigger value="orders">Order Details</TabsTrigger>
-          </TabsList>
+        {/* Glass Tabs */}
+        <div className="rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1 flex gap-1 mb-5 w-fit">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                activeTab === tab.id
+                  ? "bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm"
+                  : "text-gray-600 hover:bg-white/50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-          <TabsContent value="sales" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Weekly Sales Performance</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={salesData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip 
-                        formatter={(value) => [formatCurrency(value as number), 'Sales']}
-                      />
-                      <Bar dataKey="sales" fill="hsl(var(--primary))" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
+        {/* Tab Content */}
+        {activeTab === "sales" && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+          >
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Weekly Sales Performance</h3>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={salesData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value) => [formatCurrency(value as number), 'Sales']} />
+                  <Bar dataKey="sales" fill="url(#barGradient)" radius={[4, 4, 0, 0]} />
+                  <defs>
+                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" />
+                      <stop offset="100%" stopColor="#22c55e" />
+                    </linearGradient>
+                  </defs>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </motion.div>
+        )}
 
-          <TabsContent value="items" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Selling Items</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {topItems.map((item, index) => (
-                    <div key={item.name} className="flex items-center justify-between p-4 bg-muted rounded-lg">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-white text-sm font-bold">
-                          {index + 1}
-                        </div>
-                        <div>
-                          <h4 className="font-medium">{item.name}</h4>
-                          <p className="text-sm text-muted-foreground">{item.sold} units sold</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold">{formatCurrency(item.revenue)}</p>
-                        <Badge variant="secondary" className="text-xs">
-                          {((item.revenue / salesReport?.totalSales || 1) * 100).toFixed(1)}%
-                        </Badge>
-                      </div>
+        {activeTab === "items" && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+          >
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Top Selling Items</h3>
+            <div className="space-y-3">
+              {topItems.map((item, index) => (
+                <div key={item.name} className="flex items-center justify-between p-3 rounded-xl bg-white/50 border border-white/40">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                      {index + 1}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="orders" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Orders</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {salesReport?.orders?.slice(0, 10).map((order: any) => (
-                    <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div>
-                        <h4 className="font-medium">{order.orderNumber}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {order.customerName || 'Walk-in'} • {order.orderType}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(order.createdAt).toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold">{formatCurrency(parseFloat(order.totalAmount))}</p>
-                        <Badge variant="outline" className="text-xs">
-                          {order.paymentMethod}
-                        </Badge>
-                      </div>
+                    <div>
+                      <p className="font-medium text-sm text-gray-800">{item.name}</p>
+                      <p className="text-xs text-gray-500">{item.sold} units sold</p>
                     </div>
-                  ))}
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-sm text-gray-800">{formatCurrency(item.revenue)}</p>
+                    <span className="text-[11px] font-medium bg-emerald-100/80 text-emerald-700 px-2 py-0.5 rounded-lg">
+                      {((item.revenue / (salesReport?.totalSales || 1)) * 100).toFixed(1)}%
+                    </span>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+              ))}
+              {topItems.length === 0 && (
+                <p className="text-center text-gray-400 py-8">No data available</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {activeTab === "orders" && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+          >
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Recent Orders</h3>
+            <div className="space-y-3">
+              {salesReport?.orders?.slice(0, 10).map((order: any) => (
+                <div key={order.id} className="flex items-center justify-between p-3 rounded-xl bg-white/50 border border-white/40">
+                  <div>
+                    <p className="font-medium text-sm text-gray-800">{order.orderNumber}</p>
+                    <p className="text-xs text-gray-500">{order.customerName || 'Walk-in'} · {order.orderType}</p>
+                    <p className="text-xs text-gray-400">{new Date(order.createdAt).toLocaleString()}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-sm text-gray-800">{formatCurrency(parseFloat(order.totalAmount))}</p>
+                    <span className="text-[11px] font-medium bg-white/70 border border-white/50 text-gray-600 px-2 py-0.5 rounded-lg">
+                      {order.paymentMethod}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {(!salesReport?.orders || salesReport.orders.length === 0) && (
+                <p className="text-center text-gray-400 py-8">No orders yet</p>
+              )}
+            </div>
+          </motion.div>
+        )}
       </main>
     </div>
   );

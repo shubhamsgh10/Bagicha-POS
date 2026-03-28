@@ -3,7 +3,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -129,12 +128,12 @@ function UsersTab() {
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-white/40 rounded-xl animate-pulse" />)}
         </div>
       ) : (
         <div className="space-y-2">
           {users?.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between p-3 border rounded-lg bg-card">
+            <div key={u.id} className="flex items-center justify-between p-3 rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                   <User className="w-4 h-4 text-primary" />
@@ -318,8 +317,8 @@ function RolesTab() {
       </div>
 
       {/* Role legend */}
-      <Card className="bg-muted/30">
-        <CardContent className="pt-4 pb-3">
+      <div className="rounded-2xl backdrop-blur-sm bg-white/40 border border-white/30 shadow-sm">
+        <div className="pt-4 pb-3 px-5">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Role Permissions</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {ROLES.map(r => (
@@ -329,17 +328,17 @@ function RolesTab() {
               </div>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-muted rounded-lg animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-white/40 rounded-xl animate-pulse" />)}
         </div>
       ) : (
         <div className="space-y-2">
           {users?.map((u: any) => (
-            <div key={u.id} className="border rounded-lg p-4 bg-card space-y-3">
+            <div key={u.id} className="rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center">
@@ -508,11 +507,9 @@ function CategoriesTab() {
   return (
     <div className="space-y-4">
       {/* Add Category */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Add New Category</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-4">
+        <p className="text-sm font-semibold text-gray-700 mb-3">Add New Category</p>
+        <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Category Name *</Label>
@@ -540,18 +537,18 @@ function CategoriesTab() {
           >
             {createMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Adding...</> : <><Plus className="w-3 h-3 mr-1" /> Add Category</>}
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* List */}
       {isLoading ? (
         <div className="space-y-2">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-14 bg-muted rounded-lg animate-pulse" />)}
+          {[...Array(4)].map((_, i) => <div key={i} className="h-14 bg-white/40 rounded-xl animate-pulse" />)}
         </div>
       ) : (
         <div className="space-y-2">
           {categories?.map((cat: any) => (
-            <div key={cat.id} className="border rounded-lg p-3 bg-card">
+            <div key={cat.id} className="rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm p-3">
               {editingId === cat.id ? (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2">
@@ -667,15 +664,15 @@ export default function Admin() {
   const isAdmin = user?.role === "admin";
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
+    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Admin Panel</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage users, categories, and your account</p>
+        <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
+        <p className="text-sm text-gray-500 mt-1">Manage users, categories, and your account</p>
       </div>
 
       <Tabs defaultValue={isAdmin ? "users" : "profile"}>
-        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-5" : "grid-cols-2"}`}>
+        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-5" : "grid-cols-2"} rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1`}>
           {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
           {isAdmin && <TabsTrigger value="categories"><Tag className="w-4 h-4 mr-1.5" />Categories</TabsTrigger>}
@@ -706,70 +703,62 @@ export default function Admin() {
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="mt-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <User className="w-5 h-5 text-primary" />
-                <CardTitle className="text-base">Change Username</CardTitle>
+          <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <User className="w-5 h-5 text-emerald-600" />
+              <h3 className="font-semibold text-gray-800">Change Username</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">Update the username used to sign in</p>
+            <form onSubmit={usernameForm.handleSubmit(onUsernameSubmit)} className="space-y-4">
+              <div className="space-y-2">
+                <Label>New Username</Label>
+                <Input placeholder="Enter new username" {...usernameForm.register("username")} className="bg-white/60 border-white/50" />
+                {usernameForm.formState.errors.username && (
+                  <p className="text-xs text-destructive">{usernameForm.formState.errors.username.message}</p>
+                )}
               </div>
-              <CardDescription>Update the username used to sign in</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={usernameForm.handleSubmit(onUsernameSubmit)} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>New Username</Label>
-                  <Input placeholder="Enter new username" {...usernameForm.register("username")} />
-                  {usernameForm.formState.errors.username && (
-                    <p className="text-xs text-destructive">{usernameForm.formState.errors.username.message}</p>
-                  )}
-                </div>
-                <Button type="submit" disabled={usernameLoading}>
-                  {usernameLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Username"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+              <Button type="submit" disabled={usernameLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
+                {usernameLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Username"}
+              </Button>
+            </form>
+          </div>
         </TabsContent>
 
         {/* Password Tab */}
         <TabsContent value="password" className="mt-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-5 h-5 text-primary" />
-                <CardTitle className="text-base">Change Password</CardTitle>
+          <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <KeyRound className="w-5 h-5 text-emerald-600" />
+              <h3 className="font-semibold text-gray-800">Change Password</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">Choose a strong password with at least 6 characters</p>
+            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Current Password</Label>
+                <Input type="password" placeholder="••••••••" autoComplete="current-password" {...passwordForm.register("currentPassword")} className="bg-white/60 border-white/50" />
+                {passwordForm.formState.errors.currentPassword && (
+                  <p className="text-xs text-destructive">{passwordForm.formState.errors.currentPassword.message}</p>
+                )}
               </div>
-              <CardDescription>Choose a strong password with at least 6 characters</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Current Password</Label>
-                  <Input type="password" placeholder="••••••••" autoComplete="current-password" {...passwordForm.register("currentPassword")} />
-                  {passwordForm.formState.errors.currentPassword && (
-                    <p className="text-xs text-destructive">{passwordForm.formState.errors.currentPassword.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label>New Password</Label>
-                  <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("newPassword")} />
-                  {passwordForm.formState.errors.newPassword && (
-                    <p className="text-xs text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label>Confirm New Password</Label>
-                  <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("confirmPassword")} />
-                  {passwordForm.formState.errors.confirmPassword && (
-                    <p className="text-xs text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
-                  )}
-                </div>
-                <Button type="submit" disabled={passwordLoading}>
-                  {passwordLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Changing...</> : "Change Password"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+              <div className="space-y-2">
+                <Label>New Password</Label>
+                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("newPassword")} className="bg-white/60 border-white/50" />
+                {passwordForm.formState.errors.newPassword && (
+                  <p className="text-xs text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>Confirm New Password</Label>
+                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("confirmPassword")} className="bg-white/60 border-white/50" />
+                {passwordForm.formState.errors.confirmPassword && (
+                  <p className="text-xs text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
+                )}
+              </div>
+              <Button type="submit" disabled={passwordLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
+                {passwordLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Changing...</> : "Change Password"}
+              </Button>
+            </form>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
