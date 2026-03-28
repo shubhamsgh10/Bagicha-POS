@@ -328,7 +328,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Tables
-  async getTables(): Promise<(Table & { runningTotal?: number })[]> {
+  async getTables(): Promise<(Table & { runningTotal?: number; orderCreatedAt?: string })[]> {
     const rows = await db
       .select({
         id: tables.id,
@@ -338,6 +338,7 @@ export class DatabaseStorage implements IStorage {
         currentOrderId: tables.currentOrderId,
         section: tables.section,
         runningTotal: orders.totalAmount,
+        orderCreatedAt: orders.createdAt,
       })
       .from(tables)
       .leftJoin(orders, eq(tables.currentOrderId, orders.id))
@@ -345,6 +346,7 @@ export class DatabaseStorage implements IStorage {
     return rows.map(r => ({
       ...r,
       runningTotal: r.runningTotal != null ? Number(r.runningTotal) : undefined,
+      orderCreatedAt: r.orderCreatedAt ? new Date(r.orderCreatedAt).toISOString() : undefined,
     }));
   }
 

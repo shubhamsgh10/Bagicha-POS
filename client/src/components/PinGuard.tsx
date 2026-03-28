@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X, Delete } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -84,8 +85,8 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
     />
   ));
 
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 backdrop-blur-sm">
+  const modal = (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm">
       <div
         className="bg-gray-900 text-white rounded-2xl shadow-2xl w-72 p-6 flex flex-col items-center gap-4"
         onClick={(e) => e.stopPropagation()}
@@ -157,4 +158,6 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }

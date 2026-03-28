@@ -11,6 +11,7 @@ import { Plus, RefreshCw, ChevronDown, ChevronUp, User, Phone, ShoppingBag, Sear
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+
 const fmt = (n: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(n);
 
@@ -138,16 +139,17 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
           >
             <div className="border-t border-white/30 bg-white/20 backdrop-blur-sm px-4 py-3 space-y-3">
               {/* Info grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
                 {[
                   { label: "Customer", value: order.customerName || "—" },
                   { label: "Phone",    value: order.customerPhone || "—" },
                   { label: "Table",    value: order.tableNumber ? `Table ${order.tableNumber}` : "—" },
                   { label: "Type",     value: order.orderType?.replace("-", " ") || "—" },
+                  { label: "Payment",  value: order.paymentStatus === "paid" ? (order.paymentMethod || "cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-white/30 rounded-xl px-3 py-2 backdrop-blur-sm">
                     <p className="text-gray-400 font-medium uppercase tracking-wide text-[10px] mb-0.5">{label}</p>
-                    <p className="font-semibold text-gray-700 capitalize truncate">{value}</p>
+                    <p className={`font-semibold capitalize truncate ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : "text-gray-700"}`}>{value}</p>
                   </div>
                 ))}
               </div>
@@ -216,6 +218,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   </div>
                 </div>
               </div>
+
             </div>
           </motion.div>
         )}
@@ -246,7 +249,7 @@ export default function Orders() {
     onError: () => toast({ title: "Failed to update status", variant: "destructive" }),
   });
 
-  const q = search.trim().toLowerCase();
+const q = search.trim().toLowerCase();
   const filterOrders = (list: any[]) => {
     if (!q) return list;
     return list.filter((o: any) =>

@@ -20,6 +20,7 @@ import MobilePOS from "@/pages/MobilePOS";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
+import { ActiveRoleProvider } from "@/context/ActiveRoleContext";
 import { Loader2 } from "lucide-react";
 
 function Router() {
@@ -39,6 +40,7 @@ function Router() {
       <Login
         onLoginSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+          window.history.replaceState(null, "", "/tables");
         }}
       />
     );
@@ -78,9 +80,11 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <AppLayout>
-          <Router />
-        </AppLayout>
+        <ActiveRoleProvider>
+          <AppLayout>
+            <Router />
+          </AppLayout>
+        </ActiveRoleProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

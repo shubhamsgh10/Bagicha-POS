@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit2, Trash2, Users, ArrowRightLeft,
+  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +24,7 @@ interface Table {
   currentOrderId?: number | null;
   section: string;
   runningTotal?: number;
+  orderCreatedAt?: string;
 }
 
 const SECTION_OPTIONS = [
@@ -57,6 +58,86 @@ const statusConfig = {
 };
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
+
+/** Shows elapsed time as "X Min" or "Xh Xm", updates every minute */
+function RunningTimer({ startedAt }: { startedAt: string }) {
+  const getElapsed = (s: string) => {
+    const totalMins = Math.floor((Date.now() - new Date(s).getTime()) / 60000);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    return { h, m };
+  };
+  const [elapsed, setElapsed] = useState(() => getElapsed(startedAt));
+  useEffect(() => {
+    setElapsed(getElapsed(startedAt));
+    const id = setInterval(() => setElapsed(getElapsed(startedAt)), 60000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const display = elapsed.h > 0 ? `${elapsed.h}h ${elapsed.m}m` : `${elapsed.m} Min`;
+  return <span>{display}</span>;
+}
+
+/** Fetches order createdAt when not available from table data */
+function TableTimer({ orderId }: { orderId: number }) {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/orders", String(orderId)],
+    staleTime: Infinity,
+  });
+  if (!data?.createdAt) return <span>Active</span>;
+  return <RunningTimer startedAt={data.createdAt} />;
+}
+
+async function printTableBill(orderId: number) {
+  try {
+    const [orderRes, settingsRes] = await Promise.all([
+      fetch(`/api/orders/${orderId}`, { credentials: "include" }),
+      fetch("/api/settings", { credentials: "include" }),
+    ]);
+    const order = await orderRes.json();
+    const settings = await settingsRes.json();
+    const items: any[] = order.items || [];
+
+    const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
+    const address = settings?.address || "";
+    const phone = settings?.phone || "";
+    const gstNumber = settings?.gstNumber || "";
+    const footerNote = settings?.footerNote || "Thank you for dining with us!";
+    const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
+    const discount = parseFloat(order.discountAmount || "0");
+
+    const win = window.open("", "_blank", "width=450,height=700");
+    if (!win) return;
+    win.document.write(`<html><head><title>Bill - ${order.orderNumber}</title>
+      <style>body{font-family:monospace;font-size:13px;margin:0;padding:16px;}h2{text-align:center;font-size:20px;margin:0 0 4px;}.center{text-align:center;}.divider{border-top:1px dashed #000;margin:10px 0;}.row{display:flex;justify-content:space-between;padding:2px 0;}.bold{font-weight:bold;}.large{font-size:16px;}.footer{text-align:center;margin-top:16px;font-size:12px;}</style>
+      </head><body>
+      <h2>${restaurantName.toUpperCase()}</h2>
+      ${address ? `<div class="center" style="font-size:11px">${address}</div>` : ""}
+      ${phone ? `<div class="center" style="font-size:11px">Ph: ${phone}</div>` : ""}
+      ${gstNumber ? `<div class="center" style="font-size:11px">GSTIN: ${gstNumber}</div>` : ""}
+      <div style="margin-bottom:8px"></div>
+      <div class="divider"></div>
+      <div class="row"><span>Order #</span><span class="bold">${order.orderNumber}</span></div>
+      <div class="row"><span>Type</span><span>${order.orderType}</span></div>
+      ${order.tableNumber ? `<div class="row"><span>Table</span><span>${order.tableNumber}</span></div>` : ""}
+      ${order.customerName ? `<div class="row"><span>Customer</span><span>${order.customerName}</span></div>` : ""}
+      <div class="row"><span>Date</span><span>${new Date(order.createdAt || Date.now()).toLocaleString()}</span></div>
+      <div class="divider"></div>
+      <div class="bold" style="margin-bottom:6px">ITEMS</div>
+      ${items.length > 0 ? items.map((item: any) => `<div class="row"><span>${item.name || "Item"} × ${item.quantity}</span><span>₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</span></div>`).join("") : "<div>—</div>"}
+      <div class="divider"></div>
+      <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
+      ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
+      <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount || "0").toFixed(0)}</span></div>
+      <div class="divider"></div>
+      <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
+      <div class="row" style="margin-top:4px"><span>Payment</span><span>${order.paymentMethod || "—"}</span></div>
+      <div class="footer"><div class="divider">${footerNote}<br>Please visit again</div></div>
+      </body></html>`);
+    win.document.close(); win.focus(); win.print(); win.close();
+  } catch {
+    alert("Failed to load bill for printing");
+  }
+}
 
 function groupBySection(tables: Table[]): Record<string, Table[]> {
   return tables.reduce((acc, t) => {
@@ -328,6 +409,16 @@ export default function Tables() {
                         {/* Main content */}
                         <div className="p-2.5 min-h-[72px] flex flex-col justify-between">
                           <div>
+                            {/* Running: timer on top */}
+                            {table.status === "running" && (
+                              <p className={`text-[11px] font-semibold leading-tight ${cfg.subText}`}>
+                                {table.orderCreatedAt
+                                  ? <RunningTimer startedAt={table.orderCreatedAt} />
+                                  : table.currentOrderId
+                                    ? <TableTimer orderId={table.currentOrderId} />
+                                    : "Active"}
+                              </p>
+                            )}
                             <p className={`text-sm font-bold leading-tight truncate ${cfg.nameText}`}>
                               {table.name}
                             </p>
@@ -348,6 +439,20 @@ export default function Tables() {
                               </p>
                             )}
                           </div>
+
+                          {/* Print button — always visible for running tables */}
+                          {table.status === "running" && table.currentOrderId && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                printTableBill(table.currentOrderId!);
+                              }}
+                              className="mt-1.5 w-7 h-7 rounded-lg flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm"
+                              title="Print bill"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
 
                         {/* Hover action bar */}
