@@ -1,5 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
+import { RoleSwitcher } from "./RoleSwitcher";
+import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid,
   History,
@@ -29,8 +31,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: "KOT",       href: "/kot",            icon: ClipboardList },
   { label: "Menu",      href: "/menu",           icon: UtensilsCrossed, roles: ["admin", "manager"] },
   { label: "Inventory", href: "/inventory",      icon: Package,         roles: ["admin", "manager"] },
-  { label: "Reports",   href: "/reports",        icon: BarChart3,       roles: ["admin", "manager"] },
-  { label: "Live View", href: "/live-analytics", icon: Activity },
+  { label: "Reports",   href: "/reports",        icon: BarChart3,       roles: ["admin"] },
+  { label: "Live View", href: "/live-analytics", icon: Activity,        roles: ["admin"] },
   { label: "Admin",     href: "/admin",          icon: User,            roles: ["admin"] },
   { label: "Settings",  href: "/settings",       icon: Settings,        roles: ["admin"] },
 ];
@@ -39,11 +41,10 @@ export function TopNav() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { toast } = useToast();
-
-  const role = user?.role ?? "staff";
+  const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRoleContext();
 
   const visibleNav = NAV_ITEMS.filter(item =>
-    !item.roles || item.roles.includes(role)
+    !item.roles || item.roles.includes(activeRole)
   );
 
   const handleLogout = async () => {
@@ -91,14 +92,26 @@ export function TopNav() {
         })}
       </nav>
 
+      {/* Role Switcher */}
+      <RoleSwitcher
+        activeRole={activeRole}
+        loginRole={loginRole}
+        secondsLeft={secondsLeft}
+        isElevated={isElevated}
+        onElevate={elevateRole}
+        onRevert={revertRole}
+      />
+
+      <div className="w-px h-7 bg-gray-200 mx-1 shrink-0" />
+
       {/* Right: user info + logout */}
-      <div className="flex items-center gap-1 shrink-0 pl-2 border-l border-gray-200">
+      <div className="flex items-center gap-1 shrink-0">
         <div className="hidden sm:flex flex-col items-end mr-1">
           <span className="text-xs font-semibold text-gray-800 leading-none">
             {user?.username ?? "—"}
           </span>
           <span className="text-[10px] text-gray-400 capitalize mt-0.5">
-            {role}
+            {activeRole}
           </span>
         </div>
         <button

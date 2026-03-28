@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Loader2, User, KeyRound, Users, Tag, Plus, Trash2, Edit2, Shield, ShieldCheck,
@@ -230,7 +231,7 @@ function RolesTab() {
   const [pinDialogError, setPinDialogError] = useState("");
   const [resetConfirm, setResetConfirm] = useState(false);
 
-  const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const { data: users = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ id, role }: { id: number; role: string }) =>
@@ -336,8 +337,12 @@ function RolesTab() {
           {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-white/40 rounded-xl animate-pulse" />)}
         </div>
       ) : (
+        <>
+        {users.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-6">No users found. Make sure you are logged in as admin.</p>
+        )}
         <div className="space-y-2">
-          {users?.map((u: any) => (
+          {users.map((u: any) => (
             <div key={u.id} className="rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -374,34 +379,33 @@ function RolesTab() {
                   </Select>
                 </div>
 
-                {/* PIN buttons — only for manager/admin */}
-                {(u.role === "manager" || u.role === "admin") && (
-                  <div className="flex gap-2">
+                {/* PIN buttons — all users */}
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                    onClick={() => openPinDialog(u, "set")}
+                  >
+                    <Shield className="w-3 h-3" />
+                    {u.pin ? "Change PIN" : "Set PIN"}
+                  </Button>
+                  {u.pin && (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                      onClick={() => openPinDialog(u, "set")}
+                      className="h-8 text-xs gap-1 text-destructive border-red-200 hover:bg-red-50"
+                      onClick={() => openPinDialog(u, "remove")}
                     >
-                      <Shield className="w-3 h-3" />
-                      {u.pin ? "Change PIN" : "Set PIN"}
+                      Remove PIN
                     </Button>
-                    {u.pin && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs gap-1 text-destructive border-red-200 hover:bg-red-50"
-                        onClick={() => openPinDialog(u, "remove")}
-                      >
-                        Remove PIN
-                      </Button>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           ))}
         </div>
+        </>
       )}
 
       {/* PIN Dialog */}
@@ -661,7 +665,8 @@ export default function Admin() {
     }
   };
 
-  const isAdmin = user?.role === "admin";
+  const { activeRole } = useActiveRoleContext();
+  const isAdmin = activeRole === "admin";
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">

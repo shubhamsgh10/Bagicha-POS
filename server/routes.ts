@@ -228,7 +228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── User Management (Admin only) ──────────────────────────────────────────────
 
-  app.get("/api/users", requireAdmin, async (req, res) => {
+  app.get("/api/users", requireAuth, async (_req, res) => {
     try {
       const allUsers = await storage.getUsers();
       const safeUsers = allUsers.map(({ password, pin, ...u }) => ({ ...u, pin: !!pin }));
@@ -830,13 +830,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders/:id/payment", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { paymentMethod } = req.body;
-      const order = await storage.updateOrder(id, {
-        paymentStatus: "paid",
+      const { paymentMethod, notes } = req.body;
+      const isDue = paymentMethod === "due";
+
+      const updateData: any = {
         paymentMethod: paymentMethod || "cash",
+        paymentStatus: isDue ? "pending" : "paid",
         status: "served",
-      } as any);
-      // Free the table if dine-in
+      };
+      if (notes) updateData.notes = notes;
+
+      const order = await storage.updateOrder(id, updateData);
+
+      // Free the table regardless (customer has left); due orders remain tracked via paymentStatus
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
         broadcast({ type: 'TABLE_UPDATE' });
@@ -846,6 +852,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Payment error:", error);
       res.status(500).json({ error: "Failed to process payment" });
+    }
+  });
+
+  // ── Due orders (paymentStatus = pending, status = served) ────────────────────
+  app.get("/api/orders/due", requireAuth, async (req, res) => {
+    try {
+      const allOrders = await storage.getOrders();
+      const dueOrders = allOrders.filter(
+        (o: any) => o.paymentStatus === "pending" && o.status === "served"
+      );
+      res.json(dueOrders);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch due orders" });
+    }
+  });
+
+  // ── Payment method breakdown for a date range ────────────────────────────────
+  app.get("/api/reports/payment-summary", requireAuth, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      let allOrders: any[];
+      if (startDate && endDate) {
+        allOrders = await storage.getOrdersByDateRange(
+          new Date(startDate as string),
+          new Date(endDate as string)
+        );
+      } else {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+        allOrders = await storage.getOrdersByDateRange(today, tomorrow);
+      }
+
+      // Only count paid orders for revenue; due orders counted separately
+      const paid = allOrders.filter((o: any) => o.paymentStatus === "paid");
+      const due  = allOrders.filter((o: any) => o.paymentStatus === "pending" && o.status === "served");
+
+      const breakdown: Record<string, { count: number; amount: number }> = {};
+      for (const o of paid) {
+        const method = o.paymentMethod || "cash";
+        if (!breakdown[method]) breakdown[method] = { count: 0, amount: 0 };
+        breakdown[method].count++;
+        breakdown[method].amount += parseFloat(o.totalAmount || "0");
+      }
+
+      const dueTotal = due.reduce((s: number, o: any) => s + parseFloat(o.totalAmount || "0"), 0);
+
+      res.json({
+        breakdown,                        // { cash: {count, amount}, upi: {...}, ... }
+        totalPaid: paid.reduce((s: number, o: any) => s + parseFloat(o.totalAmount || "0"), 0),
+        totalDue: dueTotal,
+        dueCount: due.length,
+        dueOrders: due,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to generate payment summary" });
     }
   });
 

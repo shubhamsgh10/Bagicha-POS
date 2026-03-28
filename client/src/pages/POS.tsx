@@ -19,9 +19,26 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
-import { useActiveRole } from "@/hooks/useActiveRole";
+import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
+
+function POSTimer({ startedAt }: { startedAt: string }) {
+  const getElapsed = (s: string) => {
+    const totalMins = Math.floor((Date.now() - new Date(s).getTime()) / 60000);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    return { h, m };
+  };
+  const [elapsed, setElapsed] = useState(() => getElapsed(startedAt));
+  useEffect(() => {
+    setElapsed(getElapsed(startedAt));
+    const id = setInterval(() => setElapsed(getElapsed(startedAt)), 60000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const display = elapsed.h > 0 ? `${elapsed.h}h ${elapsed.m}m` : `${elapsed.m} Min`;
+  return <span className="opacity-90">{display}</span>;
+}
 
 const orderSchema = z.object({
   customerName: z.string().optional(),
@@ -187,6 +204,7 @@ export default function POS() {
   const paymentMethodRef = useRef("cash");
   const setPayment = (m: string) => { setSelectedPaymentMethod(m); paymentMethodRef.current = m; };
   const [otherReason, setOtherReason] = useState("");
+  const otherReasonRef = useRef("");
   // It's Paid checkbox
   const [isPaid, setIsPaid] = useState(false);
   // Short code input
@@ -195,7 +213,7 @@ export default function POS() {
   const discountInputRef = useRef<HTMLInputElement>(null);
 
   // ── Role switcher + permission system ────────────────────────────────────────
-  const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRole();
+  const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRoleContext();
   const { can, requirePin, pinRequest, resolvePinSuccess, resolvePinCancel, isLocked, actionPinRole } = usePermission(activeRole);
   const isAdmin = activeRole === "admin";
   const isStaff = activeRole === "staff";
@@ -431,7 +449,7 @@ export default function POS() {
         setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "settle") {
-        settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current });
+        settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
       }
     },
     onError: (error: any) => {
@@ -474,7 +492,7 @@ export default function POS() {
         setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "settle") {
-        settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current });
+        settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
       }
     },
     onError: (error: any) => {
@@ -485,8 +503,8 @@ export default function POS() {
   // ── Settle / payment mutation ─────────────────────────────────────────────
 
   const settleMutation = useMutation({
-    mutationFn: async ({ orderId, paymentMethod }: { orderId: number; paymentMethod: string; order?: any }) => {
-      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, { paymentMethod });
+    mutationFn: async ({ orderId, paymentMethod, notes }: { orderId: number; paymentMethod: string; order?: any; notes?: string }) => {
+      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, { paymentMethod, notes });
       return res.json();
     },
     onSuccess: (settled: any, vars: any) => {
@@ -964,6 +982,9 @@ export default function POS() {
           {/* Table label badge */}
           {tableLabel && (
             <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
+              {isEditMode && existingOrder?.createdAt && (
+                <POSTimer startedAt={existingOrder.createdAt} />
+              )}
               <span>{tableLabel}</span>
               {isEditMode && existingOrder?.orderNumber && (
                 <span className="opacity-75">#{existingOrder.orderNumber}</span>
@@ -1574,7 +1595,7 @@ export default function POS() {
               <input
                 type="text"
                 value={otherReason}
-                onChange={(e) => setOtherReason(e.target.value)}
+                onChange={(e) => { setOtherReason(e.target.value); otherReasonRef.current = e.target.value; }}
                 placeholder="Enter reason…"
                 className="w-full mt-2 px-2.5 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-green-400 placeholder:text-gray-400"
               />
