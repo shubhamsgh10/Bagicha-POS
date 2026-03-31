@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -183,8 +183,7 @@ export default function POS() {
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [discountPercent, setDiscountPercent] = useState(0);
-  const [serviceCharge, setServiceCharge] = useState(0);
-  const [containerCharge, setContainerCharge] = useState(0);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
   // Unified modifier modal state (handles both add-new and edit-existing)
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -373,6 +372,25 @@ export default function POS() {
   const { data: categories } = useQuery<any[]>({ queryKey: ["/api/categories"] });
   const { data: menuItems } = useQuery<any[]>({ queryKey: ["/api/menu"] });
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
+
+  // Customer lookup — fetch past orders to build a unique name+phone list
+  const { data: pastOrders = [] } = useQuery<any[]>({
+    queryKey: ["/api/orders"],
+    staleTime: 60_000,
+  });
+  const uniqueCustomers = useMemo(() => {
+    const seen = new Set<string>();
+    const list: { name: string; phone: string }[] = [];
+    for (let i = pastOrders.length - 1; i >= 0; i--) {
+      const o = pastOrders[i];
+      if (!o.customerName) continue;
+      const key = o.customerPhone || o.customerName;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({ name: o.customerName, phone: o.customerPhone || "" });
+    }
+    return list;
+  }, [pastOrders]);
   const taxRate = (settings?.taxRate ?? 18) / 100;
 
   // Fetch existing order when in edit mode (uses activeOrderId so it updates after KOT creates order)
@@ -437,16 +455,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
         printBill(order, [], settings);
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
@@ -480,16 +498,16 @@ export default function POS() {
         printKOTSlip(cartItems, tableLabel);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         printBill(order, existingOrder?.items || [], settings);
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
         settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
@@ -625,8 +643,9 @@ export default function POS() {
   const total = taxable + tax;
   const currentOrderType = form.watch("orderType");
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
-  const appliedContainerCharge = isDeliveryOrPickup ? containerCharge : 0;
-  const grandTotal = total + serviceCharge + appliedContainerCharge;
+  const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
+  const appliedContainerCharge = isDeliveryOrPickup ? totalItemQty * 15 : 0;
+  const grandTotal = total + appliedContainerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
 
@@ -722,7 +741,7 @@ export default function POS() {
         `Subtotal: ₹${subtotal.toFixed(0)}`,
         discountAmt > 0 ? `Discount: -₹${discountAmt.toFixed(0)}` : null,
         `Tax: ₹${tax.toFixed(0)}`,
-        serviceCharge > 0 ? `Service Charge: ₹${serviceCharge.toFixed(0)}` : null,
+
         appliedContainerCharge > 0 ? `Container Charge: ₹${appliedContainerCharge.toFixed(0)}` : null,
         `*TOTAL: ₹${grandTotal.toFixed(0)}*`,
         ``,
@@ -1010,7 +1029,7 @@ export default function POS() {
           {/* New Order — admin only */}
           <button
             disabled={!can("newOrder")}
-            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0); })}
+            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
             className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
           >
             + New Order
@@ -1064,12 +1083,52 @@ export default function POS() {
             })}
           </div>
 
-          {/* Customer name */}
-          <input
-            placeholder="Customer name"
-            {...form.register("customerName")}
-            className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 shrink-0"
-          />
+          {/* Customer name — autocomplete */}
+          {(() => {
+            const nameValue = form.watch("customerName") || "";
+            const filtered = nameValue.trim()
+              ? uniqueCustomers.filter(c =>
+                  c.name.toLowerCase().includes(nameValue.toLowerCase())
+                )
+              : uniqueCustomers.slice(0, 8);
+            return (
+              <div className="relative shrink-0">
+                <input
+                  placeholder="Customer name"
+                  value={nameValue}
+                  onChange={(e) => {
+                    form.setValue("customerName", e.target.value);
+                    setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 150)}
+                  className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 w-full"
+                />
+                {showCustomerDropdown && filtered.length > 0 && (
+                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                    {filtered.map((c, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          form.setValue("customerName", c.name);
+                          form.setValue("customerPhone", c.phone);
+                          setShowCustomerDropdown(false);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-emerald-50 border-b border-gray-50 last:border-0 transition-colors"
+                      >
+                        <div className="text-xs font-semibold text-gray-800">{c.name}</div>
+                        {c.phone && (
+                          <div className="text-[10px] text-gray-400 mt-0.5">{c.phone}</div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Customer phone */}
           <input
@@ -1402,7 +1461,7 @@ export default function POS() {
             {hasItems && (
               <button
                 disabled={activeRole === "staff"}
-                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setServiceCharge(0); setContainerCharge(0); })}
+                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
                 className="text-[10px] text-gray-400 hover:text-green-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
               >
                 Clear all
@@ -1531,34 +1590,12 @@ export default function POS() {
               <span>Tax ({settings?.taxRate ?? 18}%)</span>
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
-            {/* Service Charge — always visible */}
-            <div className="flex items-center gap-1 text-xs">
-              <span className="text-gray-500 flex-1">Service Charge</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={serviceCharge || ""}
-                onChange={(e) => setServiceCharge(Math.max(0, parseFloat(e.target.value) || 0))}
-                placeholder="0"
-                className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
-              />
-              <span className="text-gray-400 text-[10px]">₹</span>
-            </div>
+
             {/* Container Charge — delivery & pickup only */}
             {isDeliveryOrPickup && (
-              <div className="flex items-center gap-1 text-xs">
-                <span className="text-gray-500 flex-1">Container Charge</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={containerCharge || ""}
-                  onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
-                  placeholder="0"
-                  className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
-                />
-                <span className="text-gray-400 text-[10px]">₹</span>
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>Container Charge <span className="text-gray-400">(₹15 × {totalItemQty})</span></span>
+                <span className="font-medium text-gray-700">{fmt(appliedContainerCharge)}</span>
               </div>
             )}
             <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1.5 mt-0.5">
