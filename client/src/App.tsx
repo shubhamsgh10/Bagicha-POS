@@ -16,6 +16,7 @@ import Settings from "@/pages/Settings";
 import Tables from "@/pages/Tables";
 import LiveAnalytics from "@/pages/LiveAnalytics";
 import LiveTablesDashboard from "@/pages/LiveTablesDashboard";
+import CustomerDashboard from "@/pages/CustomerDashboard";
 import KOT from "@/pages/KOT";
 import MobilePOS from "@/pages/MobilePOS";
 import Login from "@/pages/Login";
@@ -69,6 +70,7 @@ function Router() {
           <Route path="/settings"       component={Settings} />
           <Route path="/live-analytics" component={LiveAnalytics} />
           <Route path="/live-tables"   component={LiveTablesDashboard} />
+          <Route path="/customers"     component={CustomerDashboard} />
           <Route path="/kot"            component={KOT} />
           <Route component={NotFound} />
         </Switch>
