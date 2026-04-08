@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, ChevronUp, Clock, Users, CheckCircle2 } from "lucide-react";
-import type { LiveItem, LiveTableState } from "@/hooks/useLiveTableOperations";
+import type { LiveItem, LiveTableState, OrderType } from "@/hooks/useLiveTableOperations";
 import { ItemRow } from "./ItemRow";
 
 // ── Elapsed helpers ───────────────────────────────────────────────────────────
@@ -76,6 +76,17 @@ const STATUS_CONFIG: Record<
 
 const DEFAULT_STATUS = STATUS_CONFIG.free;
 
+// ── Order type config ─────────────────────────────────────────────────────────
+
+const ORDER_TYPE_CONFIG: Record<
+  OrderType,
+  { emoji: string; bg: string; ring: string; label: string }
+> = {
+  "dine-in":  { emoji: "🍽️", bg: "bg-emerald-100", ring: "ring-emerald-300", label: "Dine-in"  },
+  "delivery": { emoji: "🛵",  bg: "bg-blue-100",    ring: "ring-blue-300",    label: "Delivery" },
+  "pickup":   { emoji: "📦",  bg: "bg-orange-100",  ring: "ring-orange-300",  label: "Pickup"   },
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface TableCardProps {
@@ -93,7 +104,8 @@ export const TableCard = memo(function TableCard({
   isExpanded,
   onToggle,
 }: TableCardProps) {
-  const cfg = STATUS_CONFIG[table.status] ?? DEFAULT_STATUS;
+  const cfg   = STATUS_CONFIG[table.status] ?? DEFAULT_STATUS;
+  const otCfg = ORDER_TYPE_CONFIG[table.orderType] ?? ORDER_TYPE_CONFIG["dine-in"];
   const urgency = useUrgency(table.startedAt, table.status);
   const totalQty = table.items.reduce((s, i) => s + i.quantity, 0);
   const hasItems = table.items.length > 0;
@@ -179,35 +191,48 @@ export const TableCard = memo(function TableCard({
         className="flex items-start justify-between gap-2 cursor-pointer"
         onClick={() => hasItems && onToggle()}
       >
-        {/* Left: name + new-item ping */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            {table.hasNewItems && !allServed && (
-              <span className="shrink-0 relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-400" />
-              </span>
-            )}
-            {allServed && (
-              <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-            )}
-            <h3
-              className={`font-bold text-gray-800 truncate leading-tight ${
-                compact ? "text-[11px]" : "text-sm"
-              }`}
-            >
-              {table.name}
-            </h3>
-          </div>
+        {/* Left: order-type badge + name + new-item ping */}
+        <div className="flex items-start gap-1.5 flex-1 min-w-0">
+          {/* Order type badge */}
+          <span
+            title={otCfg.label}
+            className={`shrink-0 inline-flex items-center justify-center rounded-full ring-1 leading-none select-none
+              ${otCfg.bg} ${otCfg.ring}
+              ${compact ? "w-4 h-4 text-[8px]" : "w-5 h-5 text-[10px]"}
+            `}
+          >
+            {otCfg.emoji}
+          </span>
 
-          {!compact && (
-            <div className="flex items-center gap-2 mt-0.5">
-              <p className="text-[9px] text-gray-400 capitalize">{table.section}</p>
-              {table.orderNumber && (
-                <p className="text-[9px] text-gray-400 font-medium">#{table.orderNumber}</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              {table.hasNewItems && !allServed && (
+                <span className="shrink-0 relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-400" />
+                </span>
               )}
+              {allServed && (
+                <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+              )}
+              <h3
+                className={`font-bold text-gray-800 truncate leading-tight ${
+                  compact ? "text-[11px]" : "text-sm"
+                }`}
+              >
+                {table.name}
+              </h3>
             </div>
-          )}
+
+            {!compact && (
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-[9px] text-gray-400 capitalize">{table.section}</p>
+                {table.orderNumber && (
+                  <p className="text-[9px] text-gray-400 font-medium">#{table.orderNumber}</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: pending badge + status dot + chevron */}

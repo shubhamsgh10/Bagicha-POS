@@ -193,6 +193,7 @@ export default function POS() {
   const preselectedTableId = urlParams.get("tableId") ? Number(urlParams.get("tableId")) : null;
   const preselectedTableName = urlParams.get("tableName") ? decodeURIComponent(urlParams.get("tableName") || "") : null;
   const editOrderId = urlParams.get("orderId") ? Number(urlParams.get("orderId")) : null;
+  const posMode = urlParams.get("mode") as "delivery" | "pickup" | null; // direct delivery/pickup mode
 
   // ── Active order ID (starts from URL, updated after KOT creates a new order) ─
   const [activeOrderId, setActiveOrderId] = useState<number | null>(editOrderId);
@@ -208,6 +209,8 @@ export default function POS() {
   const [isPaid, setIsPaid] = useState(false);
   // Short code input
   const [shortCode, setShortCode] = useState("");
+  // Mobile tab: switch between menu and cart panels
+  const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
   // Discount input ref (for re-focus after PIN unlock)
   const discountInputRef = useRef<HTMLInputElement>(null);
 
@@ -217,9 +220,9 @@ export default function POS() {
   const isAdmin = activeRole === "admin";
   const isStaff = activeRole === "staff";
 
-  // ── Route guard: POS requires a tableId OR an orderId (recalled hold) ────────
+  // ── Route guard: POS requires a tableId OR an orderId OR a direct mode ───────
   useEffect(() => {
-    if (!preselectedTableId && !editOrderId) {
+    if (!preselectedTableId && !editOrderId && !posMode) {
       navigate("/tables");
     }
   }, []);
@@ -366,7 +369,10 @@ export default function POS() {
   const { toast } = useToast();
   const form = useForm<OrderForm>({
     resolver: zodResolver(orderSchema),
-    defaultValues: { orderType: editOrderId ? "dine-in" : "dine-in", paymentMethod: "cash" },
+    defaultValues: {
+      orderType: posMode === "delivery" ? "delivery" : posMode === "pickup" ? "takeaway" : "dine-in",
+      paymentMethod: "cash",
+    },
   });
 
   const { data: categories } = useQuery<any[]>({ queryKey: ["/api/categories"] });
@@ -987,7 +993,7 @@ export default function POS() {
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
       <div className="shrink-0 bg-white border-b shadow-sm z-10">
-        <div className="flex items-center gap-2 px-3 py-2">
+        <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto scrollbar-hide">
 
           {/* Back */}
           <button
@@ -998,19 +1004,33 @@ export default function POS() {
             Tables
           </button>
 
-          {/* Table label badge */}
-          {tableLabel && (
-            <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
-              {isEditMode && existingOrder?.createdAt && (
-                <POSTimer startedAt={existingOrder.createdAt} />
-              )}
-              <span>{tableLabel}</span>
-              {isEditMode && existingOrder?.orderNumber && (
-                <span className="opacity-75">#{existingOrder.orderNumber}</span>
-              )}
-              <span className="opacity-75 text-[10px] capitalize">{orderTypeLabel}</span>
-            </div>
-          )}
+          {/* Active mode badge — dynamically reflects current orderType */}
+          {(() => {
+            const ot = form.watch("orderType");
+            if (ot === "delivery") return (
+              <div className="flex items-center gap-1.5 bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
+                🛵 <span>Delivery</span>
+              </div>
+            );
+            if (ot === "takeaway") return (
+              <div className="flex items-center gap-1.5 bg-orange-500 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
+                📦 <span>Pick Up</span>
+              </div>
+            );
+            // dine-in
+            return (
+              <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
+                🍽️
+                {isEditMode && existingOrder?.createdAt && (
+                  <POSTimer startedAt={existingOrder.createdAt} />
+                )}
+                <span>{tableLabel ?? "Dine In"}</span>
+                {isEditMode && existingOrder?.orderNumber && (
+                  <span className="opacity-75">#{existingOrder.orderNumber}</span>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="w-px h-5 bg-gray-200 mx-1 shrink-0" />
 
@@ -1065,16 +1085,18 @@ export default function POS() {
 
           <div className="flex-1" />
 
-          {/* Order type tabs */}
-          <div className="flex border border-gray-200 rounded overflow-hidden shrink-0">
+          {/* Order type tabs — Petpooja style: plain text inactive, green pill active */}
+          <div className="flex items-center gap-1 shrink-0">
             {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const).map(([val, label]) => {
               const active = form.watch("orderType") === val;
               return (
                 <button
                   key={val}
                   onClick={() => form.setValue("orderType", val)}
-                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-r border-gray-200 last:border-r-0 ${
-                    active ? "bg-green-600 text-white" : "text-gray-600 hover:bg-gray-50"
+                  className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
+                    active
+                      ? "bg-green-600 text-white shadow-sm"
+                      : "text-gray-500 hover:text-gray-800"
                   }`}
                 >
                   {label}
@@ -1134,11 +1156,12 @@ export default function POS() {
           <input
             placeholder="Phone number"
             {...form.register("customerPhone")}
+            autoFocus={!!posMode}
             className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 shrink-0"
           />
 
-          {/* Table Actions */}
-          <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+          {/* Table Actions — hidden in direct delivery/pickup mode */}
+          {!posMode && <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setShowActionsMenu((v) => !v)}
               className="flex items-center gap-1 text-xs text-gray-600 border border-gray-200 px-2.5 py-1.5 rounded hover:bg-gray-50 transition-colors font-medium"
@@ -1174,7 +1197,7 @@ export default function POS() {
                 })}
               </div>
             )}
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -1365,8 +1388,8 @@ export default function POS() {
       ════════════════════════════════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
-        {/* ── LEFT: Category sidebar ─────────────────────────────────────────── */}
-        <div className="w-[130px] shrink-0 bg-white border-r flex flex-col overflow-hidden">
+        {/* ── LEFT: Category sidebar — desktop only ──────────────────────────── */}
+        <div className="hidden md:flex w-[130px] shrink-0 bg-white border-r flex-col overflow-hidden">
           <div className="px-3 py-2 border-b shrink-0">
             <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Categories</span>
           </div>
@@ -1398,7 +1421,35 @@ export default function POS() {
         </div>
 
         {/* ── CENTER: Items grid ──────────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
+        <div className={`flex-1 flex-col overflow-hidden bg-gray-100 ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}>
+
+          {/* Mobile category pills — horizontal scroll, mobile only */}
+          <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 bg-white border-b scrollbar-hide shrink-0">
+            <button
+              onClick={() => setSelectedCategory("all")}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                selectedCategory === "all"
+                  ? "bg-green-600 text-white"
+                  : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              All
+            </button>
+            {categories?.map((cat: any) => (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  selectedCategory === cat.id
+                    ? "bg-green-600 text-white"
+                    : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+
           <ScrollArea className="flex-1">
             <div className="p-3">
               {filteredItems?.length === 0 && (
@@ -1446,8 +1497,8 @@ export default function POS() {
           </ScrollArea>
         </div>
 
-        {/* ── RIGHT: Billing panel ───────────────────────────────────────────── */}
-        <div className="w-[290px] shrink-0 bg-white border-l flex flex-col overflow-hidden">
+        {/* ── RIGHT: Billing panel — full width on mobile when cart tab active ── */}
+        <div className={`md:w-[290px] w-full shrink-0 bg-white border-l flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}>
 
           {/* Panel header */}
           <div className="px-3 py-2 border-b bg-gray-50 shrink-0 flex items-center justify-between">
@@ -1739,6 +1790,34 @@ export default function POS() {
           </div>
         </div>
       </div>
+
+      {/* ── Mobile: Menu / Cart tab switcher ────────────────────────────────── */}
+      <div className="md:hidden shrink-0 bg-white border-t flex">
+        <button
+          onClick={() => setMobileTab("menu")}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 transition-colors ${
+            mobileTab === "menu" ? "text-green-600" : "text-gray-400"
+          }`}
+        >
+          <LayoutGrid className="w-5 h-5" />
+          <span className="text-[10px] font-bold">Menu</span>
+        </button>
+        <button
+          onClick={() => setMobileTab("cart")}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 relative transition-colors ${
+            mobileTab === "cart" ? "text-green-600" : "text-gray-400"
+          }`}
+        >
+          <ShoppingCart className="w-5 h-5" />
+          <span className="text-[10px] font-bold">Cart</span>
+          {cartItems.length > 0 && (
+            <span className="absolute top-2 left-[calc(50%+6px)] min-w-[16px] h-4 text-[9px] font-bold bg-green-600 text-white rounded-full flex items-center justify-center px-1">
+              {cartItems.length}
+            </span>
+          )}
+        </button>
+      </div>
+
     </div>
   );
 }
