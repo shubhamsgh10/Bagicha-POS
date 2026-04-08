@@ -245,5 +245,16 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Responsive utilities
+   ───────────────────────────────────────────────────────────── */
+
+/* Hide scrollbar while keeping scroll functionality */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Safe-area bottom padding for phones with home indicator */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* ─────────────────────────────────────────────────────────────
    AnimatedContainer — framer-motion utility
    ───────────────────────────────────────────────────────────── */

@@ -19,6 +19,8 @@ import LiveTablesDashboard from "@/pages/LiveTablesDashboard";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import KOT from "@/pages/KOT";
 import MobilePOS from "@/pages/MobilePOS";
+import Kitchen from "@/pages/Kitchen";
+import { BottomNav } from "@/components/BottomNav";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
@@ -52,7 +54,7 @@ function Router() {
   if (location.startsWith("/pos")) return <POS />;
   if (location.startsWith("/mobile-pos")) return <MobilePOS />;
 
-  // All other pages: TopNav + page content (no sidebar)
+  // All other pages: TopNav + page content + BottomNav (mobile)
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       <TopNav />
@@ -71,10 +73,12 @@ function Router() {
           <Route path="/live-analytics" component={LiveAnalytics} />
           <Route path="/live-tables"   component={LiveTablesDashboard} />
           <Route path="/customers"     component={CustomerDashboard} />
-          <Route path="/kot"            component={KOT} />
+          <Route path="/kitchen"       component={Kitchen} />
+          <Route path="/kot"           component={KOT} />
           <Route component={NotFound} />
         </Switch>
       </div>
+      <BottomNav />
     </div>
   );
 }

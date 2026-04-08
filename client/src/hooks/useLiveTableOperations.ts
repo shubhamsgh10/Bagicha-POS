@@ -14,6 +14,8 @@ export interface LiveItem {
   size: string | null;
 }
 
+export type OrderType = "dine-in" | "delivery" | "pickup";
+
 export interface LiveTableState {
   id: number;
   name: string;
@@ -22,6 +24,7 @@ export interface LiveTableState {
   section: string;
   currentOrderId: number | null;
   orderNumber: string | null;
+  orderType: OrderType;
   startedAt: string | null;
   items: LiveItem[];
   hasNewItems: boolean;
@@ -29,6 +32,15 @@ export interface LiveTableState {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Normalise any raw orderType string → canonical OrderType */
+export function normalizeOrderType(raw: string | null | undefined, isTableOrder: boolean): OrderType {
+  if (!raw) return isTableOrder ? "dine-in" : "pickup";
+  const v = raw.toLowerCase().replace(/[-_\s]/g, "");
+  if (v.includes("deliv"))                               return "delivery";
+  if (v.includes("pickup") || v.includes("take"))       return "pickup";
+  return "dine-in";
+}
 
 async function apiFetch<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: "include" });
@@ -106,6 +118,7 @@ function buildTableState(table: any, order: any | null): LiveTableState {
     section: table.section ?? "inner",
     currentOrderId: table.currentOrderId ?? null,
     orderNumber: order?.orderNumber ?? null,
+    orderType: normalizeOrderType(order?.orderType, !!table.currentOrderId),
     startedAt: order?.createdAt ?? null,
     items,
     hasNewItems: false,
@@ -257,6 +270,7 @@ export function useLiveTableOperations() {
                 status: "running",
                 currentOrderId: order.id,
                 orderNumber: order.orderNumber,
+                orderType: normalizeOrderType(order.orderType, !!order.tableId),
                 startedAt: order.createdAt,
                 items: newItems,
                 hasNewItems: newItems.length > 0,

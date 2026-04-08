@@ -8,5 +8,5 @@
   "currency": "INR",
   "currencySymbol": "₹",
   "footerNote": "Thank you for dining with us!",
-  "posRoleTimeout": 2
+  "posRoleTimeout": 5
 }

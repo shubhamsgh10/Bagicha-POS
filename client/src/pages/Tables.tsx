@@ -287,7 +287,7 @@ export default function Tables() {
     <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 overflow-hidden">
 
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
-      <div className="shrink-0 bg-white/40 backdrop-blur-sm border-b border-white/40 flex items-center px-4 gap-2 py-2 flex-wrap">
+      <div className="shrink-0 bg-white/40 backdrop-blur-sm border-b border-white/40 flex items-center px-4 gap-2 py-2 overflow-x-auto scrollbar-hide flex-nowrap md:flex-wrap">
 
         {/* Running Tables */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
@@ -339,6 +339,22 @@ export default function Tables() {
         >
           <Plus className="w-3 h-3" />
           Add Table
+        </Button>
+
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1 shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
+          onClick={() => navigate("/pos?mode=delivery")}
+        >
+          🛵 Delivery
+        </Button>
+
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1 shrink-0 bg-orange-500 hover:bg-orange-600 text-white"
+          onClick={() => navigate("/pos?mode=pickup")}
+        >
+          📦 Pick Up
         </Button>
       </div>
 
