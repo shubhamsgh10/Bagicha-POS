@@ -6,7 +6,7 @@ import {
   type Sales, type InsertSales, type Table, type InsertTable
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -22,14 +22,19 @@ export interface IStorage {
   createCategory(category: InsertCategory): Promise<Category>;
   updateCategory(id: number, category: Partial<InsertCategory>): Promise<Category>;
   deleteCategory(id: number): Promise<void>;
+  reorderCategories(orderedIds: number[]): Promise<void>;
 
   // Menu Items
   getMenuItems(): Promise<MenuItem[]>;
+  getAllMenuItems(): Promise<MenuItem[]>;
   getMenuItemsByCategory(categoryId: number): Promise<MenuItem[]>;
   getMenuItemById(id: number): Promise<MenuItem | undefined>;
   createMenuItem(item: InsertMenuItem): Promise<MenuItem>;
   updateMenuItem(id: number, item: Partial<InsertMenuItem>): Promise<MenuItem>;
+  bulkUpdateMenuItems(ids: number[], updates: Partial<InsertMenuItem>): Promise<void>;
+  bulkDeleteMenuItems(ids: number[]): Promise<void>;
   deleteMenuItem(id: number): Promise<void>;
+  deductInventoryForOrder(orderItems: Array<{ menuItemId: number; quantity: number }>): Promise<void>;
 
   // Inventory
   getInventory(): Promise<Inventory[]>;
@@ -138,11 +143,16 @@ export class DatabaseStorage implements IStorage {
 
   // Categories
   async getCategories(): Promise<Category[]> {
-    return await db.select().from(categories).where(eq(categories.isActive, true));
+    return await db.select().from(categories)
+      .where(eq(categories.isActive, true))
+      .orderBy(asc(categories.displayOrder), asc(categories.id));
   }
 
   async createCategory(category: InsertCategory): Promise<Category> {
-    const [newCategory] = await db.insert(categories).values(category).returning();
+    // Assign next display_order
+    const existing = await db.select().from(categories).where(eq(categories.isActive, true));
+    const maxOrder = existing.reduce((m, c) => Math.max(m, c.displayOrder ?? 0), 0);
+    const [newCategory] = await db.insert(categories).values({ ...category, displayOrder: maxOrder + 1 }).returning();
     return newCategory;
   }
 
@@ -155,9 +165,21 @@ export class DatabaseStorage implements IStorage {
     await db.update(categories).set({ isActive: false }).where(eq(categories.id, id));
   }
 
+  async reorderCategories(orderedIds: number[]): Promise<void> {
+    await Promise.all(
+      orderedIds.map((id, index) =>
+        db.update(categories).set({ displayOrder: index }).where(eq(categories.id, id))
+      )
+    );
+  }
+
   // Menu Items
   async getMenuItems(): Promise<MenuItem[]> {
     return await db.select().from(menuItems).where(eq(menuItems.isAvailable, true));
+  }
+
+  async getAllMenuItems(): Promise<MenuItem[]> {
+    return await db.select().from(menuItems);
   }
 
   async getMenuItemsByCategory(categoryId: number): Promise<MenuItem[]> {
@@ -181,8 +203,31 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async bulkUpdateMenuItems(ids: number[], updates: Partial<InsertMenuItem>): Promise<void> {
+    if (ids.length === 0) return;
+    await db.update(menuItems).set(updates as any).where(inArray(menuItems.id, ids));
+  }
+
+  async bulkDeleteMenuItems(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await db.update(menuItems).set({ isAvailable: false }).where(inArray(menuItems.id, ids));
+  }
+
   async deleteMenuItem(id: number): Promise<void> {
     await db.update(menuItems).set({ isAvailable: false }).where(eq(menuItems.id, id));
+  }
+
+  async deductInventoryForOrder(orderItems: Array<{ menuItemId: number; quantity: number }>): Promise<void> {
+    for (const { menuItemId, quantity } of orderItems) {
+      const item = await this.getMenuItemById(menuItemId);
+      if (!item?.inventoryLinks || item.inventoryLinks.length === 0) continue;
+      for (const link of item.inventoryLinks) {
+        const needed = link.quantity * quantity;
+        await db.execute(
+          sql`UPDATE inventory SET current_stock = GREATEST(0, current_stock - ${needed}) WHERE id = ${link.inventoryId}`
+        );
+      }
+    }
   }
 
   // Inventory

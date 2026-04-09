@@ -17,6 +17,7 @@ export const categories = pgTable("categories", {
   name: text("name").notNull(),
   description: text("description"),
   isActive: boolean("is_active").notNull().default(true),
+  displayOrder: integer("display_order").notNull().default(0),
 });
 
 export const menuItems = pgTable("menu_items", {
@@ -35,6 +36,7 @@ export const menuItems = pgTable("menu_items", {
   variants: json("variants").$type<Array<{ group: string; options: Array<{ name: string; price?: number }>; required?: boolean }>>(),
   notesAllowed: boolean("notes_allowed").notNull().default(true),
   shortCode: text("short_code"),
+  inventoryLinks: json("inventory_links").$type<Array<{ inventoryId: number; quantity: number }>>(),
 });
 
 export const inventory = pgTable("inventory", {
