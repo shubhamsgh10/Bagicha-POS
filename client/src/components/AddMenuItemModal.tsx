@@ -18,7 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useEffect, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Package } from "lucide-react";
 
 const PIZZA_SIZES = ["Small", "Medium", "Large"] as const;
 const WOODFIRE_PIZZA = "Woodfire Pizza";
@@ -43,6 +43,11 @@ interface AddonEntry {
   price: string;
 }
 
+interface InventoryLinkEntry {
+  inventoryId: string;
+  quantity: string;
+}
+
 interface AddMenuItemModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -58,6 +63,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
   });
   const [addonsEnabled, setAddonsEnabled] = useState(false);
   const [addonsList, setAddonsList] = useState<AddonEntry[]>([]);
+  const [inventoryLinks, setInventoryLinks] = useState<InventoryLinkEntry[]>([]);
 
   const form = useForm<MenuItemForm>({
     resolver: zodResolver(menuItemSchema),
@@ -79,6 +85,10 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     queryKey: ['/api/categories'],
   });
 
+  const { data: inventoryItems = [] } = useQuery<any[]>({
+    queryKey: ['/api/inventory'],
+  });
+
   const selectedCategoryId = form.watch("categoryId");
   const selectedCategory = categories?.find((c: any) => c.id === selectedCategoryId);
   const isWoodfirePizza = selectedCategory?.name === WOODFIRE_PIZZA;
@@ -95,11 +105,13 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         description: `Menu item has been ${editItem ? 'updated' : 'created'} successfully`,
       });
       queryClient.invalidateQueries({ queryKey: ['/api/menu'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/menu?all=true'] });
       onClose();
       form.reset();
       setSizePrices({ Small: "", Medium: "", Large: "" });
       setAddonsEnabled(false);
       setAddonsList([]);
+      setInventoryLinks([]);
     },
     onError: (error: any) => {
       toast({
@@ -144,6 +156,19 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       .filter(a => a.name.trim())
       .map(a => ({ name: a.name.trim(), price: parseFloat(a.price) || 0 }));
 
+  const addInventoryLink = () => setInventoryLinks(prev => [...prev, { inventoryId: "", quantity: "1" }]);
+
+  const removeInventoryLink = (idx: number) =>
+    setInventoryLinks(prev => prev.filter((_, i) => i !== idx));
+
+  const updateInventoryLink = (idx: number, field: keyof InventoryLinkEntry, value: string) =>
+    setInventoryLinks(prev => prev.map((l, i) => i === idx ? { ...l, [field]: value } : l));
+
+  const buildInventoryLinks = () =>
+    inventoryLinks
+      .filter(l => l.inventoryId && parseFloat(l.quantity) > 0)
+      .map(l => ({ inventoryId: parseInt(l.inventoryId), quantity: parseFloat(l.quantity) }));
+
   const onSubmit = (data: MenuItemForm) => {
     if (isWoodfirePizza) {
       const missingPrices = PIZZA_SIZES.filter(s => !sizePrices[s] || isNaN(parseFloat(sizePrices[s])));
@@ -163,6 +188,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         sizes,
         addonsEnabled,
         addons: buildAddons(),
+        inventoryLinks: buildInventoryLinks(),
       });
     } else {
       if (!data.price || isNaN(parseFloat(data.price)) || parseFloat(data.price) < 0) {
@@ -174,6 +200,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         sizes: null,
         addonsEnabled,
         addons: buildAddons(),
+        inventoryLinks: buildInventoryLinks(),
       });
     }
   };
@@ -215,6 +242,11 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
           ? editItem.addons.map((a: any) => ({ name: a.name, price: a.price.toString() }))
           : []
       );
+      setInventoryLinks(
+        Array.isArray(editItem.inventoryLinks)
+          ? editItem.inventoryLinks.map((l: any) => ({ inventoryId: l.inventoryId.toString(), quantity: l.quantity.toString() }))
+          : []
+      );
     } else {
       form.reset({
         name: "",
@@ -231,6 +263,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       setSizePrices({ Small: "", Medium: "", Large: "" });
       setAddonsEnabled(false);
       setAddonsList([]);
+      setInventoryLinks([]);
     }
   }, [editItem]);
 
@@ -428,6 +461,68 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
                   <Plus className="w-4 h-4 mr-1" />
                   Add Addon
                 </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Inventory Linkage */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-blue-500" />
+                <Label className="font-medium">Ingredients / Inventory Mapping</Label>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addInventoryLink}>
+                <Plus className="w-3 h-3 mr-1" /> Add Ingredient
+              </Button>
+            </div>
+            {inventoryLinks.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Link inventory items to auto-deduct stock when an order is placed.
+              </p>
+            )}
+            {inventoryLinks.length > 0 && (
+              <div className="border rounded-lg p-3 space-y-2 bg-blue-50/30">
+                {inventoryLinks.map((link, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Select
+                      value={link.inventoryId}
+                      onValueChange={(v) => updateInventoryLink(idx, "inventoryId", v)}
+                    >
+                      <SelectTrigger className="flex-1 h-8 text-sm">
+                        <SelectValue placeholder="Select ingredient" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {inventoryItems.map((inv: any) => (
+                          <SelectItem key={inv.id} value={inv.id.toString()}>
+                            {inv.itemName} ({inv.unit}) — {inv.currentStock} left
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="flex items-center gap-1 w-28">
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">Qty:</span>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0.01"
+                        placeholder="1"
+                        value={link.quantity}
+                        onChange={(e) => updateInventoryLink(idx, "quantity", e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeInventoryLink(idx)}
+                      className="text-destructive hover:text-destructive h-8 w-8 p-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -403,6 +403,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/categories/reorder", requireAuth, async (req, res) => {
+    try {
+      const { orderedIds } = req.body;
+      if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
+      await storage.reorderCategories(orderedIds.map(Number));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to reorder categories" });
+    }
+  });
+
   // ── Live Status ──────────────────────────────────────────────────────────────
 
   app.get("/api/live-status", requireAuth, async (req, res) => {
@@ -510,7 +521,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/menu", requireAuth, async (req, res) => {
     try {
-      const menuItems = await storage.getMenuItems();
+      const menuItems = req.query.all === "true"
+        ? await storage.getAllMenuItems()
+        : await storage.getMenuItems();
       res.json(menuItems);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch menu items" });
@@ -555,6 +568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sizes: Array.isArray(b.sizes) ? b.sizes : null,
         addonsEnabled,
         addons: addonsEnabled && Array.isArray(b.addons) ? b.addons : [],
+        inventoryLinks: Array.isArray(b.inventoryLinks) && b.inventoryLinks.length > 0 ? b.inventoryLinks : null,
       } as any);
       res.json(menuItem);
     } catch (error) {
@@ -577,6 +591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
       updatePayload.addonsEnabled = b.addonsEnabled === true;
       updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
+      if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = Array.isArray(b.inventoryLinks) ? b.inventoryLinks : null;
       const menuItem = await storage.updateMenuItem(id, updatePayload);
       res.json(menuItem);
     } catch (error) {
@@ -592,6 +607,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete menu item" });
+    }
+  });
+
+  // Bulk update menu items
+  app.post("/api/menu/bulk-update", requireAuth, async (req, res) => {
+    try {
+      const { ids, updates } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
+      const allowed: any = {};
+      if (updates.isAvailable !== undefined) allowed.isAvailable = Boolean(updates.isAvailable);
+      if (updates.categoryId !== undefined) allowed.categoryId = Number(updates.categoryId);
+      if (updates.price !== undefined) allowed.price = String(updates.price);
+      await storage.bulkUpdateMenuItems(ids.map(Number), allowed);
+      queryClient_invalidate: await Promise.resolve();
+      res.json({ success: true, updated: ids.length });
+    } catch (error) {
+      console.error("Bulk update error:", error);
+      res.status(500).json({ error: "Failed to bulk update menu items" });
+    }
+  });
+
+  // Bulk delete menu items
+  app.post("/api/menu/bulk-delete", requireAuth, async (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
+      await storage.bulkDeleteMenuItems(ids.map(Number));
+      res.json({ success: true, deleted: ids.length });
+    } catch (error) {
+      console.error("Bulk delete error:", error);
+      res.status(500).json({ error: "Failed to bulk delete menu items" });
     }
   });
 
@@ -740,6 +786,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       await storage.createKotTicket({ orderId: order.id, kotNumber, items: kotItems });
+
+      // Deduct inventory based on inventoryLinks for each menu item
+      if (items && items.length > 0) {
+        try {
+          await storage.deductInventoryForOrder(
+            items.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity) }))
+          );
+        } catch (invErr) {
+          console.error("[order] inventory deduction error (non-fatal):", invErr);
+        }
+      }
 
       // Update table status if dine-in
       if (orderInfo.tableId) {

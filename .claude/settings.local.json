@@ -3,7 +3,28 @@
     "allow": [
       "Bash(npm run:*)",
       "Bash(netstat -ano)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(pip --version)",
+      "Bash(uv --version)",
+      "Bash(pip install:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell:*)",
+      "Bash(uv run:*)",
+      "Bash(ls /c/Users/shubh/.cargo/bin/uv*)",
+      "Bash(ls /c/Users/shubh/.local/bin/uv*)",
+      "Bash(ls \"/c/Users/shubh/AppData/Local/uv\"*)",
+      "Bash(ls \"/c/Users/shubh/AppData/Roaming/uv\"*)",
+      "Bash(npm install:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv pip:*)",
+      "mcp__code-review-graph__list_repos_tool",
+      "Bash(code-review-graph register:*)",
+      "Bash(crg register:*)",
+      "Bash(python -m code_review_graph register --help)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "code-review-graph"
+  ]
 }

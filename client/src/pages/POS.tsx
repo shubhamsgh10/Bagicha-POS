@@ -992,212 +992,226 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
-      <div className="shrink-0 bg-white border-b shadow-sm z-10">
-        <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto scrollbar-hide">
+      <div className="shrink-0 bg-white border-b shadow-sm relative z-20">
+        <div className="flex items-center gap-2 px-3 py-2">
 
-          {/* Back */}
-          <button
-            onClick={handleBackToTables}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 px-2 py-1.5 rounded hover:bg-gray-100 transition-colors shrink-0 font-medium"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Tables
-          </button>
+          {/* ── LEFT FIXED: Back, mode badge, role switcher, new order ── */}
+          <div className="flex items-center gap-2 shrink-0">
 
-          {/* Active mode badge — dynamically reflects current orderType */}
-          {(() => {
-            const ot = form.watch("orderType");
-            if (ot === "delivery") return (
-              <div className="flex items-center gap-1.5 bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
-                🛵 <span>Delivery</span>
-              </div>
-            );
-            if (ot === "takeaway") return (
-              <div className="flex items-center gap-1.5 bg-orange-500 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
-                📦 <span>Pick Up</span>
-              </div>
-            );
-            // dine-in
-            return (
-              <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold shrink-0">
-                🍽️
-                {isEditMode && existingOrder?.createdAt && (
-                  <POSTimer startedAt={existingOrder.createdAt} />
-                )}
-                <span>{tableLabel ?? "Dine In"}</span>
-                {isEditMode && existingOrder?.orderNumber && (
-                  <span className="opacity-75">#{existingOrder.orderNumber}</span>
-                )}
-              </div>
-            );
-          })()}
-
-          <div className="w-px h-5 bg-gray-200 mx-1 shrink-0" />
-
-          {/* Role Switcher */}
-          <RoleSwitcher
-            activeRole={activeRole}
-            loginRole={loginRole}
-            secondsLeft={secondsLeft}
-            isElevated={isElevated}
-            onElevate={elevateRole}
-            onRevert={revertRole}
-          />
-
-          <div className="w-px h-5 bg-gray-200 shrink-0" />
-
-          {/* New Order — admin only */}
-          <button
-            disabled={!can("newOrder")}
-            onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
-            className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-          >
-            + New Order
-            {!can("newOrder") && <Lock className="w-3 h-3 opacity-60" />}
-          </button>
-
-          {/* Search */}
-          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 flex-1 min-w-0 max-w-[200px]">
-            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            <input
-              placeholder="Search item..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent text-xs outline-none w-full placeholder-gray-400 min-w-0"
-            />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery("")} className="shrink-0">
-                <X className="w-3 h-3 text-gray-400" />
-              </button>
-            )}
-          </div>
-
-          {/* Short Code */}
-          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 w-[130px] shrink-0">
-            <input
-              placeholder="Short code + ↵"
-              value={shortCode}
-              onChange={(e) => setShortCode(e.target.value)}
-              onKeyDown={handleShortCode}
-              className="bg-transparent text-xs outline-none w-full placeholder-gray-400"
-            />
-          </div>
-
-          <div className="flex-1" />
-
-          {/* Order type tabs — Petpooja style: plain text inactive, green pill active */}
-          <div className="flex items-center gap-1 shrink-0">
-            {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const).map(([val, label]) => {
-              const active = form.watch("orderType") === val;
-              return (
-                <button
-                  key={val}
-                  onClick={() => form.setValue("orderType", val)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
-                    active
-                      ? "bg-green-600 text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-800"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Customer name — autocomplete */}
-          {(() => {
-            const nameValue = form.watch("customerName") || "";
-            const filtered = nameValue.trim()
-              ? uniqueCustomers.filter(c =>
-                  c.name.toLowerCase().includes(nameValue.toLowerCase())
-                )
-              : uniqueCustomers.slice(0, 8);
-            return (
-              <div className="relative shrink-0">
-                <input
-                  placeholder="Customer name"
-                  value={nameValue}
-                  onChange={(e) => {
-                    form.setValue("customerName", e.target.value);
-                    setShowCustomerDropdown(true);
-                  }}
-                  onFocus={() => setShowCustomerDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 150)}
-                  className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 w-full"
-                />
-                {showCustomerDropdown && filtered.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
-                    {filtered.map((c, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          form.setValue("customerName", c.name);
-                          form.setValue("customerPhone", c.phone);
-                          setShowCustomerDropdown(false);
-                        }}
-                        className="w-full text-left px-3 py-2 hover:bg-emerald-50 border-b border-gray-50 last:border-0 transition-colors"
-                      >
-                        <div className="text-xs font-semibold text-gray-800">{c.name}</div>
-                        {c.phone && (
-                          <div className="text-[10px] text-gray-400 mt-0.5">{c.phone}</div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Customer phone */}
-          <input
-            placeholder="Phone number"
-            {...form.register("customerPhone")}
-            autoFocus={!!posMode}
-            className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400 shrink-0"
-          />
-
-          {/* Table Actions — hidden in direct delivery/pickup mode */}
-          {!posMode && <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+            {/* Back */}
             <button
-              onClick={() => setShowActionsMenu((v) => !v)}
-              className="flex items-center gap-1 text-xs text-gray-600 border border-gray-200 px-2.5 py-1.5 rounded hover:bg-gray-50 transition-colors font-medium"
+              onClick={handleBackToTables}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 px-2 py-1.5 rounded hover:bg-gray-100 transition-colors font-medium"
             >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              Actions
-              <ChevronDown className="w-3 h-3" />
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Tables
             </button>
-            {showActionsMenu && (
-              <div className="absolute right-0 top-full mt-1 z-50 w-44 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
-                {[
-                  { label: "Move Table",   action: () => openAction(() => requirePin("Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
-                  { label: "Merge Table",  action: () => openAction(() => requirePin("Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
-                  { label: "Split Bill",   action: () => openAction(() => requirePin("Split Bill",    () => { setSplitSelectedIds([]); setShowSplitDialog(true); })), icon: "⊘", permKey: "splitBill"   as const },
-                  { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                            icon: "↩", permKey: null },
-                  { label: "Cancel Order", action: () => openAction(() => requirePin("Cancel Order",  () => setShowCancelConfirm(true))),                            icon: "✕", permKey: "cancelOrder" as const, danger: true },
-                ].map((item) => {
-                  const allowed = item.permKey === null ? true : can(item.permKey);
-                  return (
-                    <button
-                      key={item.label}
-                      disabled={!allowed}
-                      onClick={allowed ? item.action : undefined}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed ${
-                        item.danger ? "text-green-500 hover:bg-green-50 disabled:hover:bg-white" : "text-gray-700 hover:bg-gray-50 disabled:hover:bg-white"
-                      }`}
-                    >
-                      <span className="w-4 text-center text-base leading-none">{item.icon}</span>
-                      {item.label}
-                      {!allowed && <Lock className="w-3 h-3 ml-auto opacity-40" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>}
+
+            {/* Active mode badge — dynamically reflects current orderType */}
+            {(() => {
+              const ot = form.watch("orderType");
+              if (ot === "delivery") return (
+                <div className="flex items-center gap-1.5 bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-bold">
+                  🛵 <span>Delivery</span>
+                </div>
+              );
+              if (ot === "takeaway") return (
+                <div className="flex items-center gap-1.5 bg-orange-500 text-white px-2.5 py-1 rounded text-xs font-bold">
+                  📦 <span>Pick Up</span>
+                </div>
+              );
+              return (
+                <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold">
+                  🍽️
+                  {isEditMode && existingOrder?.createdAt && (
+                    <POSTimer startedAt={existingOrder.createdAt} />
+                  )}
+                  <span>{tableLabel ?? "Dine In"}</span>
+                  {isEditMode && existingOrder?.orderNumber && (
+                    <span className="opacity-75">#{existingOrder.orderNumber}</span>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="w-px h-5 bg-gray-200 mx-1" />
+
+            {/* Role Switcher — outside overflow container so dropdown isn't clipped */}
+            <RoleSwitcher
+              activeRole={activeRole}
+              loginRole={loginRole}
+              secondsLeft={secondsLeft}
+              isElevated={isElevated}
+              onElevate={elevateRole}
+              onRevert={revertRole}
+            />
+
+            <div className="w-px h-5 bg-gray-200" />
+
+            {/* New Order */}
+            <button
+              disabled={!can("newOrder")}
+              onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
+              className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              + New Order
+              {!can("newOrder") && <Lock className="w-3 h-3 opacity-60" />}
+            </button>
+          </div>
+
+          {/* ── MIDDLE SCROLLABLE: search + short code ── */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1">
+            {/* Search */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 min-w-[140px] max-w-[200px] flex-1">
+              <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <input
+                placeholder="Search item..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent text-xs outline-none w-full placeholder-gray-400 min-w-0"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="shrink-0">
+                  <X className="w-3 h-3 text-gray-400" />
+                </button>
+              )}
+            </div>
+
+            {/* Short Code */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 w-[130px] shrink-0">
+              <input
+                placeholder="Short code + ↵"
+                value={shortCode}
+                onChange={(e) => setShortCode(e.target.value)}
+                onKeyDown={handleShortCode}
+                className="bg-transparent text-xs outline-none w-full placeholder-gray-400"
+              />
+            </div>
+          </div>
+
+          {/* ── RIGHT FIXED: order types, customer, phone, actions ── */}
+          <div className="flex items-center gap-2 shrink-0">
+
+            {/* Order type tabs — locked to single mode when posMode is set */}
+            <div className="flex items-center gap-1">
+              {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const)
+                .filter(([val]) =>
+                  posMode === "delivery" ? val === "delivery" :
+                  posMode === "pickup"   ? val === "takeaway" :
+                  true
+                )
+                .map(([val, label]) => {
+                const active = form.watch("orderType") === val;
+                return (
+                  <button
+                    key={val}
+                    onClick={() => { if (!posMode) form.setValue("orderType", val); }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
+                      active
+                        ? "bg-green-600 text-white shadow-sm"
+                        : posMode ? "text-gray-400 cursor-default" : "text-gray-500 hover:text-gray-800"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Customer name — autocomplete, outside overflow so dropdown renders */}
+            {(() => {
+              const nameValue = form.watch("customerName") || "";
+              const filtered = nameValue.trim()
+                ? uniqueCustomers.filter(c =>
+                    c.name.toLowerCase().includes(nameValue.toLowerCase())
+                  )
+                : uniqueCustomers.slice(0, 8);
+              return (
+                <div className="relative">
+                  <input
+                    placeholder="Customer name"
+                    value={nameValue}
+                    onChange={(e) => {
+                      form.setValue("customerName", e.target.value);
+                      setShowCustomerDropdown(true);
+                    }}
+                    onFocus={() => setShowCustomerDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 150)}
+                    className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
+                  />
+                  {showCustomerDropdown && filtered.length > 0 && (
+                    <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                      {filtered.map((c, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            form.setValue("customerName", c.name);
+                            form.setValue("customerPhone", c.phone);
+                            setShowCustomerDropdown(false);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-emerald-50 border-b border-gray-50 last:border-0 transition-colors"
+                        >
+                          <div className="text-xs font-semibold text-gray-800">{c.name}</div>
+                          {c.phone && (
+                            <div className="text-[10px] text-gray-400 mt-0.5">{c.phone}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Customer phone */}
+            <input
+              placeholder="Phone number"
+              {...form.register("customerPhone")}
+              autoFocus={!!posMode}
+              className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
+            />
+
+            {/* Table Actions — outside overflow so dropdown renders above content */}
+            {!posMode && <div className="relative" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowActionsMenu((v) => !v)}
+                className="flex items-center gap-1 text-xs text-gray-600 border border-gray-200 px-2.5 py-1.5 rounded hover:bg-gray-50 transition-colors font-medium"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                Actions
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showActionsMenu && (
+                <div className="absolute right-0 top-full mt-1 z-50 w-44 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                  {[
+                    { label: "Move Table",   action: () => openAction(() => requirePin("Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
+                    { label: "Merge Table",  action: () => openAction(() => requirePin("Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
+                    { label: "Split Bill",   action: () => openAction(() => requirePin("Split Bill",    () => { setSplitSelectedIds([]); setShowSplitDialog(true); })), icon: "⊘", permKey: "splitBill"   as const },
+                    { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                            icon: "↩", permKey: null },
+                    { label: "Cancel Order", action: () => openAction(() => requirePin("Cancel Order",  () => setShowCancelConfirm(true))),                            icon: "✕", permKey: "cancelOrder" as const, danger: true },
+                  ].map((item) => {
+                    const allowed = item.permKey === null ? true : can(item.permKey);
+                    return (
+                      <button
+                        key={item.label}
+                        disabled={!allowed}
+                        onClick={allowed ? item.action : undefined}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed ${
+                          item.danger ? "text-green-500 hover:bg-green-50 disabled:hover:bg-white" : "text-gray-700 hover:bg-gray-50 disabled:hover:bg-white"
+                        }`}
+                      >
+                        <span className="w-4 text-center text-base leading-none">{item.icon}</span>
+                        {item.label}
+                        {!allowed && <Lock className="w-3 h-3 ml-auto opacity-40" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>}
+          </div>
         </div>
       </div>
 

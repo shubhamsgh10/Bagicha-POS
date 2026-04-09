@@ -28,7 +28,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, User, KeyRound, Users, Tag, Plus, Trash2, Edit2, Shield, ShieldCheck,
+  Loader2, User, KeyRound, Users, Plus, Trash2, Shield, ShieldCheck,
 } from "lucide-react";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -459,165 +459,6 @@ function RolesTab() {
   );
 }
 
-// ── Categories Tab ─────────────────────────────────────────────────────────────
-
-function CategoriesTab() {
-  const { toast } = useToast();
-  const [newName, setNewName] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-
-  const { data: categories, isLoading } = useQuery<any[]>({ queryKey: ["/api/categories"] });
-
-  const createMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/categories", { name: newName.trim(), description: newDesc.trim() || null }),
-    onSuccess: () => {
-      toast({ title: "Category created" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-      setNewName("");
-      setNewDesc("");
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to create category", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async ({ id, name, description }: { id: number; name: string; description: string }) =>
-      apiRequest("PUT", `/api/categories/${id}`, { name, description: description || null }),
-    onSuccess: () => {
-      toast({ title: "Category updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-      setEditingId(null);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update category", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/categories/${id}`),
-    onSuccess: () => {
-      toast({ title: "Category deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to delete category", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  return (
-    <div className="space-y-4">
-      {/* Add Category */}
-      <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-4">
-        <p className="text-sm font-semibold text-gray-700 mb-3">Add New Category</p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Category Name *</Label>
-              <Input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Pizza, Drinks, Desserts"
-                className="h-8"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Description (optional)</Label>
-              <Input
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="Short description"
-                className="h-8"
-              />
-            </div>
-          </div>
-          <Button
-            size="sm"
-            disabled={!newName.trim() || createMutation.isPending}
-            onClick={() => createMutation.mutate()}
-          >
-            {createMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Adding...</> : <><Plus className="w-3 h-3 mr-1" /> Add Category</>}
-          </Button>
-        </div>
-      </div>
-
-      {/* List */}
-      {isLoading ? (
-        <div className="space-y-2">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-14 bg-white/40 rounded-xl animate-pulse" />)}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {categories?.map((cat: any) => (
-            <div key={cat.id} className="rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm p-3">
-              {editingId === cat.id ? (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="h-7 text-sm"
-                    />
-                    <Input
-                      value={editDesc}
-                      onChange={(e) => setEditDesc(e.target.value)}
-                      placeholder="Description"
-                      className="h-7 text-sm"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: cat.id, name: editName, description: editDesc })} disabled={!editName.trim() || updateMutation.isPending}>
-                      Save
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingId(null)}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-sm">{cat.name}</p>
-                    {cat.description && <p className="text-xs text-muted-foreground">{cat.description}</p>}
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0"
-                      onClick={() => { setEditingId(cat.id); setEditName(cat.name); setEditDesc(cat.description || ""); }}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                      onClick={() => {
-                        if (confirm(`Delete category "${cat.name}"? This will hide it from the menu.`)) {
-                          deleteMutation.mutate(cat.id);
-                        }
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-          {categories?.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">No categories yet</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Main Admin Page ───────────────────────────────────────────────────────────
 
 export default function Admin() {
@@ -677,10 +518,9 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue={isAdmin ? "users" : "profile"}>
-        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-5" : "grid-cols-2"} rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1`}>
+        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"} rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1`}>
           {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="categories"><Tag className="w-4 h-4 mr-1.5" />Categories</TabsTrigger>}
           <TabsTrigger value="profile"><User className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
         </TabsList>
@@ -696,13 +536,6 @@ export default function Admin() {
         {isAdmin && (
           <TabsContent value="roles" className="mt-6">
             <RolesTab />
-          </TabsContent>
-        )}
-
-        {/* Categories Tab */}
-        {isAdmin && (
-          <TabsContent value="categories" className="mt-6">
-            <CategoriesTab />
           </TabsContent>
         )}
 
