@@ -21,7 +21,8 @@
       "mcp__code-review-graph__list_repos_tool",
       "Bash(code-review-graph register:*)",
       "Bash(crg register:*)",
-      "Bash(python -m code_review_graph register --help)"
+      "Bash(python -m code_review_graph register --help)",
+      "mcp__code-review-graph__build_or_update_graph_tool"
     ]
   },
   "enabledMcpjsonServers": [

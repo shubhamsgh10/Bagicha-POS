@@ -258,3 +258,159 @@
 /* ─────────────────────────────────────────────────────────────
    AnimatedContainer — framer-motion utility
    ───────────────────────────────────────────────────────────── */
+
+/* ═════════════════════════════════════════════════════════════
+   LOGIN PAGE — Light canvas style
+   Image bg is pure white (#FDFDFE) — UI adapts to image,
+   no dark overlays, no color filters. Logo PNG uses its
+   existing mix-blend-mode:multiply which works correctly on
+   white backgrounds (white bg of PNG vanishes, navy shows).
+   ═════════════════════════════════════════════════════════════ */
+
+/* ── 1. Full-viewport background — no overlay ───────────────── */
+.login-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background-size: 100% 100%;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-color: #F7FBFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── 2. Content — centered ──────────────────────────────────── */
+.login-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 22rem;
+  padding: 0 1.25rem;
+}
+
+/* ── 3. Logo area ───────────────────────────────────────────── */
+/* Logo img keeps its original mix-blend-mode:multiply — correct
+   on this white bg. No overrides needed. Text colors unchanged. */
+.login-logo-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.login-logo-img {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  border-radius: 16px;
+  background-color: #F7FBFF;
+}
+
+.login-tagline {
+  font-size: 0.72rem;
+  color: #6B7280;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 0.35rem;
+}
+
+/* ── 4. Card — light frosted glass on white canvas ──────────── */
+.login-card {
+  background: rgba(247, 251, 255, 0.75) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 14px !important;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset !important;
+}
+
+/* ── 5. Typography ──────────────────────────────────────────── */
+.login-title {
+  color: #1F2937 !important;
+  font-weight: 600;
+  font-size: 1.2rem;
+}
+.login-desc {
+  color: #6B7280 !important;
+  font-size: 0.8rem;
+}
+.login-label {
+  color: #374151 !important;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* ── 6. Inputs ──────────────────────────────────────────────── */
+.login-input {
+  background: rgba(255, 255, 255, 0.90) !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  color: #1F2937 !important;
+  border-radius: 8px !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.login-input::placeholder {
+  color: #9CA3AF !important;
+}
+.login-input:focus {
+  background: #ffffff !important;
+  border-color: #4CAF50 !important;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.15) !important;
+  outline: none !important;
+}
+
+/* ── 7. Button ──────────────────────────────────────────────── */
+.login-btn {
+  background: #4CAF50 !important;
+  border: none !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  letter-spacing: 0.02em !important;
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.22) !important;
+  transition: all 0.25s ease !important;
+}
+.login-btn:hover:not(:disabled) {
+  background: #43A047 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.30) !important;
+}
+.login-btn:active:not(:disabled) {
+  transform: translateY(0) !important;
+  box-shadow: 0 1px 4px rgba(76, 175, 80, 0.20) !important;
+}
+.login-btn:disabled {
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* ── 8. Misc ────────────────────────────────────────────────── */
+.login-error { color: #DC2626 !important; }
+
+.login-hint {
+  font-size: 0.73rem;
+  color: #9CA3AF;
+  text-align: center;
+  margin-top: 1rem;
+}
+.login-mono {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: #4B5563;
+  font-size: 0.75rem;
+}
+
+/* ── 9. Responsive ──────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .login-content { padding: 0 1rem; }
+}
+
+
+

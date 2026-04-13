@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { BagichaLogo } from "@/components/BagichaLogo";
+import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
+import bgImage from "@assets/Login Page Background.png";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -50,57 +52,61 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   };
 
   return (
-    <div className="min-h-full w-full flex items-center justify-center">
-      <div className="w-full max-w-sm px-4">
-        <div className="flex flex-col items-center mb-8">
-          <BagichaLogo />
-          <p className="text-sm text-muted-foreground mt-2">Restaurant POS System</p>
+    <div className="login-bg" style={{ backgroundImage: `url(${bgImage})` }}>
+      <div className="login-content">
+        <div className="login-logo-area">
+          <img
+            src={bagichaLogoImg}
+            alt="Bagicha"
+            className="login-logo-img"
+          />
+          <p className="login-tagline">Restaurant POS System</p>
         </div>
 
-        <Card>
+        <Card className="login-card">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-xl">Sign in</CardTitle>
-            <CardDescription>Enter your credentials to access the dashboard</CardDescription>
+            <CardTitle className="login-title">Sign in</CardTitle>
+            <CardDescription className="login-desc">
+              Enter your credentials to access the dashboard
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
+                <Label htmlFor="username" className="login-label">Username</Label>
                 <Input
                   id="username"
                   placeholder="admin"
                   autoComplete="username"
+                  className="login-input"
                   {...register("username")}
                 />
                 {errors.username && (
-                  <p className="text-xs text-destructive">{errors.username.message}</p>
+                  <p className="text-xs login-error">{errors.username.message}</p>
                 )}
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password" className="login-label">Password</Label>
                 <Input
                   id="password"
                   type="password"
                   placeholder="••••••••"
                   autoComplete="current-password"
+                  className="login-input"
                   {...register("password")}
                 />
                 {errors.password && (
-                  <p className="text-xs text-destructive">{errors.password.message}</p>
+                  <p className="text-xs login-error">{errors.password.message}</p>
                 )}
               </div>
 
-              <Button type="submit" className="w-full" disabled={loading}>
+              <Button type="submit" className="w-full login-btn" disabled={loading}>
                 {loading ? (
                   <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Signing in...</>
                 ) : "Sign in"}
               </Button>
             </form>
-
-            <p className="text-xs text-muted-foreground text-center mt-4">
-              Default: <span className="font-mono">admin</span> / <span className="font-mono">admin123</span>
-            </p>
           </CardContent>
         </Card>
       </div>
