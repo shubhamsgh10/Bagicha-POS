@@ -23,6 +23,7 @@ import Kitchen from "@/pages/Kitchen";
 import { BottomNav } from "@/components/BottomNav";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
+import { RouteGuard } from "@/components/RouteGuard";
 import { useAuth } from "@/hooks/useAuth";
 import { ActiveRoleProvider } from "@/context/ActiveRoleContext";
 import { Loader2 } from "lucide-react";
@@ -60,23 +61,25 @@ function Router() {
       <TopNav />
       {/* app-page-content — strips light bg from page roots so dark AppLayout bg shows through */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden app-page-content">
-        <Switch>
-          <Route path="/"               component={Tables} />
-          <Route path="/tables"         component={Tables} />
-          <Route path="/dashboard"      component={Dashboard} />
-          <Route path="/orders"         component={Orders} />
-          <Route path="/menu"           component={Menu} />
-          <Route path="/inventory"      component={Inventory} />
-          <Route path="/reports"        component={Reports} />
-          <Route path="/admin"          component={Admin} />
-          <Route path="/settings"       component={Settings} />
-          <Route path="/live-analytics" component={LiveAnalytics} />
-          <Route path="/live-tables"   component={LiveTablesDashboard} />
-          <Route path="/customers"     component={CustomerDashboard} />
-          <Route path="/kitchen"       component={Kitchen} />
-          <Route path="/kot"           component={KOT} />
-          <Route component={NotFound} />
-        </Switch>
+        <RouteGuard>
+          <Switch>
+            <Route path="/"               component={Tables} />
+            <Route path="/tables"         component={Tables} />
+            <Route path="/dashboard"      component={Dashboard} />
+            <Route path="/orders"         component={Orders} />
+            <Route path="/menu"           component={Menu} />
+            <Route path="/inventory"      component={Inventory} />
+            <Route path="/reports"        component={Reports} />
+            <Route path="/admin"          component={Admin} />
+            <Route path="/settings"       component={Settings} />
+            <Route path="/live-analytics" component={LiveAnalytics} />
+            <Route path="/live-tables"   component={LiveTablesDashboard} />
+            <Route path="/customers"     component={CustomerDashboard} />
+            <Route path="/kitchen"       component={Kitchen} />
+            <Route path="/kot"           component={KOT} />
+            <Route component={NotFound} />
+          </Switch>
+        </RouteGuard>
       </div>
       <BottomNav />
     </div>
