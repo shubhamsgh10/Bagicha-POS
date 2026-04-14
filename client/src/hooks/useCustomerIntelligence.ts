@@ -95,7 +95,7 @@ export function useCustomerIntelligence() {
     const now = Date.now();
     const profiles: CustomerProfile[] = [];
 
-    for (const [key, orders] of map) {
+    for (const [key, orders] of Array.from(map)) {
       // Sort newest first
       const sorted = [...orders].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -104,7 +104,7 @@ export function useCustomerIntelligence() {
       const oldest = sorted[sorted.length - 1];
 
       const totalSpend = orders.reduce(
-        (s, o) => s + parseFloat(String(o.totalAmount ?? "0")),
+        (s: number, o: any) => s + parseFloat(String(o.totalAmount ?? "0")),
         0
       );
       const avgOrderValue = totalSpend / orders.length;
@@ -194,8 +194,8 @@ export function useCustomerOrderDetails(orderIds: number[]) {
   const favoriteItem = useMemo(() => {
     const freq: Record<string, number> = {};
     for (const r of results) {
-      if (!r.data?.items) continue;
-      for (const item of r.data.items) {
+      if (!(r.data as any)?.items) continue;
+      for (const item of (r.data as any).items) {
         const name = item.name ?? item.menuItemName ?? "Unknown";
         const label = item.size ? `${name} (${item.size})` : name;
         freq[label] = (freq[label] ?? 0) + item.quantity;
@@ -206,7 +206,7 @@ export function useCustomerOrderDetails(orderIds: number[]) {
     return entries.sort((a, b) => b[1] - a[1])[0][0];
   }, [results]);
 
-  const ordersWithItems = results.map(r => r.data).filter(Boolean);
+  const ordersWithItems = results.map(r => r.data).filter(Boolean) as any[];
   const isLoading = results.some(r => r.isLoading);
 
   return { favoriteItem, ordersWithItems, isLoading };

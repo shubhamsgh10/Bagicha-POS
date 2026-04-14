@@ -194,12 +194,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createMenuItem(item: InsertMenuItem): Promise<MenuItem> {
-    const [newItem] = await db.insert(menuItems).values(item).returning();
+    const [newItem] = await db.insert(menuItems).values(item as any).returning();
     return newItem;
   }
 
   async updateMenuItem(id: number, item: Partial<InsertMenuItem>): Promise<MenuItem> {
-    const [updated] = await db.update(menuItems).set(item).where(eq(menuItems.id, id)).returning();
+    const [updated] = await db.update(menuItems).set(item as any).where(eq(menuItems.id, id)).returning();
     return updated;
   }
 
@@ -338,13 +338,13 @@ export class DatabaseStorage implements IStorage {
   async createKotTicket(ticket: InsertKotTicket): Promise<KotTicket> {
     let items = ticket.items;
     if (items && !Array.isArray(items)) {
-      items = Array.from(items);
+      items = Array.from(items as any) as typeof items;
     }
     const fixedTicket = {
       ...ticket,
       items: Array.isArray(items) ? items : undefined,
     };
-    const [newTicket] = await db.insert(kotTickets).values(fixedTicket).returning();
+    const [newTicket] = await db.insert(kotTickets).values(fixedTicket as any).returning();
     return newTicket;
   }
 
