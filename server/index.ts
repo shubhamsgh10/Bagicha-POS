@@ -4,6 +4,7 @@ import passport from "passport";
 import MemoryStore from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { startAutomationScheduler } from "./services/customerAutomationService";
 
 const MemoryStoreSession = MemoryStore(session);
 
@@ -88,5 +89,7 @@ app.use((req, res, next) => {
     host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
+    // Start the customer automation background scheduler
+    startAutomationScheduler();
   });
 })();

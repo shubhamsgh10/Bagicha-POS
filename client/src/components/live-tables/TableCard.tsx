@@ -117,7 +117,7 @@ export const TableCard = memo(function TableCard({
   useEffect(() => {
     const currentKeys = new Set(table.items.map(itemKey));
     setDeliveredKeys(prev => {
-      const filtered = new Set([...prev].filter(k => currentKeys.has(k)));
+      const filtered = new Set(Array.from(prev).filter(k => currentKeys.has(k)));
       return filtered.size === prev.size ? prev : filtered;
     });
   }, [table.items]);

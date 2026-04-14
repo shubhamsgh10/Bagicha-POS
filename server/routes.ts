@@ -8,6 +8,19 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
 import { getSettings, saveSettings } from "./settingsStore";
+import {
+  getAutomationConfig,
+  saveAutomationConfig,
+  loadLogs,
+  clearLogs,
+  getAutomationStats,
+  setCustomerPref,
+  loadCustomerPrefs,
+} from "./services/automationStore";
+import {
+  runCustomerAutomation,
+  restartScheduler,
+} from "./services/customerAutomationService";
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -1290,6 +1303,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ error: "Failed to generate sales report" });
     }
+  });
+
+  // ── Automation API ────────────────────────────────────────────────────────────
+
+  /** GET /api/automation/config — get current automation config */
+  app.get("/api/automation/config", requireAuth, (_req, res) => {
+    const config = getAutomationConfig();
+    // Never expose API keys in full — mask them
+    res.json({
+      ...config,
+      anthropicApiKey: config.anthropicApiKey ? "***configured***" : "",
+      watiApiKey:      config.watiApiKey      ? "***configured***" : "",
+    });
+  });
+
+  /** POST /api/automation/config — update automation config */
+  app.post("/api/automation/config", requireAuth, (req, res) => {
+    try {
+      const patch = req.body as Record<string, unknown>;
+      // Don't overwrite keys with masked placeholder
+      if (patch.anthropicApiKey === "***configured***") delete patch.anthropicApiKey;
+      if (patch.watiApiKey      === "***configured***") delete patch.watiApiKey;
+
+      const updated = saveAutomationConfig(patch);
+      restartScheduler();   // pick up new interval setting immediately
+      res.json({ ok: true, enabled: updated.enabled });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to save config" });
+    }
+  });
+
+  /** GET /api/automation/logs — get automation logs, newest first */
+  app.get("/api/automation/logs", requireAuth, (req, res) => {
+    const limit  = parseInt(String(req.query.limit  ?? "200"), 10);
+    const offset = parseInt(String(req.query.offset ?? "0"),   10);
+    const logs   = loadLogs().slice().reverse(); // newest first
+    res.json({
+      total: logs.length,
+      logs:  logs.slice(offset, offset + limit),
+    });
+  });
+
+  /** DELETE /api/automation/logs — clear all logs */
+  app.delete("/api/automation/logs", requireAuth, (_req, res) => {
+    clearLogs();
+    res.json({ ok: true });
+  });
+
+  /** GET /api/automation/stats — campaign performance summary */
+  app.get("/api/automation/stats", requireAuth, (_req, res) => {
+    res.json(getAutomationStats());
+  });
+
+  /** POST /api/automation/run — manually trigger one run now (force-bypasses enabled flag) */
+  app.post("/api/automation/run", requireAuth, async (_req, res) => {
+    try {
+      const result = await runCustomerAutomation({ force: true });
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Automation run failed" });
+    }
+  });
+
+  /** POST /api/automation/prefs/:customerId — update customer opt-out pref */
+  app.post("/api/automation/prefs/:customerId", requireAuth, (req, res) => {
+    const { customerId } = req.params;
+    const { doNotSend, mutedUntil } = req.body as { doNotSend?: boolean; mutedUntil?: string };
+    setCustomerPref(decodeURIComponent(customerId), { doNotSend, mutedUntil });
+    res.json({ ok: true });
+  });
+
+  /** GET /api/automation/prefs — all customer preferences */
+  app.get("/api/automation/prefs", requireAuth, (_req, res) => {
+    res.json(loadCustomerPrefs());
   });
 
   return httpServer;

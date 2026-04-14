@@ -160,7 +160,7 @@ function KitchenCard({
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.15 }}
       draggable
-      onDragStart={e => onDragStart(e, order.key)}
+      onDragStart={(e: any) => onDragStart(e, order.key)}
       className={`
         bg-white rounded-xl border border-gray-100 border-l-4
         ${colDef.borderColor}

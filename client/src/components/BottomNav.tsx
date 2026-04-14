@@ -22,8 +22,7 @@ export function BottomNav() {
       <div className="flex items-end h-[56px] pb-1">
         {NAV_ITEMS.map(item => {
           const Icon     = item.icon;
-          const isActive = location === item.href ||
-            (item.href !== "/" && location.startsWith(item.href));
+          const isActive = location === item.href || location.startsWith(item.href + "/");
           const isAccent = "accent" in item && item.accent;
 
           return (

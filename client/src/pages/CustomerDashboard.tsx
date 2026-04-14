@@ -4,7 +4,7 @@ import {
   Users, Phone, ShoppingBag, TrendingUp, Clock, Star, AlertTriangle,
   UserCheck, UserPlus, Search, X, ChevronRight, Flame, Lightbulb,
   CalendarDays, BarChart2, Loader2, Send, Bell, BellOff, Edit2,
-  LayoutList, Brain,
+  LayoutList, Brain, Zap,
 } from "lucide-react";
 import {
   useCustomerIntelligence,
@@ -19,6 +19,7 @@ import {
   getTemplateInfo,
   type WhatsAppTemplate,
 } from "@/utils/whatsapp";
+import { AutomationPanel } from "@/components/AutomationPanel";
 
 const WA_TEMPLATES: WhatsAppTemplate[] = ["thank_you", "inactive_offer", "vip_reward"];
 
@@ -823,7 +824,7 @@ function IntelligenceView({
 export default function CustomerDashboard() {
   const { customers, stats, isLoading } = useCustomerIntelligence();
 
-  const [tab, setTab]               = useState<"listing" | "intelligence">("listing");
+  const [tab, setTab]               = useState<"listing" | "intelligence" | "automation">("listing");
   const [extras, setExtras]         = useState<Record<string, CustomerExtra>>(loadExtras);
   const [editTarget, setEditTarget] = useState<CustomerProfile | null>(null);
 
@@ -863,6 +864,7 @@ export default function CustomerDashboard() {
           {([
             { key: "listing",      label: "Customer Listing", icon: LayoutList },
             { key: "intelligence", label: "Intelligence",     icon: Brain },
+            { key: "automation",   label: "Automation",       icon: Zap },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -889,10 +891,16 @@ export default function CustomerDashboard() {
           onEdit={setEditTarget}
           onToggleNotif={handleToggleNotif}
         />
-      ) : (
+      ) : tab === "intelligence" ? (
         <IntelligenceView
           customers={customers}
           stats={stats}
+          isLoading={isLoading}
+        />
+      ) : (
+        <AutomationPanel
+          customers={customers}
+          extras={extras}
           isLoading={isLoading}
         />
       )}
