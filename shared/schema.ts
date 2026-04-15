@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal, json } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -175,3 +175,183 @@ export type Sales = typeof sales.$inferSelect;
 export type InsertSales = z.infer<typeof insertSalesSchema>;
 export type Table = typeof tables.$inferSelect;
 export type InsertTable = z.infer<typeof insertTableSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CRM EXTENSION TABLES (Phase 1 — additive, backward-compatible)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * customers_master — stable UUID identity for every customer.
+ * key = customer.key from the client (phone || name) — the bridge between
+ * the existing string-keyed system and the new UUID world.
+ */
+export const customersMaster = pgTable("customers_master", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  key:       text("key").notNull().unique(),   // phone || name — matches CustomerProfile.key
+  phone:     text("phone"),
+  name:      text("name").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * customer_profiles — extended CRM profile.
+ * Mirrors the CustomerExtra interface stored in localStorage so both
+ * sources can be merged (DB takes priority).
+ */
+export const customerProfiles = pgTable("customer_profiles", {
+  id:                  serial("id").primaryKey(),
+  customerId:          uuid("customer_id").notNull().unique(),
+  email:               text("email"),
+  dob:                 text("dob"),
+  anniversary:         text("anniversary"),
+  locality:            text("locality"),
+  gstNo:               text("gst_no"),
+  address:             text("address"),
+  isFavorite:          boolean("is_favorite").notNull().default(false),
+  tags:                text("tags").array(),
+  remark:              text("remark"),
+  notificationEnabled: boolean("notification_enabled").notNull().default(true),
+  doNotSendUpdate:     boolean("do_not_send_update").notNull().default(false),
+  updatedAt:           timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * customer_events — append-only event log.
+ * Records every meaningful customer action for the CRM timeline.
+ */
+export const customerEvents = pgTable("customer_events", {
+  id:         serial("id").primaryKey(),
+  customerId: uuid("customer_id").notNull(),
+  eventType:  text("event_type").notNull(), // ORDER_PLACED | VISIT | INACTIVE | MESSAGE_SENT | COUPON_USED | MILESTONE
+  metadata:   json("metadata").$type<Record<string, unknown>>(),
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * customer_segments — RFM-scored segment per customer.
+ * Recomputed after every order and by the hourly cron job.
+ */
+export const customerSegments = pgTable("customer_segments", {
+  id:             serial("id").primaryKey(),
+  customerId:     uuid("customer_id").notNull().unique(),
+  segment:        text("segment").notNull().default("New"), // VIP | Regular | New | At Risk | Lapsed
+  rfmScore:       integer("rfm_score").notNull().default(0),
+  recencyScore:   integer("recency_score").notNull().default(0),
+  frequencyScore: integer("frequency_score").notNull().default(0),
+  monetaryScore:  integer("monetary_score").notNull().default(0),
+  updatedAt:      timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * automation_rules — admin-configurable trigger rules stored in DB.
+ */
+export const automationRules = pgTable("automation_rules", {
+  id:          serial("id").primaryKey(),
+  name:        text("name").notNull(),
+  triggerType: text("trigger_type").notNull(), // INACTIVITY | BIRTHDAY | MILESTONE | HIGH_SPEND
+  conditions:  json("conditions").$type<Record<string, unknown>>(),
+  actions:     json("actions").$type<Record<string, unknown>>(),
+  isActive:    boolean("is_active").notNull().default(true),
+  createdAt:   timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * automation_jobs — job queue tracking pending / executed sends.
+ */
+export const automationJobs = pgTable("automation_jobs", {
+  id:          serial("id").primaryKey(),
+  customerId:  uuid("customer_id").notNull(),
+  ruleId:      integer("rule_id"),               // nullable — manual sends have no rule
+  triggerType: text("trigger_type").notNull(),
+  status:      text("status").notNull().default("pending"), // pending | sent | failed | skipped
+  message:     text("message"),
+  scheduledAt: timestamp("scheduled_at").notNull().defaultNow(),
+  executedAt:  timestamp("executed_at"),
+  error:       text("error"),
+});
+
+/**
+ * customer_messages — omnichannel message log (WhatsApp / email / SMS).
+ */
+export const customerMessages = pgTable("customer_messages", {
+  id:         serial("id").primaryKey(),
+  customerId: uuid("customer_id").notNull(),
+  channel:    text("channel").notNull().default("whatsapp"), // whatsapp | email | sms
+  message:    text("message").notNull(),
+  status:     text("status").notNull().default("pending"),   // pending | sent | failed | delivered
+  trigger:    text("trigger"),
+  sentAt:     timestamp("sent_at"),
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── CRM Relations ─────────────────────────────────────────────────────────────
+
+export const customersMasterRelations = relations(customersMaster, ({ one, many }) => ({
+  profile:   one(customerProfiles, { fields: [customersMaster.id], references: [customerProfiles.customerId] }),
+  segment:   one(customerSegments, { fields: [customersMaster.id], references: [customerSegments.customerId] }),
+  events:    many(customerEvents),
+  jobs:      many(automationJobs),
+  messages:  many(customerMessages),
+}));
+
+export const customerProfilesRelations = relations(customerProfiles, ({ one }) => ({
+  customer: one(customersMaster, { fields: [customerProfiles.customerId], references: [customersMaster.id] }),
+}));
+
+export const customerSegmentsRelations = relations(customerSegments, ({ one }) => ({
+  customer: one(customersMaster, { fields: [customerSegments.customerId], references: [customersMaster.id] }),
+}));
+
+export const customerEventsRelations = relations(customerEvents, ({ one }) => ({
+  customer: one(customersMaster, { fields: [customerEvents.customerId], references: [customersMaster.id] }),
+}));
+
+export const automationJobsRelations = relations(automationJobs, ({ one }) => ({
+  customer: one(customersMaster, { fields: [automationJobs.customerId], references: [customersMaster.id] }),
+  rule:     one(automationRules, { fields: [automationJobs.ruleId],    references: [automationRules.id] }),
+}));
+
+export const customerMessagesRelations = relations(customerMessages, ({ one }) => ({
+  customer: one(customersMaster, { fields: [customerMessages.customerId], references: [customersMaster.id] }),
+}));
+
+// ── CRM Insert Schemas ────────────────────────────────────────────────────────
+
+export const insertCustomerMasterSchema  = createInsertSchema(customersMaster).omit({ id: true, createdAt: true });
+export const insertCustomerProfileSchema = createInsertSchema(customerProfiles).omit({ id: true, updatedAt: true });
+export const insertCustomerEventSchema   = createInsertSchema(customerEvents).omit({ id: true, createdAt: true });
+export const insertCustomerSegmentSchema = createInsertSchema(customerSegments).omit({ id: true, updatedAt: true });
+export const insertAutomationRuleSchema  = createInsertSchema(automationRules).omit({ id: true, createdAt: true });
+export const insertAutomationJobSchema   = createInsertSchema(automationJobs).omit({ id: true });
+export const insertCustomerMessageSchema = createInsertSchema(customerMessages).omit({ id: true, createdAt: true });
+
+// ── CRM Types ─────────────────────────────────────────────────────────────────
+
+export type CustomerMaster       = typeof customersMaster.$inferSelect;
+export type InsertCustomerMaster = z.infer<typeof insertCustomerMasterSchema>;
+export type CustomerProfile_DB   = typeof customerProfiles.$inferSelect;
+export type InsertCustomerProfile_DB = z.infer<typeof insertCustomerProfileSchema>;
+export type CustomerEvent        = typeof customerEvents.$inferSelect;
+export type InsertCustomerEvent  = z.infer<typeof insertCustomerEventSchema>;
+export type CustomerSegment      = typeof customerSegments.$inferSelect;
+export type InsertCustomerSegment = z.infer<typeof insertCustomerSegmentSchema>;
+export type AutomationRule       = typeof automationRules.$inferSelect;
+export type InsertAutomationRule = z.infer<typeof insertAutomationRuleSchema>;
+export type AutomationJob        = typeof automationJobs.$inferSelect;
+export type InsertAutomationJob  = z.infer<typeof insertAutomationJobSchema>;
+export type CustomerMessage      = typeof customerMessages.$inferSelect;
+export type InsertCustomerMessage = z.infer<typeof insertCustomerMessageSchema>;
+
+// ── CRM Event type constants ──────────────────────────────────────────────────
+
+export const CRM_EVENT_TYPES = {
+  ORDER_PLACED:   "ORDER_PLACED",
+  VISIT:          "VISIT",
+  INACTIVE:       "INACTIVE",
+  MESSAGE_SENT:   "MESSAGE_SENT",
+  COUPON_USED:    "COUPON_USED",
+  MILESTONE:      "MILESTONE",
+  PROFILE_UPDATE: "PROFILE_UPDATE",
+} as const;
+
+export type CrmEventType = typeof CRM_EVENT_TYPES[keyof typeof CRM_EVENT_TYPES];

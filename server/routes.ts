@@ -22,6 +22,31 @@ import {
   restartScheduler,
 } from "./services/customerAutomationService";
 
+// ── CRM Services (Phase 2–9 additions) ────────────────────────────────────────
+import {
+  resolveCustomerId,
+  getCustomerMaster,
+  getCustomerProfile,
+  upsertCustomerProfile,
+  syncLocalStorageExtras,
+  dbProfileToExtra,
+} from "./services/crm/customerIdService";
+import {
+  getCustomerEvents,
+  logOrderPlaced,
+} from "./services/crm/eventService";
+import {
+  runSegmentationForCustomer,
+  runSegmentationForAll,
+  getCustomerSegment,
+} from "./services/crm/segmentationService";
+import { getRecommendations } from "./services/crm/recommendationService";
+import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
+import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
+import { db } from "./db";
+import { automationRules, automationJobs, customerMessages } from "@shared/schema";
+import { eq, desc } from "drizzle-orm";
+
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -817,6 +842,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         broadcast({ type: 'TABLE_UPDATE' });
       }
       broadcast({ type: 'NEW_ORDER', order, items });
+
+      // ── CRM: log ORDER_PLACED event + update segmentation (fire-and-forget) ──
+      const crmKey = (order.customerPhone?.trim() || order.customerName?.trim());
+      if (crmKey) {
+        const crmName = order.customerName ?? crmKey;
+        logOrderPlaced(
+          crmKey, crmName, order.customerPhone,
+          order.id, order.orderNumber, parseFloat(String(order.totalAmount))
+        ).catch(e => console.warn("[CRM] logOrderPlaced failed:", e));
+
+        runSegmentationForCustomer(crmKey, crmName, order.customerPhone)
+          .catch(e => console.warn("[CRM] segmentation failed:", e));
+      }
+
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
@@ -1377,6 +1416,295 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /** GET /api/automation/prefs — all customer preferences */
   app.get("/api/automation/prefs", requireAuth, (_req, res) => {
     res.json(loadCustomerPrefs());
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CRM API ROUTES (Phase 9 — additive, all behind requireAuth)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Customer master lookup ─────────────────────────────────────────────────
+
+  /**
+   * GET /api/crm/customers/:key
+   * Returns the master record + DB profile + current segment for a customer.
+   * Falls back gracefully if the customer hasn't been synced to DB yet.
+   */
+  app.get("/api/crm/customers/:key", requireAuth, async (req, res) => {
+    try {
+      const key    = decodeURIComponent(req.params.key);
+      const master = await getCustomerMaster(key);
+      if (!master) return res.json({ exists: false });
+
+      const profile = await getCustomerProfile(key);
+      const segment = await getCustomerSegment(master.id);
+
+      res.json({
+        exists:  true,
+        id:      master.id,
+        key:     master.key,
+        name:    master.name,
+        phone:   master.phone,
+        profile: profile ? dbProfileToExtra(profile) : null,
+        segment: segment ? {
+          segment:        segment.segment,
+          rfmScore:       segment.rfmScore,
+          recencyScore:   segment.recencyScore,
+          frequencyScore: segment.frequencyScore,
+          monetaryScore:  segment.monetaryScore,
+          updatedAt:      segment.updatedAt,
+        } : null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Customer events / timeline ─────────────────────────────────────────────
+
+  /**
+   * GET /api/crm/customers/:key/events
+   * Returns the CRM event timeline for a customer (newest first).
+   */
+  app.get("/api/crm/customers/:key/events", requireAuth, async (req, res) => {
+    try {
+      const key    = decodeURIComponent(req.params.key);
+      const master = await getCustomerMaster(key);
+      if (!master) return res.json([]);
+
+      const limit  = Math.min(parseInt(String(req.query.limit ?? "50"), 10), 200);
+      const events = await getCustomerEvents(master.id, limit);
+      res.json(events);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Profile upsert (sync from client localStorage → DB) ───────────────────
+
+  /**
+   * POST /api/crm/customers/:key/profile
+   * Saves or updates the extended CRM profile for a customer.
+   * Called from the EditCustomerModal Save handler to keep DB in sync.
+   */
+  app.post("/api/crm/customers/:key/profile", requireAuth, async (req, res) => {
+    try {
+      const key   = decodeURIComponent(req.params.key);
+      const extra = req.body as { name?: string; phone?: string; [key: string]: unknown };
+
+      const name  = extra.name  ?? key;
+      const phone = typeof extra.phone === "string" ? extra.phone : undefined;
+
+      const customerId = await resolveCustomerId(key, name, phone);
+      const profile    = await upsertCustomerProfile(customerId, extra as any);
+
+      res.json({ ok: true, id: customerId, profile: dbProfileToExtra(profile) });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * POST /api/crm/sync-extras
+   * Bulk-syncs the entire localStorage extras map to the DB.
+   * Body: { extras: Record<string, CustomerExtra & { name?, phone? }> }
+   */
+  app.post("/api/crm/sync-extras", requireAuth, async (req, res) => {
+    try {
+      const { extras } = req.body as { extras: Record<string, any> };
+      if (!extras || typeof extras !== "object") {
+        return res.status(400).json({ error: "extras map required" });
+      }
+      const result = await syncLocalStorageExtras(extras);
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Recommendations ────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/crm/recommendations/:key
+   * Returns personalised item recommendations for a customer.
+   */
+  app.get("/api/crm/recommendations/:key", requireAuth, async (req, res) => {
+    try {
+      const key    = decodeURIComponent(req.params.key);
+      const result = await getRecommendations(key);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Message history ────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/crm/customers/:key/messages
+   * Returns the full message history for a customer.
+   */
+  app.get("/api/crm/customers/:key/messages", requireAuth, async (req, res) => {
+    try {
+      const key    = decodeURIComponent(req.params.key);
+      const master = await getCustomerMaster(key);
+      if (!master) return res.json([]);
+
+      const messages = await getCustomerMessages(master.id);
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * POST /api/crm/customers/:key/message
+   * Send a manual message to a customer via any channel.
+   */
+  app.post("/api/crm/customers/:key/message", requireAuth, async (req, res) => {
+    try {
+      const key     = decodeURIComponent(req.params.key);
+      const { channel, to, message, subject, trigger } = req.body as {
+        channel: "whatsapp" | "email" | "sms";
+        to:      string;
+        message: string;
+        subject?: string;
+        trigger?: string;
+      };
+
+      if (!channel || !to || !message) {
+        return res.status(400).json({ error: "channel, to, and message are required" });
+      }
+
+      const master = await getCustomerMaster(key);
+      const name   = master?.name ?? key;
+
+      const config = getAutomationConfig();
+      const result = await sendMessage(key, name, { channel, to, message, subject, trigger }, {
+        watiApiKey:   config.watiApiKey,
+        watiEndpoint: config.watiEndpoint,
+      });
+
+      res.json({ ok: result.success, mode: result.mode, error: result.error });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Segmentation ───────────────────────────────────────────────────────────
+
+  /**
+   * POST /api/crm/segment/:key
+   * Recomputes the RFM segment for a single customer.
+   */
+  app.post("/api/crm/segment/:key", requireAuth, async (req, res) => {
+    try {
+      const key    = decodeURIComponent(req.params.key);
+      const master = await getCustomerMaster(key);
+      const result = await runSegmentationForCustomer(
+        key,
+        master?.name ?? key,
+        master?.phone
+      );
+      res.json({ ok: !!result, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * POST /api/crm/segment/batch
+   * Runs full batch segmentation for all customers.
+   */
+  app.post("/api/crm/segment/batch", requireAdmin, async (_req, res) => {
+    try {
+      const result = await runSegmentationForAll();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ── Server-side automation ─────────────────────────────────────────────────
+
+  /**
+   * POST /api/crm/automation/run
+   * Runs the server-side rule engine (separate from the client-side engine).
+   */
+  app.post("/api/crm/automation/run", requireAuth, async (req, res) => {
+    try {
+      const { force, limit } = req.body as { force?: boolean; limit?: number };
+      const result = await runAutomationServerSide({ force: force ?? true, limit });
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * GET /api/crm/automation/rules
+   * Returns all automation rules from DB.
+   */
+  app.get("/api/crm/automation/rules", requireAuth, async (_req, res) => {
+    try {
+      const rules = await db.select().from(automationRules).orderBy(automationRules.createdAt);
+      res.json(rules);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * POST /api/crm/automation/rules
+   * Creates a new automation rule.
+   */
+  app.post("/api/crm/automation/rules", requireAdmin, async (req, res) => {
+    try {
+      const { name, triggerType, conditions, actions, isActive } = req.body;
+      const [rule] = await db
+        .insert(automationRules)
+        .values({ name, triggerType, conditions, actions, isActive: isActive ?? true })
+        .returning();
+      res.json(rule);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * PATCH /api/crm/automation/rules/:id
+   * Updates an existing automation rule.
+   */
+  app.patch("/api/crm/automation/rules/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { name, triggerType, conditions, actions, isActive } = req.body;
+      const [rule] = await db
+        .update(automationRules)
+        .set({ name, triggerType, conditions, actions, isActive })
+        .where(eq(automationRules.id, id))
+        .returning();
+      res.json(rule);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
+   * GET /api/crm/automation/jobs
+   * Returns recent automation jobs (newest first).
+   */
+  app.get("/api/crm/automation/jobs", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10), 500);
+      const jobs  = await db
+        .select()
+        .from(automationJobs)
+        .orderBy(desc(automationJobs.scheduledAt))
+        .limit(limit);
+      res.json(jobs);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
   });
 
   return httpServer;
