@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CustomerDashboard.tsx — Function Summary</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a202c; background: #fff; padding: 40px; font-size: 13px; }
+    h1 { font-size: 22px; font-weight: 700; color: #2563eb; margin-bottom: 4px; }
+    .subtitle { color: #6b7280; font-size: 12px; margin-bottom: 32px; }
+    h2 { font-size: 15px; font-weight: 700; color: #1e40af; margin: 28px 0 12px; border-bottom: 2px solid #bfdbfe; padding-bottom: 6px; }
+    h3 { font-size: 13px; font-weight: 700; color: #374151; margin: 16px 0 6px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
+    th { background: #eff6ff; color: #1e40af; text-align: left; padding: 8px 12px; font-weight: 700; border: 1px solid #bfdbfe; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; vertical-align: top; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
+    .blue   { background: #dbeafe; color: #1d4ed8; }
+    .green  { background: #d1fae5; color: #065f46; }
+    .amber  { background: #fef3c7; color: #92400e; }
+    .purple { background: #ede9fe; color: #5b21b6; }
+    .red    { background: #fee2e2; color: #991b1b; }
+    .gray   { background: #f3f4f6; color: #374151; }
+    .tag-section { margin-bottom: 8px; }
+    .note { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 10px 14px; border-radius: 4px; font-size: 12px; color: #166534; margin-bottom: 16px; }
+    .warn { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 4px; font-size: 12px; color: #92400e; margin-bottom: 16px; }
+    .flow { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; margin-bottom: 12px; }
+    .flow li { margin: 4px 0 4px 18px; }
+    code { background: #f1f5f9; color: #0f172a; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-family: 'Consolas', monospace; }
+    .toc a { color: #2563eb; text-decoration: none; font-size: 12px; }
+    .toc li { margin: 4px 0 4px 16px; }
+    @media print {
+      body { padding: 20px; }
+      a { text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>CustomerDashboard.tsx — Function &amp; Component Summary</h1>
+<p class="subtitle">File: <code>client/src/pages/CustomerDashboard.tsx</code> &nbsp;|&nbsp; Generated: 2026-04-14 &nbsp;|&nbsp; Project: BagichaOrderMaster</p>
+
+<div class="note">
+  This page is the <strong>Customer Intelligence Hub</strong> of the Bagicha POS. It combines a customer listing table,
+  an AI-powered intelligence grid, and a full automation engine — all in one tabbed view.
+</div>
+
+<!-- ═══════════════════════════════════════ TABLE OF CONTENTS -->
+<h2>Table of Contents</h2>
+<ol class="toc">
+  <li><a href="#helpers">Utility / Helper Functions</a></li>
+  <li><a href="#localStorage">localStorage Helpers</a></li>
+  <li><a href="#components">UI Components</a></li>
+  <li><a href="#views">View Components (major sections)</a></li>
+  <li><a href="#main">Main Page Component</a></li>
+  <li><a href="#handlers">Event Handlers inside CustomerDashboard</a></li>
+  <li><a href="#dataflow">Data Flow Diagram</a></li>
+</ol>
+
+<!-- ═══════════════════════════════════════ HELPERS -->
+<h2 id="helpers">1. Utility / Helper Functions</h2>
+<table>
+  <thead>
+    <tr><th>Function</th><th>Purpose</th><th>Input</th><th>Output</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>formatCurrency(n)</code></td>
+      <td>Formats a number to Indian Rupee string (e.g. ₹1,250)</td>
+      <td><code>number</code></td>
+      <td><code>string</code> — <code>₹X,XXX</code></td>
+    </tr>
+    <tr>
+      <td><code>relativeTime(date)</code></td>
+      <td>Returns human-readable relative time: "Today", "Yesterday", "3d ago", "2w ago", "1mo ago", "1y ago"</td>
+      <td><code>Date</code></td>
+      <td><code>string</code></td>
+    </tr>
+    <tr>
+      <td><code>formatHour(h)</code></td>
+      <td>Converts 24-hour integer to 12-hour label e.g. <code>13</code> → <code>"1:00 PM"</code></td>
+      <td><code>number</code> (0–23)</td>
+      <td><code>string</code></td>
+    </tr>
+    <tr>
+      <td><code>formatDate(dateStr)</code></td>
+      <td>Formats ISO date string to Indian locale format e.g. <code>"14 Apr 2026"</code></td>
+      <td><code>string</code> (ISO)</td>
+      <td><code>string</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ LOCALSTORAGE -->
+<h2 id="localStorage">2. localStorage Helpers (Customer Extras)</h2>
+<p style="margin-bottom:10px">Customer extra data (email, DOB, address, flags) is stored in <code>localStorage</code> under key <code>"bagicha_customer_extras"</code>.</p>
+<table>
+  <thead>
+    <tr><th>Function</th><th>Purpose</th><th>Storage key</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>loadExtras()</code></td>
+      <td>Reads and parses all customer extras from localStorage. Returns empty object on error.</td>
+      <td><code>bagicha_customer_extras</code></td>
+    </tr>
+    <tr>
+      <td><code>saveExtras(data)</code></td>
+      <td>Serialises and writes updated extras map back to localStorage.</td>
+      <td><code>bagicha_customer_extras</code></td>
+    </tr>
+    <tr>
+      <td><code>defaultExtra()</code></td>
+      <td>Returns a blank <code>CustomerExtra</code> object with all empty strings and <code>notificationEnabled: true</code>.</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>CustomerExtra Interface Fields</h3>
+<table>
+  <thead>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>email</code></td><td>string</td><td>Customer email address</td></tr>
+    <tr><td><code>dateOfBirth</code></td><td>string</td><td>DOB in date-input format</td></tr>
+    <tr><td><code>dateOfAnniversary</code></td><td>string</td><td>Anniversary date</td></tr>
+    <tr><td><code>locality</code></td><td>string</td><td>Area / primary locality</td></tr>
+    <tr><td><code>gstNo</code></td><td>string</td><td>Customer GST number</td></tr>
+    <tr><td><code>address</code></td><td>string</td><td>Full postal address</td></tr>
+    <tr><td><code>doNotSendUpdate</code></td><td>boolean</td><td>Opt-out flag — blocks automation messages</td></tr>
+    <tr><td><code>isFavorite</code></td><td>boolean</td><td>Marks customer as favorite</td></tr>
+    <tr><td><code>tags</code></td><td>string</td><td>Comma-separated custom tags</td></tr>
+    <tr><td><code>remark</code></td><td>string</td><td>Internal staff notes</td></tr>
+    <tr><td><code>notificationEnabled</code></td><td>boolean</td><td>Master notification toggle per customer</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ COMPONENTS -->
+<h2 id="components">3. UI Components</h2>
+<table>
+  <thead>
+    <tr><th>Component</th><th>Type</th><th>Props</th><th>What it renders</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>TagBadge</code></td>
+      <td><span class="badge blue">Presentational</span></td>
+      <td><code>tag: CustomerTag</code></td>
+      <td>Coloured pill badge (VIP / Regular / New / At Risk) with matching icon from <code>TAG_CONFIG</code>.</td>
+    </tr>
+    <tr>
+      <td><code>StatPill</code></td>
+      <td><span class="badge blue">Presentational</span></td>
+      <td><code>icon, label, value, color, sub?</code></td>
+      <td>Glassmorphism stat card showing a single metric (e.g. Total, VIP count). Used in the Intelligence stats row.</td>
+    </tr>
+    <tr>
+      <td><code>CustomerCard</code></td>
+      <td><span class="badge green">Interactive</span></td>
+      <td><code>customer, index, onClick</code></td>
+      <td>Grid card for a single customer in Intelligence view. Shows name, tag, visits, spend, avg order, last visit, AI suggestion. Click opens <code>CustomerDrawer</code>. Animated with Framer Motion (staggered).</td>
+    </tr>
+    <tr>
+      <td><code>CustomerDrawer</code></td>
+      <td><span class="badge green">Interactive</span></td>
+      <td><code>customer, onClose</code></td>
+      <td>Slide-in right panel with full customer profile. Internally calls <code>useCustomerOrderDetails()</code>. Sections: Metrics, Behavior, Peak time, Favorite item, <code>LoyaltyCard</code>, <code>RecommendationBox</code>, Recent Orders (last 5 with items). Also shows WhatsApp quick-send buttons.</td>
+    </tr>
+    <tr>
+      <td><code>EditCustomerModal</code></td>
+      <td><span class="badge amber">Form / Modal</span></td>
+      <td><code>customer, extra, onSave, onClose</code></td>
+      <td>Full-screen modal for editing customer extras. Fields: email, DOB, anniversary, locality, GST, address, Do-Not-Send checkbox, Favorite checkbox, tags, remark. Saves via <code>onSave(form)</code> callback.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ VIEWS -->
+<h2 id="views">4. View Components (Tab Sections)</h2>
+
+<h3>4a. CustomerListingView — "Customer Listing" tab</h3>
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Props</td><td><code>customers, isLoading, extras, onEdit, onToggleNotif</code></td></tr>
+    <tr><td>Local state</td><td><code>search: string</code> — live-filters name or phone</td></tr>
+    <tr><td>Computed</td><td><code>displayed</code> — memoised filtered list based on search query</td></tr>
+    <tr><td>Renders</td><td>Petpooja-style flat table: Mobile | Email | Name | Add (tags/locality) | Action</td></tr>
+    <tr><td>Actions</td><td>Edit pencil → calls <code>onEdit(customer)</code> to open <code>EditCustomerModal</code><br/>Notification toggle button → calls <code>onToggleNotif(key)</code> to flip <code>notificationEnabled</code></td></tr>
+    <tr><td>Loading state</td><td>6 skeleton pulse rows while data loads</td></tr>
+    <tr><td>Empty state</td><td>Friendly "No customers found" illustration</td></tr>
+  </tbody>
+</table>
+
+<h3>4b. IntelligenceView — "Intelligence" tab</h3>
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Props</td><td><code>customers, stats, isLoading</code></td></tr>
+    <tr><td>Local state</td><td><code>filter: FilterKey</code> (all / VIP / Regular / New / At Risk)<br/><code>search: string</code><br/><code>selected: CustomerProfile | null</code></td></tr>
+    <tr><td>Computed</td><td><code>displayed</code> — memoised list applying tag filter + search</td></tr>
+    <tr><td>Stats row</td><td>Four <code>StatPill</code>s: Total, Active Today, VIP, At Risk</td></tr>
+    <tr><td>Filter bar</td><td>Segmented pill buttons for each tag, plus search input</td></tr>
+    <tr><td>Grid</td><td>Responsive 1–4 column animated grid of <code>CustomerCard</code>s</td></tr>
+    <tr><td>Drawer</td><td>Opens <code>CustomerDrawer</code> for selected customer; mobile backdrop overlay</td></tr>
+    <tr><td>Legend bar</td><td>Count breakdown per tag at bottom</td></tr>
+    <tr><td>Loading state</td><td>8 animated skeleton cards</td></tr>
+  </tbody>
+</table>
+
+<h3>4c. AutomationPanel — "Automation" tab</h3>
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Source</td><td>Imported from <code>@/components/AutomationPanel</code></td></tr>
+    <tr><td>Props passed</td><td><code>customers, extras, isLoading</code></td></tr>
+    <tr><td>Sub-tabs</td><td>Overview · Queue (N) · Log (N) · Settings</td></tr>
+    <tr><td>Core engine</td><td>100% client-side via <code>runAutomationClientSide()</code> in <code>automationEngine.ts</code></td></tr>
+    <tr><td>Persistence</td><td>Settings + logs in localStorage (no server required)</td></tr>
+    <tr><td>WhatsApp</td><td>Opens <code>wa.me</code> links (Web mode) per eligible customer</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ MAIN -->
+<h2 id="main">5. Main Page Component — <code>CustomerDashboard()</code></h2>
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Data hook</td><td><code>useCustomerIntelligence()</code> → <code>{ customers, stats, isLoading }</code></td></tr>
+    <tr>
+      <td>State</td>
+      <td>
+        <code>tab</code>: <code>"listing" | "intelligence" | "automation"</code> — active tab<br/>
+        <code>extras</code>: <code>Record&lt;string, CustomerExtra&gt;</code> — loaded from localStorage on mount<br/>
+        <code>editTarget</code>: <code>CustomerProfile | null</code> — which customer is being edited
+      </td>
+    </tr>
+    <tr><td>Side effect</td><td><code>useEffect</code> — calls <code>saveExtras(extras)</code> every time <code>extras</code> changes → auto-persists to localStorage</td></tr>
+    <tr>
+      <td>Tabs rendered</td>
+      <td>
+        <strong>Customer Listing</strong> (LayoutList icon)<br/>
+        <strong>Intelligence</strong> (Brain icon)<br/>
+        <strong>Automation</strong> (Zap icon)
+      </td>
+    </tr>
+    <tr><td>Header</td><td>Page title "Customers" + live count: <em>X total · Y active today</em></td></tr>
+    <tr><td>Modal gate</td><td><code>AnimatePresence</code> wraps <code>EditCustomerModal</code> — only mounts when <code>editTarget !== null</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ HANDLERS -->
+<h2 id="handlers">6. Event Handlers inside CustomerDashboard</h2>
+<table>
+  <thead>
+    <tr><th>Handler</th><th>Triggered by</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>handleSaveExtra(customer, data)</code></td>
+      <td><code>EditCustomerModal</code> Save button</td>
+      <td>Merges new <code>CustomerExtra</code> data into the <code>extras</code> map keyed by <code>customer.key</code>. The <code>useEffect</code> then persists to localStorage automatically.</td>
+    </tr>
+    <tr>
+      <td><code>handleToggleNotif(key)</code></td>
+      <td>Notification Status button in listing row</td>
+      <td>Flips <code>notificationEnabled</code> for the given customer key. If no extras exist yet, starts from <code>defaultExtra()</code>.</td>
+    </tr>
+    <tr>
+      <td><code>handleSendWA(template)</code> <em>(inside CustomerDrawer)</em></td>
+      <td>WhatsApp template buttons in the drawer</td>
+      <td>Calls <code>sendViaWhatsAppWeb(phone, template, name)</code> to open a pre-filled WhatsApp Web link. Sets <code>waSent</code> state for 2.5s to show "Opened!" feedback.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ DATA FLOW -->
+<h2 id="dataflow">7. Data Flow Diagram</h2>
+<div class="flow">
+<pre>
+PostgreSQL DB (Neon)
+       │
+       ▼
+useCustomerIntelligence()  ← TanStack Query, fetches /api/orders + /api/order-items
+       │
+       ├── customers[]  ─────────────────────────────────────────────────┐
+       │                                                                  │
+       │   CustomerListingView          IntelligenceView     AutomationPanel
+       │   ├─ search filter              ├─ tag + search filter  ├─ buildFollowUpQueue()
+       │   ├─ flat table UI              ├─ CustomerCard grid     ├─ runAutomationClientSide()
+       │   ├─ EditCustomerModal          ├─ CustomerDrawer        ├─ localStorage logs
+       │   └─ notification toggle        │   ├─ LoyaltyCard       └─ wa.me links
+       │                                 │   ├─ RecommendationBox
+       │                                 │   └─ WA quick-send
+       │
+       └── extras{}  ←→  localStorage("bagicha_customer_extras")
+              ▲
+              │ handleSaveExtra / handleToggleNotif
+              │
+          EditCustomerModal (modal)
+</pre>
+</div>
+
+<div class="warn">
+  <strong>Key constraint:</strong> <code>customer.key</code> is the primary identifier — it equals <code>phone</code> if available, else <code>name</code>.
+  All extras, automation logs, and notification prefs are keyed on this value.
+</div>
+
+<!-- ═══════════════════════════════════════ DEPENDENCIES -->
+<h2>8. External Dependencies Used</h2>
+<table>
+  <thead>
+    <tr><th>Import</th><th>From</th><th>Used for</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>useCustomerIntelligence</code></td><td><code>@/hooks/useCustomerIntelligence</code></td><td>Customer profiles + aggregate stats from DB</td></tr>
+    <tr><td><code>useCustomerOrderDetails</code></td><td><code>@/hooks/useCustomerIntelligence</code></td><td>Fetches order items for a specific customer (used in drawer)</td></tr>
+    <tr><td><code>LoyaltyCard</code></td><td><code>@/components/loyalty/LoyaltyCard</code></td><td>Shows loyalty points/tier in the drawer</td></tr>
+    <tr><td><code>RecommendationBox</code></td><td><code>@/components/recommendations/RecommendationBox</code></td><td>AI-driven menu suggestions in the drawer</td></tr>
+    <tr><td><code>sendViaWhatsAppWeb, getTemplateInfo</code></td><td><code>@/utils/whatsapp</code></td><td>Opens wa.me links with pre-filled messages</td></tr>
+    <tr><td><code>AutomationPanel</code></td><td><code>@/components/AutomationPanel</code></td><td>Full automation engine UI (third tab)</td></tr>
+    <tr><td><code>framer-motion</code></td><td>npm</td><td>Animations: drawer slide, card stagger, modal fade</td></tr>
+    <tr><td><code>lucide-react</code></td><td>npm</td><td>Icons throughout</td></tr>
+  </tbody>
+</table>
+
+<hr style="margin-top:40px; border-color:#e5e7eb"/>
+<p style="color:#9ca3af; font-size:11px; margin-top:12px">Generated by Claude Code · BagichaOrderMaster · 2026-04-14</p>
+
+</body>
+</html>

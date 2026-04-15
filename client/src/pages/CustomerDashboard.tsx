@@ -1,10 +1,12 @@
 import { useMemo, useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Users, Phone, ShoppingBag, TrendingUp, Clock, Star, AlertTriangle,
   UserCheck, UserPlus, Search, X, ChevronRight, Flame, Lightbulb,
   CalendarDays, BarChart2, Loader2, Send, Bell, BellOff, Edit2,
-  LayoutList, Brain, Zap,
+  LayoutList, Brain, Zap, Activity, Database, Sparkles, Award,
+  Target, BarChart,
 } from "lucide-react";
 import {
   useCustomerIntelligence,
@@ -20,6 +22,13 @@ import {
   type WhatsAppTemplate,
 } from "@/utils/whatsapp";
 import { AutomationPanel } from "@/components/AutomationPanel";
+import { CustomerTimeline } from "@/components/crm/CustomerTimeline";
+import {
+  useCrmProfile,
+  useCrmExtrasSync,
+  useServerRecommendations,
+  type CrmSegment,
+} from "@/hooks/useCrmProfile";
 
 const WA_TEMPLATES: WhatsAppTemplate[] = ["thank_you", "inactive_offer", "vip_reward"];
 
@@ -112,6 +121,105 @@ function TagBadge({ tag }: { tag: CustomerTag }) {
     <span className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${c.bg} ${c.text}`}>
       <Icon className="w-2.5 h-2.5" />{c.label}
     </span>
+  );
+}
+
+// ── RFM Score Panel ───────────────────────────────────────────────────────────
+
+function RfmScoreBar({ label, score, color }: { label: string; score: number; color: string }) {
+  const pct = Math.round((score / 10) * 100);
+  return (
+    <div className="space-y-0.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[9px] font-semibold text-gray-500">{label}</span>
+        <span className={`text-[9px] font-bold ${color}`}>{score}/10</span>
+      </div>
+      <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-700 ${color.replace("text-", "bg-")}`}
+          style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function RfmPanel({ segment }: { segment: CrmSegment }) {
+  const segColors: Record<string, string> = {
+    VIP:      "text-amber-600 bg-amber-50 border-amber-200",
+    Regular:  "text-indigo-600 bg-indigo-50 border-indigo-200",
+    New:      "text-emerald-600 bg-emerald-50 border-emerald-200",
+    "At Risk":"text-red-600 bg-red-50 border-red-200",
+    Lapsed:   "text-gray-500 bg-gray-50 border-gray-200",
+  };
+  const cls = segColors[segment.segment] ?? "text-gray-600 bg-gray-50 border-gray-200";
+
+  return (
+    <section>
+      <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+        <Database className="w-3 h-3" /> CRM Intelligence
+      </h3>
+      <div className="bg-white border border-gray-100 rounded-xl p-3 space-y-3">
+        {/* Segment + RFM total */}
+        <div className="flex items-center justify-between">
+          <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-lg border ${cls}`}>
+            <Activity className="w-3 h-3" />
+            {segment.segment}
+          </span>
+          <div className="text-right">
+            <div className="text-base font-bold text-gray-800">{segment.rfmScore}<span className="text-[9px] text-gray-400 font-normal">/30</span></div>
+            <div className="text-[8px] text-gray-400">RFM Score</div>
+          </div>
+        </div>
+
+        {/* Score bars */}
+        <div className="space-y-1.5">
+          <RfmScoreBar label="Recency"   score={segment.recencyScore}   color="text-blue-500"    />
+          <RfmScoreBar label="Frequency" score={segment.frequencyScore} color="text-indigo-500"  />
+          <RfmScoreBar label="Monetary"  score={segment.monetaryScore}  color="text-emerald-500" />
+        </div>
+
+        <p className="text-[8px] text-gray-400">
+          Updated {new Date(segment.updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ── Server Recommendations Panel ──────────────────────────────────────────────
+
+function ServerRecsPanel({ customerKey }: { customerKey: string }) {
+  const { recommendations, isLoading } = useServerRecommendations(customerKey);
+
+  if (isLoading) return null;
+  if (!recommendations || recommendations.isEmpty) return null;
+
+  const { upsells } = recommendations;
+  if (!upsells.length) return null;
+
+  return (
+    <section>
+      <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+        <Target className="w-3 h-3" /> Upsell Opportunities
+      </h3>
+      <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-100 rounded-xl p-3 space-y-1.5">
+        <p className="flex items-center gap-1.5 text-[9px] text-purple-600 font-semibold">
+          <Sparkles className="w-3 h-3" /> Items this customer hasn't tried yet
+        </p>
+        {upsells.map((item, i) => (
+          <div key={item.itemId} className="flex items-center gap-2 bg-white/70 rounded-lg px-2 py-1.5">
+            <span className="text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full bg-purple-100 text-purple-600 shrink-0">
+              {i + 1}
+            </span>
+            <span className="text-xs font-medium text-gray-800 truncate flex-1">{item.itemName}</span>
+            {item.score > 0 && (
+              <span className="text-[8px] font-semibold text-purple-500 bg-purple-50 px-1 py-0.5 rounded shrink-0">
+                co-bought {item.score}×
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -484,6 +592,9 @@ function CustomerCard({ customer, index, onClick }: {
   customer: CustomerProfile; index: number; onClick: () => void;
 }) {
   const ring = TAG_CONFIG[customer.tag].cardRing;
+  const { crmData } = useCrmProfile(customer.key);
+  const rfm = crmData?.segment;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -506,7 +617,16 @@ function CustomerCard({ customer, index, onClick }: {
             </div>
           )}
         </div>
-        <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0 mt-0.5" />
+        {/* RFM score chip — only shown when DB has computed it */}
+        {rfm ? (
+          <div className="shrink-0 flex flex-col items-end gap-0.5">
+            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 flex items-center gap-0.5">
+              <BarChart className="w-2.5 h-2.5" />{rfm.rfmScore}
+            </span>
+          </div>
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0 mt-0.5" />
+        )}
       </div>
       <div className="grid grid-cols-3 gap-2 mt-3 pt-2.5 border-t border-black/5">
         <div className="text-center">
@@ -544,6 +664,9 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
   const cfg = TAG_CONFIG[customer.tag];
   const Icon = cfg.icon;
   const [waSent, setWaSent] = useState<WhatsAppTemplate | null>(null);
+
+  // CRM enrichment — falls back gracefully if DB unavailable
+  const { crmData } = useCrmProfile(customer.key);
 
   function handleSendWA(template: WhatsAppTemplate) {
     if (!customer.phone) return;
@@ -665,7 +788,17 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
         </section>
 
         <LoyaltyCard customerKey={customer.key} totalSpend={customer.totalSpend} />
+
+        {/* CRM: RFM Score Panel — shows when DB has computed scores */}
+        {crmData?.segment && <RfmPanel segment={crmData.segment} />}
+
         <RecommendationBox ordersWithItems={ordersWithItems} isLoading={loadingItems} />
+
+        {/* CRM: Server-side upsell recommendations */}
+        <ServerRecsPanel customerKey={customer.key} />
+
+        {/* CRM Timeline — renders nothing if DB unavailable */}
+        <CustomerTimeline customerKey={customer.key} />
 
         <section>
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Recent Orders</h3>
@@ -708,6 +841,51 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
   );
 }
 
+// ── CRM Status Banner ─────────────────────────────────────────────────────────
+
+function CrmStatusBanner({ customerCount }: { customerCount: number }) {
+  // Use the first customer's key as a probe — if it returns any valid JSON
+  // (even { exists: false }), the DB is reachable. If it throws a 500, DB is down.
+  const { data: probe, isLoading, isError } = useQuery<{ exists: boolean }>({
+    queryKey: ["/api/crm/customers/__probe__"],
+    staleTime: 60_000,
+    retry: false,
+    enabled: customerCount > 0,
+  });
+
+  // Connected = we got a response (any response, exists or not) without a server error
+  const isConnected = !isError && probe !== undefined;
+
+  if (!customerCount) return null;
+
+  return (
+    <div className={`shrink-0 mx-5 mb-2 rounded-xl px-3 py-2 flex items-center gap-2 text-[10px] font-semibold border transition-colors ${
+      isLoading
+        ? "bg-gray-50 border-gray-100 text-gray-400"
+        : isConnected
+        ? "bg-indigo-50 border-indigo-100 text-indigo-600"
+        : "bg-amber-50 border-amber-100 text-amber-600"
+    }`}>
+      {isLoading ? (
+        <><Loader2 className="w-3 h-3 animate-spin" /> Connecting to CRM engine…</>
+      ) : isConnected ? (
+        <>
+          <Database className="w-3 h-3" />
+          <span>CRM Engine Active</span>
+          <span className="ml-auto text-[9px] font-normal opacity-70">
+            RFM scores · Event tracking · Smart recommendations
+          </span>
+        </>
+      ) : (
+        <>
+          <Activity className="w-3 h-3" />
+          <span>Local mode — DB unreachable, check server connection</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function IntelligenceView({
   customers,
   stats,
@@ -740,6 +918,9 @@ function IntelligenceView({
         <StatPill icon={Star}          label="VIP"          value={stats.vip}         color="text-amber-500" />
         <StatPill icon={AlertTriangle} label="At Risk"      value={stats.atRisk}      color="text-red-500" />
       </div>
+
+      {/* CRM Engine status banner */}
+      <CrmStatusBanner customerCount={stats.total} />
 
       {/* Filters + search */}
       <div className="shrink-0 px-5 pb-3 flex items-center gap-3 flex-wrap">
@@ -831,8 +1012,27 @@ export default function CustomerDashboard() {
   // Persist extras to localStorage whenever they change
   useEffect(() => { saveExtras(extras); }, [extras]);
 
+  // Background sync: push localStorage extras → DB (non-blocking, fire-and-forget)
+  useCrmExtrasSync(extras, !isLoading);
+
   const handleSaveExtra = (customer: CustomerProfile, data: CustomerExtra) => {
+    // 1. Update localStorage immediately (existing behavior — unchanged)
     setExtras(prev => ({ ...prev, [customer.key]: data }));
+
+    // 2. Sync to DB in background (non-blocking — failure is silent)
+    fetch(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({
+        ...data,
+        name:  customer.name,
+        phone: customer.phone || undefined,
+        // Remap UI field names → DB field names
+        dob:         data.dateOfBirth,
+        anniversary: data.dateOfAnniversary,
+      }),
+    }).catch(e => console.warn("[CRM] Profile sync failed (non-fatal):", e));
   };
 
   const handleToggleNotif = (key: string) => {

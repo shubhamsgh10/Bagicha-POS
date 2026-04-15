@@ -5,6 +5,8 @@ import MemoryStore from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
+import { startSegmentationScheduler } from "./services/crm/segmentationService";
+import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 
 const MemoryStoreSession = MemoryStore(session);
 
@@ -91,5 +93,9 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
     // Start the customer automation background scheduler
     startAutomationScheduler();
+    // Start CRM segmentation scheduler (every 1h)
+    startSegmentationScheduler(1);
+    // Seed default automation rules if none exist
+    seedDefaultRules().catch(e => console.warn("[CRM] seed rules failed:", e));
   });
 })();
