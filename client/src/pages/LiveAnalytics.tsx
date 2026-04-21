@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
@@ -9,14 +9,181 @@ import {
 } from "recharts";
 import {
   IndianRupee, ShoppingBag, Clock, TrendingUp, AlertTriangle,
-  Star, LayoutGrid, ArrowLeft,
+  Star, LayoutGrid, ArrowLeft, Calendar, ChevronDown, Check,
 } from "lucide-react";
+
+// ── Date range helpers ─────────────────────────────────────────────────────────
+
+function toISO(d: Date) { return d.toISOString().slice(0, 10); }
+function today()        { return toISO(new Date()); }
+function daysAgo(n: number) {
+  const d = new Date(); d.setDate(d.getDate() - n); return toISO(d);
+}
+function startOfMonth() {
+  const d = new Date(); d.setDate(1); return toISO(d);
+}
+
+interface DateRange { start: string; end: string; label: string; }
+
+const PRESETS: { label: string; range: () => { start: string; end: string } }[] = [
+  { label: "Today",        range: () => ({ start: today(),        end: today() }) },
+  { label: "Yesterday",    range: () => ({ start: daysAgo(1),     end: daysAgo(1) }) },
+  { label: "Last 7 Days",  range: () => ({ start: daysAgo(6),     end: today() }) },
+  { label: "Last 30 Days", range: () => ({ start: daysAgo(29),    end: today() }) },
+  { label: "This Month",   range: () => ({ start: startOfMonth(), end: today() }) },
+];
+
+function formatRangeLabel(start: string, end: string) {
+  const fmt = (s: string) =>
+    new Date(s + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
+}
+
+// ── DateRangePicker ────────────────────────────────────────────────────────────
+
+function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
+  const [open, setOpen]               = useState(false);
+  const [customStart, setCustomStart] = useState(value.start);
+  const [customEnd, setCustomEnd]     = useState(value.end);
+  const [showCustom, setShowCustom]   = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function h(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  function applyPreset(p: typeof PRESETS[number]) {
+    const r = p.range();
+    onChange({ ...r, label: p.label });
+    setShowCustom(false);
+    setOpen(false);
+  }
+
+  function applyCustom() {
+    if (!customStart || !customEnd || customStart > customEnd) return;
+    onChange({ start: customStart, end: customEnd, label: "Custom" });
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
+                   bg-muted border border-border text-foreground
+                   hover:bg-muted/80 transition-all"
+      >
+        <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+        <span>{value.label === "Custom" ? formatRangeLabel(value.start, value.end) : value.label}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 top-full mt-2 z-50 w-60 rounded-2xl
+                       bg-card border border-border shadow-xl p-2 overflow-hidden"
+          >
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-2 py-1.5">
+              Quick Select
+            </p>
+            {PRESETS.map(p => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => applyPreset(p)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm
+                            transition-colors text-left ${
+                              value.label === p.label
+                                ? "bg-indigo-500/10 text-indigo-600 font-semibold"
+                                : "text-foreground hover:bg-muted"
+                            }`}
+              >
+                {p.label}
+                {value.label === p.label && <Check className="w-3.5 h-3.5 text-indigo-500" />}
+              </button>
+            ))}
+
+            <div className="border-t border-border mt-1 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCustom(s => !s)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm
+                            transition-colors text-left ${
+                              value.label === "Custom"
+                                ? "bg-indigo-500/10 text-indigo-600 font-semibold"
+                                : "text-foreground hover:bg-muted"
+                            }`}
+              >
+                Custom Range
+                {value.label === "Custom" && <Check className="w-3.5 h-3.5 text-indigo-500" />}
+              </button>
+              <AnimatePresence>
+                {showCustom && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="overflow-hidden px-2 pb-2 space-y-2"
+                  >
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground mb-1">From</label>
+                      <input
+                        type="date"
+                        value={customStart}
+                        max={customEnd || today()}
+                        onChange={e => setCustomStart(e.target.value)}
+                        className="w-full text-xs border border-border rounded-lg px-2 py-1.5
+                                   bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-muted-foreground mb-1">To</label>
+                      <input
+                        type="date"
+                        value={customEnd}
+                        min={customStart}
+                        max={today()}
+                        onChange={e => setCustomEnd(e.target.value)}
+                        className="w-full text-xs border border-border rounded-lg px-2 py-1.5
+                                   bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={applyCustom}
+                      disabled={!customStart || !customEnd || customStart > customEnd}
+                      className="w-full py-1.5 rounded-xl text-xs font-semibold bg-indigo-500
+                                 text-white hover:bg-indigo-600 disabled:bg-muted
+                                 disabled:text-muted-foreground transition-colors"
+                    >
+                      Apply
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
+    style: "currency", currency: "INR", minimumFractionDigits: 0,
   }).format(n);
 
 const PALETTE = [
@@ -27,8 +194,7 @@ const PALETTE = [
 const cardAnim = {
   hidden: { opacity: 0, y: 14 },
   visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
+    opacity: 1, y: 0,
     transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" },
   }),
 };
@@ -48,6 +214,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 // ── Sliding Glass Panel ───────────────────────────────────────────────────────
+
 function SlidingGlassPanel({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) {
   return (
     <AnimatePresence>
@@ -68,34 +235,64 @@ function SlidingGlassPanel({ isOpen, children }: { isOpen: boolean; children: Re
   );
 }
 
+// ── Page ───────────────────────────────────────────────────────────────────────
+
 export default function LiveAnalytics() {
   const [, navigate] = useLocation();
   const [openCard, setOpenCard] = useState<string | null>(null);
   const toggleCard = (id: string) => setOpenCard(prev => (prev === id ? null : id));
   const now = new Date();
 
+  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+    start: daysAgo(6),
+    end:   today(),
+    label: "Last 7 Days",
+  }));
+
+  const params = `?startDate=${dateRange.start}&endDate=${dateRange.end}`;
+
+  // Stats always show today's live numbers
   const { data: stats } = useQuery<any>({
     queryKey: ["/api/dashboard/stats"],
     staleTime: 0,
     refetchInterval: 5000,
   });
 
-  const { data: salesChart = [] } = useQuery<any[]>({
-    queryKey: ["/api/dashboard/sales-chart"],
+  // Charts are date-range aware
+  const { data: salesChart = [], isFetching: chartFetching } = useQuery<any[]>({
+    queryKey: ["/api/dashboard/sales-chart", dateRange.start, dateRange.end],
+    queryFn: async () => {
+      const r = await fetch(`/api/dashboard/sales-chart${params}`, { credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
+    placeholderData: (prev) => prev,
   });
 
-  const { data: categorySales = [] } = useQuery<any[]>({
-    queryKey: ["/api/dashboard/category-sales"],
+  const { data: categorySales = [], isFetching: catFetching } = useQuery<any[]>({
+    queryKey: ["/api/dashboard/category-sales", dateRange.start, dateRange.end],
+    queryFn: async () => {
+      const r = await fetch(`/api/dashboard/category-sales${params}`, { credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
+    placeholderData: (prev) => prev,
   });
 
-  const { data: topItems = [] } = useQuery<any[]>({
-    queryKey: ["/api/dashboard/top-items"],
+  const { data: topItems = [], isFetching: topFetching } = useQuery<any[]>({
+    queryKey: ["/api/dashboard/top-items", dateRange.start, dateRange.end],
+    queryFn: async () => {
+      const r = await fetch(`/api/dashboard/top-items${params}`, { credentials: "include" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
+    placeholderData: (prev) => prev,
   });
 
   const { data: lowStockItems = [] } = useQuery<any[]>({
@@ -117,10 +314,10 @@ export default function LiveAnalytics() {
   });
 
   const todayStr = now.toDateString();
-  const todayOrders = allOrders.filter((o: any) => new Date(o.createdAt).toDateString() === todayStr);
+  const todayOrders    = allOrders.filter((o: any) => new Date(o.createdAt).toDateString() === todayStr);
   const activeOrdersList = allOrders.filter((o: any) => o.status === "pending" || o.status === "preparing");
-  const innerTables = allTables.filter((t: any) => t.section?.toLowerCase() === "inner" && t.status === "occupied");
-  const outerTables = allTables.filter((t: any) => t.section?.toLowerCase() === "outer" && t.status === "occupied");
+  const innerTables    = allTables.filter((t: any) => t.section?.toLowerCase() === "inner" && t.status === "occupied");
+  const outerTables    = allTables.filter((t: any) => t.section?.toLowerCase() === "outer" && t.status === "occupied");
 
   const statCards = [
     {
@@ -165,10 +362,7 @@ export default function LiveAnalytics() {
       value: String(stats?.lowStockCount || 0),
       sub: stats?.lowStockCount > 0 ? "Needs attention" : "All good",
       icon: AlertTriangle,
-      gradient:
-        stats?.lowStockCount > 0
-          ? "from-red-500 to-rose-600"
-          : "from-green-500 to-emerald-500",
+      gradient: stats?.lowStockCount > 0 ? "from-red-500 to-rose-600" : "from-green-500 to-emerald-500",
       bg: stats?.lowStockCount > 0 ? "bg-red-500/10" : "bg-green-500/10",
     },
     {
@@ -200,6 +394,21 @@ export default function LiveAnalytics() {
     },
   ];
 
+  const chartTitle =
+    dateRange.label === "Custom"
+      ? `Sales — ${formatRangeLabel(dateRange.start, dateRange.end)}`
+      : `Sales — ${dateRange.label}`;
+
+  const topItemsTitle =
+    dateRange.label === "Custom"
+      ? `Top Items — ${formatRangeLabel(dateRange.start, dateRange.end)}`
+      : `Top Items — ${dateRange.label}`;
+
+  const catTitle =
+    dateRange.label === "Custom"
+      ? `Category Sales — ${formatRangeLabel(dateRange.start, dateRange.end)}`
+      : `Sales by Category — ${dateRange.label}`;
+
   return (
     <div className="h-screen w-screen flex flex-col bg-background overflow-hidden">
 
@@ -207,16 +416,15 @@ export default function LiveAnalytics() {
       <header className="shrink-0 h-14 bg-card border-b border-border flex items-center px-4 gap-3 shadow-sm">
         <button
           onClick={() => navigate("/tables")}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5 rounded-lg hover:bg-muted"
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
+                     transition-colors px-2 py-1.5 rounded-lg hover:bg-muted"
         >
           <ArrowLeft className="w-4 h-4" />
           Table View
         </button>
 
         <div className="w-px h-6 bg-border shrink-0" />
-
         <BagichaLogo size="sm" />
-
         <div className="w-px h-6 bg-border shrink-0" />
 
         <span className="text-base font-bold text-foreground tracking-tight">
@@ -225,14 +433,13 @@ export default function LiveAnalytics() {
 
         <div className="flex-1" />
 
+        {/* Date Range Picker */}
+        <DateRangePicker value={dateRange} onChange={setDateRange} />
+
         <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5">
           <Clock className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-xs font-medium text-foreground">
-            {now.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-            })}
+            {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
           </span>
         </div>
 
@@ -244,7 +451,7 @@ export default function LiveAnalytics() {
       {/* ── Content ─────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto p-5 space-y-5 min-h-0">
 
-        {/* ── Stat Cards ── */}
+        {/* ── Stat Cards (always today) ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
           {statCards.map((card, i) => (
             <motion.div
@@ -262,20 +469,12 @@ export default function LiveAnalytics() {
                   : "border-border/40 hover:shadow-md"
                 }`}
             >
-              <div
-                className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}
-              >
+              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
                 <card.icon className="w-4 h-4 text-white" />
               </div>
-              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">
-                {card.label}
-              </p>
-              <p className="text-lg font-bold text-foreground leading-tight truncate">
-                {card.value}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {card.sub}
-              </p>
+              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
+              <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
             </motion.div>
           ))}
         </div>
@@ -417,28 +616,25 @@ export default function LiveAnalytics() {
             transition={{ delay: 0.45, duration: 0.4 }}
             className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
           >
-            <p className="text-sm font-semibold mb-4">Sales — Last 7 Days</p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">{chartTitle}</p>
+              {chartFetching && <span className="text-[11px] text-muted-foreground animate-pulse">Updating…</span>}
+            </div>
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart
-                data={salesChart}
-                margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="#e2e8f0"
-                  strokeOpacity={0.6}
-                />
+              <LineChart data={salesChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.6} />
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 11, fill: "#94a3b8" }}
                   axisLine={false}
                   tickLine={false}
+                  interval="preserveStartEnd"
                 />
                 <YAxis
                   tick={{ fontSize: 11, fill: "#94a3b8" }}
                   axisLine={false}
                   tickLine={false}
-                  tickFormatter={(v) => `₹${v}`}
+                  tickFormatter={(v) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
                   width={55}
                 />
                 <Tooltip content={<CustomTooltip />} />
@@ -460,10 +656,17 @@ export default function LiveAnalytics() {
             transition={{ delay: 0.55, duration: 0.4 }}
             className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
           >
-            <p className="text-sm font-semibold mb-3">Sales by Category</p>
-            {categorySales.length === 0 ? (
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold">{catTitle}</p>
+              {catFetching && <span className="text-[11px] text-muted-foreground animate-pulse">Updating…</span>}
+            </div>
+            {catFetching && categorySales.length === 0 ? (
+              <div className="h-[200px] flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : categorySales.length === 0 ? (
               <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
-                No sales today
+                No sales in range
               </div>
             ) : (
               <>
@@ -480,10 +683,7 @@ export default function LiveAnalytics() {
                       paddingAngle={3}
                     >
                       {categorySales.map((_: any, idx: number) => (
-                        <Cell
-                          key={idx}
-                          fill={PALETTE[idx % PALETTE.length]}
-                        />
+                        <Cell key={idx} fill={PALETTE[idx % PALETTE.length]} />
                       ))}
                     </Pie>
                     <Tooltip content={<CustomTooltip />} />
@@ -491,22 +691,12 @@ export default function LiveAnalytics() {
                 </ResponsiveContainer>
                 <div className="space-y-1.5 mt-3">
                   {categorySales.slice(0, 5).map((c: any, idx: number) => (
-                    <div
-                      key={c.category}
-                      className="flex items-center justify-between text-xs"
-                    >
+                    <div key={c.category} className="flex items-center justify-between text-xs">
                       <span className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{ background: PALETTE[idx % PALETTE.length] }}
-                        />
-                        <span className="text-muted-foreground truncate">
-                          {c.category}
-                        </span>
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: PALETTE[idx % PALETTE.length] }} />
+                        <span className="text-muted-foreground truncate">{c.category}</span>
                       </span>
-                      <span className="font-semibold ml-2 flex-shrink-0">
-                        {fmt(c.total)}
-                      </span>
+                      <span className="font-semibold ml-2 flex-shrink-0">{fmt(c.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -523,23 +713,22 @@ export default function LiveAnalytics() {
             transition={{ delay: 0.65, duration: 0.4 }}
             className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
           >
-            <p className="text-sm font-semibold mb-4">Top Items Today</p>
-            {topItems.length === 0 ? (
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">{topItemsTitle}</p>
+              {topFetching && <span className="text-[11px] text-muted-foreground animate-pulse">Updating…</span>}
+            </div>
+            {topFetching && topItems.length === 0 ? (
+              <div className="h-[200px] flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : topItems.length === 0 ? (
               <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
-                No sales today
+                No sales in range
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart
-                  data={topItems}
-                  margin={{ top: 4, right: 8, left: 0, bottom: 20 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#e2e8f0"
-                    strokeOpacity={0.6}
-                    vertical={false}
-                  />
+                <BarChart data={topItems} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.6} vertical={false} />
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 10, fill: "#94a3b8" }}
@@ -556,17 +745,9 @@ export default function LiveAnalytics() {
                     allowDecimals={false}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar
-                    dataKey="qty"
-                    name="qty"
-                    radius={[6, 6, 0, 0]}
-                    maxBarSize={40}
-                  >
+                  <Bar dataKey="qty" name="qty" radius={[6, 6, 0, 0]} maxBarSize={40}>
                     {topItems.map((_: any, idx: number) => (
-                      <Cell
-                        key={idx}
-                        fill={PALETTE[idx % PALETTE.length]}
-                      />
+                      <Cell key={idx} fill={PALETTE[idx % PALETTE.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -593,9 +774,7 @@ export default function LiveAnalytics() {
                 <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center">
                   <span className="text-emerald-500 text-xl font-bold">✓</span>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  All items in stock
-                </p>
+                <p className="text-sm text-muted-foreground">All items in stock</p>
               </div>
             ) : (
               <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
@@ -607,12 +786,8 @@ export default function LiveAnalytics() {
                     className="flex items-center justify-between p-2.5 rounded-xl bg-red-500/5 border border-red-500/15"
                   >
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">
-                        {item.itemName}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Min: {item.minStock} {item.unit}
-                      </p>
+                      <p className="text-xs font-medium text-foreground truncate">{item.itemName}</p>
+                      <p className="text-[11px] text-muted-foreground">Min: {item.minStock} {item.unit}</p>
                     </div>
                     <span className="text-sm font-bold text-red-500 ml-2 flex-shrink-0">
                       {item.currentStock} {item.unit}

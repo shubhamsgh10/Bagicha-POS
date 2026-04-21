@@ -23,8 +23,13 @@ export interface AutomationConfig {
   runIntervalHours: number;     // default 1
   maxPerRun: number;            // max messages per scheduler run (default 50)
   sendDelayMs: number;          // ms between sends (default 3000)
+  // WATI provider
   watiApiKey: string;
   watiEndpoint: string;         // e.g. https://live-mt-server.wati.io/ACCOUNT_ID
+  // Meta WhatsApp Cloud API provider
+  metaPhoneNumberId: string;    // WhatsApp Phone Number ID from Meta Dashboard
+  metaAccessToken: string;      // System User permanent access token
+  // Other
   anthropicApiKey: string;      // if set → use Claude for message generation
   restaurantName: string;
   trackingBaseUrl: string;      // e.g. https://your-pos.com — appended to tracking links
@@ -57,6 +62,8 @@ const DEFAULT_CONFIG: AutomationConfig = {
   sendDelayMs: 3000,
   watiApiKey: "",
   watiEndpoint: "",
+  metaPhoneNumberId: "",
+  metaAccessToken: "",
   anthropicApiKey: "",
   restaurantName: "Bagicha",
   trackingBaseUrl: "",
