@@ -1,0 +1,25 @@
+[
+  {
+    "id": "2fd6d93b-db2e-41a2-8a47-eeb57cb77cf7",
+    "customerId": "9752486454",
+    "customerName": "Shubham",
+    "phone": "9752486454",
+    "trigger": "WELCOME",
+    "message": "Hi Shubham! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-04-15T09:35:49.833Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "2bbd5bb6-d26c-42dc-bd92-c89849c7240e",
+    "customerId": "9109550322",
+    "customerName": "Shubham",
+    "phone": "9109550322",
+    "trigger": "AT_RISK",
+    "message": "Hi Shubham! 🙏 We noticed it's been a while since you visited *Bagicha*. We'd love to have you back! As a special treat, enjoy *a complimentary dessert* on your next visit — just show this message. Hope to see you soon! 😊",
+    "sentAt": "2026-04-15T09:35:52.842Z",
+    "status": "failed",
+    "error": "Invalid or missing phone number",
+    "campaign": "AT_RISK"
+  }
+]

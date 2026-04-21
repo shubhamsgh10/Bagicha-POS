@@ -247,10 +247,12 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
         trackingLink
       );
 
-      // Send
+      // Send (Meta takes priority over WATI when both configured)
       const result = await sendWhatsAppMessage(customer.phone, message, {
-        watiApiKey:   config.watiApiKey,
-        watiEndpoint: config.watiEndpoint,
+        watiApiKey:        config.watiApiKey,
+        watiEndpoint:      config.watiEndpoint,
+        metaPhoneNumberId: config.metaPhoneNumberId,
+        metaAccessToken:   config.metaAccessToken,
       });
 
       // Log
