@@ -103,12 +103,12 @@ export interface IStorage {
   }>;
 
   // Dashboard Charts
-  getSalesChart(): Promise<Array<{ date: string; total: number }>>;
-  getCategorySales(): Promise<Array<{ category: string; total: number }>>;
-  getDashboardTopItems(limit?: number): Promise<Array<{ name: string; qty: number }>>;
+  getSalesChart(startDate?: Date, endDate?: Date): Promise<Array<{ date: string; total: number }>>;
+  getCategorySales(startDate?: Date, endDate?: Date): Promise<Array<{ category: string; total: number }>>;
+  getDashboardTopItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; qty: number }>>;
 
   // Reports
-  getTopSellingItems(limit?: number): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
+  getTopSellingItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -542,12 +542,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Dashboard Charts
-  async getSalesChart(): Promise<Array<{ date: string; total: number }>> {
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    const start = new Date();
-    start.setDate(start.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
+  async getSalesChart(startDate?: Date, endDate?: Date): Promise<Array<{ date: string; total: number }>> {
+    let start: Date, end: Date;
+    if (startDate && endDate) {
+      start = new Date(startDate); start.setHours(0, 0, 0, 0);
+      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
+    } else {
+      end = new Date(); end.setHours(23, 59, 59, 999);
+      start = new Date(); start.setDate(start.getDate() - 6); start.setHours(0, 0, 0, 0);
+    }
 
     const allOrders = await db.select({
       createdAt: orders.createdAt,
@@ -556,15 +559,16 @@ export class DatabaseStorage implements IStorage {
       and(gte(orders.createdAt, start), lte(orders.createdAt, end))
     );
 
+    // Build a day slot for every day in the range
     const days: Array<{ date: string; dateKey: string; total: number }> = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+    const cursor = new Date(start);
+    while (cursor <= end) {
       days.push({
-        date: d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' }),
-        dateKey: d.toISOString().slice(0, 10),
+        date: cursor.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' }),
+        dateKey: cursor.toISOString().slice(0, 10),
         total: 0,
       });
+      cursor.setDate(cursor.getDate() + 1);
     }
 
     for (const order of allOrders) {
@@ -576,11 +580,15 @@ export class DatabaseStorage implements IStorage {
     return days.map(({ date, total }) => ({ date, total }));
   }
 
-  async getCategorySales(): Promise<Array<{ category: string; total: number }>> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+  async getCategorySales(startDate?: Date, endDate?: Date): Promise<Array<{ category: string; total: number }>> {
+    let start: Date, end: Date;
+    if (startDate && endDate) {
+      start = new Date(startDate); start.setHours(0, 0, 0, 0);
+      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
+    } else {
+      start = new Date(); start.setHours(0, 0, 0, 0);
+      end   = new Date(); end.setHours(23, 59, 59, 999);
+    }
 
     const result = await db
       .select({
@@ -591,18 +599,22 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .innerJoin(categories, eq(menuItems.categoryId, categories.id))
-      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
       .groupBy(categories.id, categories.name)
       .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`);
 
     return result.map(r => ({ category: r.category, total: Number(r.total) }));
   }
 
-  async getDashboardTopItems(limit: number = 8): Promise<Array<{ name: string; qty: number }>> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+  async getDashboardTopItems(limit: number = 8, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; qty: number }>> {
+    let start: Date, end: Date;
+    if (startDate && endDate) {
+      start = new Date(startDate); start.setHours(0, 0, 0, 0);
+      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
+    } else {
+      start = new Date(); start.setHours(0, 0, 0, 0);
+      end   = new Date(); end.setHours(23, 59, 59, 999);
+    }
 
     const result = await db
       .select({
@@ -612,7 +624,7 @@ export class DatabaseStorage implements IStorage {
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
       .groupBy(menuItems.id, menuItems.name)
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(limit);
@@ -620,7 +632,15 @@ export class DatabaseStorage implements IStorage {
     return result.map(r => ({ name: r.name, qty: Number(r.qty) }));
   }
 
-  async getTopSellingItems(limit: number = 10): Promise<Array<{ name: string; totalSold: number; revenue: number }>> {
+  async getTopSellingItems(
+    limit = 10,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<Array<{ name: string; totalSold: number; revenue: number }>> {
+    const conditions = [];
+    if (startDate) conditions.push(gte(orders.createdAt, startDate));
+    if (endDate)   conditions.push(lte(orders.createdAt, endDate));
+
     const result = await db
       .select({
         name: menuItems.name,
@@ -629,6 +649,8 @@ export class DatabaseStorage implements IStorage {
       })
       .from(orderItems)
       .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .where(conditions.length ? and(...conditions) : undefined)
       .groupBy(menuItems.id, menuItems.name)
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(limit);

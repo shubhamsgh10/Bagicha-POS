@@ -372,7 +372,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/dashboard/sales-chart", requireAuth, async (req, res) => {
     try {
-      const data = await storage.getSalesChart();
+      const { startDate, endDate } = req.query;
+      const start = startDate ? new Date(startDate as string) : undefined;
+      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const data = await storage.getSalesChart(start, end);
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch sales chart" });
@@ -381,7 +384,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/dashboard/category-sales", requireAuth, async (req, res) => {
     try {
-      const data = await storage.getCategorySales();
+      const { startDate, endDate } = req.query;
+      const start = startDate ? new Date(startDate as string) : undefined;
+      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const data = await storage.getCategorySales(start, end);
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch category sales" });
@@ -390,7 +396,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/dashboard/top-items", requireAuth, async (req, res) => {
     try {
-      const data = await storage.getDashboardTopItems();
+      const { startDate, endDate } = req.query;
+      const start = startDate ? new Date(startDate as string) : undefined;
+      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const data = await storage.getDashboardTopItems(8, start, end);
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch top items" });
@@ -1271,31 +1280,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/reports/weekly", requireAuth, async (req, res) => {
     try {
-      const end = new Date();
-      end.setHours(23, 59, 59, 999);
-      const start = new Date();
-      start.setDate(start.getDate() - 6);
-      start.setHours(0, 0, 0, 0);
+      const { startDate, endDate } = req.query;
+
+      let end: Date, start: Date;
+      if (startDate && endDate) {
+        start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+      } else {
+        end = new Date();
+        end.setHours(23, 59, 59, 999);
+        start = new Date();
+        start.setDate(start.getDate() - 6);
+        start.setHours(0, 0, 0, 0);
+      }
 
       const allOrders = await storage.getOrdersByDateRange(start, end);
 
+      // Build one entry per day in the selected range
       const days: { name: string; date: string; sales: number; orders: number }[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
+      const cursor = new Date(start);
+      while (cursor <= end) {
         days.push({
-          name: d.toLocaleDateString("en-IN", { weekday: "short" }),
-          date: d.toISOString().slice(0, 10),
+          name: cursor.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+          date: cursor.toISOString().slice(0, 10),
           sales: 0,
           orders: 0,
         });
+        cursor.setDate(cursor.getDate() + 1);
       }
 
       for (const order of allOrders) {
         const orderDate = new Date(order.createdAt!).toISOString().slice(0, 10);
         const day = days.find(d => d.date === orderDate);
         if (day) {
-          day.sales += parseFloat(order.totalAmount);
+          day.sales  += parseFloat(order.totalAmount);
           day.orders += 1;
         }
       }
@@ -1308,7 +1328,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/reports/top-items", requireAuth, async (req, res) => {
     try {
-      const topItems = await storage.getTopSellingItems(10);
+      const { startDate, endDate } = req.query;
+      const start = startDate ? new Date(startDate as string) : undefined;
+      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const topItems = await storage.getTopSellingItems(10, start, end);
       res.json(topItems);
     } catch (error) {
       res.status(500).json({ error: "Failed to get top items" });
@@ -1352,8 +1375,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Never expose API keys in full — mask them
     res.json({
       ...config,
-      anthropicApiKey: config.anthropicApiKey ? "***configured***" : "",
-      watiApiKey:      config.watiApiKey      ? "***configured***" : "",
+      anthropicApiKey:  config.anthropicApiKey  ? "***configured***" : "",
+      watiApiKey:       config.watiApiKey        ? "***configured***" : "",
+      metaAccessToken:  config.metaAccessToken   ? "***configured***" : "",
     });
   });
 
@@ -1364,6 +1388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Don't overwrite keys with masked placeholder
       if (patch.anthropicApiKey === "***configured***") delete patch.anthropicApiKey;
       if (patch.watiApiKey      === "***configured***") delete patch.watiApiKey;
+      if (patch.metaAccessToken === "***configured***") delete patch.metaAccessToken;
 
       const updated = saveAutomationConfig(patch);
       restartScheduler();   // pick up new interval setting immediately
