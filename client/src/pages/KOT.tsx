@@ -7,46 +7,6 @@ import { KOT_STATUS } from "@/lib/constants";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-function printKOT(ticket: any) {
-  const win = window.open("", "_blank", "width=400,height=600");
-  if (!win) return;
-  win.document.write(`
-    <html>
-      <head>
-        <title>KOT - ${ticket.kotNumber}</title>
-        <style>
-          body { font-family: monospace; font-size: 14px; margin: 16px; }
-          h2 { text-align: center; margin: 0 0 8px; font-size: 18px; }
-          .divider { border-top: 1px dashed #000; margin: 8px 0; }
-          .row { display: flex; justify-content: space-between; margin: 4px 0; }
-          .item-name { font-weight: bold; }
-          .note { font-size: 12px; color: #555; margin-left: 8px; }
-          .footer { text-align: center; font-size: 12px; margin-top: 12px; }
-        </style>
-      </head>
-      <body>
-        <h2>KOT</h2>
-        <div class="row"><span><strong>KOT#:</strong> ${ticket.kotNumber}</span><span>${new Date(ticket.printedAt).toLocaleTimeString()}</span></div>
-        <div class="row"><strong>Status:</strong> <span>${ticket.status.replace("-", " ").toUpperCase()}</span></div>
-        <div class="divider"></div>
-        <div style="font-weight:bold;margin-bottom:4px">ITEMS:</div>
-        ${(ticket.items || []).map((item: any) => `
-          <div class="row">
-            <span class="item-name">${item.name}</span>
-            <span>x${item.quantity}</span>
-          </div>
-          ${item.instructions ? `<div class="note">Note: ${item.instructions}</div>` : ""}
-        `).join("")}
-        <div class="divider"></div>
-        <div class="footer">** Please prepare immediately **</div>
-      </body>
-    </html>
-  `);
-  win.document.close();
-  win.focus();
-  win.print();
-  win.close();
-}
 
 const statusAccent: Record<string, string> = {
   pending:     "border-l-red-400 bg-red-50/40",
@@ -62,6 +22,26 @@ const statusBadge: Record<string, string> = {
 
 export default function KOT() {
   const { toast } = useToast();
+
+  const reprintKOT = async (orderId: number) => {
+    try {
+      const res = await fetch('/api/print/kot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, reprint: true }),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
+      } else {
+        toast({ title: 'KOT sent to printer!' });
+      }
+    } catch {
+      toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
+    }
+  };
+
   const [activeTab, setActiveTab] = useState("active");
 
   const { data: kotTickets, isLoading } = useQuery<any[]>({
@@ -108,7 +88,7 @@ export default function KOT() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: idx * 0.04, duration: 0.2 }}
-      className={`rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md
+      className={`rounded-2xl bg-white/40 border border-white/30 shadow-md
                   border-l-4 ${statusAccent[ticket.status] || "border-l-gray-300"}
                   hover:shadow-xl hover:bg-white/50 transition-all duration-200`}
     >
@@ -140,7 +120,7 @@ export default function KOT() {
       <div className="px-4 pb-3 flex gap-2 border-t border-white/40 pt-2.5">
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => printKOT(ticket)}
+          onClick={() => reprintKOT(ticket.orderId)}
           className="flex-1 flex items-center justify-center gap-1 text-xs font-medium py-1.5 rounded-lg
                      bg-white/60 border border-white/40 text-gray-600 hover:bg-white/80 transition-all"
         >
@@ -180,7 +160,7 @@ export default function KOT() {
         <Header title="Kitchen — KOT" description="Loading tickets..." />
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-40 rounded-2xl bg-white/40 border border-white/30 backdrop-blur-sm animate-pulse" />
+            <div key={i} className="h-40 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
           ))}
         </div>
       </div>
@@ -231,7 +211,7 @@ export default function KOT() {
 
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
         {/* Glass Tabs */}
-        <div className="rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1 flex flex-wrap gap-1 mb-5">
+        <div className="rounded-xl bg-white/40 border border-white/30 p-1 flex flex-wrap gap-1 mb-5">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -248,7 +228,7 @@ export default function KOT() {
         </div>
 
         {currentTickets.length === 0 ? (
-          <div className="text-center py-16 rounded-2xl bg-white/30 backdrop-blur-sm border border-white/30">
+          <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30">
             {emptyIcon()}
             <p className="font-medium text-gray-500">{emptyText()}</p>
             <p className="text-sm text-gray-400 mt-1">New orders will appear here</p>
