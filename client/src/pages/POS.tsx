@@ -149,6 +149,8 @@ export default function POS() {
   const [activeOrderId, setActiveOrderId] = useState<number | null>(editOrderId);
   // Tracks what action triggered the submit
   const submitModeRef = useRef<"kot" | "kot-print" | "save" | "save-print" | "save-ebill" | "settle">("save");
+  // Snapshot of existingOrder.items captured at KOT click time — used for delta preview
+  const preKOTItemsRef = useRef<Array<{ menuItemId: number; quantity: number; size: string | null }>>([]);
   // Payment method selection
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cash");
   const paymentMethodRef = useRef("cash");
@@ -320,21 +322,20 @@ export default function POS() {
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
   const showKOTPreview = (order: any) => {
-    // Compute delta: only show items added since the last KOT print
-    const lastSnapshotItems: Array<{ itemId: number; quantity: number; size: string | null }> =
-      order.lastKotSnapshot?.items ?? [];
-    const lastMap = new Map<string, number>();
-    for (const s of lastSnapshotItems) {
-      lastMap.set(`${s.itemId}:${s.size ?? ''}`, s.quantity);
+    // Delta: compare current cart against what was in the order before this KOT action.
+    // preKOTItemsRef is captured at button-click time so it always has the pre-mutation state,
+    // regardless of whether lastKotSnapshot was ever updated (it only updates on successful print).
+    const prevMap = new Map<string, number>();
+    for (const s of preKOTItemsRef.current) {
+      prevMap.set(`${s.menuItemId}:${s.size ?? ''}`, s.quantity);
     }
     const deltaItems = cartItems
       .map(i => {
-        const prevQty = lastMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
+        const prevQty = prevMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
         const dQty = i.quantity - prevQty;
         return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
-    // Fall back to full cart if delta is empty (shouldn't happen, but safe)
     const items = deltaItems.length > 0
       ? deltaItems
       : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null }));
@@ -752,21 +753,33 @@ export default function POS() {
     else { form.handleSubmit(onSubmit)(); }
   };
 
-  const handleKOT        = () => { submitModeRef.current = "kot";        triggerSubmit(); };
-  const handleKOTAndPrint= () => { submitModeRef.current = "kot-print";  triggerSubmit(); };
+  const capturePreKOTItems = () => {
+    preKOTItemsRef.current = (existingOrder?.items ?? []).map((i: any) => ({
+      menuItemId: Number(i.menuItemId),
+      quantity: Number(i.quantity),
+      size: i.size ?? null,
+    }));
+  };
+
+  const handleKOT        = () => { capturePreKOTItems(); submitModeRef.current = "kot";        triggerSubmit(); };
+  const handleKOTAndPrint= () => { capturePreKOTItems(); submitModeRef.current = "kot-print";  triggerSubmit(); };
   const handleSettle     = () => { submitModeRef.current = "settle";     triggerSubmit(); };
 
-  // Direct KOT preview — no server call, uses delta against last snapshot
+  // Direct KOT preview — no server call, shows delta of new items not yet in the order
   const handleKOTPreview = () => {
-    const lastSnapshotItems: Array<{ itemId: number; quantity: number; size: string | null }> =
-      existingOrder?.lastKotSnapshot?.items ?? [];
-    const lastMap = new Map<string, number>();
-    for (const s of lastSnapshotItems) {
-      lastMap.set(`${s.itemId}:${s.size ?? ''}`, s.quantity);
+    const prevItems: Array<{ menuItemId: number; quantity: number; size: string | null }> =
+      (existingOrder?.items ?? []).map((i: any) => ({
+        menuItemId: Number(i.menuItemId),
+        quantity: Number(i.quantity),
+        size: i.size ?? null,
+      }));
+    const prevMap = new Map<string, number>();
+    for (const s of prevItems) {
+      prevMap.set(`${s.menuItemId}:${s.size ?? ''}`, s.quantity);
     }
     const deltaItems = cartItems
       .map(i => {
-        const prevQty = lastMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
+        const prevQty = prevMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
         const dQty = i.quantity - prevQty;
         return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
       })
