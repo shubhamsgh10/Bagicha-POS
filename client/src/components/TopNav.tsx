@@ -61,7 +61,15 @@ export function TopNav() {
   return (
     <>
       {/* ── Top bar (always visible) ──────────────────────────────────────── */}
-      <header className="shrink-0 h-14 bg-white/80 backdrop-blur-xl border-b border-black/5 flex items-center px-3 gap-2 shadow-sm z-50">
+      <header className="shrink-0 h-14 flex items-center px-3 gap-2 z-50"
+        style={{
+          background: "rgba(255,255,255,0.78)",
+          backdropFilter: "blur(22px) saturate(1.9)",
+          WebkitBackdropFilter: "blur(22px) saturate(1.9)",
+          borderBottom: "1px solid rgba(255,255,255,0.65)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.95) inset, 0 2px 20px rgba(0,0,0,0.06)",
+        }}
+      >
 
         {/* Hamburger — mobile only */}
         <button
@@ -143,12 +151,20 @@ export function TopNav() {
         <div className="fixed inset-0 z-[100] md:hidden flex">
           {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/50"
             onClick={() => setSidebarOpen(false)}
           />
 
           {/* Drawer panel */}
-          <div className="relative w-72 max-w-[85vw] bg-white h-full flex flex-col shadow-2xl">
+          <div className="relative w-72 max-w-[85vw] h-full flex flex-col"
+            style={{
+              background: "rgba(255,255,255,0.88)",
+              backdropFilter: "blur(24px) saturate(1.8)",
+              WebkitBackdropFilter: "blur(24px) saturate(1.8)",
+              borderRight: "1px solid rgba(255,255,255,0.65)",
+              boxShadow: "4px 0 32px rgba(0,0,0,0.10)",
+            }}
+          >
 
             {/* Drawer header */}
             <div className="flex items-center justify-between px-4 py-4 border-b">

@@ -67,7 +67,7 @@ function SkeletonCard() {
 
 function StatPill({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-white/70 backdrop-blur-sm border border-white/50 rounded-xl px-3 py-2 text-center shadow-sm min-w-[60px]">
+    <div className="bg-white/70 border border-white/50 rounded-xl px-3 py-2 text-center shadow-sm min-w-[60px]">
       <div className={`text-lg font-bold leading-none ${color}`}>{value}</div>
       <div className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide mt-0.5">{label}</div>
     </div>
@@ -371,7 +371,7 @@ export default function LiveTablesDashboard() {
       </div>
 
       {/* ── Filter + search bar ────────────────────────────────── */}
-      <div className="shrink-0 px-5 py-2.5 bg-white/60 backdrop-blur-sm border-b border-gray-100/60 flex items-center gap-2 flex-wrap">
+      <div className="shrink-0 px-5 py-2.5 bg-white/60 border-b border-gray-100/60 flex items-center gap-2 flex-wrap">
         {/* Status quick filters */}
         {([
           { key: "food-ready" as StatusFilter,  label: "Food Ready",  count: statusCounts["food-ready"],  active: "bg-green-600 text-white",  inactive: "text-gray-600 bg-white"  },

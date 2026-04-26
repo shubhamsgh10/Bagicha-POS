@@ -100,7 +100,7 @@ function DateRangePicker({
         whileTap={{ scale: 0.95 }}
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
-                   bg-white/60 backdrop-blur-sm border border-white/50 text-gray-700
+                   bg-white/60 border border-white/50 text-gray-700
                    hover:bg-white/80 transition-all shadow-sm"
       >
         <Calendar className="w-4 h-4 text-emerald-500" />
@@ -116,7 +116,7 @@ function DateRangePicker({
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
             transition={{ duration: 0.15 }}
             className="absolute right-0 top-full mt-2 z-50 w-64 rounded-2xl
-                       bg-white/90 backdrop-blur-md border border-white/50
+                       bg-white/90 border border-white/50
                        shadow-xl shadow-black/10 p-2 overflow-hidden"
           >
             {/* Presets */}
@@ -269,7 +269,7 @@ export default function Reports() {
         <Header title="Reports" description="Loading reports..." />
         <div className="min-h-0 flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-32 rounded-2xl bg-white/40 border border-white/30 backdrop-blur-sm animate-pulse" />
+            <div key={i} className="h-32 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
           ))}
         </div>
       </div>
@@ -324,7 +324,7 @@ export default function Reports() {
             <motion.button
               whileTap={{ scale: 0.95 }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
-                         bg-white/50 backdrop-blur-sm border border-white/40 text-gray-600
+                         bg-white/50 border border-white/40 text-gray-600
                          hover:bg-white/70 transition-all"
             >
               <Download className="w-4 h-4" /> Export
@@ -340,7 +340,7 @@ export default function Reports() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05, duration: 0.2 }}
-              className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5
+              className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5
                          hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
                          transition-all duration-200"
             >
@@ -357,7 +357,7 @@ export default function Reports() {
         </div>
 
         {/* Tabs */}
-        <div className="rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1 flex gap-1 mb-5 w-fit">
+        <div className="rounded-xl bg-white/40 border border-white/30 p-1 flex gap-1 mb-5 w-fit">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -379,7 +379,7 @@ export default function Reports() {
             key={`sales-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">Sales Performance</h3>
@@ -426,7 +426,7 @@ export default function Reports() {
             key={`items-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">Top Selling Items</h3>
@@ -468,7 +468,7 @@ export default function Reports() {
             key={`orders-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">
@@ -513,7 +513,7 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
           >
-            <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+            <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-semibold text-gray-800">Payment Summary</h3>
                 <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
@@ -555,7 +555,7 @@ export default function Reports() {
             </div>
 
             {(paymentSummary?.dueOrders?.length > 0) && (
-              <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+              <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <AlertCircle className="w-5 h-5 text-red-500" />
                   <h3 className="text-base font-semibold text-gray-800">Unpaid / Due Orders</h3>
@@ -592,7 +592,7 @@ export default function Reports() {
             )}
 
             {(paymentSummary?.dueCount === 0) && (
-              <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-8 text-center">
+              <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-8 text-center">
                 <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
                   <DollarSign className="w-6 h-6 text-emerald-600" />
                 </div>

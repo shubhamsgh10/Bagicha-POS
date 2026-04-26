@@ -73,7 +73,7 @@ export default function Inventory() {
         <Header title="Inventory" description="Loading inventory..." />
         <div className="min-h-0 flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 backdrop-blur-sm animate-pulse" />
+            <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
           ))}
         </div>
       </div>
@@ -97,7 +97,7 @@ export default function Inventory() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05, duration: 0.2 }}
-              className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5 flex items-center justify-between"
+              className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5 flex items-center justify-between"
             >
               <div>
                 <p className="text-sm text-gray-500">{stat.label}</p>
@@ -113,14 +113,14 @@ export default function Inventory() {
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-6 rounded-2xl backdrop-blur-lg bg-red-50/60 border border-red-200/60 shadow-md p-4"
+            className="mb-6 rounded-2xl bg-red-50/60 border border-red-200/60 shadow-md p-4"
           >
             <h3 className="text-red-800 font-semibold flex items-center gap-2 mb-3">
               <AlertTriangle className="w-4 h-4" /> Low Stock Alert
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {lowStockItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 bg-white/60 backdrop-blur-sm rounded-xl border border-white/40">
+                <div key={item.id} className="flex items-center justify-between p-3 bg-white/60 rounded-xl border border-white/40">
                   <div>
                     <h4 className="font-medium text-sm">{item.itemName}</h4>
                     <p className="text-xs text-gray-500">{item.currentStock} {item.unit} remaining</p>
@@ -167,7 +167,7 @@ export default function Inventory() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.2 }}
-                className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-4
+                className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-4
                            hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
                            transition-all duration-200"
               >
@@ -216,7 +216,7 @@ export default function Inventory() {
         </div>
 
         {inventory.length === 0 && (
-          <div className="text-center py-16 rounded-2xl bg-white/30 backdrop-blur-sm border border-white/30 mt-4">
+          <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30 mt-4">
             <Package className="w-10 h-10 mx-auto mb-3 text-gray-300" />
             <h3 className="text-base font-semibold text-gray-600 mb-1">No inventory items yet</h3>
             <p className="text-sm text-gray-400 mb-4">Start tracking by adding your first item</p>

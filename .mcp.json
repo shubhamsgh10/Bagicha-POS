@@ -4,7 +4,7 @@
       "command": "uv",
       "args": [
         "--directory",
-        "c:/Users/shubh/OneDrive/Claude Code/BagichaOrderMaster/BagichaOrderMaster/code-review-graph",
+        "E:/Claude Code/BagichaOrderMaster/BagichaOrderMaster/code-review-graph",
         "run",
         "code-review-graph",
         "serve"

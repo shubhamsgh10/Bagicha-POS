@@ -77,7 +77,9 @@ export default function Dashboard() {
       sub: `${stats?.todayOrders || 0} orders placed`,
       icon: IndianRupee,
       gradient: 'from-violet-500 to-purple-600',
-      bg: 'bg-violet-500/10',
+      glassColor: 'rgba(99,102,241,0.07)',
+      glowColor:  'rgba(99,102,241,0.12)',
+      borderColor: 'rgba(99,102,241,0.22)',
     },
     {
       label: 'Orders Today',
@@ -85,7 +87,9 @@ export default function Dashboard() {
       sub: `Avg ${fmt(stats?.avgOrderValue || 0)} / order`,
       icon: ShoppingBag,
       gradient: 'from-blue-500 to-cyan-500',
-      bg: 'bg-blue-500/10',
+      glassColor: 'rgba(59,130,246,0.07)',
+      glowColor:  'rgba(59,130,246,0.12)',
+      borderColor: 'rgba(59,130,246,0.22)',
     },
     {
       label: 'Active Orders',
@@ -93,7 +97,9 @@ export default function Dashboard() {
       sub: 'Pending / preparing',
       icon: Clock,
       gradient: 'from-amber-500 to-orange-500',
-      bg: 'bg-amber-500/10',
+      glassColor: 'rgba(245,158,11,0.07)',
+      glowColor:  'rgba(245,158,11,0.12)',
+      borderColor: 'rgba(245,158,11,0.22)',
     },
     {
       label: 'Total Revenue',
@@ -101,7 +107,9 @@ export default function Dashboard() {
       sub: 'All time',
       icon: TrendingUp,
       gradient: 'from-emerald-500 to-green-500',
-      bg: 'bg-emerald-500/10',
+      glassColor: 'rgba(16,185,129,0.07)',
+      glowColor:  'rgba(16,185,129,0.12)',
+      borderColor: 'rgba(16,185,129,0.22)',
     },
     {
       label: 'Low Stock',
@@ -109,7 +117,9 @@ export default function Dashboard() {
       sub: stats?.lowStockCount > 0 ? 'Needs attention' : 'All good',
       icon: AlertTriangle,
       gradient: stats?.lowStockCount > 0 ? 'from-red-500 to-rose-600' : 'from-green-500 to-emerald-500',
-      bg: stats?.lowStockCount > 0 ? 'bg-red-500/10' : 'bg-green-500/10',
+      glassColor: stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.07)'  : 'rgba(16,185,129,0.07)',
+      glowColor:  stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.12)'  : 'rgba(16,185,129,0.12)',
+      borderColor:stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.22)'  : 'rgba(16,185,129,0.22)',
     },
     {
       label: 'Top Item Today',
@@ -117,7 +127,9 @@ export default function Dashboard() {
       sub: 'Best seller',
       icon: Star,
       gradient: 'from-pink-500 to-rose-500',
-      bg: 'bg-pink-500/10',
+      glassColor: 'rgba(236,72,153,0.07)',
+      glowColor:  'rgba(236,72,153,0.12)',
+      borderColor: 'rgba(236,72,153,0.22)',
     },
     {
       label: 'Inner Running',
@@ -125,7 +137,9 @@ export default function Dashboard() {
       sub: `of ${stats?.totalTables || 0} total tables`,
       icon: LayoutGrid,
       gradient: 'from-indigo-500 to-blue-500',
-      bg: 'bg-indigo-500/10',
+      glassColor: 'rgba(79,70,229,0.07)',
+      glowColor:  'rgba(79,70,229,0.12)',
+      borderColor: 'rgba(79,70,229,0.22)',
     },
     {
       label: 'Outer Running',
@@ -133,12 +147,14 @@ export default function Dashboard() {
       sub: `of ${stats?.totalTables || 0} total tables`,
       icon: LayoutGrid,
       gradient: 'from-teal-500 to-cyan-500',
-      bg: 'bg-teal-500/10',
+      glassColor: 'rgba(20,184,166,0.07)',
+      glowColor:  'rgba(20,184,166,0.12)',
+      borderColor: 'rgba(20,184,166,0.22)',
     },
   ];
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "transparent" }}>
       <Header
         title="Dashboard"
         description="Live analytics · refreshes every 5s"
@@ -157,12 +173,20 @@ export default function Dashboard() {
               animate="visible"
               variants={cardAnim}
               whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
-              className={`rounded-2xl p-4 border border-border/40 shadow-sm ${card.bg}`}
+              className="rounded-2xl p-4"
+              style={{
+                background: `rgba(255,255,255,0.50)`,
+                backdropFilter: "blur(16px) saturate(1.8)",
+                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+                border: `1px solid ${card.borderColor}`,
+                boxShadow: `0 4px 20px ${card.glowColor}, 0 1px 0 rgba(255,255,255,0.92) inset`,
+              }}
             >
-              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
+              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3`}
+                style={{ boxShadow: `0 3px 10px ${card.glowColor}` }}>
                 <card.icon className="w-4 h-4 text-white" />
               </div>
-              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
+              <p className="text-[11px] font-semibold text-muted-foreground mb-0.5 uppercase tracking-wide">{card.label}</p>
               <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
             </motion.div>
@@ -174,7 +198,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.45, duration: 0.4 }}
-            className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+            className="lg:col-span-2 rounded-2xl p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-4">Sales — Last 7 Days</p>
             <ResponsiveContainer width="100%" height={200}>
@@ -193,7 +217,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.55, duration: 0.4 }}
-            className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+            className="rounded-2xl p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-3">Sales by Category</p>
             {categorySales.length === 0 ? (
@@ -232,7 +256,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.65, duration: 0.4 }}
-            className="lg:col-span-2 rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+            className="lg:col-span-2 rounded-2xl p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-4">Top Items Today</p>
             {topItems.length === 0 ? (
@@ -258,7 +282,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.75, duration: 0.4 }}
-            className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+            className="rounded-2xl p-5 glass-card"
           >
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm font-semibold">Low Stock Alerts</p>

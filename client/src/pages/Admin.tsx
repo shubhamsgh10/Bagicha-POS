@@ -129,12 +129,19 @@ function UsersTab() {
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-white/40 rounded-xl animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-16 skeleton-glass" />)}
         </div>
       ) : (
         <div className="space-y-2">
           {users?.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between p-3 rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm">
+            <div key={u.id} className="flex items-center justify-between p-3 rounded-xl transition-all duration-200 hover:scale-[1.005]"
+              style={{
+                background: "rgba(255,255,255,0.55)",
+                backdropFilter: "blur(16px) saturate(1.8)",
+                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+                border: "1px solid rgba(255,255,255,0.72)",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+              }}>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                   <User className="w-4 h-4 text-primary" />
@@ -230,6 +237,9 @@ function RolesTab() {
   const [newPinConfirm, setNewPinConfirm] = useState("");
   const [pinDialogError, setPinDialogError] = useState("");
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [showAddRole, setShowAddRole] = useState(false);
+  const [addForm, setAddForm] = useState({ username: "", password: "", role: "staff", pin: "", pinConfirm: "" });
+  const [addFormError, setAddFormError] = useState("");
 
   const { data: users = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
@@ -270,6 +280,50 @@ function RolesTab() {
     },
   });
 
+  const createRoleMutation = useMutation({
+    mutationFn: async (data: typeof addForm) =>
+      apiRequest("POST", "/api/users", {
+        username: data.username.trim(),
+        password: data.password,
+        role: data.role,
+        pin: data.pin || undefined,
+      }),
+    onSuccess: () => {
+      toast({ title: "Role created successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
+      setShowAddRole(false);
+      setAddForm({ username: "", password: "", role: "staff", pin: "", pinConfirm: "" });
+      setAddFormError("");
+    },
+    onError: (err: any) => {
+      setAddFormError(parseError(err));
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
+    onSuccess: () => {
+      toast({ title: "User deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to delete user", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  const handleAddRole = () => {
+    setAddFormError("");
+    if (!addForm.username.trim()) { setAddFormError("Username is required"); return; }
+    if (addForm.password.length < 6) { setAddFormError("Password must be at least 6 characters"); return; }
+    if (addForm.pin) {
+      if (addForm.pin.length !== 4 && addForm.pin.length !== 6) { setAddFormError("PIN must be 4 or 6 digits"); return; }
+      if (addForm.pin !== addForm.pinConfirm) { setAddFormError("PINs do not match"); return; }
+    }
+    createRoleMutation.mutate(addForm);
+  };
+
   const openPinDialog = (user: any, mode: "set" | "remove") => {
     setPinDialogUser(user);
     setPinDialogMode(mode);
@@ -283,7 +337,7 @@ function RolesTab() {
       setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
       return;
     }
-    if (newPin.length !== 4) { setPinDialogError("PIN must be exactly 4 digits"); return; }
+    if (newPin.length !== 4 && newPin.length !== 6) { setPinDialogError("PIN must be 4 or 6 digits"); return; }
     if (newPin !== newPinConfirm) { setPinDialogError("PINs do not match"); return; }
     setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
   };
@@ -298,27 +352,39 @@ function RolesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2 flex-wrap">
         <p className="text-sm text-muted-foreground">Assign roles and manage POS PINs for each user</p>
-        {resetConfirm ? (
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
-            <Button size="sm" variant="destructive" disabled={resetAllPinsMutation.isPending}
-              onClick={() => resetAllPinsMutation.mutate()}>
-              {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Resetting...</> : "Yes, Reset"}
+        <div className="flex items-center gap-2 flex-wrap">
+          {resetConfirm ? (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
+              <Button size="sm" variant="destructive" disabled={resetAllPinsMutation.isPending}
+                onClick={() => resetAllPinsMutation.mutate()}>
+                {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Resetting...</> : "Yes, Reset"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" className="text-destructive border-red-200 hover:bg-red-50"
+              onClick={() => setResetConfirm(true)}>
+              Reset All PINs
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
-          </div>
-        ) : (
-          <Button size="sm" variant="outline" className="text-destructive border-red-200 hover:bg-red-50"
-            onClick={() => setResetConfirm(true)}>
-            Reset All PINs
+          )}
+          <Button size="sm" onClick={() => { setShowAddRole(true); setAddFormError(""); }}>
+            <Plus className="w-4 h-4 mr-1" /> Add Role
           </Button>
-        )}
+        </div>
       </div>
 
       {/* Role legend */}
-      <div className="rounded-2xl backdrop-blur-sm bg-white/40 border border-white/30 shadow-sm">
+      <div className="rounded-2xl"
+        style={{
+          background: "rgba(255,255,255,0.46)",
+          backdropFilter: "blur(16px) saturate(1.7)",
+          WebkitBackdropFilter: "blur(16px) saturate(1.7)",
+          border: "1px solid rgba(255,255,255,0.68)",
+          boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
+        }}>
         <div className="pt-4 pb-3 px-5">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Role Permissions</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -334,7 +400,7 @@ function RolesTab() {
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-white/40 rounded-xl animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-20 skeleton-glass" />)}
         </div>
       ) : (
         <>
@@ -343,7 +409,14 @@ function RolesTab() {
         )}
         <div className="space-y-2">
           {users.map((u: any) => (
-            <div key={u.id} className="rounded-xl backdrop-blur-sm bg-white/50 border border-white/40 shadow-sm p-4 space-y-3">
+            <div key={u.id} className="rounded-xl p-4 space-y-3 transition-all duration-200"
+              style={{
+                background: "rgba(255,255,255,0.55)",
+                backdropFilter: "blur(16px) saturate(1.8)",
+                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+                border: "1px solid rgba(255,255,255,0.72)",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+              }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center">
@@ -356,7 +429,18 @@ function RolesTab() {
                     </p>
                   </div>
                 </div>
-                {u.id === currentUser?.id && <Badge variant="outline" className="text-xs">You</Badge>}
+                <div className="flex items-center gap-2">
+                  {u.id === currentUser?.id && <Badge variant="outline" className="text-xs">You</Badge>}
+                  {u.id !== currentUser?.id && (
+                    <Button
+                      size="sm" variant="ghost"
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-red-50"
+                      onClick={() => { if (confirm(`Delete "${u.username}"?`)) deleteUserMutation.mutate(u.id); }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
@@ -408,6 +492,60 @@ function RolesTab() {
         </>
       )}
 
+      {/* Add Role Dialog */}
+      <Dialog open={showAddRole} onOpenChange={(o) => { setShowAddRole(o); setAddFormError(""); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-4 h-4 text-primary" /> Add Role
+            </DialogTitle>
+            <DialogDescription>Create a new user with a role and optional PIN.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Username</Label>
+              <Input placeholder="e.g. manager2" value={addForm.username}
+                onChange={(e) => setAddForm(f => ({ ...f, username: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Password</Label>
+              <Input type="password" placeholder="Min 6 characters" value={addForm.password}
+                onChange={(e) => setAddForm(f => ({ ...f, password: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select value={addForm.role} onValueChange={(v) => setAddForm(f => ({ ...f, role: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>PIN <span className="text-muted-foreground font-normal text-xs">(optional, 4 or 6 digits)</span></Label>
+              <Input type="password" inputMode="numeric" maxLength={6} placeholder="4 or 6 digits"
+                value={addForm.pin}
+                onChange={(e) => setAddForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))} />
+            </div>
+            {addForm.pin.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>Confirm PIN</Label>
+                <Input type="password" inputMode="numeric" maxLength={6} placeholder="Re-enter PIN"
+                  value={addForm.pinConfirm}
+                  onChange={(e) => setAddForm(f => ({ ...f, pinConfirm: e.target.value.replace(/\D/g, "") }))} />
+              </div>
+            )}
+            {addFormError && <p className="text-xs text-destructive">{addFormError}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => setShowAddRole(false)}>Cancel</Button>
+              <Button disabled={createRoleMutation.isPending} onClick={handleAddRole}>
+                {createRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</> : "Create Role"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* PIN Dialog */}
       <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
         <DialogContent className="max-w-sm">
@@ -419,7 +557,7 @@ function RolesTab() {
             <DialogDescription>
               {pinDialogMode === "remove"
                 ? `Remove the PIN for "${pinDialogUser?.username}".`
-                : `${pinDialogUser?.pin ? "Change" : "Set a"} 4-digit PIN for "${pinDialogUser?.username}".`}
+                : `${pinDialogUser?.pin ? "Change" : "Set a"} 4 or 6-digit PIN for "${pinDialogUser?.username}".`}
             </DialogDescription>
           </DialogHeader>
           {pinDialogMode === "remove" ? (
@@ -436,12 +574,12 @@ function RolesTab() {
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>New PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="4 digits"
+                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="4 or 6 digits"
                   value={newPin} onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
               </div>
               <div className="space-y-2">
                 <Label>Confirm PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="Re-enter PIN"
+                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="Re-enter PIN"
                   value={newPinConfirm} onChange={(e) => { setNewPinConfirm(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
               </div>
               {pinDialogError && <p className="text-xs text-destructive">{pinDialogError}</p>}
@@ -510,7 +648,7 @@ export default function Admin() {
   const isAdmin = activeRole === "admin";
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" style={{ background: "transparent" }}>
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
@@ -518,7 +656,14 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue={isAdmin ? "users" : "profile"}>
-        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"} rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 p-1`}>
+        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"} rounded-xl p-1`}
+          style={{
+            background: "rgba(255,255,255,0.50)",
+            backdropFilter: "blur(16px) saturate(1.8)",
+            WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+            border: "1px solid rgba(255,255,255,0.70)",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
+          }}>
           {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
           <TabsTrigger value="profile"><User className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
@@ -541,7 +686,14 @@ export default function Admin() {
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="mt-6">
-          <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+          <div className="rounded-2xl p-5"
+            style={{
+              background: "rgba(255,255,255,0.55)",
+              backdropFilter: "blur(18px) saturate(1.8)",
+              WebkitBackdropFilter: "blur(18px) saturate(1.8)",
+              border: "1px solid rgba(255,255,255,0.72)",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
+            }}>
             <div className="flex items-center gap-2 mb-1">
               <User className="w-5 h-5 text-emerald-600" />
               <h3 className="font-semibold text-gray-800">Change Username</h3>
@@ -564,7 +716,14 @@ export default function Admin() {
 
         {/* Password Tab */}
         <TabsContent value="password" className="mt-6">
-          <div className="rounded-2xl backdrop-blur-lg bg-white/40 border border-white/30 shadow-md p-5">
+          <div className="rounded-2xl p-5"
+            style={{
+              background: "rgba(255,255,255,0.55)",
+              backdropFilter: "blur(18px) saturate(1.8)",
+              WebkitBackdropFilter: "blur(18px) saturate(1.8)",
+              border: "1px solid rgba(255,255,255,0.72)",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
+            }}>
             <div className="flex items-center gap-2 mb-1">
               <KeyRound className="w-5 h-5 text-emerald-600" />
               <h3 className="font-semibold text-gray-800">Change Password</h3>

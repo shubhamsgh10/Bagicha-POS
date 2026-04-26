@@ -1,0 +1,295 @@
+<h2>Glass Intensity — Table Cards</h2>
+<p class="subtitle">The Tables page is the most-used screen. How frosted should surfaces feel?<br>All three keep the emerald brand. Pick the intensity that feels right.</p>
+
+<style>
+  .demo-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin: 24px 0;
+  }
+  .demo-wrap {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(0,0,0,0.08);
+  }
+  .demo-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 14px;
+    background: rgba(0,0,0,0.04);
+    border-bottom: 1px solid rgba(0,0,0,0.07);
+    color: #555;
+  }
+  .demo-bg {
+    padding: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  /* ── OPTION A: Subtle (current direction, polished up) */
+  .bg-a { background: linear-gradient(135deg, #f0f9f4 0%, #ffffff 50%, #e8f5e9 100%); }
+  .card-a {
+    border-radius: 14px;
+    padding: 12px;
+    min-height: 78px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: system-ui, sans-serif;
+  }
+  .card-a.free {
+    background: rgba(255,255,255,0.60);
+    backdrop-filter: blur(8px);
+    border: 1.5px dashed rgba(0,0,0,0.15);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .card-a.running {
+    background: rgba(219,234,254,0.65);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(96,165,250,0.35);
+    box-shadow: 0 2px 12px rgba(59,130,246,0.10);
+  }
+  .card-a.billed {
+    background: rgba(254,243,199,0.65);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(251,191,36,0.35);
+    box-shadow: 0 2px 12px rgba(245,158,11,0.10);
+  }
+  /* ── OPTION B: Medium glass — more visible depth */
+  .bg-b { background: linear-gradient(135deg, #e8f5ff 0%, #f8fbff 40%, #e8faf0 100%); }
+  .card-b {
+    border-radius: 14px;
+    padding: 12px;
+    min-height: 78px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: system-ui, sans-serif;
+  }
+  .card-b.free {
+    background: rgba(255,255,255,0.45);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1px solid rgba(255,255,255,0.75);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.9) inset;
+  }
+  .card-b.running {
+    background: rgba(239,246,255,0.55);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1px solid rgba(147,197,253,0.50);
+    box-shadow: 0 4px 20px rgba(59,130,246,0.12), 0 0 0 1px rgba(147,197,253,0.2) inset;
+  }
+  .card-b.billed {
+    background: rgba(255,251,235,0.55);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1px solid rgba(252,211,77,0.45);
+    box-shadow: 0 4px 20px rgba(245,158,11,0.12), 0 0 0 1px rgba(252,211,77,0.2) inset;
+  }
+  /* ── OPTION C: Deep glass — dramatic frosted panels */
+  .bg-c {
+    background: linear-gradient(135deg, #1a2740 0%, #0f3320 40%, #1a1a2e 100%);
+  }
+  .card-c {
+    border-radius: 14px;
+    padding: 12px;
+    min-height: 78px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: system-ui, sans-serif;
+  }
+  .card-c.free {
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,0.15);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.12) inset;
+  }
+  .card-c.running {
+    background: rgba(59,130,246,0.18);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid rgba(96,165,250,0.35);
+    box-shadow: 0 4px 24px rgba(59,130,246,0.25), 0 1px 0 rgba(255,255,255,0.1) inset;
+  }
+  .card-c.billed {
+    background: rgba(245,158,11,0.15);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid rgba(251,191,36,0.30);
+    box-shadow: 0 4px 24px rgba(245,158,11,0.20), 0 1px 0 rgba(255,255,255,0.1) inset;
+  }
+  /* Typography */
+  .ct-free { color: #4b5563; }
+  .ct-run  { color: #1e40af; }
+  .ct-bill { color: #92400e; }
+  .ct-free-s { color: #9ca3af; font-size: 11px; }
+  .ct-run-s  { color: #3b82f6; font-size: 11px; }
+  .ct-bill-s { color: #d97706; font-size: 11px; }
+  .ct-dark   { color: rgba(255,255,255,0.85); }
+  .ct-dark-s { color: rgba(255,255,255,0.45); font-size: 11px; }
+  .ct-run-dk { color: #93c5fd; }
+  .ct-run-dk-s { color: #60a5fa; font-size: 11px; }
+  .ct-bill-dk { color: #fcd34d; }
+  .ct-bill-dk-s { color: #fbbf24; font-size: 11px; }
+  .tname { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  .tsub  { font-weight: 500; }
+  .dot { width:6px; height:6px; border-radius:50%; display:inline-block; margin-right:3px; vertical-align:middle; }
+  .dot-run  { background:#3b82f6; }
+  .dot-bill { background:#f59e0b; }
+  .badge {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+    padding: 2px 6px; border-radius: 6px; display: inline-block; text-transform: uppercase;
+  }
+  .badge-run  { background: rgba(59,130,246,0.15); color: #1d4ed8; }
+  .badge-bill { background: rgba(245,158,11,0.15); color: #b45309; }
+  .badge-run-dk  { background: rgba(96,165,250,0.2); color: #93c5fd; }
+  .badge-bill-dk { background: rgba(251,191,36,0.2); color: #fcd34d; }
+  .theme-note { font-size: 11px; text-align: center; padding: 6px; border-radius: 8px; margin-top: 4px; }
+  .note-a { color: #6b7280; background: rgba(0,0,0,0.04); }
+  .note-b { color: #6b7280; background: rgba(0,0,0,0.04); }
+  .note-c { color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.05); }
+</style>
+
+<div class="cards demo-grid">
+
+  <!-- OPTION A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)" style="padding:0; overflow:hidden;">
+    <div class="demo-wrap" style="height:100%">
+      <div class="demo-label">A — Refined Light (keep white bg)</div>
+      <div class="demo-bg bg-a">
+        <div class="card-a free">
+          <div class="tname ct-free">T1</div>
+          <div class="ct-free-s">4 seats</div>
+        </div>
+        <div class="card-a running">
+          <div>
+            <div class="ct-run-s"><span class="dot dot-run"></span>22 Min</div>
+            <div class="tname ct-run">T2</div>
+            <div class="ct-run-s" style="font-weight:600">₹480</div>
+          </div>
+        </div>
+        <div class="card-a billed">
+          <div>
+            <div class="tname ct-bill">T3</div>
+            <div class="ct-bill-s" style="font-weight:600">Bill out</div>
+          </div>
+        </div>
+        <div class="card-a free">
+          <div class="tname ct-free">T4</div>
+          <div class="ct-free-s">2 seats</div>
+        </div>
+        <div class="card-a running">
+          <div>
+            <div class="ct-run-s"><span class="dot dot-run"></span>1h 5m</div>
+            <div class="tname ct-run">VIP1</div>
+            <div class="ct-run-s" style="font-weight:600">₹1,240</div>
+          </div>
+        </div>
+        <div class="card-a free">
+          <div class="tname ct-free">T5</div>
+          <div class="ct-free-s">6 seats</div>
+        </div>
+      </div>
+      <div class="theme-note note-a">Light bg · Subtle glass · Easy on eyes</div>
+    </div>
+    <div class="card-body" style="padding: 12px 16px">
+      <h3>Refined Light</h3>
+      <p>Keeps white/light background. Adds glass depth to cards. Soft borders. Easiest to read in bright restaurant lighting.</p>
+    </div>
+  </div>
+
+  <!-- OPTION B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)" style="padding:0; overflow:hidden;">
+    <div class="demo-wrap" style="height:100%">
+      <div class="demo-label">B — Premium Glass (light bg, vivid glass)</div>
+      <div class="demo-bg bg-b">
+        <div class="card-b free">
+          <div class="tname ct-free">T1</div>
+          <div class="ct-free-s">4 seats</div>
+        </div>
+        <div class="card-b running">
+          <div>
+            <div class="ct-run-s"><span class="dot dot-run"></span>22 Min</div>
+            <div class="tname ct-run">T2</div>
+            <div class="ct-run-s" style="font-weight:600">₹480</div>
+          </div>
+        </div>
+        <div class="card-b billed">
+          <div>
+            <div class="tname ct-bill">T3</div>
+            <div class="ct-bill-s" style="font-weight:600">Bill out</div>
+          </div>
+        </div>
+        <div class="card-b free">
+          <div class="tname ct-free">T4</div>
+          <div class="ct-free-s">2 seats</div>
+        </div>
+        <div class="card-b running">
+          <div>
+            <div class="ct-run-s"><span class="dot dot-run"></span>1h 5m</div>
+            <div class="tname ct-run">VIP1</div>
+            <div class="ct-run-s" style="font-weight:600">₹1,240</div>
+          </div>
+        </div>
+        <div class="card-b free">
+          <div class="tname ct-free">T5</div>
+          <div class="ct-free-s">6 seats</div>
+        </div>
+      </div>
+      <div class="theme-note note-b">Vivid glass on light · Deep shadows · SaaS-premium</div>
+    </div>
+    <div class="card-body" style="padding: 12px 16px">
+      <h3>Premium Glass</h3>
+      <p>Still light background but cards have strong glass depth, inset highlights, and colored glow shadows. Closest to high-end SaaS POS.</p>
+    </div>
+  </div>
+
+  <!-- OPTION C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)" style="padding:0; overflow:hidden;">
+    <div class="demo-wrap" style="height:100%">
+      <div class="demo-label">C — Dark Glass (shift to dark bg)</div>
+      <div class="demo-bg bg-c">
+        <div class="card-c free">
+          <div class="tname ct-dark">T1</div>
+          <div class="ct-dark-s">4 seats</div>
+        </div>
+        <div class="card-c running">
+          <div>
+            <div class="ct-run-dk-s"><span class="dot dot-run"></span>22 Min</div>
+            <div class="tname ct-run-dk">T2</div>
+            <div class="ct-run-dk-s" style="font-weight:600">₹480</div>
+          </div>
+        </div>
+        <div class="card-c billed">
+          <div>
+            <div class="tname ct-bill-dk">T3</div>
+            <div class="ct-bill-dk-s" style="font-weight:600">Bill out</div>
+          </div>
+        </div>
+        <div class="card-c free">
+          <div class="tname ct-dark">T4</div>
+          <div class="ct-dark-s">2 seats</div>
+        </div>
+        <div class="card-c running">
+          <div>
+            <div class="ct-run-dk-s"><span class="dot dot-run"></span>1h 5m</div>
+            <div class="tname ct-run-dk">VIP1</div>
+            <div class="ct-run-dk-s" style="font-weight:600">₹1,240</div>
+          </div>
+        </div>
+        <div class="card-c free">
+          <div class="tname ct-dark">T5</div>
+          <div class="ct-dark-s">6 seats</div>
+        </div>
+      </div>
+      <div class="theme-note note-c">Dark bg · Neon glass · Dramatic restaurant feel</div>
+    </div>
+    <div class="card-body" style="padding: 12px 16px">
+      <h3>Dark Glass</h3>
+      <p>Switches the overall background to dark/deep green-navy. Cards glow with colored glass. Dramatic, but requires updating all pages. Biggest change.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:8px">💡 <strong>My recommendation: Option B</strong> — strongest glass effect while keeping the existing light theme. No backend changes, aligns with spec constraint of not breaking architecture.</p>

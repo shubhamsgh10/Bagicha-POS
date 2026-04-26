@@ -170,7 +170,7 @@ export const TableCard = memo(function TableCard({
       exit={{ opacity: 0, scale: 0.88 }}
       transition={{ delay: index * 0.02, duration: 0.18, ease: "easeOut" }}
       className={`
-        relative backdrop-blur-sm border rounded-2xl shadow-sm
+        relative border rounded-2xl shadow-sm
         ${allServed ? "bg-emerald-50/80 border-emerald-300/70" : cfg.card} ${urgencyRing}
         ${compact ? "p-2.5" : "p-3.5"}
       `}

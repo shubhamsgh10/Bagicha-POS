@@ -1,0 +1,117 @@
+<h2>Implementation Approach</h2>
+<p class="subtitle">3 strategies for delivering the Option-B glass upgrade. Trade-offs shown below.</p>
+
+<style>
+.approach-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin: 20px 0; }
+.ap {
+  border-radius: 14px; padding: 20px; border: 1.5px solid transparent;
+  font-family: system-ui, sans-serif;
+  background: rgba(255,255,255,0.55);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+.ap.rec { border-color: #10b981; box-shadow: 0 4px 20px rgba(16,185,129,0.15); }
+.ap-tag {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; padding: 3px 8px; border-radius: 20px;
+  display: inline-block; margin-bottom: 10px;
+}
+.tag-a { background: #f3f4f6; color: #6b7280; }
+.tag-b { background: #d1fae5; color: #065f46; }
+.tag-c { background: #fef3c7; color: #92400e; }
+.ap h3 { font-size: 15px; font-weight: 700; margin: 0 0 6px; color: #111; }
+.ap .desc { font-size: 13px; color: #4b5563; line-height: 1.5; margin-bottom: 14px; }
+.scope-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.scope-list li { font-size: 12px; padding: 3px 0; color: #374151; display: flex; gap: 6px; align-items: flex-start; }
+.scope-list li::before { content: '→'; color: #9ca3af; flex-shrink: 0; }
+.risk { font-size: 11px; font-weight: 600; padding: 6px 10px; border-radius: 8px; }
+.risk-low  { background: #d1fae5; color: #065f46; }
+.risk-med  { background: #fef3c7; color: #92400e; }
+.risk-high { background: #fee2e2; color: #991b1b; }
+.divider { height: 1px; background: rgba(0,0,0,0.07); margin: 12px 0; }
+.rec-badge {
+  background: #10b981; color: #fff; font-size: 10px; font-weight: 700;
+  padding: 3px 8px; border-radius: 20px; letter-spacing: 0.05em;
+  display: inline-block; margin-left: 8px; vertical-align: middle;
+}
+
+/* scope coverage table */
+.coverage { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 12px; }
+.coverage th { text-align: left; font-weight: 600; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding: 6px 10px; }
+.coverage td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+.coverage tr:last-child td { border-bottom: none; }
+.yes { color: #10b981; font-weight: 700; }
+.partial { color: #f59e0b; font-weight: 700; }
+.no  { color: #d1d5db; }
+</style>
+
+<div class="approach-grid">
+
+  <div class="ap">
+    <span class="ap-tag tag-a">Option A</span>
+    <h3>CSS-Only Sweep</h3>
+    <p class="desc">Apply glass classes globally via <code>index.css</code> and Tailwind. Minimal per-file edits.</p>
+    <ul class="scope-list">
+      <li>Extend <code>.glass-card</code> / <code>.glass-panel</code> with B-level depth</li>
+      <li>Apply to TopNav, BottomNav, dialogs via global selectors</li>
+      <li>No per-page JSX changes</li>
+    </ul>
+    <div class="divider"></div>
+    <span class="risk risk-low">Risk: Low · Fastest</span>
+    <p class="desc" style="margin-top:8px;margin-bottom:0">⚠️ Can't target individual pages precisely. Dialogs &amp; table cards need JSX edits to actually use glass classes.</p>
+  </div>
+
+  <div class="ap rec">
+    <span class="ap-tag tag-b">Option B</span>
+    <h3>Layered File-by-File <span class="rec-badge">★ Recommended</span></h3>
+    <p class="desc">Upgrade each surface in its own file. Design tokens in CSS, glass applied precisely where needed.</p>
+    <ul class="scope-list">
+      <li>Enhanced design tokens in <code>index.css</code></li>
+      <li>TopNav + BottomNav → glass treatment</li>
+      <li>Tables page → glass cards + skeleton</li>
+      <li>Dashboard → glass stat cards</li>
+      <li>Settings / Admin → glass panels + sections</li>
+      <li>Dialogs → glass <code>DialogContent</code> override</li>
+      <li>POS top bar + cart panel → glass only (no logic touch)</li>
+    </ul>
+    <div class="divider"></div>
+    <span class="risk risk-med">Risk: Medium · 1–2 days</span>
+    <p class="desc" style="margin-top:8px;margin-bottom:0">Best balance of coverage, safety, and visual impact. Every file edit is UI-layer only.</p>
+  </div>
+
+  <div class="ap">
+    <span class="ap-tag tag-c">Option C</span>
+    <h3>Component Extraction</h3>
+    <p class="desc">Extract reusable <code>&lt;GlassCard&gt;</code>, <code>&lt;GlassPanel&gt;</code>, <code>&lt;StatusBadge&gt;</code> components. Refactor all pages to use them.</p>
+    <ul class="scope-list">
+      <li>New shared components under <code>client/src/components/ui/</code></li>
+      <li>All pages refactored to import &amp; use them</li>
+      <li>Maximum future consistency</li>
+    </ul>
+    <div class="divider"></div>
+    <span class="risk risk-high">Risk: High · 3–5 days</span>
+    <p class="desc" style="margin-top:8px;margin-bottom:0">Over-engineered for a UI polish task. Extraction adds unnecessary abstraction and risk of merge conflicts.</p>
+  </div>
+
+</div>
+
+<h3>Page Coverage per Approach</h3>
+<table class="coverage">
+  <tr>
+    <th>Surface</th>
+    <th>Option A</th>
+    <th>Option B ★</th>
+    <th>Option C</th>
+  </tr>
+  <tr><td>Design tokens (index.css)</td><td class="yes">Full</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>TopNav + BottomNav</td><td class="partial">Partial</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>Tables page</td><td class="no">Skipped</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>Dashboard</td><td class="no">Skipped</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>Orders page</td><td class="partial">Minor</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>Settings / Admin</td><td class="no">Skipped</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>Dialogs / Modals</td><td class="no">Skipped</td><td class="yes">Full</td><td class="yes">Full</td></tr>
+  <tr><td>POS page</td><td class="no">Skipped</td><td class="partial">Header + Cart only</td><td class="partial">Header + Cart only</td></tr>
+  <tr><td>Logic / API</td><td class="yes">Untouched</td><td class="yes">Untouched</td><td class="yes">Untouched</td></tr>
+</table>
+
+<p class="subtitle">→ <strong>Option B delivers full coverage with surgical precision</strong> — each file edit is reviewable, reversible, and UI-layer only. No abstractions added, no logic touched.</p>
