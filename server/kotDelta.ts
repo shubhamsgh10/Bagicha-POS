@@ -30,19 +30,18 @@ export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): Kot
   const modifiedItems: Array<SnapshotItem & { previousQty: number }> = [];
   const cancelledItems: SnapshotItem[] = [];
 
-  for (const [key, item] of currentMap) {
+  for (const [key, item] of Array.from(currentMap.entries())) {
     const prev = lastMap.get(key);
     if (!prev) {
       newItems.push(item);
     } else if (item.quantity > prev.quantity) {
-      // Only print the incremental increase as "new"
       newItems.push({ ...item, quantity: item.quantity - prev.quantity });
     } else if (item.quantity < prev.quantity) {
       modifiedItems.push({ ...item, previousQty: prev.quantity });
     }
   }
 
-  for (const [key, item] of lastMap) {
+  for (const [key, item] of Array.from(lastMap.entries())) {
     if (!currentMap.has(key)) {
       cancelledItems.push(item);
     }
