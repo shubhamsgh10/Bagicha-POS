@@ -34,6 +34,8 @@ export const ROLE_SAFE_REDIRECT: Record<UserRole, string> = {
   admin:   "/dashboard",
   manager: "/tables",
   staff:   "/tables",
+  cashier: "/tables",
+  kitchen: "/tables",
 };
 
 /**

@@ -15,6 +15,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { printOrderBill } from "@/lib/printBill";
 
 interface Table {
   id: number;
@@ -35,25 +36,40 @@ const SECTION_OPTIONS = [
   { value: "hall",    label: "Hall" },
 ];
 
-// Petpooja-style status colours
+// Premium glass status card styles (Option B)
 const statusConfig = {
   free: {
-    bg: "bg-white dark:bg-zinc-900",
-    border: "border-dashed border-2 border-zinc-300 dark:border-zinc-600",
-    nameText: "text-zinc-700 dark:text-zinc-300",
-    subText: "text-zinc-400 dark:text-zinc-500",
+    style: {
+      background: "rgba(255,255,255,0.50)",
+      backdropFilter: "blur(16px) saturate(1.8)",
+      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+      border: "1.5px dashed rgba(0,0,0,0.11)",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+    },
+    nameText: "text-zinc-700",
+    subText: "text-zinc-400",
   },
   running: {
-    bg: "bg-blue-100 dark:bg-blue-950/50",
-    border: "border border-blue-300 dark:border-blue-700",
-    nameText: "text-blue-900 dark:text-blue-100",
-    subText: "text-blue-600 dark:text-blue-400",
+    style: {
+      background: "rgba(239,246,255,0.62)",
+      backdropFilter: "blur(16px) saturate(1.8)",
+      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+      border: "1px solid rgba(147,197,253,0.55)",
+      boxShadow: "0 4px 20px rgba(59,130,246,0.10), 0 1px 0 rgba(255,255,255,0.92) inset",
+    },
+    nameText: "text-blue-900",
+    subText: "text-blue-600",
   },
   billed: {
-    bg: "bg-yellow-100 dark:bg-yellow-950/50",
-    border: "border border-yellow-300 dark:border-yellow-700",
-    nameText: "text-yellow-900 dark:text-yellow-100",
-    subText: "text-yellow-600 dark:text-yellow-400",
+    style: {
+      background: "rgba(255,251,235,0.62)",
+      backdropFilter: "blur(16px) saturate(1.8)",
+      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+      border: "1px solid rgba(252,211,77,0.50)",
+      boxShadow: "0 4px 20px rgba(245,158,11,0.10), 0 1px 0 rgba(255,255,255,0.92) inset",
+    },
+    nameText: "text-amber-900",
+    subText: "text-amber-600",
   },
 };
 
@@ -93,47 +109,9 @@ async function printTableBill(orderId: number) {
       fetch(`/api/orders/${orderId}`, { credentials: "include" }),
       fetch("/api/settings", { credentials: "include" }),
     ]);
-    const order = await orderRes.json();
+    const order    = await orderRes.json();
     const settings = await settingsRes.json();
-    const items: any[] = order.items || [];
-
-    const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
-    const address = settings?.address || "";
-    const phone = settings?.phone || "";
-    const gstNumber = settings?.gstNumber || "";
-    const footerNote = settings?.footerNote || "Thank you for dining with us!";
-    const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
-    const discount = parseFloat(order.discountAmount || "0");
-
-    const win = window.open("", "_blank", "width=450,height=700");
-    if (!win) return;
-    win.document.write(`<html><head><title>Bill - ${order.orderNumber}</title>
-      <style>body{font-family:monospace;font-size:13px;margin:0;padding:16px;}h2{text-align:center;font-size:20px;margin:0 0 4px;}.center{text-align:center;}.divider{border-top:1px dashed #000;margin:10px 0;}.row{display:flex;justify-content:space-between;padding:2px 0;}.bold{font-weight:bold;}.large{font-size:16px;}.footer{text-align:center;margin-top:16px;font-size:12px;}</style>
-      </head><body>
-      <h2>${restaurantName.toUpperCase()}</h2>
-      ${address ? `<div class="center" style="font-size:11px">${address}</div>` : ""}
-      ${phone ? `<div class="center" style="font-size:11px">Ph: ${phone}</div>` : ""}
-      ${gstNumber ? `<div class="center" style="font-size:11px">GSTIN: ${gstNumber}</div>` : ""}
-      <div style="margin-bottom:8px"></div>
-      <div class="divider"></div>
-      <div class="row"><span>Order #</span><span class="bold">${order.orderNumber}</span></div>
-      <div class="row"><span>Type</span><span>${order.orderType}</span></div>
-      ${order.tableNumber ? `<div class="row"><span>Table</span><span>${order.tableNumber}</span></div>` : ""}
-      ${order.customerName ? `<div class="row"><span>Customer</span><span>${order.customerName}</span></div>` : ""}
-      <div class="row"><span>Date</span><span>${new Date(order.createdAt || Date.now()).toLocaleString()}</span></div>
-      <div class="divider"></div>
-      <div class="bold" style="margin-bottom:6px">ITEMS</div>
-      ${items.length > 0 ? items.map((item: any) => `<div class="row"><span>${item.name || "Item"} × ${item.quantity}</span><span>₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</span></div>`).join("") : "<div>—</div>"}
-      <div class="divider"></div>
-      <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
-      ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
-      <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount || "0").toFixed(0)}</span></div>
-      <div class="divider"></div>
-      <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
-      <div class="row" style="margin-top:4px"><span>Payment</span><span>${order.paymentMethod || "—"}</span></div>
-      <div class="footer"><div class="divider">${footerNote}<br>Please visit again</div></div>
-      </body></html>`);
-    win.document.close(); win.focus(); win.print(); win.close();
+    await printOrderBill(order, order.items || [], settings);
   } catch {
     alert("Failed to load bill for printing");
   }
@@ -164,6 +142,7 @@ export default function Tables() {
   const { data: tables = [], isLoading } = useQuery<Table[]>({
     queryKey: ["/api/tables"],
     staleTime: 0,
+    refetchOnMount: "always",
     refetchInterval: 5000,
   });
 
@@ -175,6 +154,7 @@ export default function Tables() {
   }>({
     queryKey: ["/api/live-status"],
     staleTime: 0,
+    refetchOnMount: "always",
     refetchInterval: 5000,
   });
 
@@ -284,43 +264,55 @@ export default function Tables() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden" style={{ background: "transparent" }}>
 
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
-      <div className="shrink-0 bg-white/40 backdrop-blur-sm border-b border-white/40 flex items-center px-4 gap-2 py-2 overflow-x-auto scrollbar-hide flex-nowrap md:flex-wrap">
+      <div className="shrink-0 flex items-center px-4 gap-2 py-2 overflow-x-auto scrollbar-hide flex-nowrap md:flex-wrap"
+        style={{
+          background: "rgba(255,255,255,0.52)",
+          backdropFilter: "blur(16px) saturate(1.7)",
+          WebkitBackdropFilter: "blur(16px) saturate(1.7)",
+          borderBottom: "1px solid rgba(255,255,255,0.68)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.92) inset, 0 2px 12px rgba(0,0,0,0.05)",
+        }}
+      >
 
         {/* Running Tables */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+          style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.18)", boxShadow: "0 1px 4px rgba(239,68,68,0.08)" }}>
           <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-          <span className="text-xs text-red-600 dark:text-red-400 font-medium">Running</span>
-          <span className="text-sm font-bold text-red-700 dark:text-red-300 min-w-[1ch] text-center">
+          <span className="text-xs text-red-600 font-semibold">Running</span>
+          <span className="text-sm font-bold text-red-700 min-w-[1ch] text-center">
             {liveStatus?.runningTables ?? runningTables.length}
           </span>
         </div>
 
         {/* Free Tables */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+          style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.20)", boxShadow: "0 1px 4px rgba(16,185,129,0.08)" }}>
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Free</span>
-          <span className="text-sm font-bold text-emerald-700 dark:text-emerald-300 min-w-[1ch] text-center">
+          <span className="text-xs text-emerald-600 font-semibold">Free</span>
+          <span className="text-sm font-bold text-emerald-700 min-w-[1ch] text-center">
             {liveStatus?.freeTables ?? freeTables.length}
           </span>
         </div>
 
         {/* Active Orders */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+          style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.20)", boxShadow: "0 1px 4px rgba(59,130,246,0.08)" }}>
           <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-          <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Orders</span>
-          <span className="text-sm font-bold text-blue-700 dark:text-blue-300 min-w-[1ch] text-center">
+          <span className="text-xs text-blue-600 font-semibold">Orders</span>
+          <span className="text-sm font-bold text-blue-700 min-w-[1ch] text-center">
             {liveStatus?.activeOrders ?? 0}
           </span>
         </div>
 
         {/* Today Sales */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+          style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
           <span className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
-          <span className="text-xs text-violet-600 dark:text-violet-400 font-medium">Sales</span>
-          <span className="text-sm font-bold text-violet-700 dark:text-violet-300">
+          <span className="text-xs text-violet-600 font-semibold">Sales</span>
+          <span className="text-sm font-bold text-violet-700">
             ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
           </span>
         </div>
@@ -363,7 +355,7 @@ export default function Tables() {
         {isLoading ? (
           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
             {[...Array(16)].map((_, i) => (
-              <div key={i} className="h-20 rounded-xl bg-muted animate-pulse" />
+              <div key={i} className="h-20 skeleton-glass" />
             ))}
           </div>
         ) : tables.length === 0 ? (
@@ -386,11 +378,11 @@ export default function Tables() {
             <div key={section}>
               {/* Section heading */}
               <div className="flex items-center gap-3 mb-3">
-                <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">
+                <h2 className="text-xs font-bold text-foreground uppercase tracking-[0.1em]">
                   {sectionLabel(section)}
                 </h2>
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">
+                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.6)", boxShadow: "0 1px 0 rgba(0,0,0,0.06)" }} />
+                <span className="text-xs text-muted-foreground font-medium">
                   {grouped[section].filter(t => t.status === "running").length} running
                   {" · "}
                   {grouped[section].length} tables
@@ -417,10 +409,10 @@ export default function Tables() {
                         onClick={() => handleTableClick(table)}
                         className={`
                           relative rounded-xl cursor-pointer select-none group
-                          ${cfg.bg} ${cfg.border}
                           ${isShiftTarget ? "ring-2 ring-amber-400 ring-offset-1" : ""}
                           ${isShiftSource ? "ring-2 ring-primary ring-offset-1" : ""}
                         `}
+                        style={cfg.style}
                       >
                         {/* Main content */}
                         <div className="p-2.5 min-h-[72px] flex flex-col justify-between">

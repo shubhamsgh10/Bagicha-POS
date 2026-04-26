@@ -247,7 +247,7 @@ function EditCustomerModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-sm overflow-y-auto py-8 px-4"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto py-8 px-4"
       onClick={onClose}
     >
       <motion.div
@@ -577,7 +577,7 @@ function StatPill({ icon: Icon, label, value, color, sub }: {
   icon: any; label: string; value: number | string; color: string; sub?: string;
 }) {
   return (
-    <div className="flex-1 min-w-[70px] bg-white/60 backdrop-blur-sm border border-white/50 rounded-xl px-3 py-2.5 shadow-sm">
+    <div className="flex-1 min-w-[70px] bg-white/60 border border-white/50 rounded-xl px-3 py-2.5 shadow-sm">
       <div className="flex items-center gap-1.5 mb-1">
         <Icon className={`w-3.5 h-3.5 ${color}`} />
         <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">{label}</span>
@@ -602,7 +602,7 @@ function CustomerCard({ customer, index, onClick }: {
       exit={{ opacity: 0, y: 4 }}
       transition={{ delay: index * 0.02, duration: 0.18, ease: "easeOut" }}
       onClick={onClick}
-      className={`bg-white/70 backdrop-blur-sm border border-white/60 rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-white/90 transition-all duration-150 ${ring}`}
+      className={`bg-white/70 border border-white/60 rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-white/90 transition-all duration-150 ${ring}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -681,7 +681,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="fixed top-14 right-0 bottom-0 w-full max-w-sm bg-white/95 backdrop-blur-xl border-l border-gray-200/60 shadow-2xl z-40 flex flex-col overflow-hidden"
+      className="fixed top-14 right-0 bottom-0 w-full max-w-sm bg-white/95 border-l border-gray-200/60 shadow-2xl z-40 flex flex-col overflow-hidden"
     >
       <div className="shrink-0 px-5 pt-5 pb-4 border-b border-gray-100">
         <div className="flex items-start justify-between gap-3">
@@ -924,7 +924,7 @@ function IntelligenceView({
 
       {/* Filters + search */}
       <div className="shrink-0 px-5 pb-3 flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-white/60 backdrop-blur-sm border border-white/50 rounded-xl p-1 shadow-sm">
+        <div className="flex items-center gap-1 bg-white/60 border border-white/50 rounded-xl p-1 shadow-sm">
           {FILTERS.map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 whitespace-nowrap ${
               filter === f.key ? "bg-gradient-to-br from-gray-500 to-gray-600 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
@@ -938,7 +938,7 @@ function IntelligenceView({
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Name or phone…"
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white/60 backdrop-blur-sm border border-white/50 rounded-xl shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-300"
+            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white/60 border border-white/50 rounded-xl shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-300"
           />
         </div>
       </div>

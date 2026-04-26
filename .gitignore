@@ -3,4 +3,8 @@ dist
 .DS_Store
 server/public
 vite.config.ts.*
-*.tar.gzcode-review-graph/
+*.tar.gz
+code-review-graph/
+.env
+.env.local
+.env.*.local

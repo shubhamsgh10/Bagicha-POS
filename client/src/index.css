@@ -30,6 +30,21 @@
   --warning:              hsl(36, 100%, 50%);
   --bagicha-primary:      hsl(210, 29%, 29%);
   --bagicha-secondary:    hsl(122, 39%, 49%);
+
+  /* ── Glass system tokens (Option B — Premium Glass) */
+  --glass-bg:             rgba(255, 255, 255, 0.52);
+  --glass-bg-heavy:       rgba(255, 255, 255, 0.78);
+  --glass-bg-light:       rgba(255, 255, 255, 0.38);
+  --glass-border:         rgba(255, 255, 255, 0.75);
+  --glass-border-subtle:  rgba(255, 255, 255, 0.55);
+  --glass-inset:          0 1px 0 rgba(255, 255, 255, 0.92) inset;
+  --glass-shadow:         0 4px 24px rgba(0, 0, 0, 0.07);
+  --glass-shadow-md:      0 8px 32px rgba(0, 0, 0, 0.10);
+  --glass-blur:           blur(18px) saturate(1.8);
+  --glass-blur-heavy:     blur(24px) saturate(1.9);
+  --focus-ring-color:     rgba(16, 185, 129, 0.14);
+  --motion-dur:           0.42s;
+  --motion-ease:          cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -66,7 +81,7 @@
 .app-layout {
   position: fixed;
   inset: 0;
-  background: linear-gradient(135deg, #f8fafc 0%, #ffffff 50%, #f0fdf4 100%);
+  background: linear-gradient(135deg, #edf7f2 0%, #ffffff 45%, #f0f4ff 100%);
   overflow: hidden;
 }
 
@@ -126,30 +141,55 @@
 
   .glass-card {
     @apply rounded-2xl border transition-all duration-300 transform-gpu;
-    background:      rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(20px) saturate(1.8);
-    -webkit-backdrop-filter: blur(20px) saturate(1.8);
-    border-color:    rgba(255, 255, 255, 0.7);
-    box-shadow:      0 4px 24px rgba(0,0,0,0.06),
-                     0 1px 0 rgba(255,255,255,0.9) inset;
+    background:      var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-color:    var(--glass-border);
+    box-shadow:      var(--glass-shadow), var(--glass-inset);
   }
 
   .glass-card:hover {
-    background:   rgba(255, 255, 255, 0.72);
-    border-color: rgba(255, 255, 255, 0.85);
-    box-shadow:   0 8px 32px rgba(0,0,0,0.1),
-                  0 0 0 1px rgba(16,185,129,0.08),
-                  0 1px 0 rgba(255,255,255,0.9) inset;
-    transform: translateY(-1px) scale(1.005);
+    background:   rgba(255, 255, 255, 0.70);
+    border-color: rgba(255, 255, 255, 0.88);
+    box-shadow:   var(--glass-shadow-md),
+                  0 0 0 1px rgba(16,185,129,0.07),
+                  var(--glass-inset);
+    transform: translateY(-2px) scale(1.004);
   }
 
   .glass-panel {
     @apply rounded-2xl border;
-    background:      rgba(255, 255, 255, 0.45);
-    backdrop-filter: blur(16px) saturate(1.6);
-    -webkit-backdrop-filter: blur(16px) saturate(1.6);
-    border-color:    rgba(255, 255, 255, 0.65);
-    box-shadow:      0 2px 16px rgba(0,0,0,0.05);
+    background:      rgba(255, 255, 255, 0.46);
+    backdrop-filter: blur(16px) saturate(1.7);
+    -webkit-backdrop-filter: blur(16px) saturate(1.7);
+    border-color:    var(--glass-border-subtle);
+    box-shadow:      0 2px 16px rgba(0,0,0,0.05), var(--glass-inset);
+  }
+
+  /* Colored glass variants for status cards */
+  .glass-card-blue {
+    @apply rounded-2xl border transition-all duration-300 transform-gpu;
+    background:      rgba(239, 246, 255, 0.62);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-color:    rgba(147, 197, 253, 0.55);
+    box-shadow:      0 4px 20px rgba(59,130,246,0.10), var(--glass-inset);
+  }
+  .glass-card-amber {
+    @apply rounded-2xl border transition-all duration-300 transform-gpu;
+    background:      rgba(255, 251, 235, 0.62);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-color:    rgba(252, 211, 77, 0.50);
+    box-shadow:      0 4px 20px rgba(245,158,11,0.10), var(--glass-inset);
+  }
+  .glass-card-red {
+    @apply rounded-2xl border transition-all duration-300 transform-gpu;
+    background:      rgba(254, 242, 242, 0.62);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-color:    rgba(252, 165, 165, 0.50);
+    box-shadow:      0 4px 20px rgba(239,68,68,0.08), var(--glass-inset);
   }
 
   /* ── GLOW UTILITIES ── */
@@ -242,6 +282,44 @@
   .status-ready     { @apply bg-green-50 text-green-600; }
   .status-delivered { @apply bg-purple-50 text-purple-600; }
   .status-served    { @apply bg-green-50 text-green-600; }
+
+  /* ── MICRO-INTERACTIONS — tap feedback ── */
+  /* Apply .tap-scale to any tappable element for a 97% press-down feel. */
+  .tap-scale {
+    @apply touch-manipulation select-none;
+    transition: transform 150ms ease, box-shadow 150ms ease;
+    will-change: transform;
+  }
+  .tap-scale:active { transform: scale(0.97); }
+
+  /* ── SKELETON SHIMMER ── */
+  .skeleton {
+    @apply rounded-xl bg-gray-100 relative overflow-hidden;
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  /* Glass-style skeleton for pages with glass bg */
+  .skeleton-glass {
+    @apply rounded-xl relative overflow-hidden;
+    background: rgba(255,255,255,0.40);
+    border: 1px solid rgba(255,255,255,0.60);
+  }
+  .skeleton-glass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -302,11 +380,12 @@
 }
 
 .login-logo-img {
-  width: 80px;
-  height: 80px;
+  width: 84px;
+  height: 84px;
   object-fit: contain;
   border-radius: 16px;
-  background-color: #F7FBFF;
+  background-color: transparent;
+  mix-blend-mode: multiply;
 }
 
 .login-tagline {
@@ -317,76 +396,75 @@
   margin-top: 0.35rem;
 }
 
-/* ── 4. Card — light frosted glass on white canvas ──────────── */
+/* ── 4. Card — translucent glass on background canvas ───────── */
 .login-card {
-  background: rgba(247, 251, 255, 0.75) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.30) !important;
+  backdrop-filter: blur(18px) saturate(1.5) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.5) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-radius: 16px !important;
   box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.08),
-    0 1px 0 rgba(255, 255, 255, 0.9) inset !important;
+    0 4px 20px rgba(0, 0, 0, 0.07),
+    0 1px 0 rgba(255, 255, 255, 0.75) inset !important;
+  /* No hover transform — card is stable and fixed */
 }
 
 /* ── 5. Typography ──────────────────────────────────────────── */
 .login-title {
-  color: #1F2937 !important;
-  font-weight: 600;
-  font-size: 1.2rem;
+  color: #111827 !important;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
 }
 .login-desc {
-  color: #6B7280 !important;
+  color: #4B5563 !important;
   font-size: 0.8rem;
 }
 .login-label {
-  color: #374151 !important;
+  color: #1F2937 !important;
   font-size: 0.8rem;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* ── 6. Inputs ──────────────────────────────────────────────── */
 .login-input {
-  background: rgba(255, 255, 255, 0.90) !important;
-  border: 1px solid rgba(0, 0, 0, 0.12) !important;
-  color: #1F2937 !important;
-  border-radius: 8px !important;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+  background: rgba(255, 255, 255, 0.75) !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  color: #111827 !important;
+  border-radius: 9px !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
 }
 .login-input::placeholder {
   color: #9CA3AF !important;
 }
 .login-input:focus {
-  background: #ffffff !important;
+  background: rgba(255, 255, 255, 0.95) !important;
   border-color: #4CAF50 !important;
-  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.15) !important;
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.12) !important;
   outline: none !important;
 }
 
 /* ── 7. Button ──────────────────────────────────────────────── */
 .login-btn {
-  background: #4CAF50 !important;
+  background: linear-gradient(135deg, #43A047 0%, #66BB6A 100%) !important;
   border: none !important;
   color: #ffffff !important;
   font-weight: 600 !important;
-  border-radius: 8px !important;
-  letter-spacing: 0.02em !important;
-  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.22) !important;
-  transition: all 0.25s ease !important;
+  border-radius: 9px !important;
+  letter-spacing: 0.025em !important;
+  box-shadow: 0 3px 12px rgba(76, 175, 80, 0.28), 0 1px 0 rgba(255,255,255,0.18) inset !important;
+  transition: background 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease !important;
 }
 .login-btn:hover:not(:disabled) {
-  background: #43A047 !important;
-  transform: translateY(-1px) !important;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.30) !important;
+  background: linear-gradient(135deg, #388E3C 0%, #43A047 100%) !important;
+  box-shadow: 0 5px 18px rgba(76, 175, 80, 0.36), 0 1px 0 rgba(255,255,255,0.18) inset !important;
 }
 .login-btn:active:not(:disabled) {
-  transform: translateY(0) !important;
-  box-shadow: 0 1px 4px rgba(76, 175, 80, 0.20) !important;
+  box-shadow: 0 1px 6px rgba(76, 175, 80, 0.22) !important;
 }
 .login-btn:disabled {
   opacity: 0.55 !important;
   cursor: not-allowed !important;
-  transform: none !important;
 }
 
 /* ── 8. Misc ────────────────────────────────────────────────── */

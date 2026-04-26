@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bagicha POS — Full UI Upgrade Design</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 0;
+  }
+
+  /* ── Page shell */
+  .page-header {
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 20px 32px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .page-header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .page-header .sub { font-size: 13px; color: #64748b; margin-top: 2px; }
+  .badge-approved {
+    background: #10b981; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 4px 12px; border-radius: 20px; letter-spacing: 0.05em;
+  }
+
+  .content { padding: 32px; max-width: 1200px; margin: 0 auto; }
+
+  /* ── Section headers */
+  .section-header {
+    display: flex; align-items: center; gap: 12px; margin: 40px 0 20px;
+  }
+  .section-num {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: linear-gradient(135deg, #10b981, #22c55e);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #fff; flex-shrink: 0;
+  }
+  .section-header h2 { font-size: 17px; font-weight: 700; color: #f1f5f9; }
+  .section-header .sec-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+  /* ── Split view */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 12px; }
+  .panel {
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .panel-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .before-label { background: rgba(239,68,68,0.08); color: #f87171; }
+  .after-label  { background: rgba(16,185,129,0.08); color: #34d399; }
+
+  /* ── DESIGN TOKENS */
+  .token-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .token-card {
+    border-radius: 12px; padding: 14px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+  }
+  .token-swatch { height: 36px; border-radius: 8px; margin-bottom: 10px; }
+  .token-name { font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.06em; text-transform: uppercase; }
+  .token-val  { font-size: 12px; color: #e2e8f0; font-family: monospace; margin-top: 3px; }
+
+  /* ── TOPNAV mockup */
+  .topnav-mock {
+    padding: 14px; display: flex; align-items: center; gap: 10px;
+    font-family: system-ui;
+  }
+  .tn-logo { font-size: 14px; font-weight: 800; color: #1e3a2a; }
+  .tn-logo span { color: #10b981; }
+  .tn-sep { width: 1px; height: 24px; background: rgba(0,0,0,0.1); }
+  .tn-nav { display: flex; gap: 4px; flex: 1; }
+  .tn-item {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 6px 10px; border-radius: 10px; cursor: pointer;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+  }
+  .tn-item-icon { width: 16px; height: 16px; border-radius: 3px; }
+  .tn-active {
+    background: linear-gradient(135deg, #10b981, #22c55e);
+    color: #fff;
+    box-shadow: 0 3px 10px rgba(16,185,129,0.3);
+  }
+  .tn-inactive { color: #9ca3af; }
+  .tn-inactive:hover { background: rgba(0,0,0,0.05); }
+  .tn-role {
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 10px; font-weight: 700;
+    background: rgba(99,102,241,0.12); color: #6366f1;
+    border: 1px solid rgba(99,102,241,0.2);
+  }
+  .tn-user { font-size: 11px; font-weight: 600; color: #374151; }
+  .tn-user .role { font-size: 10px; color: #9ca3af; font-weight: 400; }
+
+  /* before topnav */
+  .topnav-before { background: #fff; border-bottom: 1px solid #e5e7eb; }
+  /* after topnav */
+  .topnav-after {
+    background: rgba(255,255,255,0.75);
+    backdrop-filter: blur(20px) saturate(1.8);
+    border-bottom: 1px solid rgba(255,255,255,0.6);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 2px 16px rgba(0,0,0,0.06);
+  }
+
+  /* ── BOTTOMNAV */
+  .bottomnav-mock {
+    display: flex; height: 56px; align-items: center; padding: 0 4px;
+    font-family: system-ui;
+  }
+  .bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+  .bn-icon { width: 20px; height: 20px; border-radius: 4px; }
+  .bn-label { font-size: 9px; font-weight: 700; }
+  .bn-accent-wrap { display: flex; flex-direction: column; align-items: center; margin-top: -16px; }
+  .bn-accent-btn {
+    width: 46px; height: 46px; border-radius: 16px;
+    background: linear-gradient(135deg, #10b981, #22c55e);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(16,185,129,0.4);
+  }
+  .bn-accent-btn .plus { color: #fff; font-size: 22px; font-weight: 300; }
+  .bn-before { background: #fff; border-top: 1px solid #e5e7eb; }
+  .bn-after {
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(20px) saturate(1.8);
+    border-top: 1px solid rgba(255,255,255,0.6);
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.06);
+  }
+
+  /* ── TABLES */
+  .tables-demo { padding: 16px; font-family: system-ui; }
+  .status-bar {
+    display: flex; gap: 8px; padding: 8px; margin-bottom: 14px;
+    border-radius: 12px; flex-wrap: wrap;
+  }
+  .sb-before { background: rgba(255,255,255,0.4); border-bottom: 1px solid rgba(255,255,255,0.4); }
+  .sb-after {
+    background: rgba(255,255,255,0.5); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.7);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset;
+  }
+  .sb-chip {
+    display: flex; align-items: center; gap-6px; gap: 5px;
+    padding: 5px 10px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  }
+  .sb-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .chip-run   { background: rgba(239,68,68,0.1); color: #dc2626; }
+  .chip-free  { background: rgba(16,185,129,0.1); color: #059669; }
+  .chip-ord   { background: rgba(59,130,246,0.1); color: #2563eb; }
+  .chip-sale  { background: rgba(139,92,246,0.1); color: #7c3aed; }
+
+  .table-grid-before { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .table-grid-after  { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .bg-tables-before { background: linear-gradient(135deg, #f8fafc, #fff, #f0fdf4); }
+  .bg-tables-after  { background: linear-gradient(135deg, #f0f9f4 0%, #ffffff 50%, #e8f5ff 100%); }
+
+  .tc { border-radius: 12px; padding: 10px; min-height: 68px; display: flex; flex-direction: column; justify-content: space-between; font-size: 12px; }
+  /* Before table cards */
+  .tc-free-b   { background: #fff; border: 2px dashed #d1d5db; }
+  .tc-run-b    { background: #dbeafe; border: 1px solid #93c5fd; }
+  .tc-bill-b   { background: #fef9c3; border: 1px solid #fde047; }
+  /* After table cards — Option B glass */
+  .tc-free-a {
+    background: rgba(255,255,255,0.48);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1.5px dashed rgba(0,0,0,0.12);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.95) inset;
+  }
+  .tc-run-a {
+    background: rgba(239,246,255,0.6);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1px solid rgba(147,197,253,0.55);
+    box-shadow: 0 4px 20px rgba(59,130,246,0.12), 0 1px 0 rgba(255,255,255,0.9) inset;
+  }
+  .tc-bill-a {
+    background: rgba(255,251,235,0.6);
+    backdrop-filter: blur(16px) saturate(1.8);
+    border: 1px solid rgba(252,211,77,0.50);
+    box-shadow: 0 4px 20px rgba(245,158,11,0.12), 0 1px 0 rgba(255,255,255,0.9) inset;
+  }
+  .tc-name-free { font-weight: 700; color: #374151; }
+  .tc-name-run  { font-weight: 700; color: #1d4ed8; }
+  .tc-name-bill { font-weight: 700; color: #92400e; }
+  .tc-sub-free  { font-size: 10px; color: #9ca3af; }
+  .tc-sub-run   { font-size: 10px; color: #3b82f6; font-weight: 600; }
+  .tc-sub-bill  { font-size: 10px; color: #d97706; font-weight: 600; }
+  .tc-timer     { font-size: 10px; color: #60a5fa; font-weight: 600; }
+
+  /* ── DASHBOARD */
+  .dash-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 14px; }
+  .stat-before {
+    border-radius: 14px; padding: 14px; font-family: system-ui;
+  }
+  .stat-after {
+    border-radius: 14px; padding: 14px; font-family: system-ui;
+    backdrop-filter: blur(16px) saturate(1.8);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.9) inset;
+    border: 1px solid rgba(255,255,255,0.75);
+  }
+  .stat-icon { width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; font-size: 14px; }
+  .stat-val { font-size: 18px; font-weight: 800; }
+  .stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; }
+  .stat-sub { font-size: 10px; margin-top: 4px; }
+
+  /* before stat colours */
+  .s1b { background: rgba(99,102,241,0.1); } .s1b .stat-val { color: #4f46e5; } .s1b .stat-label { color: #6366f1; } .s1b .stat-sub { color: #818cf8; }
+  .s2b { background: rgba(245,158,11,0.1); } .s2b .stat-val { color: #b45309; } .s2b .stat-label { color: #d97706; } .s2b .stat-sub { color: #fbbf24; }
+  .s3b { background: rgba(16,185,129,0.1); } .s3b .stat-val { color: #065f46; } .s3b .stat-label { color: #10b981; } .s3b .stat-sub { color: #34d399; }
+  .s4b { background: rgba(239,68,68,0.1);  } .s4b .stat-val { color: #991b1b; } .s4b .stat-label { color: #ef4444; } .s4b .stat-sub { color: #f87171; }
+
+  /* after stat — glass */
+  .s1a { background: rgba(99,102,241,0.08);  border-color: rgba(99,102,241,0.2) !important; }
+  .s2a { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.2) !important; }
+  .s3a { background: rgba(16,185,129,0.08);  border-color: rgba(16,185,129,0.2) !important; }
+  .s4a { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.2) !important; }
+  .s1a .stat-val { color: #4f46e5; } .s1a .stat-label { color: #6366f1; } .s1a .stat-sub { color: #818cf8; }
+  .s2a .stat-val { color: #b45309; } .s2a .stat-label { color: #d97706; } .s2a .stat-sub { color: #fbbf24; }
+  .s3a .stat-val { color: #065f46; } .s3a .stat-label { color: #10b981; } .s3a .stat-sub { color: #34d399; }
+  .s4a .stat-val { color: #991b1b; } .s4a .stat-label { color: #ef4444; } .s4a .stat-sub { color: #f87171; }
+
+  .bg-dash-before { background: linear-gradient(135deg, #f8fafc, #fff); }
+  .bg-dash-after  { background: linear-gradient(135deg, #f0f9f4, #ffffff, #f0f4ff); }
+
+  /* ── DIALOG */
+  .dialog-backdrop { position: relative; height: 200px; display: flex; align-items: center; justify-content: center; }
+  .db-before { background: #f9fafb; }
+  .db-after  { background: rgba(240,242,248,0.55); backdrop-filter: blur(12px); }
+  .dialog-box { border-radius: 16px; padding: 20px; width: 240px; font-family: system-ui; }
+  .dlg-before { background: #fff; border: 1px solid #e5e7eb; box-shadow: 0 10px 40px rgba(0,0,0,0.15); }
+  .dlg-after  {
+    background: rgba(255,255,255,0.82);
+    backdrop-filter: blur(24px) saturate(1.8);
+    border: 1px solid rgba(255,255,255,0.7);
+    box-shadow: 0 8px 40px rgba(100,110,160,0.18), 0 1px 0 rgba(255,255,255,0.9) inset;
+  }
+  .dlg-title { font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 4px; }
+  .dlg-sub   { font-size: 11px; color: #6b7280; margin-bottom: 14px; }
+  .dlg-input {
+    width: 100%; padding: 8px 12px; border-radius: 10px; font-size: 12px;
+    border: 1px solid rgba(0,0,0,0.1); margin-bottom: 8px; outline: none;
+    background: rgba(255,255,255,0.8);
+  }
+  .dlg-btn {
+    width: 100%; padding: 8px; border-radius: 10px; border: none; cursor: pointer;
+    font-size: 12px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, #10b981, #22c55e);
+    box-shadow: 0 3px 12px rgba(16,185,129,0.3);
+  }
+
+  /* ── SKELETON */
+  .skeleton-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; padding: 14px; }
+  .skel {
+    border-radius: 12px; height: 70px;
+    background: linear-gradient(90deg, #f3f4f6 0%, #e9ecef 50%, #f3f4f6 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .skel-glass {
+    border-radius: 12px; height: 70px;
+    background: rgba(255,255,255,0.4);
+    border: 1px solid rgba(255,255,255,0.6);
+    position: relative; overflow: hidden;
+  }
+  .skel-glass::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* ── MOTION timeline */
+  .motion-box {
+    padding: 20px; border-radius: 14px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+    font-family: system-ui;
+  }
+  .motion-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .motion-label { font-size: 11px; font-weight: 600; color: #94a3b8; width: 120px; flex-shrink: 0; }
+  .motion-bar { height: 8px; border-radius: 4px; position: relative; background: #1e293b; flex: 1; }
+  .motion-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #10b981, #22c55e); }
+  .motion-val  { font-size: 11px; color: #64748b; font-family: monospace; width: 80px; flex-shrink: 0; text-align: right; }
+  .already-tag { font-size: 9px; background: rgba(16,185,129,0.15); color: #10b981; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+
+  /* ── File list */
+  .file-list { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
+  .file-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; border-radius: 12px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  }
+  .file-icon { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
+  .fi-css  { background: rgba(59,130,246,0.15); }
+  .fi-tsx  { background: rgba(16,185,129,0.15); }
+  .fi-pos  { background: rgba(245,158,11,0.15); }
+  .file-item h4 { font-size: 12px; font-weight: 700; color: #e2e8f0; font-family: monospace; }
+  .file-item p  { font-size: 11px; color: #64748b; margin-top: 2px; line-height: 1.4; }
+  .change-tag { font-size: 9px; padding: 2px 6px; border-radius: 4px; font-weight: 700; letter-spacing: 0.04em; display: inline-block; margin-top: 4px; }
+  .ct-ui   { background: rgba(16,185,129,0.12); color: #10b981; }
+  .ct-full { background: rgba(99,102,241,0.12); color: #6366f1; }
+  .ct-part { background: rgba(245,158,11,0.12); color: #f59e0b; }
+</style>
+
+<div class="page-header">
+  <div>
+    <h1>Bagicha POS — Premium Glass UI Upgrade</h1>
+    <div class="sub">Option B · Layered File-by-File · UI layer only · No logic/API changes</div>
+  </div>
+  <span class="badge-approved">Design Approved</span>
+</div>
+
+<div class="content">
+
+  <!-- ── 1. DESIGN TOKENS -->
+  <div class="section-header">
+    <div class="section-num">1</div>
+    <div>
+      <h2>Design Tokens — index.css upgrade</h2>
+      <div class="sec-sub">Enhanced CSS variables + deeper glass recipe. One file, all pages benefit.</div>
+    </div>
+  </div>
+  <div class="token-grid">
+    <div class="token-card">
+      <div class="token-swatch" style="background: linear-gradient(135deg,#10b981,#22c55e); box-shadow: 0 4px 14px rgba(16,185,129,0.35);"></div>
+      <div class="token-name">--glass-primary</div>
+      <div class="token-val">emerald gradient</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="background: rgba(255,255,255,0.52); border: 1px solid rgba(255,255,255,0.75); box-shadow: 0 4px 20px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.9) inset;"></div>
+      <div class="token-name">--glass-bg</div>
+      <div class="token-val">rgba(255,255,255,0.52)</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="background: rgba(255,255,255,0.75); border: 1px solid rgba(255,255,255,0.6); box-shadow: 0 2px 16px rgba(0,0,0,0.05);"></div>
+      <div class="token-name">--glass-bg-heavy</div>
+      <div class="token-val">rgba(255,255,255,0.75)</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="background: rgba(255,255,255,0.0); border: 1.5px solid rgba(255,255,255,0.75);"></div>
+      <div class="token-name">--glass-border</div>
+      <div class="token-val">rgba(255,255,255,0.75)</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="border-radius: 8px; background: linear-gradient(135deg,#f0f9f4,#ffffff,#f0f4ff);"></div>
+      <div class="token-name">--app-bg</div>
+      <div class="token-val">3-stop gradient</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="box-shadow: 0 4px 20px rgba(0,0,0,0.07); background: #fff;"></div>
+      <div class="token-name">--shadow-glass</div>
+      <div class="token-val">0 4px 20px rgba(0,0,0,0.07)</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); box-shadow: 0 0 0 3px rgba(16,185,129,0.1);"></div>
+      <div class="token-name">--focus-ring</div>
+      <div class="token-val">emerald 10% + ring</div>
+    </div>
+    <div class="token-card">
+      <div class="token-swatch" style="background: linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.6) 50%,transparent 100%);"></div>
+      <div class="token-name">--skeleton-shine</div>
+      <div class="token-val">shimmer gradient</div>
+    </div>
+  </div>
+
+  <!-- ── 2. TOPNAV + BOTTOMNAV -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">2</div>
+    <div>
+      <h2>TopNav + BottomNav — Glass chrome</h2>
+      <div class="sec-sub">TopNav gets heavier blur + inset highlight. BottomNav gets glass instead of plain white.</div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <div class="panel-label before-label">Before — TopNav</div>
+      <div class="topnav-before topnav-mock">
+        <div class="tn-logo">Bag<span>icha</span></div>
+        <div class="tn-sep"></div>
+        <div class="tn-nav">
+          <div class="tn-item tn-active" style="font-size:9px">⬛ Tables</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">📋 Orders</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">🍽 Menu</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">📦 Inv.</div>
+        </div>
+        <div class="tn-role">Staff</div>
+        <div class="tn-user">admin <br><span class="role">admin</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — TopNav (heavier glass + inset)</div>
+      <div class="topnav-after topnav-mock">
+        <div class="tn-logo">Bag<span>icha</span></div>
+        <div class="tn-sep"></div>
+        <div class="tn-nav">
+          <div class="tn-item tn-active" style="font-size:9px">⬛ Tables</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">📋 Orders</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">🍽 Menu</div>
+          <div class="tn-item tn-inactive" style="font-size:9px">📦 Inv.</div>
+        </div>
+        <div class="tn-role">Staff</div>
+        <div class="tn-user">admin <br><span class="role">admin</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <div class="panel-label before-label">Before — BottomNav</div>
+      <div class="bn-before bottomnav-mock">
+        <div class="bn-item"><div class="bn-icon" style="background:#e5e7eb"></div><div class="bn-label" style="color:#9ca3af">Tables</div></div>
+        <div class="bn-item">
+          <div class="bn-accent-wrap">
+            <div class="bn-accent-btn"><div class="plus">+</div></div>
+            <div class="bn-label" style="color:#9ca3af; margin-top:2px">New</div>
+          </div>
+        </div>
+        <div class="bn-item"><div class="bn-icon" style="background:#e5e7eb"></div><div class="bn-label" style="color:#9ca3af">Kitchen</div></div>
+        <div class="bn-item"><div class="bn-icon" style="background:#e5e7eb"></div><div class="bn-label" style="color:#9ca3af">Guests</div></div>
+        <div class="bn-item"><div class="bn-icon" style="background:#e5e7eb"></div><div class="bn-label" style="color:#9ca3af">Settings</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — BottomNav (glass + glow)</div>
+      <div class="bn-after bottomnav-mock">
+        <div class="bn-item"><div class="bn-icon" style="background:rgba(16,185,129,0.15)"></div><div class="bn-label" style="color:#10b981">Tables</div></div>
+        <div class="bn-item">
+          <div class="bn-accent-wrap">
+            <div class="bn-accent-btn" style="box-shadow:0 6px 20px rgba(16,185,129,0.45)"><div class="plus">+</div></div>
+            <div class="bn-label" style="color:#9ca3af; margin-top:2px">New</div>
+          </div>
+        </div>
+        <div class="bn-item"><div class="bn-icon" style="background:rgba(0,0,0,0.04)"></div><div class="bn-label" style="color:#9ca3af">Kitchen</div></div>
+        <div class="bn-item"><div class="bn-icon" style="background:rgba(0,0,0,0.04)"></div><div class="bn-label" style="color:#9ca3af">Guests</div></div>
+        <div class="bn-item"><div class="bn-icon" style="background:rgba(0,0,0,0.04)"></div><div class="bn-label" style="color:#9ca3af">Settings</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. TABLES PAGE -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">3</div>
+    <div>
+      <h2>Tables Page — Glass cards + skeleton</h2>
+      <div class="sec-sub">Status bar upgraded to glass panel. Table cards get Option-B depth. Skeleton replaces animate-pulse.</div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <div class="panel-label before-label">Before — flat cards</div>
+      <div class="bg-tables-before tables-demo">
+        <div class="status-bar sb-before">
+          <div class="sb-chip chip-run"><div class="sb-dot" style="background:#ef4444"></div>Running <b>3</b></div>
+          <div class="sb-chip chip-free"><div class="sb-dot" style="background:#10b981"></div>Free <b>8</b></div>
+          <div class="sb-chip chip-ord"><div class="sb-dot" style="background:#3b82f6"></div>Orders <b>3</b></div>
+        </div>
+        <div class="table-grid-before">
+          <div class="tc tc-free-b"><div class="tc-name-free">T1</div><div class="tc-sub-free">4 seats</div></div>
+          <div class="tc tc-run-b"><div class="tc-timer">22 Min</div><div class="tc-name-run">T2</div><div class="tc-sub-run">₹480</div></div>
+          <div class="tc tc-bill-b"><div class="tc-name-bill">T3</div><div class="tc-sub-bill">Bill out</div></div>
+          <div class="tc tc-free-b"><div class="tc-name-free">T4</div><div class="tc-sub-free">2 seats</div></div>
+          <div class="tc tc-run-b"><div class="tc-timer">1h 5m</div><div class="tc-name-run">VIP1</div><div class="tc-sub-run">₹1,240</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — Premium Glass B</div>
+      <div class="bg-tables-after tables-demo">
+        <div class="status-bar sb-after">
+          <div class="sb-chip chip-run"><div class="sb-dot" style="background:#ef4444"></div>Running <b>3</b></div>
+          <div class="sb-chip chip-free"><div class="sb-dot" style="background:#10b981"></div>Free <b>8</b></div>
+          <div class="sb-chip chip-ord"><div class="sb-dot" style="background:#3b82f6"></div>Orders <b>3</b></div>
+        </div>
+        <div class="table-grid-after">
+          <div class="tc tc-free-a"><div class="tc-name-free">T1</div><div class="tc-sub-free">4 seats</div></div>
+          <div class="tc tc-run-a"><div class="tc-timer">22 Min</div><div class="tc-name-run">T2</div><div class="tc-sub-run">₹480</div></div>
+          <div class="tc tc-bill-a"><div class="tc-name-bill">T3</div><div class="tc-sub-bill">Bill out</div></div>
+          <div class="tc tc-free-a"><div class="tc-name-free">T4</div><div class="tc-sub-free">2 seats</div></div>
+          <div class="tc tc-run-a"><div class="tc-timer">1h 5m</div><div class="tc-name-run">VIP1</div><div class="tc-sub-run">₹1,240</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="split" style="margin-top:12px">
+    <div class="panel">
+      <div class="panel-label before-label">Before — animate-pulse skeleton</div>
+      <div class="bg-tables-before" style="padding:14px">
+        <div class="skeleton-grid" style="padding:0">
+          <div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — glass shimmer skeleton</div>
+      <div class="bg-tables-after" style="padding:14px">
+        <div class="skeleton-grid" style="padding:0">
+          <div class="skel-glass"></div><div class="skel-glass"></div><div class="skel-glass"></div><div class="skel-glass"></div><div class="skel-glass"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4. DASHBOARD -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">4</div>
+    <div>
+      <h2>Dashboard — Glass stat cards</h2>
+      <div class="sec-sub">Opaque tinted backgrounds → glass with colored borders + glow shadows.</div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <div class="panel-label before-label">Before — opaque tinted cards</div>
+      <div class="bg-dash-before dash-grid">
+        <div class="stat-before s1b"><div class="stat-icon" style="background:rgba(99,102,241,0.15)">💰</div><div class="stat-val">₹18,240</div><div class="stat-label">Today's Sales</div><div class="stat-sub">47 orders</div></div>
+        <div class="stat-before s2b"><div class="stat-icon" style="background:rgba(245,158,11,0.15)">⏱</div><div class="stat-val">24 Min</div><div class="stat-label">Avg Order</div><div class="stat-sub">Fastest: 8m</div></div>
+        <div class="stat-before s3b"><div class="stat-icon" style="background:rgba(16,185,129,0.15)">📈</div><div class="stat-val">₹388</div><div class="stat-label">Avg Value</div><div class="stat-sub">↑12% vs yesterday</div></div>
+        <div class="stat-before s4b"><div class="stat-icon" style="background:rgba(239,68,68,0.15)">⚠️</div><div class="stat-val">3</div><div class="stat-label">Low Stock</div><div class="stat-sub">Needs reorder</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — glass with colored depth</div>
+      <div class="bg-dash-after dash-grid">
+        <div class="stat-after s1a"><div class="stat-icon" style="background:rgba(99,102,241,0.12)">💰</div><div class="stat-val">₹18,240</div><div class="stat-label">Today's Sales</div><div class="stat-sub">47 orders</div></div>
+        <div class="stat-after s2a"><div class="stat-icon" style="background:rgba(245,158,11,0.12)">⏱</div><div class="stat-val">24 Min</div><div class="stat-label">Avg Order</div><div class="stat-sub">Fastest: 8m</div></div>
+        <div class="stat-after s3a"><div class="stat-icon" style="background:rgba(16,185,129,0.12)">📈</div><div class="stat-val">₹388</div><div class="stat-label">Avg Value</div><div class="stat-sub">↑12% vs yesterday</div></div>
+        <div class="stat-after s4a"><div class="stat-icon" style="background:rgba(239,68,68,0.12)">⚠️</div><div class="stat-val">3</div><div class="stat-label">Low Stock</div><div class="stat-sub">Needs reorder</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 5. DIALOG / MODAL -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">5</div>
+    <div>
+      <h2>Dialogs — Glass modal treatment</h2>
+      <div class="sec-sub">Shadcn Dialog overridden: opaque white → frosted glass backdrop + glass card.</div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="panel">
+      <div class="panel-label before-label">Before — opaque white dialog</div>
+      <div class="dialog-backdrop db-before">
+        <div class="dialog-box dlg-before">
+          <div class="dlg-title">Add New Table</div>
+          <div class="dlg-sub">Create a table for dine-in orders</div>
+          <input class="dlg-input" placeholder="Table name e.g. T1" style="background:#f9fafb; border:1px solid #e5e7eb">
+          <button class="dlg-btn">Add Table</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label after-label">After — glass dialog on blurred backdrop</div>
+      <div class="dialog-backdrop db-after">
+        <div class="dialog-box dlg-after">
+          <div class="dlg-title">Add New Table</div>
+          <div class="dlg-sub">Create a table for dine-in orders</div>
+          <input class="dlg-input" placeholder="Table name e.g. T1">
+          <button class="dlg-btn">Add Table</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 6. MOTION SYSTEM -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">6</div>
+    <div>
+      <h2>Motion System — Already correct ✅</h2>
+      <div class="sec-sub">App.tsx already uses the exact spec values. No changes needed here.</div>
+    </div>
+  </div>
+  <div class="motion-box">
+    <div class="motion-row">
+      <div class="motion-label">Page transition</div>
+      <div class="motion-bar"><div class="motion-fill" style="width:42%"></div></div>
+      <div class="motion-val">0.42s <span class="already-tag">✓ done</span></div>
+    </div>
+    <div class="motion-row">
+      <div class="motion-label">Ease curve</div>
+      <div class="motion-bar"><div class="motion-fill" style="width:100%"></div></div>
+      <div class="motion-val">[0.22,1,0.36,1] <span class="already-tag">✓ done</span></div>
+    </div>
+    <div class="motion-row">
+      <div class="motion-label">Button press</div>
+      <div class="motion-bar"><div class="motion-fill" style="width:15%"></div></div>
+      <div class="motion-val">150ms scale(0.97) <span class="already-tag">✓ done</span></div>
+    </div>
+    <div class="motion-row">
+      <div class="motion-label">Card hover</div>
+      <div class="motion-bar"><div class="motion-fill" style="width:20%"></div></div>
+      <div class="motion-val">200ms translateY(-1px) <span class="already-tag">✓ done</span></div>
+    </div>
+    <div class="motion-row">
+      <div class="motion-label">Modal in</div>
+      <div class="motion-bar"><div class="motion-fill" style="width:22%"></div></div>
+      <div class="motion-val">220ms spring <span class="already-tag">✓ done</span></div>
+    </div>
+    <p style="font-size:12px; color:#64748b; margin-top:8px">All motion system values already implemented in App.tsx, PinGuard.tsx, and index.css. Will verify and standardize any outliers.</p>
+  </div>
+
+  <!-- ── 7. FILES TO TOUCH -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-num">7</div>
+    <div>
+      <h2>Files to Edit (UI layer only)</h2>
+      <div class="sec-sub">No backend files. No route changes. No API modifications.</div>
+    </div>
+  </div>
+  <div class="file-list">
+    <div class="file-item">
+      <div class="file-icon fi-css">📄</div>
+      <div>
+        <h4>client/src/index.css</h4>
+        <p>Enhanced glass tokens, upgraded .glass-card/.glass-panel, glass skeleton, improved app-bg gradient</p>
+        <span class="change-tag ct-ui">CSS only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/components/TopNav.tsx</h4>
+        <p>Heavier glass header, inset highlight, glass mobile drawer backdrop</p>
+        <span class="change-tag ct-ui">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/components/BottomNav.tsx</h4>
+        <p>Glass bar instead of plain white border-top</p>
+        <span class="change-tag ct-ui">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/pages/Tables.tsx</h4>
+        <p>Glass table cards (free/running/billed), glass status bar, skeleton loader class</p>
+        <span class="change-tag ct-full">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/pages/Dashboard.tsx</h4>
+        <p>Glass stat cards, glass chart panels, glass section headers</p>
+        <span class="change-tag ct-full">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/pages/Settings.tsx</h4>
+        <p>Glass section panels, glass action cards, glass modals</p>
+        <span class="change-tag ct-full">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/pages/Admin.tsx</h4>
+        <p>Glass user list cards, glass tab panels, glass dialog</p>
+        <span class="change-tag ct-full">JSX className only</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/pages/Orders.tsx</h4>
+        <p>Already partially glass — standardize to Option B depth + skeleton</p>
+        <span class="change-tag ct-ui">Minor polish</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-pos">⚛</div>
+      <div>
+        <h4>client/src/pages/POS.tsx</h4>
+        <p>Top bar + cart panel glass treatment ONLY. Zero logic/handler changes.</p>
+        <span class="change-tag ct-part">Partial — header/cart</span>
+      </div>
+    </div>
+    <div class="file-item">
+      <div class="file-icon fi-tsx">⚛</div>
+      <div>
+        <h4>client/src/components/ui/dialog.tsx</h4>
+        <p>Override DialogOverlay + DialogContent for glass treatment globally</p>
+        <span class="change-tag ct-ui">className only</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 32px; padding: 20px; border-radius: 14px; background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2);">
+    <p style="font-size: 13px; color: #d1fae5; font-weight: 600; margin-bottom: 6px;">✅ What stays completely untouched</p>
+    <p style="font-size: 12px; color: #6ee7b7; line-height: 1.6;">server/ · shared/schema.ts · All API routes · All hooks (useAuth, useRole, usePermission, useLiveOrders) · All mutations · All query keys · Routing (wouter) · Authentication flow · PinGuard logic · RoleSwitcher logic · All business rules</p>
+  </div>
+
+</div>

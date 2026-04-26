@@ -18,7 +18,15 @@ export function BottomNav() {
   const [location, navigate] = useLocation();
 
   return (
-    <nav className="md:hidden shrink-0 bg-white border-t border-gray-200 safe-bottom">
+    <nav className="md:hidden shrink-0 safe-bottom"
+      style={{
+        background: "rgba(255,255,255,0.82)",
+        backdropFilter: "blur(22px) saturate(1.8)",
+        WebkitBackdropFilter: "blur(22px) saturate(1.8)",
+        borderTop: "1px solid rgba(255,255,255,0.65)",
+        boxShadow: "0 -4px 24px rgba(0,0,0,0.06), 0 -1px 0 rgba(255,255,255,0.9) inset",
+      }}
+    >
       <div className="flex items-end h-[56px] pb-1">
         {NAV_ITEMS.map(item => {
           const Icon     = item.icon;
@@ -34,9 +42,11 @@ export function BottomNav() {
               {isAccent ? (
                 /* New Order — raised green circle */
                 <div className="flex flex-col items-center -mt-5">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-md transition-transform active:scale-95 ${
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform active:scale-95 ${
                     isActive ? "bg-emerald-600" : "bg-emerald-500"
-                  }`}>
+                  }`}
+                    style={{ boxShadow: "0 6px 20px rgba(16,185,129,0.42), 0 2px 8px rgba(0,0,0,0.10)" }}
+                  >
                     <Icon className="w-6 h-6 text-white" />
                   </div>
                   <span className={`text-[9px] font-semibold mt-0.5 ${

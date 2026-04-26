@@ -291,7 +291,7 @@ function ItemSheet({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/40" />
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
@@ -412,7 +412,7 @@ function TableActionSheet({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/40" />
       <motion.div
         initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
@@ -489,7 +489,7 @@ function PaymentSheet({
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/50" />
       <motion.div
         initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
@@ -1453,7 +1453,7 @@ export default function MobilePOS() {
 
       {/* ── Bottom Navigation ── */}
       <nav className="shrink-0 absolute bottom-0 left-0 right-0
-                      bg-white/95 backdrop-blur-xl border-t border-gray-100 px-2 pt-1 pb-2 z-10">
+                      bg-white/95 border-t border-gray-100 px-2 pt-1 pb-2 z-10">
         <div className="grid grid-cols-4 gap-0.5">
           {([
             { id: "tables", icon: LayoutGrid,   label: "Tables",  badge: 0 },

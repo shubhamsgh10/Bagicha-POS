@@ -65,7 +65,7 @@ export const PickupCard = memo(function PickupCard({
       animate={{ opacity: 1, y: 0,  scale: 1 }}
       exit={{    opacity: 0, scale: 0.93 }}
       transition={{ delay: index * 0.03, duration: 0.18, ease: "easeOut" }}
-      className={`relative backdrop-blur-sm border rounded-2xl shadow-sm p-3.5 ${cardBg}`}
+      className={`relative border rounded-2xl shadow-sm p-3.5 ${cardBg}`}
     >
       {/* ── Header ───────────────────────────────────────────────── */}
       {/* Row 1: order number + ping | clock + items count */}
