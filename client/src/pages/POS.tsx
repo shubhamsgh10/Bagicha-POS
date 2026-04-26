@@ -320,10 +320,28 @@ export default function POS() {
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
   const showKOTPreview = (order: any) => {
+    // Compute delta: only show items added since the last KOT print
+    const lastSnapshotItems: Array<{ itemId: number; quantity: number; size: string | null }> =
+      order.lastKotSnapshot?.items ?? [];
+    const lastMap = new Map<string, number>();
+    for (const s of lastSnapshotItems) {
+      lastMap.set(`${s.itemId}:${s.size ?? ''}`, s.quantity);
+    }
+    const deltaItems = cartItems
+      .map(i => {
+        const prevQty = lastMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
+        const dQty = i.quantity - prevQty;
+        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    // Fall back to full cart if delta is empty (shouldn't happen, but safe)
+    const items = deltaItems.length > 0
+      ? deltaItems
+      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null }));
     const lines = kotLines({
       orderRef: order.orderNumber ?? String(order.id),
       tableNumber: order.tableNumber ?? null,
-      items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null })),
+      items,
     });
     setPrintPreview({ title: 'KOT Preview', lines });
   };
