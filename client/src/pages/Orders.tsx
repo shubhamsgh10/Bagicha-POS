@@ -11,6 +11,7 @@ import { Plus, RefreshCw, ChevronDown, ChevronUp, User, Phone, ShoppingBag, Sear
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
+import { billLines } from "@/lib/receiptText";
 
 
 const fmt = (n: number) =>
@@ -47,6 +48,29 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
+  const showBillPreview = () => {
+    const lines = billLines({
+      orderNumber: order.orderNumber,
+      tableNumber: order.tableNumber ?? null,
+      customerName: order.customerName ?? null,
+      orderType: order.orderType,
+      totalAmount: parseFloat(order.totalAmount ?? '0'),
+      taxAmount: parseFloat(order.taxAmount ?? '0'),
+      discountAmount: parseFloat(order.discountAmount ?? '0'),
+      paymentMethod: order.paymentMethod ?? null,
+      billPrintCount: order.billPrintCount ?? 0,
+      createdAt: order.createdAt,
+      items: items.map((i: any) => ({
+        name: i.name,
+        quantity: i.quantity,
+        price: parseFloat(i.price ?? '0'),
+        size: i.size ?? null,
+        notes: i.specialInstructions ?? null,
+      })),
+    });
+    setPrintPreview({ title: 'Bill Preview', lines });
+  };
+
   const reprintBill = async () => {
     try {
       const res = await fetch('/api/print/bill', {
@@ -55,18 +79,13 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
         body: JSON.stringify({ orderId: order.id }),
         credentials: 'include',
       });
-      const data = await res.json();
       if (!res.ok) {
-        const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bill', orderId: order.id }), credentials: 'include' });
-        if (pv.ok) { const d = await pv.json(); setPrintPreview({ title: 'Bill Preview', lines: d.lines, width: d.width }); }
-        else toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
+        showBillPreview();
       } else {
         toast({ title: 'Bill sent to printer!' });
       }
     } catch {
-      const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bill', orderId: order.id }), credentials: 'include' }).catch(() => null);
-      if (pv?.ok) { const d = await pv.json(); setPrintPreview({ title: 'Bill Preview', lines: d.lines, width: d.width }); }
-      else toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
+      showBillPreview();
     }
   };
 
