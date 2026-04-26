@@ -285,7 +285,7 @@ export class DatabaseStorage implements IStorage {
 
   async createOrder(order: InsertOrder): Promise<Order> {
     const [newOrder] = await db.insert(orders).values({
-      ...order,
+      ...(order as any),
       updatedAt: new Date()
     }).returning();
     return newOrder;
@@ -293,7 +293,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order> {
     const [updated] = await db.update(orders).set({
-      ...order,
+      ...(order as any),
       updatedAt: new Date()
     }).where(eq(orders.id, id)).returning();
     return updated;

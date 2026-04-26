@@ -80,44 +80,6 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
-function printBill(order: any, items: any[] = [], settings?: any) {
-  const win = window.open("", "_blank", "width=450,height=700");
-  if (!win) return;
-  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
-  const discount = parseFloat(order.discountAmount || "0");
-  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
-  const address = settings?.address || "";
-  const phone = settings?.phone || "";
-  const gstNumber = settings?.gstNumber || "";
-  const footerNote = settings?.footerNote || "Thank you for dining with us!";
-  win.document.write(`<html><head><title>Bill - ${order.orderNumber}</title>
-    <style>body{font-family:monospace;font-size:13px;margin:0;padding:16px;}h2{text-align:center;font-size:20px;margin:0 0 4px;}.center{text-align:center;}.divider{border-top:1px dashed #000;margin:10px 0;}.row{display:flex;justify-content:space-between;padding:2px 0;}.bold{font-weight:bold;}.large{font-size:16px;}.footer{text-align:center;margin-top:16px;font-size:12px;}</style>
-    </head><body>
-    <h2>${restaurantName.toUpperCase()}</h2>
-    ${address ? `<div class="center" style="font-size:11px">${address}</div>` : ""}
-    ${phone ? `<div class="center" style="font-size:11px">Ph: ${phone}</div>` : ""}
-    ${gstNumber ? `<div class="center" style="font-size:11px">GSTIN: ${gstNumber}</div>` : ""}
-    <div style="margin-bottom:8px"></div>
-    <div class="divider"></div>
-    <div class="row"><span>Order #</span><span class="bold">${order.orderNumber}</span></div>
-    <div class="row"><span>Type</span><span>${order.orderType}</span></div>
-    ${order.tableNumber ? `<div class="row"><span>Table</span><span>${order.tableNumber}</span></div>` : ""}
-    ${order.customerName ? `<div class="row"><span>Customer</span><span>${order.customerName}</span></div>` : ""}
-    <div class="row"><span>Date</span><span>${new Date(order.createdAt || Date.now()).toLocaleString()}</span></div>
-    <div class="divider"></div>
-    <div class="bold" style="margin-bottom:6px">ITEMS</div>
-    ${items.length > 0 ? items.map((item: any) => `<div class="row"><span>${item.name || "Item"} × ${item.quantity}</span><span>₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</span></div>`).join("") : "<div>—</div>"}
-    <div class="divider"></div>
-    <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
-    ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
-    <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount || "0").toFixed(0)}</span></div>
-    <div class="divider"></div>
-    <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
-    <div class="row" style="margin-top:4px"><span>Payment</span><span>${order.paymentMethod || "—"}</span></div>
-    <div class="footer"><div class="divider">${footerNote}<br>Please visit again</div></div>
-    </body></html>`);
-  win.document.close(); win.focus(); win.print(); win.close();
-}
 
 function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetWindow?: Window | null) {
   const phone = order.customerPhone?.replace(/\D/g, "");
@@ -160,21 +122,7 @@ function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetW
   return true;
 }
 
-function printKOTSlip(items: any[], tableLabel: string | null) {
-  const win = window.open("", "_blank", "width=300,height=400");
-  if (!win) return;
-  win.document.write(`<html><head><title>KOT</title>
-    <style>body{font-family:monospace;font-size:14px;padding:12px;}h3{text-align:center;margin:0 0 8px;}.row{display:flex;justify-content:space-between;}.divider{border-top:1px dashed #000;margin:8px 0;}.bold{font-weight:bold;}</style>
-    </head><body>
-    <h3>KITCHEN ORDER TICKET</h3>
-    ${tableLabel ? `<div class="row"><span>Table:</span><span class="bold">${tableLabel}</span></div>` : ""}
-    <div class="row"><span>Time:</span><span>${new Date().toLocaleTimeString()}</span></div>
-    <div class="divider"></div>
-    ${items.map(i => `<div class="row bold"><span>${i.name}${i.size ? ` (${i.size})` : ""}</span><span>× ${i.quantity}</span></div>${i.addons?.length ? i.addons.map((a: any) => `<div style="font-size:11px;padding-left:8px">+ ${a.name}</div>`).join("") : ""}${i.variants && Object.keys(i.variants).length ? Object.entries(i.variants).map(([g,v]: any) => `<div style="font-size:11px;padding-left:8px;color:#444">▸ ${g}: ${v}</div>`).join("") : ""}${i.notes ? `<div style="font-size:11px;padding-left:8px;font-style:italic;color:#555">📝 ${i.notes}</div>` : ""}`).join("")}
-    <div class="divider"></div>
-    </body></html>`);
-  win.document.close(); win.focus(); win.print(); win.close();
-}
+
 
 export default function POS() {
   const [, navigate] = useLocation();
@@ -367,6 +315,47 @@ export default function POS() {
   };
 
   const { toast } = useToast();
+
+  const triggerKOTPrint = async (orderId: number) => {
+    try {
+      const res = await fetch('/api/print/kot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: 'KOT print failed', description: data.message, variant: 'destructive' });
+      } else if (data.printed === false) {
+        toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
+      } else {
+        toast({ title: 'KOT sent to printer!' });
+      }
+    } catch {
+      toast({ title: 'KOT print failed', description: 'Could not reach printer', variant: 'destructive' });
+    }
+  };
+
+  const triggerBillPrint = async (orderId: number) => {
+    try {
+      const res = await fetch('/api/print/bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: 'Bill print failed', description: data.message, variant: 'destructive' });
+      } else {
+        toast({ title: 'Bill sent to printer!' });
+      }
+    } catch {
+      toast({ title: 'Bill print failed', description: 'Could not reach printer', variant: 'destructive' });
+    }
+  };
+
   const form = useForm<OrderForm>({
     resolver: zodResolver(orderSchema),
     defaultValues: {
@@ -458,14 +447,14 @@ export default function POS() {
         toast({ title: "KOT sent!" });
         setActiveOrderId(order.id);
         setCartLoaded(false);
-        printKOTSlip(cartItems, tableLabel);
+        triggerKOTPrint(order.id);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
-        printBill(order, [], settings);
+        triggerBillPrint(order.id);
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
@@ -501,14 +490,14 @@ export default function POS() {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
         toast({ title: "KOT sent!" });
-        printKOTSlip(cartItems, tableLabel);
+        triggerKOTPrint(vars.orderId);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
-        printBill(order, existingOrder?.items || [], settings);
+        triggerBillPrint(vars.orderId);
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
@@ -537,7 +526,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
       const billOrder = vars.order || settled;
-      printBill(billOrder, existingOrder?.items || [], settings);
+      if (vars.orderId) triggerBillPrint(vars.orderId);
       toast({ title: "Payment complete!", description: "Bill printed" });
       navigate("/tables");
     },
@@ -992,7 +981,14 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
-      <div className="shrink-0 bg-white border-b shadow-sm relative z-20">
+      <div className="shrink-0 relative z-20"
+        style={{
+          background: "rgba(255,255,255,0.88)",
+          backdropFilter: "blur(20px) saturate(1.8)",
+          WebkitBackdropFilter: "blur(20px) saturate(1.8)",
+          borderBottom: "1px solid rgba(255,255,255,0.65)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.95) inset, 0 2px 16px rgba(0,0,0,0.05)",
+        }}>
         <div className="flex items-center gap-2 px-3 py-2">
 
           {/* ── LEFT FIXED: Back, mode badge, role switcher, new order ── */}
@@ -1435,10 +1431,12 @@ export default function POS() {
         </div>
 
         {/* ── CENTER: Items grid ──────────────────────────────────────────────── */}
-        <div className={`flex-1 flex-col overflow-hidden bg-gray-100 ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}>
+        <div className={`flex-1 flex-col overflow-hidden ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}
+          style={{ background: "rgba(241,245,249,0.70)" }}>
 
           {/* Mobile category pills — horizontal scroll, mobile only */}
-          <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 bg-white border-b scrollbar-hide shrink-0">
+          <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 scrollbar-hide shrink-0"
+            style={{ background: "rgba(255,255,255,0.75)", borderBottom: "1px solid rgba(255,255,255,0.60)" }}>
             <button
               onClick={() => setSelectedCategory("all")}
               className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
@@ -1512,10 +1510,17 @@ export default function POS() {
         </div>
 
         {/* ── RIGHT: Billing panel — full width on mobile when cart tab active ── */}
-        <div className={`md:w-[290px] w-full shrink-0 bg-white border-l flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}>
+        <div className={`md:w-[290px] w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
+          style={{
+            background: "rgba(255,255,255,0.80)",
+            backdropFilter: "blur(18px) saturate(1.8)",
+            WebkitBackdropFilter: "blur(18px) saturate(1.8)",
+            borderLeft: "1px solid rgba(255,255,255,0.65)",
+          }}>
 
           {/* Panel header */}
-          <div className="px-3 py-2 border-b bg-gray-50 shrink-0 flex items-center justify-between">
+          <div className="px-3 py-2 shrink-0 flex items-center justify-between"
+            style={{ borderBottom: "1px solid rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.60)" }}>
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-3.5 h-3.5 text-gray-500" />
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Order</span>
@@ -1537,7 +1542,8 @@ export default function POS() {
 
           {/* Column headers */}
           {hasItems && (
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 px-3 py-1 border-b bg-gray-50 shrink-0">
+            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 px-3 py-1 shrink-0"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.55)" }}>
               <span className="text-[10px] font-semibold text-gray-500 uppercase">Item</span>
               <span className="text-[10px] font-semibold text-gray-500 uppercase w-14 text-center">Qty</span>
               <span className="text-[10px] font-semibold text-gray-500 uppercase w-10 text-right">Rate</span>

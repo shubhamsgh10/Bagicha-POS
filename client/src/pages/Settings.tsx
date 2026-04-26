@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
@@ -9,8 +9,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Loader2, Store, Receipt, ShieldCheck, RefreshCw, Database,
   Trash2, Archive, FileText, Monitor, KeyRound, X, AlertTriangle,
-  CheckCircle2, ChevronRight, Settings2,
+  CheckCircle2, ChevronRight, Settings2, Upload, FileUp, Download,
+  Printer,
 } from "lucide-react";
+import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,12 +33,14 @@ type ModalId =
   | "restaurant-config"
   | "reset-bill-no"
   | "reset-sync-code"
-  | "database-migration"
+  | "sync-schema"
+  | "data-import"
   | "remove-orders"
   | "remove-backup"
   | "logs"
   | "check-machine"
   | "generate-code"
+  | "print-settings"
   | null;
 
 // ── Action card definitions ───────────────────────────────────────────────────
@@ -68,10 +72,16 @@ const ACTION_CARDS: {
     icon: RefreshCw,
   },
   {
-    id: "database-migration",
-    label: "Database",
-    sublabel: "Migration",
+    id: "sync-schema",
+    label: "Sync",
+    sublabel: "Schema",
     icon: Database,
+  },
+  {
+    id: "data-import",
+    label: "Import",
+    sublabel: "Data",
+    icon: Upload,
   },
   {
     id: "remove-orders",
@@ -104,6 +114,12 @@ const ACTION_CARDS: {
     label: "Generate",
     sublabel: "Code",
     icon: KeyRound,
+  },
+  {
+    id: "print-settings" as const,
+    label: "Print",
+    sublabel: "Settings",
+    icon: Printer,
   },
 ];
 
@@ -171,7 +187,7 @@ function Modal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
         onClick={onClose}
       >
         <motion.div
@@ -180,7 +196,14 @@ function Modal({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 12 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+          className="rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+          style={{
+            background: "rgba(255,255,255,0.86)",
+            backdropFilter: "blur(24px) saturate(1.9)",
+            WebkitBackdropFilter: "blur(24px) saturate(1.9)",
+            border: "1px solid rgba(255,255,255,0.72)",
+            boxShadow: "0 8px 40px rgba(100,110,160,0.16), 0 1px 0 rgba(255,255,255,0.95) inset",
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -452,6 +475,328 @@ function GenerateCodePanel() {
   );
 }
 
+// ── Logs panel ────────────────────────────────────────────────────────────────
+
+function LogsPanel() {
+  const [logs, setLogs] = useState<{ ts: string; source: string; message: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/logs", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      setLogs(data);
+      setFetched(true);
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (err: any) {
+      setLogs([{ ts: new Date().toISOString(), source: "error", message: `Failed to fetch logs: ${err.message}` }]);
+      setFetched(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-fetch on mount
+  useEffect(() => { fetchLogs(); }, []);
+
+  const sourceColor = (source: string) => {
+    if (source === "error") return "text-red-400";
+    if (source === "ws")    return "text-yellow-400";
+    return "text-green-400";
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-gray-900 font-mono text-[11px] rounded-xl p-4 min-h-[180px] max-h-[320px] overflow-y-auto space-y-0.5">
+        {!fetched && (
+          <p className="text-gray-500 flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading logs…
+          </p>
+        )}
+        {fetched && logs.length === 0 && (
+          <p className="text-gray-500">No log entries yet.</p>
+        )}
+        {logs.map((l, i) => (
+          <p key={i} className={sourceColor(l.source)}>
+            <span className="text-gray-500">[{l.ts.replace("T", " ").slice(0, 19)}]</span>
+            {" "}<span className="text-gray-400">[{l.source}]</span>
+            {" "}{l.message}
+          </p>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+      <button
+        onClick={fetchLogs}
+        disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-60"
+      >
+        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+        {loading ? "Refreshing…" : "Refresh Logs"}
+      </button>
+    </div>
+  );
+}
+
+// ── Data Import panel ─────────────────────────────────────────────────────────
+
+type ImportType = "menu" | "inventory" | "customers";
+
+const TEMPLATES: Record<ImportType, { headers: string[]; sample: string[][] }> = {
+  menu: {
+    headers: ["Name", "Category", "Price", "Description"],
+    sample: [
+      ["Butter Chicken", "Main Course", "320", "Creamy tomato gravy with tender chicken"],
+      ["Paneer Tikka", "Starters", "280", "Grilled cottage cheese with spices"],
+      ["Veg Fried Rice", "Rice & Noodles", "180", ""],
+    ],
+  },
+  inventory: {
+    headers: ["Item Name", "Current Stock", "Min Stock", "Unit"],
+    sample: [
+      ["Rice", "50", "10", "kg"],
+      ["Tomatoes", "20", "5", "kg"],
+      ["Cooking Oil", "15", "3", "litre"],
+    ],
+  },
+  customers: {
+    headers: ["Name", "Phone", "Email", "Address", "Locality", "Date of Birth", "Tags", "Remark"],
+    sample: [
+      ["Rahul Sharma", "9876543210", "rahul@email.com", "123 MG Road", "Koramangala", "1990-05-15", "VIP", "Prefers window seat"],
+      ["Priya Patel", "9812345678", "", "45 Park Street", "Indiranagar", "", "Regular", ""],
+      ["Amit Kumar", "9900112233", "amit@gmail.com", "", "", "", "", ""],
+    ],
+  },
+};
+
+function parseCSV(text: string): string[][] {
+  return text
+    .split(/\r?\n/)
+    .filter(l => l.trim())
+    .map(line =>
+      line.split(",").map(cell => cell.trim().replace(/^["']|["']$/g, ""))
+    );
+}
+
+function toCSVBlob(headers: string[], rows: string[][]): Blob {
+  const lines = [headers.join(","), ...rows.map(r => r.join(","))];
+  return new Blob([lines.join("\n")], { type: "text/csv" });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function DataImportPanel({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast();
+  const [type, setType] = useState<ImportType>("menu");
+  const [rows, setRows] = useState<string[][] | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<{ imported: number; errors: string[] } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const tpl = TEMPLATES[type];
+
+  const handleFile = (file: File) => {
+    setResult(null);
+    file.text().then(text => {
+      const all = parseCSV(text);
+      // Skip header row if it matches expected headers (case-insensitive check on first cell)
+      const firstCell = all[0]?.[0]?.toLowerCase() ?? "";
+      const dataRows = (firstCell === tpl.headers[0].toLowerCase() || isNaN(Number(firstCell)))
+        ? all.slice(1)
+        : all;
+      setRows(dataRows.filter(r => r.some(c => c)));
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleImport = async () => {
+    if (!rows?.length) return;
+    setImporting(true);
+    try {
+      const payload =
+        type === "menu"
+          ? rows.map(r => ({ name: r[0], category: r[1], price: r[2], description: r[3] }))
+          : type === "inventory"
+          ? rows.map(r => ({ itemName: r[0], currentStock: r[1], minStock: r[2], unit: r[3] }))
+          : rows.map(r => ({ name: r[0], phone: r[1], email: r[2], address: r[3], locality: r[4], dob: r[5], tags: r[6], remark: r[7] }));
+
+      const res = await fetch(`/api/admin/import/${type}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ rows: payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Import failed");
+      setResult(data);
+      if (data.imported > 0) {
+        queryClient.invalidateQueries({ queryKey: ["/api/menu-items"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/inventory"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/customers"] });
+      }
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const inputCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 w-full bg-gray-50 outline-none";
+
+  return (
+    <div className="space-y-4">
+      {/* Type selector */}
+      <div className="flex gap-2">
+        {(["menu", "inventory", "customers"] as ImportType[]).map(t => (
+          <button
+            key={t}
+            onClick={() => { setType(t); setRows(null); setResult(null); }}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-all ${
+              type === t
+                ? "bg-emerald-500 text-white border-emerald-500"
+                : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300"
+            }`}
+          >
+            {t === "menu" ? "Menu Items" : t === "inventory" ? "Inventory" : "Customers"}
+          </button>
+        ))}
+      </div>
+
+      {/* Template info */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-1.5">
+        <p className="text-xs font-semibold text-blue-700">
+          Required columns: {tpl.headers.join(", ")}
+        </p>
+        <p className="text-xs text-blue-500">
+          {type === "menu"
+            ? "Categories are created automatically if they don't exist."
+            : type === "customers"
+            ? "Phone is used as the unique key. Duplicate phone numbers are skipped. Tags can be semicolon-separated."
+            : "Upload a CSV file with these columns."}
+        </p>
+        <button
+          onClick={() => downloadBlob(toCSVBlob(tpl.headers, tpl.sample), `${type}-template.csv`)}
+          className="flex items-center gap-1.5 text-xs text-blue-600 font-medium hover:underline mt-1"
+        >
+          <Download className="w-3 h-3" /> Download sample template
+        </button>
+      </div>
+
+      {/* Upload area */}
+      {!rows && (
+        <label
+          className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl py-8 cursor-pointer transition-colors ${
+            dragOver ? "border-emerald-400 bg-emerald-50" : "border-gray-200 hover:border-emerald-300 hover:bg-gray-50"
+          }`}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          <FileUp className="w-7 h-7 text-gray-400" />
+          <p className="text-sm text-gray-500">Drop a CSV file here, or click to browse</p>
+          <input
+            type="file" accept=".csv,text/csv" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+          />
+        </label>
+      )}
+
+      {/* Preview */}
+      {rows && !result && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-600">{rows.length} rows detected — preview (first 5)</p>
+            <button onClick={() => setRows(null)} className="text-xs text-gray-400 hover:text-gray-600">Change file</button>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-gray-100">
+            <table className="w-full text-[11px]">
+              <thead className="bg-gray-50">
+                <tr>
+                  {tpl.headers.map(h => (
+                    <th key={h} className="px-2 py-1.5 text-left font-semibold text-gray-500 border-b border-gray-100">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 5).map((r, i) => (
+                  <tr key={i} className="border-b border-gray-50 last:border-0">
+                    {tpl.headers.map((_, ci) => (
+                      <td key={ci} className="px-2 py-1.5 text-gray-700 max-w-[120px] truncate">{r[ci] || "—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {rows.length > 5 && (
+            <p className="text-[10px] text-gray-400 text-center">+{rows.length - 5} more rows</p>
+          )}
+          <button
+            onClick={handleImport}
+            disabled={importing}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-60"
+          >
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {importing ? "Importing..." : `Import ${rows.length} rows`}
+          </button>
+        </div>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div className="space-y-3">
+          <div className={`flex items-start gap-3 p-4 rounded-xl border ${result.imported > 0 ? "bg-emerald-50 border-emerald-100" : "bg-red-50 border-red-100"}`}>
+            <CheckCircle2 className={`w-5 h-5 shrink-0 mt-0.5 ${result.imported > 0 ? "text-emerald-500" : "text-red-400"}`} />
+            <div>
+              <p className="text-sm font-semibold text-gray-800">
+                {result.imported} {type === "menu" ? "menu items" : type === "inventory" ? "inventory items" : "customers"} imported successfully
+              </p>
+              {result.errors.length > 0 && (
+                <p className="text-xs text-red-500 mt-1">{result.errors.length} rows skipped</p>
+              )}
+            </div>
+          </div>
+          {result.errors.length > 0 && (
+            <div className="bg-gray-50 rounded-xl p-3 max-h-32 overflow-y-auto space-y-1">
+              {result.errors.map((e, i) => (
+                <p key={i} className="text-[11px] text-red-500 font-mono">{e}</p>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setRows(null); setResult(null); }}
+              className="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-200 hover:bg-gray-50 transition-colors"
+            >
+              Import more
+            </button>
+            <button
+              onClick={onClose}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Settings page ────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -529,7 +874,7 @@ export default function Settings() {
         <div className="p-6 max-w-5xl mx-auto">
           <div className="grid grid-cols-3 md:grid-cols-5 gap-4 mt-8">
             {Array.from({ length: 9 }).map((_, i) => (
-              <div key={i} className="h-24 rounded-xl bg-gray-100 animate-pulse" />
+              <div key={i} className="h-24 skeleton-glass" />
             ))}
           </div>
         </div>
@@ -538,7 +883,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-white">
+    <div className="min-h-0 flex-1 overflow-y-auto" style={{ background: "transparent" }}>
       <div className="p-6 max-w-5xl mx-auto">
 
         {/* Page header */}
@@ -561,16 +906,19 @@ export default function Settings() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.15 }}
+                whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => { setActiveModal(card.id); setConfirmStep(false); }}
-                className={`
-                  flex flex-col items-center justify-center gap-2
-                  rounded-xl p-4 min-h-[100px] text-center
-                  border transition-all duration-150 select-none cursor-pointer
-                  bg-[#f5f6f7] border-[#e8e9eb]
-                  hover:bg-white hover:border-gray-300 hover:shadow-md
-                  active:scale-[0.97]
-                  ${card.destructive ? "hover:border-red-200 hover:bg-red-50/50" : ""}
-                `}
+                className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200"
+                style={{
+                  background: card.destructive ? "rgba(254,242,242,0.60)" : "rgba(255,255,255,0.52)",
+                  backdropFilter: "blur(16px) saturate(1.8)",
+                  WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+                  border: card.destructive ? "1px solid rgba(252,165,165,0.45)" : "1px solid rgba(255,255,255,0.72)",
+                  boxShadow: card.destructive
+                    ? "0 4px 16px rgba(239,68,68,0.08), 0 1px 0 rgba(255,255,255,0.9) inset"
+                    : "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+                }}
               >
                 <Icon className={`w-6 h-6 ${card.destructive ? "text-red-400" : "text-gray-500"}`} />
                 <div>
@@ -655,23 +1003,30 @@ export default function Settings() {
         </Modal>
       )}
 
-      {/* Database Migration */}
-      {activeModal === "database-migration" && (
-        <Modal title="Database Migration" onClose={closeModal}>
+      {/* Sync Schema (developer tool) */}
+      {activeModal === "sync-schema" && (
+        <Modal title="Sync Database Schema" onClose={closeModal}>
           <div className="space-y-4">
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700">
-              Running a migration will apply any pending schema changes to the database.
-              This is safe and non-destructive.
+              Compares the current schema definition with the live database and applies any pending structural changes (new tables, new columns). Safe and non-destructive — no data is deleted.
             </div>
+            <p className="text-xs text-gray-400">Use this after a software update that adds new features requiring schema changes.</p>
             <button
-              onClick={() => handleDestructiveAction("/api/admin/migrate", "POST", "Database migration completed")}
+              onClick={() => handleDestructiveAction("/api/admin/migrate", "POST", "Schema synced successfully")}
               disabled={actionLoading}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-500 hover:bg-purple-600 transition-colors disabled:opacity-60"
             >
               {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-              {actionLoading ? "Running Migration..." : "Run Migration"}
+              {actionLoading ? "Syncing..." : "Sync Schema"}
             </button>
           </div>
+        </Modal>
+      )}
+
+      {/* Data Import */}
+      {activeModal === "data-import" && (
+        <Modal title="Import Data" onClose={closeModal}>
+          <DataImportPanel onClose={closeModal} />
         </Modal>
       )}
 
@@ -736,24 +1091,7 @@ export default function Settings() {
       {/* Logs */}
       {activeModal === "logs" && (
         <Modal title="System Logs" onClose={closeModal}>
-          <div className="space-y-3">
-            <div className="bg-gray-900 text-green-400 font-mono text-[11px] rounded-xl p-4 min-h-[160px] max-h-[300px] overflow-y-auto space-y-1">
-              <p>[{new Date().toISOString()}] System started</p>
-              <p>[{new Date().toISOString()}] Settings loaded from restaurant-settings.json</p>
-              <p>[{new Date().toISOString()}] WebSocket server initialized</p>
-              <p>[{new Date().toISOString()}] Database connection established</p>
-              <p>[{new Date().toISOString()}] Auth middleware active</p>
-              <p className="text-gray-500">— End of log —</p>
-            </div>
-            <button
-              onClick={() => handleDestructiveAction("/api/admin/logs", "POST", "Log request sent")}
-              disabled={actionLoading}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-60"
-            >
-              {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-              Fetch Server Logs
-            </button>
-          </div>
+          <LogsPanel />
         </Modal>
       )}
 
@@ -769,6 +1107,14 @@ export default function Settings() {
         <Modal title="Generate Pairing Code" onClose={closeModal}>
           <GenerateCodePanel />
         </Modal>
+      )}
+
+      {/* Print Settings */}
+      {activeModal === "print-settings" && (
+        <PrintSettingsPanel
+          currentSettings={formData}
+          onClose={closeModal}
+        />
       )}
     </div>
   );
