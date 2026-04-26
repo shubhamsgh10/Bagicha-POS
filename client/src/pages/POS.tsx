@@ -23,6 +23,7 @@ import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
+import { kotLines, billLines } from "@/lib/receiptText";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -318,22 +319,40 @@ export default function POS() {
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
-  const showPreview = async (type: 'kot' | 'bill', orderId: number, reprint = false) => {
-    try {
-      const res = await fetch('/api/print/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, orderId, reprint }),
-        credentials: 'include',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPrintPreview({ title: type === 'kot' ? 'KOT Preview' : 'Bill Preview', lines: data.lines, width: data.width });
-      }
-    } catch { /* silent */ }
+  const showKOTPreview = (order: any) => {
+    const lines = kotLines({
+      orderRef: order.orderNumber ?? String(order.id),
+      tableNumber: order.tableNumber ?? null,
+      items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null })),
+    });
+    setPrintPreview({ title: 'KOT Preview', lines });
   };
 
-  const triggerKOTPrint = async (orderId: number) => {
+  const showBillPreview = (order: any) => {
+    const s = settings as any;
+    const lines = billLines({
+      orderNumber: order.orderNumber ?? String(order.id),
+      tableNumber: order.tableNumber ?? null,
+      customerName: order.customerName ?? null,
+      orderType: order.orderType,
+      totalAmount: parseFloat(order.totalAmount ?? '0'),
+      taxAmount: parseFloat(order.taxAmount ?? '0'),
+      discountAmount: parseFloat(order.discountAmount ?? '0'),
+      paymentMethod: order.paymentMethod ?? null,
+      createdAt: order.createdAt ?? new Date(),
+      items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null })),
+      restaurantName: s?.restaurantName,
+      address: s?.address,
+      phone: s?.phone,
+      gstNumber: s?.gstNumber,
+      currencySymbol: s?.currencySymbol,
+      taxRate: s?.taxRate,
+      footerNote: s?.footerNote,
+    });
+    setPrintPreview({ title: 'Bill Preview', lines });
+  };
+
+  const triggerKOTPrint = async (orderId: number, order?: any) => {
     try {
       const res = await fetch('/api/print/kot', {
         method: 'POST',
@@ -343,18 +362,18 @@ export default function POS() {
       });
       const data = await res.json();
       if (!res.ok) {
-        await showPreview('kot', orderId);
+        if (order) showKOTPreview(order);
       } else if (data.printed === false) {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
       } else {
         toast({ title: 'KOT sent to printer!' });
       }
     } catch {
-      await showPreview('kot', orderId);
+      if (order) showKOTPreview(order);
     }
   };
 
-  const triggerBillPrint = async (orderId: number) => {
+  const triggerBillPrint = async (orderId: number, order?: any) => {
     try {
       const res = await fetch('/api/print/bill', {
         method: 'POST',
@@ -364,12 +383,12 @@ export default function POS() {
       });
       const data = await res.json();
       if (!res.ok) {
-        await showPreview('bill', orderId);
+        if (order) showBillPreview(order);
       } else {
         toast({ title: 'Bill sent to printer!' });
       }
     } catch {
-      await showPreview('bill', orderId);
+      if (order) showBillPreview(order);
     }
   };
 
@@ -464,14 +483,14 @@ export default function POS() {
         toast({ title: "KOT sent!" });
         setActiveOrderId(order.id);
         setCartLoaded(false);
-        triggerKOTPrint(order.id);
+        triggerKOTPrint(order.id, order);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
-        triggerBillPrint(order.id);
+        triggerBillPrint(order.id, order);
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
@@ -507,14 +526,14 @@ export default function POS() {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
         toast({ title: "KOT sent!" });
-        triggerKOTPrint(vars.orderId);
+        triggerKOTPrint(vars.orderId, order);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
-        triggerBillPrint(vars.orderId);
+        triggerBillPrint(vars.orderId, order);
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "save-ebill") {
@@ -543,7 +562,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
       const billOrder = vars.order || settled;
-      if (vars.orderId) triggerBillPrint(vars.orderId);
+      if (vars.orderId) triggerBillPrint(vars.orderId, billOrder);
       toast({ title: "Payment complete!", description: "Bill printed" });
       navigate("/tables");
     },
