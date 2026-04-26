@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, RefreshCw, ChevronDown, ChevronUp, User, Phone, ShoppingBag, Search, X, Printer } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 
 
 const fmt = (n: number) =>
@@ -44,6 +45,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
 
   const items: any[] = detail?.items || [];
   const { toast } = useToast();
+  const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
   const reprintBill = async () => {
     try {
@@ -55,12 +57,16 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
+        const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bill', orderId: order.id }), credentials: 'include' });
+        if (pv.ok) { const d = await pv.json(); setPrintPreview({ title: 'Bill Preview', lines: d.lines, width: d.width }); }
+        else toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
       } else {
         toast({ title: 'Bill sent to printer!' });
       }
     } catch {
-      toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
+      const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bill', orderId: order.id }), credentials: 'include' }).catch(() => null);
+      if (pv?.ok) { const d = await pv.json(); setPrintPreview({ title: 'Bill Preview', lines: d.lines, width: d.width }); }
+      else toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
     }
   };
 
@@ -257,6 +263,10 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
             <Printer className="w-3 h-3" /> Reprint Bill
           </button>
         </div>
+      )}
+
+      {printPreview && (
+        <PrintPreviewModal preview={printPreview} onClose={() => setPrintPreview(null)} />
       )}
     </motion.div>
   );

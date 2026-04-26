@@ -50,11 +50,14 @@ async function apiFetch<T>(url: string): Promise<T> {
   return res.json();
 }
 
+// ── Module-level cache — survives unmount/remount ─────────────────────────────
+let _tablesCache: EnrichedTable[] | null = null;
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useLiveTables() {
-  const [tables, setTables] = useState<EnrichedTable[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [tables, setTables] = useState<EnrichedTable[]>(_tablesCache ?? []);
+  const [isLoading, setIsLoading] = useState(_tablesCache === null);
   const { lastMessage, connectionStatus } = useWebSocket("/ws");
 
   // Prevents state updates after component unmount
@@ -82,6 +85,7 @@ export function useLiveTables() {
       );
 
       if (mountedRef.current) {
+        _tablesCache = enriched;
         setTables(enriched);
         setIsLoading(false);
       }

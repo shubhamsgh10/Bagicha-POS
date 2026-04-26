@@ -8,6 +8,26 @@ import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
+// ── In-memory log ring buffer (last 200 entries) ──────────────────────────────
+const LOG_BUFFER: { ts: string; source: string; message: string }[] = [];
+const MAX_LOG_ENTRIES = 200;
+
+function pushLog(source: string, message: string) {
+  LOG_BUFFER.push({ ts: new Date().toISOString(), source, message });
+  if (LOG_BUFFER.length > MAX_LOG_ENTRIES) LOG_BUFFER.shift();
+}
+
+export function getLogBuffer() {
+  return [...LOG_BUFFER];
+}
+
+// Capture console.error into the buffer as well
+const _origError = console.error.bind(console);
+console.error = (...args: any[]) => {
+  _origError(...args);
+  pushLog("error", args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
+};
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -17,6 +37,7 @@ export function log(message: string, source = "express") {
   });
 
   console.log(`${formattedTime} [${source}] ${message}`);
+  pushLog(source, message);
 }
 
 export async function setupVite(app: Express, server: Server) {

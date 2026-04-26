@@ -5,9 +5,9 @@
   "sendDelayMs": 3000,
   "watiApiKey": "",
   "watiEndpoint": "",
+  "metaPhoneNumberId": "3171981639640466",
+  "metaAccessToken": "502f249fff8fa63bce7dc489de00fd22",
   "anthropicApiKey": "",
   "restaurantName": "Bagicha",
-  "trackingBaseUrl": "",
-  "metaPhoneNumberId": "3171981639640466",
-  "metaAccessToken": "502f249fff8fa63bce7dc489de00fd22"
+  "trackingBaseUrl": ""
 }

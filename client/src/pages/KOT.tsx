@@ -6,6 +6,7 @@ import { FileText, Printer, Clock, CheckCircle, ChefHat } from "lucide-react";
 import { KOT_STATUS } from "@/lib/constants";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 
 
 const statusAccent: Record<string, string> = {
@@ -22,6 +23,7 @@ const statusBadge: Record<string, string> = {
 
 export default function KOT() {
   const { toast } = useToast();
+  const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
   const reprintKOT = async (orderId: number) => {
     try {
@@ -33,12 +35,17 @@ export default function KOT() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
+        // Fall back to preview
+        const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'kot', orderId, reprint: true }), credentials: 'include' });
+        if (pv.ok) { const d = await pv.json(); setPrintPreview({ title: 'KOT Preview', lines: d.lines, width: d.width }); }
+        else toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
       } else {
         toast({ title: 'KOT sent to printer!' });
       }
     } catch {
-      toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
+      const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'kot', orderId, reprint: true }), credentials: 'include' }).catch(() => null);
+      if (pv?.ok) { const d = await pv.json(); setPrintPreview({ title: 'KOT Preview', lines: d.lines, width: d.width }); }
+      else toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
     }
   };
 
@@ -241,6 +248,10 @@ export default function KOT() {
           </div>
         )}
       </main>
+
+      {printPreview && (
+        <PrintPreviewModal preview={printPreview} onClose={() => setPrintPreview(null)} />
+      )}
     </div>
   );
 }

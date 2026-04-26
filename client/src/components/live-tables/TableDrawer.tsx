@@ -67,7 +67,7 @@ export function TableDrawer({ table, onClose }: TableDrawerProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40"
+            className="fixed inset-0 bg-black/20-[2px] z-40"
             onClick={onClose}
           />
 
@@ -78,7 +78,7 @@ export function TableDrawer({ table, onClose }: TableDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 280 }}
-            className="fixed right-0 top-0 h-full w-[390px] max-w-[95vw] flex flex-col bg-white/92 backdrop-blur-xl border-l border-white/40 shadow-2xl z-50"
+            className="fixed right-0 top-0 h-full w-[390px] max-w-[95vw] flex flex-col bg-white/92 border-l border-white/40 shadow-2xl z-50"
           >
             {/* ── Header ─────────────────────────────────────────────────── */}
             <div className="shrink-0 flex items-start justify-between px-5 py-4 border-b border-gray-100/80">
@@ -214,7 +214,7 @@ export function TableDrawer({ table, onClose }: TableDrawerProps) {
 
             {/* ── Footer — totals ─────────────────────────────────────────── */}
             {order && (
-              <div className="shrink-0 border-t border-gray-100 px-5 py-4 bg-white/70 backdrop-blur-sm space-y-1.5">
+              <div className="shrink-0 border-t border-gray-100 px-5 py-4 bg-white/70 space-y-1.5">
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>Subtotal</span>
                   <span>

@@ -146,11 +146,14 @@ function playBeep() {
   }
 }
 
+// ── Module-level cache — survives unmount/remount ─────────────────────────────
+let _tablesCache: LiveTableState[] | null = null;
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useLiveTableOperations() {
-  const [tables, setTables] = useState<LiveTableState[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [tables, setTables] = useState<LiveTableState[]>(_tablesCache ?? []);
+  const [isLoading, setIsLoading] = useState(_tablesCache === null);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   const { lastMessage, connectionStatus } = useWebSocket("/ws");
@@ -188,27 +191,29 @@ export function useLiveTableOperations() {
       if (mountedRef.current) {
         // Merge: carry over still-active isNew flags so TABLE_UPDATE
         // (which triggers loadAll) doesn't wipe highlights mid-animation.
-        setTables(prev => {
-          const prevMap = new Map(prev.map(t => [t.id, t]));
-          const now = Date.now();
-          return states.map(newState => {
-            const prevState = prevMap.get(newState.id);
-            if (!prevState?.hasNewItems) return newState;
-            // Re-apply by menuItemId+size (IDs are re-generated on every save)
-            const prevItemMap = new Map(
-              prevState.items.map(i => [`${i.menuItemId}|${i.size ?? ""}`, i])
-            );
-            const items = newState.items.map(item => {
-              const key = `${item.menuItemId}|${item.size ?? ""}`;
-              const prevItem = prevItemMap.get(key);
-              if (prevItem?.isNew && prevItem.newAt && now - prevItem.newAt < 6_000) {
-                return { ...item, isNew: true, newAt: prevItem.newAt };
-              }
-              return item;
-            });
-            return { ...newState, items, hasNewItems: items.some(i => i.isNew) };
+        // Use tablesRef (mirror of current state) so we can capture the result
+        // for the module-level cache without a functional setState.
+        const prevMap = new Map(tablesRef.current.map(t => [t.id, t]));
+        const now = Date.now();
+        const merged = states.map(newState => {
+          const prevState = prevMap.get(newState.id);
+          if (!prevState?.hasNewItems) return newState;
+          // Re-apply by menuItemId+size (IDs are re-generated on every save)
+          const prevItemMap = new Map(
+            prevState.items.map(i => [`${i.menuItemId}|${i.size ?? ""}`, i])
+          );
+          const items = newState.items.map(item => {
+            const key = `${item.menuItemId}|${item.size ?? ""}`;
+            const prevItem = prevItemMap.get(key);
+            if (prevItem?.isNew && prevItem.newAt && now - prevItem.newAt < 6_000) {
+              return { ...item, isNew: true, newAt: prevItem.newAt };
+            }
+            return item;
           });
+          return { ...newState, items, hasNewItems: items.some(i => i.isNew) };
         });
+        _tablesCache = merged;
+        setTables(merged);
         setIsLoading(false);
       }
     } catch {

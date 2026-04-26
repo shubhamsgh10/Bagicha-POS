@@ -72,11 +72,14 @@ function rawToOrder(raw: any): LiveOrder | null {
   };
 }
 
+// ── Module-level cache — survives unmount/remount ─────────────────────────────
+let _ordersCache: LiveOrder[] | null = null;
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useLiveOrders() {
-  const [orders, setOrders]   = useState<LiveOrder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [orders, setOrders]   = useState<LiveOrder[]>(_ordersCache ?? []);
+  const [isLoading, setIsLoading] = useState(_ordersCache === null);
 
   const { lastMessage, connectionStatus } = useWebSocket("/ws");
   const mountedRef  = useRef(true);
@@ -115,11 +118,11 @@ export function useLiveOrders() {
 
       if (mountedRef.current) {
         const valid = settled.filter((o): o is LiveOrder => o !== null);
-        setOrders(
-          valid.sort((a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          )
+        const sorted = valid.sort((a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
+        _ordersCache = sorted;
+        setOrders(sorted);
         setIsLoading(false);
       }
     } catch {

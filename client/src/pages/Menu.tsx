@@ -215,7 +215,7 @@ export default function Menu() {
 
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
         {/* Tab Bar */}
-        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-white/40 backdrop-blur-sm border border-white/30 shadow-sm w-fit">
+        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-white/40 border border-white/30 shadow-sm w-fit">
           <button
             onClick={() => switchTab("items")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
@@ -244,7 +244,7 @@ export default function Menu() {
             {isLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {[...Array(6)].map((_, i) => (
-                  <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 backdrop-blur-sm animate-pulse" />
+                  <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
                 ))}
               </div>
             ) : (
@@ -314,7 +314,7 @@ export default function Menu() {
                         transform: showFilters ? "translateY(0)" : "translateY(-6px)",
                         transition: "opacity 0.18s ease, transform 0.18s ease",
                       }}
-                      className="rounded-2xl bg-white/50 backdrop-blur-sm border border-white/40 shadow-sm p-4"
+                      className="rounded-2xl bg-white/50 border border-white/40 shadow-sm p-4"
                     >
                       <div className="flex flex-wrap gap-4 items-end">
                         {/* Search */}
@@ -402,7 +402,7 @@ export default function Menu() {
                       initial={{ opacity: 0, y: -8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
-                      className="mb-5 rounded-2xl bg-amber-50/80 backdrop-blur-sm border border-amber-200 shadow-sm p-4"
+                      className="mb-5 rounded-2xl bg-amber-50/80 border border-amber-200 shadow-sm p-4"
                     >
                       <div className="flex flex-wrap gap-3 items-center">
                         <span className="text-sm font-semibold text-amber-800">
@@ -509,7 +509,7 @@ export default function Menu() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.03, duration: 0.2 }}
                         onClick={bulkMode ? () => toggleSelect(item.id) : undefined}
-                        className={`rounded-2xl backdrop-blur-lg bg-white/40 border shadow-md p-4
+                        className={`rounded-2xl bg-white/40 border shadow-md p-4
                                    hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
                                    transition-all duration-200 ${
                           bulkMode ? "cursor-pointer" : ""
@@ -528,7 +528,7 @@ export default function Menu() {
                                   : <Square className="w-4 h-4 text-gray-300" />}
                               </div>
                             )}
-                            <span className="text-[11px] font-semibold bg-emerald-100/80 text-emerald-700 px-2.5 py-1 rounded-lg backdrop-blur-sm">
+                            <span className="text-[11px] font-semibold bg-emerald-100/80 text-emerald-700 px-2.5 py-1 rounded-lg">
                               {getCategoryName(item.categoryId)}
                             </span>
                           </div>
@@ -589,7 +589,7 @@ export default function Menu() {
                 </div>
 
                 {menuItems.length === 0 && (
-                  <div className="text-center py-16 rounded-2xl bg-white/30 backdrop-blur-sm border border-white/30 mt-4">
+                  <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30 mt-4">
                     {hasActiveFilters ? (
                       <>
                         <Search className="w-10 h-10 mx-auto mb-3 text-gray-300" />

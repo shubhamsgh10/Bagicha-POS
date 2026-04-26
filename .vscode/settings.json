@@ -1,0 +1,6 @@
+{
+    "claudeCode.useTerminal": true,
+    "claudeCode.useCtrlEnterToSend": true,
+    "claudeCode.initialPermissionMode": "bypassPermissions",
+    "claudeCode.allowDangerouslySkipPermissions": true
+}

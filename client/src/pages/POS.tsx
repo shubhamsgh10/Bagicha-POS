@@ -22,6 +22,7 @@ import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
+import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -315,6 +316,22 @@ export default function POS() {
   };
 
   const { toast } = useToast();
+  const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
+
+  const showPreview = async (type: 'kot' | 'bill', orderId: number, reprint = false) => {
+    try {
+      const res = await fetch('/api/print/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, orderId, reprint }),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPrintPreview({ title: type === 'kot' ? 'KOT Preview' : 'Bill Preview', lines: data.lines, width: data.width });
+      }
+    } catch { /* silent */ }
+  };
 
   const triggerKOTPrint = async (orderId: number) => {
     try {
@@ -326,14 +343,14 @@ export default function POS() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: 'KOT print failed', description: data.message, variant: 'destructive' });
+        await showPreview('kot', orderId);
       } else if (data.printed === false) {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
       } else {
         toast({ title: 'KOT sent to printer!' });
       }
     } catch {
-      toast({ title: 'KOT print failed', description: 'Could not reach printer', variant: 'destructive' });
+      await showPreview('kot', orderId);
     }
   };
 
@@ -347,12 +364,12 @@ export default function POS() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: 'Bill print failed', description: data.message, variant: 'destructive' });
+        await showPreview('bill', orderId);
       } else {
         toast({ title: 'Bill sent to printer!' });
       }
     } catch {
-      toast({ title: 'Bill print failed', description: 'Could not reach printer', variant: 'destructive' });
+      await showPreview('bill', orderId);
     }
   };
 
@@ -1838,6 +1855,9 @@ export default function POS() {
         </button>
       </div>
 
+      {printPreview && (
+        <PrintPreviewModal preview={printPreview} onClose={() => setPrintPreview(null)} />
+      )}
     </div>
   );
 }
