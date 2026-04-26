@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PinGuard } from "@/components/PinGuard";
@@ -755,6 +755,33 @@ export default function POS() {
   const handleKOT        = () => { submitModeRef.current = "kot";        triggerSubmit(); };
   const handleKOTAndPrint= () => { submitModeRef.current = "kot-print";  triggerSubmit(); };
   const handleSettle     = () => { submitModeRef.current = "settle";     triggerSubmit(); };
+
+  // Direct KOT preview — no server call, uses delta against last snapshot
+  const handleKOTPreview = () => {
+    const lastSnapshotItems: Array<{ itemId: number; quantity: number; size: string | null }> =
+      existingOrder?.lastKotSnapshot?.items ?? [];
+    const lastMap = new Map<string, number>();
+    for (const s of lastSnapshotItems) {
+      lastMap.set(`${s.itemId}:${s.size ?? ''}`, s.quantity);
+    }
+    const deltaItems = cartItems
+      .map(i => {
+        const prevQty = lastMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
+        const dQty = i.quantity - prevQty;
+        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    const items = deltaItems.length > 0
+      ? deltaItems
+      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null }));
+    const fv = form.getValues();
+    const lines = kotLines({
+      orderRef: existingOrder?.orderNumber ?? (activeOrderId ? String(activeOrderId) : 'NEW'),
+      tableNumber: existingOrder?.tableNumber ?? fv.tableNumber ?? null,
+      items,
+    });
+    setPrintPreview({ title: 'KOT Preview', lines });
+  };
 
   // Save actions — gated by manager PIN for staff
   const handleSave = () => {
@@ -1826,7 +1853,7 @@ export default function POS() {
             </div>
 
             {/* KOT row */}
-            <div className="grid grid-cols-2 gap-1">
+            <div className="grid grid-cols-3 gap-1">
               <button
                 disabled={!hasItems || isPending}
                 onClick={handleKOT}
@@ -1835,12 +1862,20 @@ export default function POS() {
                 KOT
               </button>
               <button
+                disabled={!hasItems}
+                onClick={handleKOTPreview}
+                className="py-2 rounded text-[11px] font-bold bg-orange-100 hover:bg-orange-200 text-orange-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+              >
+                <Eye className="w-3 h-3" />
+                Preview
+              </button>
+              <button
                 disabled={!hasItems || isPending}
                 onClick={handleKOTAndPrint}
                 className="py-2 rounded text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 <Printer className="w-3 h-3" />
-                KOT & Print
+                Print
               </button>
             </div>
 
