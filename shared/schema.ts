@@ -67,6 +67,12 @@ export const orders = pgTable("orders", {
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  kotPrintCount: integer("kot_print_count").default(0).notNull(),
+  billPrintCount: integer("bill_print_count").default(0).notNull(),
+  lastKotSnapshot: json("last_kot_snapshot").$type<{
+    items: Array<{ itemId: number; name: string; quantity: number; size: string | null }>;
+    printedAt: string;
+  } | null>(),
 });
 
 export const orderItems = pgTable("order_items", {
