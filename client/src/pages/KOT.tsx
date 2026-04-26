@@ -7,6 +7,7 @@ import { KOT_STATUS } from "@/lib/constants";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
+import { kotLines } from "@/lib/receiptText";
 
 
 const statusAccent: Record<string, string> = {
@@ -25,27 +26,36 @@ export default function KOT() {
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
-  const reprintKOT = async (orderId: number) => {
+  const showKOTPreview = (ticket: any) => {
+    const lines = kotLines({
+      kotNumber: ticket.kotNumber,
+      tableNumber: ticket.tableNumber ?? null,
+      items: (ticket.items ?? []).map((i: any) => ({
+        name: i.name,
+        quantity: i.quantity,
+        size: i.size ?? null,
+        notes: i.instructions ?? i.notes ?? null,
+      })),
+      isReprint: true,
+    });
+    setPrintPreview({ title: 'KOT Preview', lines });
+  };
+
+  const reprintKOT = async (ticket: any) => {
     try {
       const res = await fetch('/api/print/kot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, reprint: true }),
+        body: JSON.stringify({ orderId: ticket.orderId, reprint: true }),
         credentials: 'include',
       });
-      const data = await res.json();
       if (!res.ok) {
-        // Fall back to preview
-        const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'kot', orderId, reprint: true }), credentials: 'include' });
-        if (pv.ok) { const d = await pv.json(); setPrintPreview({ title: 'KOT Preview', lines: d.lines, width: d.width }); }
-        else toast({ title: 'Print failed', description: data.message, variant: 'destructive' });
+        showKOTPreview(ticket);
       } else {
         toast({ title: 'KOT sent to printer!' });
       }
     } catch {
-      const pv = await fetch('/api/print/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'kot', orderId, reprint: true }), credentials: 'include' }).catch(() => null);
-      if (pv?.ok) { const d = await pv.json(); setPrintPreview({ title: 'KOT Preview', lines: d.lines, width: d.width }); }
-      else toast({ title: 'Print failed', description: 'Could not reach printer', variant: 'destructive' });
+      showKOTPreview(ticket);
     }
   };
 
@@ -127,7 +137,7 @@ export default function KOT() {
       <div className="px-4 pb-3 flex gap-2 border-t border-white/40 pt-2.5">
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => reprintKOT(ticket.orderId)}
+          onClick={() => reprintKOT(ticket)}
           className="flex-1 flex items-center justify-center gap-1 text-xs font-medium py-1.5 rounded-lg
                      bg-white/60 border border-white/40 text-gray-600 hover:bg-white/80 transition-all"
         >
