@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { spawn } from "child_process";
 import { storage } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertOrderSchema } from "@shared/schema";
@@ -8,6 +9,7 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
 import { getSettings, saveSettings } from "./settingsStore";
+import { getLogBuffer } from "./vite";
 import {
   getAutomationConfig,
   saveAutomationConfig,
@@ -44,7 +46,8 @@ import { getRecommendations } from "./services/crm/recommendationService";
 import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
-import { automationRules, automationJobs, customerMessages } from "@shared/schema";
+import { registerPrintRoutes } from "./printRoutes";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 // Password hashing helpers using Node's built-in crypto
@@ -214,19 +217,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ── Manager PIN verification ───────────────────────────────────────────────────
+  // ── PIN verification ──────────────────────────────────────────────────────────
+
+  // Returns which roles have at least one user with a PIN set
+  app.get("/api/auth/switchable-roles", requireAuth, async (req, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      const rolesWithPin = Array.from(new Set(allUsers.filter((u) => u.pin).map((u) => u.role)));
+      res.json({ roles: rolesWithPin });
+    } catch (err) {
+      res.status(500).json({ roles: [] });
+    }
+  });
 
   app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
     try {
       const { pin, requiredRole } = req.body;
       if (!pin) return res.status(400).json({ valid: false });
       const allUsers = await storage.getUsers();
-      // requiredRole="admin"   → only admin PINs accepted  (manager doing restricted action)
-      // requiredRole="manager" → manager OR admin PIN accepted (staff doing restricted action / switching to manager)
-      // default                → manager or admin (backwards-compat)
-      const match = requiredRole === "admin"
-        ? allUsers.find((u) => u.role === "admin" && u.pin === String(pin))
-        : allUsers.find((u) => (u.role === "manager" || u.role === "admin") && u.pin === String(pin));
+
+      // Role hierarchy for PIN acceptance:
+      // Switching to "admin"   → only admin PIN accepted
+      // Switching to "manager" → manager OR admin PIN accepted
+      // Any other role         → that role's PIN OR any higher role's PIN accepted
+      const ROLE_LEVEL: Record<string, number> = {
+        staff: 0, cashier: 0, kitchen: 0, manager: 1, admin: 2,
+      };
+      const targetLevel = ROLE_LEVEL[requiredRole] ?? 1;
+      const match = allUsers.find(
+        (u) => (ROLE_LEVEL[u.role] ?? 0) >= targetLevel && u.pin === String(pin)
+      );
       res.json({ valid: !!match });
     } catch (err) {
       console.error("Verify PIN error:", err);
@@ -252,7 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const { pin } = req.body;
-      if (pin && !/^\d{4}$/.test(String(pin))) {
+      if (pin && !/^\d{4,6}$/.test(String(pin))) {
         return res.status(400).json({ message: "PIN must be 4-6 digits" });
       }
       const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
@@ -278,9 +298,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, role } = req.body;
+      const { username, password, role, pin } = req.body;
       if (!username || !password) return res.status(400).json({ message: "Username and password are required" });
       if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+      if (pin && !/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ message: "PIN must be 4 or 6 digits" });
       const existing = await storage.getUserByUsername(username.trim());
       if (existing) return res.status(409).json({ message: "Username already taken" });
       const hashed = await hashPassword(password);
@@ -288,9 +309,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         username: username.trim(),
         password: hashed,
         role: role || "staff",
+        pin: pin ? String(pin) : null,
       });
-      const { password: _, pin, ...safeUser } = user;
-      res.json({ ...safeUser, pin: !!pin });
+      const { password: _, pin: userPin, ...safeUser } = user;
+      res.json({ ...safeUser, pin: !!userPin });
     } catch (err) {
       console.error("Create user error:", err);
       res.status(500).json({ message: "Failed to create user" });
@@ -339,6 +361,166 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete user" });
     }
   });
+
+  // ── Database migration ────────────────────────────────────────────────────────
+
+  app.post("/api/admin/migrate", requireAdmin, (_req, res) => {
+    const child = spawn("npx", ["drizzle-kit", "push", "--force"], {
+      cwd: process.cwd(),
+      env: process.env,
+      shell: true,
+    });
+
+    let output = "";
+    child.stdout.on("data", (d: Buffer) => { output += d.toString(); });
+    child.stderr.on("data", (d: Buffer) => { output += d.toString(); });
+
+    child.on("close", (code: number) => {
+      if (code === 0) {
+        res.json({ success: true, output });
+      } else {
+        res.status(500).json({ message: "Migration failed", output });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      res.status(500).json({ message: err.message });
+    });
+  });
+
+  // ── Server logs ───────────────────────────────────────────────────────────────
+
+  app.get("/api/admin/logs", requireAdmin, (_req, res) => {
+    res.json(getLogBuffer());
+  });
+
+  // ── Data import ───────────────────────────────────────────────────────────────
+
+  app.post("/api/admin/import/menu", requireAdmin, async (req, res) => {
+    const rows: { name: string; category: string; price: string; description?: string }[] = req.body.rows ?? [];
+    if (!rows.length) return res.status(400).json({ message: "No rows provided" });
+
+    const imported: number[] = [];
+    const errors: string[] = [];
+
+    // Build category name→id cache (case-insensitive)
+    const existingCats = await db.select().from(categories);
+    const catCache = new Map<string, number>(existingCats.map(c => [c.name.toLowerCase(), c.id]));
+
+    for (const row of rows) {
+      try {
+        const catName = row.category?.trim() || "Uncategorised";
+        let catId = catCache.get(catName.toLowerCase());
+        if (!catId) {
+          const [newCat] = await db.insert(categories).values({ name: catName, isActive: true, displayOrder: 0 }).returning();
+          catId = newCat.id;
+          catCache.set(catName.toLowerCase(), catId);
+        }
+        const price = parseFloat(row.price);
+        if (isNaN(price) || price < 0) throw new Error(`Invalid price "${row.price}"`);
+        const [item] = await db.insert(menuItems).values({
+          name: row.name.trim(),
+          description: row.description?.trim() || null,
+          price: price.toFixed(2),
+          categoryId: catId,
+          isAvailable: true,
+          preparationTime: 15,
+        }).returning();
+        imported.push(item.id);
+      } catch (err: any) {
+        errors.push(`"${row.name}": ${err.message}`);
+      }
+    }
+
+    res.json({ imported: imported.length, errors });
+  });
+
+  app.post("/api/admin/import/inventory", requireAdmin, async (req, res) => {
+    const rows: { itemName: string; currentStock: string; minStock: string; unit: string }[] = req.body.rows ?? [];
+    if (!rows.length) return res.status(400).json({ message: "No rows provided" });
+
+    const imported: number[] = [];
+    const errors: string[] = [];
+
+    for (const row of rows) {
+      try {
+        const current = parseFloat(row.currentStock);
+        const min     = parseFloat(row.minStock);
+        if (isNaN(current) || isNaN(min)) throw new Error("Invalid stock value");
+        const [item] = await db.insert(inventory).values({
+          itemName:     row.itemName.trim(),
+          currentStock: current.toFixed(2),
+          minStock:     min.toFixed(2),
+          unit:         row.unit?.trim() || "pcs",
+        }).returning();
+        imported.push(item.id);
+      } catch (err: any) {
+        errors.push(`"${row.itemName}": ${err.message}`);
+      }
+    }
+
+    res.json({ imported: imported.length, errors });
+  });
+
+  app.post("/api/admin/import/customers", requireAdmin, async (req, res) => {
+    const rows: {
+      name: string; phone?: string; email?: string; address?: string;
+      locality?: string; dob?: string; anniversary?: string; tags?: string; remark?: string;
+    }[] = req.body.rows ?? [];
+    if (!rows.length) return res.status(400).json({ message: "No rows provided" });
+
+    const imported: string[] = [];
+    const errors: string[] = [];
+
+    // Build phone/name → existing customer id cache to skip duplicates
+    const existingCustomers = await db.select({ id: customersMaster.id, key: customersMaster.key }).from(customersMaster);
+    const existingKeys = new Set(existingCustomers.map(c => c.key.toLowerCase()));
+
+    for (const row of rows) {
+      const name = row.name?.trim();
+      if (!name) { errors.push("Row skipped: Name is required"); continue; }
+
+      const phone = row.phone?.trim().replace(/\D/g, "") || undefined;
+      const key   = phone || name;
+
+      if (existingKeys.has(key.toLowerCase())) {
+        errors.push(`"${name}": already exists (skipped)`);
+        continue;
+      }
+
+      try {
+        const [master] = await db.insert(customersMaster).values({ key, name, phone: phone || null }).returning();
+
+        const tags = row.tags
+          ? row.tags.split(/[;,]/).map(t => t.trim()).filter(Boolean)
+          : [];
+
+        await db.insert(customerProfiles).values({
+          customerId:          master.id,
+          email:               row.email?.trim()       || null,
+          address:             row.address?.trim()     || null,
+          locality:            row.locality?.trim()    || null,
+          dob:                 row.dob?.trim()         || null,
+          anniversary:         row.anniversary?.trim() || null,
+          tags:                tags.length ? tags : null,
+          remark:              row.remark?.trim()      || null,
+          isFavorite:          false,
+          notificationEnabled: true,
+          doNotSendUpdate:     false,
+        });
+
+        existingKeys.add(key.toLowerCase());
+        imported.push(master.id);
+      } catch (err: any) {
+        errors.push(`"${name}": ${err.message}`);
+      }
+    }
+
+    res.json({ imported: imported.length, errors });
+  });
+
+  // ── Print routes ──────────────────────────────────────────────────────────────
+  registerPrintRoutes(app);
 
   // ── Settings ──────────────────────────────────────────────────────────────────
 
