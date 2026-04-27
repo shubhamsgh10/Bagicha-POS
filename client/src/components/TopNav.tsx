@@ -6,7 +6,7 @@ import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid, History, UtensilsCrossed, Package,
   BarChart3, Activity, Monitor, User, Users,
-  Settings, LogOut, ClipboardList, Menu, X, ChefHat,
+  Settings, LogOut, ClipboardList, Menu, X, ChefHat, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { queryClient } from "@/lib/queryClient";
@@ -22,6 +22,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Tables",      href: "/tables",        icon: LayoutGrid },
   { label: "Orders",      href: "/orders",         icon: History },
+  { label: "Billing",     href: "/billing",        icon: CreditCard },
+  { label: "Staff",       href: "/staff",          icon: UserCheck,        roles: ["admin", "manager"] },
   { label: "KOT",         href: "/kot",            icon: ClipboardList },
   { label: "Menu",        href: "/menu",           icon: UtensilsCrossed,  roles: ["admin", "manager"] },
   { label: "Inventory",   href: "/inventory",      icon: Package,          roles: ["admin", "manager"] },
