@@ -49,6 +49,9 @@ import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
+import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
+import { earnPointsForOrder } from "./services/loyaltyService";
+import { scheduleFeedbackForOrder } from "./services/feedbackService";
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -521,6 +524,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── Print routes ──────────────────────────────────────────────────────────────
   registerPrintRoutes(app);
+
+  // ── Phase 1 growth routes (Razorpay, Coupons, Loyalty, Feedback, Digest) ─────
+  registerPublicGrowthRoutes(app);
+  registerGrowthRoutes(app, broadcast);
 
   // ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -1148,6 +1155,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         broadcast({ type: 'TABLE_UPDATE' });
       }
       broadcast({ type: 'ORDER_UPDATE', order });
+
+      // ── Post-payment hooks (loyalty earn + feedback queue) ──────────────────
+      if (!isDue) {
+        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
+        if (key) {
+          earnPointsForOrder(
+            key,
+            (order as any).customerName ?? key,
+            id,
+            parseFloat(String((order as any).totalAmount ?? 0)),
+          ).catch(e => console.warn("[Loyalty] earn failed:", e));
+        }
+        scheduleFeedbackForOrder(id).catch(e => console.warn("[Feedback] schedule failed:", e));
+      }
+
       res.json(order);
     } catch (error) {
       console.error("Payment error:", error);
@@ -1557,9 +1579,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Never expose API keys in full — mask them
     res.json({
       ...config,
-      anthropicApiKey:  config.anthropicApiKey  ? "***configured***" : "",
-      watiApiKey:       config.watiApiKey        ? "***configured***" : "",
-      metaAccessToken:  config.metaAccessToken   ? "***configured***" : "",
+      anthropicApiKey:        config.anthropicApiKey        ? "***configured***" : "",
+      watiApiKey:             config.watiApiKey             ? "***configured***" : "",
+      metaAccessToken:        config.metaAccessToken        ? "***configured***" : "",
+      razorpayKeySecret:      config.razorpayKeySecret      ? "***configured***" : "",
+      razorpayWebhookSecret:  config.razorpayWebhookSecret  ? "***configured***" : "",
     });
   });
 
@@ -1568,9 +1592,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const patch = req.body as Record<string, unknown>;
       // Don't overwrite keys with masked placeholder
-      if (patch.anthropicApiKey === "***configured***") delete patch.anthropicApiKey;
-      if (patch.watiApiKey      === "***configured***") delete patch.watiApiKey;
-      if (patch.metaAccessToken === "***configured***") delete patch.metaAccessToken;
+      if (patch.anthropicApiKey       === "***configured***") delete patch.anthropicApiKey;
+      if (patch.watiApiKey            === "***configured***") delete patch.watiApiKey;
+      if (patch.metaAccessToken       === "***configured***") delete patch.metaAccessToken;
+      if (patch.razorpayKeySecret     === "***configured***") delete patch.razorpayKeySecret;
+      if (patch.razorpayWebhookSecret === "***configured***") delete patch.razorpayWebhookSecret;
 
       const updated = saveAutomationConfig(patch);
       restartScheduler();   // pick up new interval setting immediately

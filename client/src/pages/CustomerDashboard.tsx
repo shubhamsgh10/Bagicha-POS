@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useCustomerIntelligence";
 import { LoyaltyCard } from "@/components/loyalty/LoyaltyCard";
 import { RecommendationBox } from "@/components/recommendations/RecommendationBox";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
 import {
   sendViaWhatsAppWeb,
   getTemplateInfo,
@@ -921,6 +922,11 @@ function IntelligenceView({
 
       {/* CRM Engine status banner */}
       <CrmStatusBanner customerCount={stats.total} />
+
+      {/* Feedback / NPS widget */}
+      <div className="shrink-0 px-5 pb-3">
+        <FeedbackWidget />
+      </div>
 
       {/* Filters + search */}
       <div className="shrink-0 px-5 pb-3 flex items-center gap-3 flex-wrap">
