@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock, Eye } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PinGuard } from "@/components/PinGuard";
@@ -159,6 +159,11 @@ export default function POS() {
   const otherReasonRef = useRef("");
   // It's Paid checkbox
   const [isPaid, setIsPaid] = useState(false);
+  // Settle two-phase loading state
+  const [settlePhase, setSettlePhase] = useState<"idle" | "processing" | "printing">("idle");
+  // Auto-KOT debounce refs
+  const autoKotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoKotReadyRef = useRef(false);
   // Short code input
   const [shortCode, setShortCode] = useState("");
   // Mobile tab: switch between menu and cart panels
@@ -478,6 +483,48 @@ export default function POS() {
     setCartLoaded(true);
   }, [existingOrder, menuItems, activeOrderId, cartLoaded]);
 
+  // Disable auto-KOT readiness when cart resets, re-enable 300ms after load completes
+  // so the initial population of the cart from DB doesn't trigger a spurious print.
+  useEffect(() => {
+    if (!cartLoaded) { autoKotReadyRef.current = false; return; }
+    const t = setTimeout(() => { autoKotReadyRef.current = true; }, 300);
+    return () => clearTimeout(t);
+  }, [cartLoaded]);
+
+  // Auto-KOT: debounced trigger when the user adds/modifies items in an existing order.
+  // Calls the same /api/print/kot endpoint as manual KOT — the backend's delta logic
+  // ensures only new/changed items are printed and prevents duplicate prints.
+  useEffect(() => {
+    if (!autoKotReadyRef.current || !activeOrderId || cartItems.length === 0) return;
+    const kotSettings = (settings as any)?.printSettings?.kot;
+    if (!kotSettings?.autoKOTPrint) return;
+
+    if (autoKotTimerRef.current) clearTimeout(autoKotTimerRef.current);
+    const delay: number = kotSettings.autoKOTDebounceMs ?? 1500;
+
+    autoKotTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/print/kot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: activeOrderId }),
+          credentials: 'include',
+        });
+        const data = await res.json();
+        // Only notify on successful print; no_delta and unconfigured-printer are silently ignored
+        if (res.ok && data.printed) {
+          toast({ title: 'KOT sent!', description: 'Kitchen notified automatically' });
+        }
+      } catch {
+        // Network failure — silently ignore; user can always use manual KOT
+      }
+    }, delay);
+
+    return () => {
+      if (autoKotTimerRef.current) clearTimeout(autoKotTimerRef.current);
+    };
+  }, [cartItems, activeOrderId]); // settings intentionally omitted — read via closure at fire time
+
   // ── Create order mutation ────────────────────────────────────────────────────
 
   const createOrderMutation = useMutation({
@@ -580,12 +627,14 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+      setSettlePhase("printing");
       const billOrder = vars.order || settled;
       if (vars.orderId) triggerBillPrint(vars.orderId, billOrder);
-      toast({ title: "Payment complete!", description: "Bill printed" });
+      toast({ title: "Payment complete!", description: "Bill sent to printer" });
       navigate("/tables");
     },
     onError: (error: any) => {
+      setSettlePhase("idle");
       toast({ title: "Settlement failed", description: error.message || "Something went wrong", variant: "destructive" });
     },
   });
@@ -763,7 +812,7 @@ export default function POS() {
 
   const handleKOT        = () => { capturePreKOTItems(); submitModeRef.current = "kot";        triggerSubmit(); };
   const handleKOTAndPrint= () => { capturePreKOTItems(); submitModeRef.current = "kot-print";  triggerSubmit(); };
-  const handleSettle     = () => { submitModeRef.current = "settle";     triggerSubmit(); };
+  const handleSettle     = () => { setSettlePhase("processing"); submitModeRef.current = "settle"; triggerSubmit(); };
 
   // Direct KOT preview — no server call, shows delta of new items not yet in the order
   const handleKOTPreview = () => {
@@ -1836,51 +1885,14 @@ export default function POS() {
               </button>
             </div>
 
-            {/* Save row — staff needs manager PIN */}
-            <div className="grid grid-cols-3 gap-1">
-              <button
-                disabled={!hasItems || isPending}
-                onClick={handleSave}
-                className="py-2 rounded text-[11px] font-bold bg-gray-700 hover:bg-gray-800 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-              >
-                Save
-                {isStaff && <Lock className="w-2.5 h-2.5 opacity-60" />}
-              </button>
-              <button
-                disabled={!hasItems || isPending}
-                onClick={handleSaveAndPrint}
-                className="py-2 rounded text-[11px] font-bold bg-gray-700 hover:bg-gray-800 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-              >
-                <Printer className="w-3 h-3" />
-                Save
-                {isStaff && <Lock className="w-2.5 h-2.5 opacity-60" />}
-              </button>
-              <button
-                disabled={!hasItems || isPending}
-                onClick={handleSaveEBill}
-                className="py-2 rounded text-[11px] font-bold bg-gray-700 hover:bg-gray-800 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-              >
-                EBill
-                {isStaff && <Lock className="w-2.5 h-2.5 opacity-60" />}
-              </button>
-            </div>
-
             {/* KOT row */}
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-2 gap-1">
               <button
                 disabled={!hasItems || isPending}
                 onClick={handleKOT}
                 className="py-2 rounded text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 KOT
-              </button>
-              <button
-                disabled={!hasItems}
-                onClick={handleKOTPreview}
-                className="py-2 rounded text-[11px] font-bold bg-orange-100 hover:bg-orange-200 text-orange-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-              >
-                <Eye className="w-3 h-3" />
-                Preview
               </button>
               <button
                 disabled={!hasItems || isPending}
@@ -1906,7 +1918,7 @@ export default function POS() {
                 onClick={handleSettle}
                 className="py-2 rounded text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {settleMutation.isPending ? "Settling..." : "Settle"}
+                {settlePhase === "printing" ? "Printing bill..." : (settleMutation.isPending || settlePhase === "processing") ? "Processing..." : "Settle"}
               </button>
             </div>
           </div>

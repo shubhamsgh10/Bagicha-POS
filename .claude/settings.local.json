@@ -46,7 +46,8 @@
       "PowerShell(npm i *)",
       "Bash(findstr \":5000\")",
       "Bash(findstr \"LISTENING\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(curl *)"
     ]
   },
   "enabledMcpjsonServers": [
