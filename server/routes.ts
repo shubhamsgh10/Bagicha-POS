@@ -171,6 +171,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // ── Device context — tells client if request is from local network + mobile ──
+  app.get("/api/auth/context", (req, res) => {
+    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+      || req.socket.remoteAddress
+      || "";
+    const isLocalNetwork =
+      ip === "::1" ||
+      ip === "127.0.0.1" ||
+      /^::ffff:127\./.test(ip) ||
+      /^10\./.test(ip) ||
+      /^192\.168\./.test(ip) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+
+    const ua = req.headers["user-agent"] ?? "";
+    const isMobile = /Mobile|Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+
+    res.json({ isLocalNetwork, isMobile });
+  });
+
+  // ── Staff PIN login — no password, just userId + 4-digit PIN ────────────────
+  app.post("/api/auth/staff-pin-login", async (req, res, next) => {
+    try {
+      const { userId, pin } = req.body;
+      if (!userId || !pin) return res.status(400).json({ message: "userId and pin required" });
+
+      const user = await storage.getUser(Number(userId));
+      if (!user) return res.status(401).json({ message: "User not found" });
+      if (user.role !== "staff") return res.status(403).json({ message: "PIN login is only for staff accounts" });
+      if (!user.pin) return res.status(401).json({ message: "No PIN set for this user. Ask your manager to set one." });
+      if (user.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
+
+      req.logIn(user, (err) => {
+        if (err) return next(err);
+        const { password, pin: _pin, ...safeUser } = user;
+        res.json(safeUser);
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;

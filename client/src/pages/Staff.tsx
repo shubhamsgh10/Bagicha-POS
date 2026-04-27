@@ -117,10 +117,11 @@ export default function Staff() {
 
   const { data: attendanceSettings } = useQuery<AttendanceSettings>({
     queryKey: ["/api/attendance/settings"],
-    onSuccess: (d) => {
+    select: (d) => {
       setSheetUrl(d.sheetUrl ?? "");
       setAutoSyncHour(String(d.autoSyncHour ?? -1));
-      if (d.columnMapping) setColMapping({ ...colMapping, ...d.columnMapping });
+      if (d.columnMapping) setColMapping(prev => ({ ...prev, ...d.columnMapping }));
+      return d;
     },
   });
 
