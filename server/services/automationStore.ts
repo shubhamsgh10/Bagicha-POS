@@ -60,6 +60,22 @@ export interface AutomationConfig {
   birthdayEnabled: boolean;
   /** Hour of day (0–23) to fire birthday/anniversary scan. Default 9. */
   birthdayHour: number;
+
+  // ── Staff / Attendance ────────────────────────────────────────────────────
+  /** Google Sheet URL for biometric attendance export. */
+  attendanceSheetUrl: string;
+  /** Maps sheet column headers to attendance fields. */
+  attendanceColumnMapping: {
+    employeeName:  string;
+    employeeCode?: string;
+    date:          string;
+    punchIn?:      string;
+    punchOut?:     string;
+    hoursWorked?:  string;
+    status?:       string;
+  } | null;
+  /** Auto-sync attendance daily at this hour (0–23). -1 = disabled. */
+  attendanceAutoSyncHour: number;
 }
 
 export interface AutomationLog {
@@ -105,6 +121,9 @@ const DEFAULT_CONFIG: AutomationConfig = {
   feedbackBaseUrl: "",
   birthdayEnabled: false,
   birthdayHour: 9,
+  attendanceSheetUrl: "",
+  attendanceColumnMapping: null,
+  attendanceAutoSyncHour: -1,
 };
 
 // ── Generic JSON helpers ───────────────────────────────────────────────────────

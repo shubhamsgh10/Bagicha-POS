@@ -73,6 +73,7 @@ export const orders = pgTable("orders", {
     items: Array<{ itemId: number; name: string; quantity: number; size: string | null }>;
     printedAt: string;
   } | null>(),
+  createdBy: integer("created_by"),  // staff user id who created the order
 });
 
 export const orderItems = pgTable("order_items", {
@@ -523,3 +524,49 @@ export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
 export type InsertPaymentTransaction = z.infer<typeof insertPaymentTransactionSchema>;
 export type DailyDigest        = typeof dailyDigests.$inferSelect;
 export type InsertDailyDigest  = z.infer<typeof insertDailyDigestSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STAFF MANAGEMENT — Attendance + Performance
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * attendance_records — imported from Google Sheets (biometric export).
+ * Each row = one punch-in/punch-out pair for a staff member on a date.
+ */
+export const attendanceRecords = pgTable("attendance_records", {
+  id:           serial("id").primaryKey(),
+  employeeName: text("employee_name").notNull(),
+  employeeCode: text("employee_code"),
+  date:         text("date").notNull(),             // YYYY-MM-DD
+  punchIn:      text("punch_in"),                   // HH:MM or HH:MM:SS
+  punchOut:     text("punch_out"),
+  hoursWorked:  decimal("hours_worked", { precision: 5, scale: 2 }),
+  status:       text("status").notNull().default("present"), // present | absent | half-day | late
+  source:       text("source").notNull().default("gsheet"),  // gsheet | manual
+  rawRow:       json("raw_row").$type<Record<string, string>>(),
+  syncedAt:     timestamp("synced_at").notNull().defaultNow(),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * attendance_sync_log — tracks each Google Sheets sync run.
+ */
+export const attendanceSyncLog = pgTable("attendance_sync_log", {
+  id:         serial("id").primaryKey(),
+  syncedAt:   timestamp("synced_at").notNull().defaultNow(),
+  rowsFetched: integer("rows_fetched").notNull().default(0),
+  rowsInserted: integer("rows_inserted").notNull().default(0),
+  rowsSkipped: integer("rows_skipped").notNull().default(0),
+  status:     text("status").notNull().default("success"),  // success | failed | partial
+  error:      text("error"),
+  sheetUrl:   text("sheet_url"),
+});
+
+// ── Insert schemas + types ────────────────────────────────────────────────────
+
+export const insertAttendanceRecordSchema = createInsertSchema(attendanceRecords).omit({ id: true, createdAt: true, syncedAt: true });
+export const insertAttendanceSyncLogSchema = createInsertSchema(attendanceSyncLog).omit({ id: true, syncedAt: true });
+
+export type AttendanceRecord       = typeof attendanceRecords.$inferSelect;
+export type InsertAttendanceRecord = z.infer<typeof insertAttendanceRecordSchema>;
+export type AttendanceSyncLog      = typeof attendanceSyncLog.$inferSelect;
