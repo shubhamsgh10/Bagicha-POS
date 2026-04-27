@@ -114,10 +114,18 @@ export default function Billing() {
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method }: { id: number; method: string }) =>
       apiRequest("POST", `/api/orders/${id}/payment`, { paymentMethod: method }),
-    onSuccess: () => {
-      toast({ title: "Payment processed!", description: "Order marked as paid" });
+    onSuccess: (_, vars) => {
+      toast({ title: "Payment processed!", description: "Printing bill..." });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      fetch('/api/print/bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: vars.id }),
+        credentials: 'include',
+      }).then(res => res.json()).then(() => {
+        toast({ title: "Bill printed!" });
+      }).catch(() => {});
       setPayingOrder(null);
     },
     onError: () => {
