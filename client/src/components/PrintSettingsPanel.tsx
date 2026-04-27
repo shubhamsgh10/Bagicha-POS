@@ -30,6 +30,8 @@ interface KOTPrintSettings {
   printDeletedSeparate: boolean;
   printOnTableMove: boolean;
   kotPrinterId: string | null;
+  autoKOTPrint: boolean;
+  autoKOTDebounceMs: number;
 }
 
 interface BillPrintSettings {
@@ -57,6 +59,7 @@ const DEFAULT_KOT: KOTPrintSettings = {
   printModifiedItemsOnly: true, printCancelledKOT: true, printAddons: true,
   showDuplicateWatermark: true, printDeletedItems: true, printDeletedSeparate: false,
   printOnTableMove: false, kotPrinterId: null,
+  autoKOTPrint: false, autoKOTDebounceMs: 1500,
 };
 
 const DEFAULT_BILL: BillPrintSettings = {
@@ -391,6 +394,31 @@ export function PrintSettingsPanel({
                 </select>
               </div>
               <ToggleRow label="Enable KOT Printing" checked={ps.kot.enabled} onChange={v => setKot('enabled', v)} />
+              <ToggleRow
+                label="Auto Print KOT on Item Add"
+                description="Automatically sends KOT to kitchen when items are added or modified. Only new/changed items are printed (delta logic). Requires a KOT printer to be configured."
+                checked={ps.kot.autoKOTPrint}
+                onChange={v => setKot('autoKOTPrint', v)}
+              />
+              {ps.kot.autoKOTPrint && (
+                <div className="flex items-center justify-between gap-4 py-3 border-b border-gray-100">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">Auto KOT Delay</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Combines rapid item additions into a single KOT print</p>
+                  </div>
+                  <select
+                    className={selectCls}
+                    value={ps.kot.autoKOTDebounceMs}
+                    onChange={e => setKot('autoKOTDebounceMs', Number(e.target.value))}
+                  >
+                    <option value={500}>0.5 s</option>
+                    <option value={1000}>1 s</option>
+                    <option value={1500}>1.5 s</option>
+                    <option value={2000}>2 s</option>
+                    <option value={3000}>3 s</option>
+                  </select>
+                </div>
+              )}
               <ToggleRow
                 label="Print KOT on Print Bill"
                 description="This setting will only work when the print bill action is initiated for the first time. For reprint of KOT, use the KOT listing page."

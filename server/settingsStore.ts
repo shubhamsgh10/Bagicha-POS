@@ -28,6 +28,8 @@ export interface KOTPrintSettings {
   printDeletedSeparate: boolean;
   printOnTableMove: boolean;
   kotPrinterId: string | null;
+  autoKOTPrint: boolean;
+  autoKOTDebounceMs: number;
 }
 
 export interface BillPrintSettings {
@@ -80,6 +82,8 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     printDeletedSeparate: false,
     printOnTableMove: false,
     kotPrinterId: null,
+    autoKOTPrint: false,
+    autoKOTDebounceMs: 1500,
   },
   bill: {
     taxDisplay: 'none',

@@ -93,5 +93,17 @@
     "status": "failed",
     "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
     "campaign": "WELCOME"
+  },
+  {
+    "id": "3dead1d1-eb15-4977-8d8d-590b1bc51f3a",
+    "customerId": "9109550322",
+    "customerName": "Shubham",
+    "phone": "9109550322",
+    "trigger": "WIN_BACK",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 30 days since your last visit (especially your favourite *Shakshuka*). Come back and enjoy *15% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-04-27T08:09:14.857Z",
+    "status": "failed",
+    "error": "Invalid or missing phone number",
+    "campaign": "WIN_BACK"
   }
 ]
