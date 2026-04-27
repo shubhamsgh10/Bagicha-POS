@@ -358,6 +358,168 @@ export const CRM_EVENT_TYPES = {
   COUPON_USED:    "COUPON_USED",
   MILESTONE:      "MILESTONE",
   PROFILE_UPDATE: "PROFILE_UPDATE",
+  FEEDBACK_RECEIVED: "FEEDBACK_RECEIVED",
+  POINTS_EARNED:    "POINTS_EARNED",
+  POINTS_REDEEMED:  "POINTS_REDEEMED",
 } as const;
 
 export type CrmEventType = typeof CRM_EVENT_TYPES[keyof typeof CRM_EVENT_TYPES];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 1 GROWTH TABLES — Coupons, Loyalty, Feedback, Payments, Daily Digest
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * coupons — Generic coupon codes for discounts.
+ * Coupons can be:
+ *   - Manually issued (admin creates one for promo)
+ *   - Auto-issued by automation (birthday, win-back, NPS recovery)
+ */
+export const coupons = pgTable("coupons", {
+  id:           serial("id").primaryKey(),
+  code:         text("code").notNull().unique(),
+  type:         text("type").notNull(),                                // percent | flat | item
+  value:        decimal("value", { precision: 10, scale: 2 }).notNull(),
+  description:  text("description"),
+  minOrderAmount: decimal("min_order_amount", { precision: 10, scale: 2 }).default("0"),
+  maxDiscount:  decimal("max_discount", { precision: 10, scale: 2 }),
+  usageLimit:   integer("usage_limit").default(1).notNull(),           // total redemptions allowed
+  perCustomerLimit: integer("per_customer_limit").default(1).notNull(),
+  validFrom:    timestamp("valid_from").notNull().defaultNow(),
+  validUntil:   timestamp("valid_until"),
+  isActive:     boolean("is_active").notNull().default(true),
+  customerId:   uuid("customer_id"),                                   // null = public, else customer-bound
+  source:       text("source").notNull().default("manual"),            // manual | birthday | nps | win_back | welcome | referral
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * coupon_redemptions — Audit trail of every coupon use.
+ */
+export const couponRedemptions = pgTable("coupon_redemptions", {
+  id:             serial("id").primaryKey(),
+  couponId:       integer("coupon_id").notNull(),
+  orderId:        integer("order_id").notNull(),
+  customerId:     uuid("customer_id"),
+  customerKey:    text("customer_key"),                                // phone||name fallback
+  discountApplied: decimal("discount_applied", { precision: 10, scale: 2 }).notNull(),
+  redeemedAt:     timestamp("redeemed_at").notNull().defaultNow(),
+});
+
+/**
+ * loyalty_points — Server-backed loyalty point ledger.
+ * Replaces localStorage redemptions with a persistent, per-customer ledger.
+ * Each row is a transaction (positive = earned, negative = redeemed).
+ */
+export const loyaltyPoints = pgTable("loyalty_points", {
+  id:           serial("id").primaryKey(),
+  customerId:   uuid("customer_id").notNull(),
+  customerKey:  text("customer_key").notNull(),                        // dedup fallback
+  points:       integer("points").notNull(),                           // signed: + earned, - redeemed
+  reason:       text("reason").notNull(),                              // earn_order | redeem_order | manual | expired
+  orderId:      integer("order_id"),
+  metadata:     json("metadata").$type<Record<string, unknown>>(),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * feedback — Post-order NPS / rating collection.
+ */
+export const feedback = pgTable("feedback", {
+  id:           serial("id").primaryKey(),
+  orderId:      integer("order_id").notNull(),
+  customerId:   uuid("customer_id"),
+  customerKey:  text("customer_key"),
+  customerName: text("customer_name"),
+  customerPhone: text("customer_phone"),
+  token:        text("token").notNull().unique(),                      // public secret for the rating link
+  rating:       integer("rating"),                                     // 1..5 (null = not yet submitted)
+  npsScore:     integer("nps_score"),                                  // 0..10 (optional)
+  comment:      text("comment"),
+  sentiment:    text("sentiment"),                                     // positive | neutral | negative (auto)
+  recoveryStatus: text("recovery_status").default("none"),             // none | pending | resolved
+  recoveryCouponId: integer("recovery_coupon_id"),
+  channel:      text("channel").notNull().default("whatsapp"),
+  sentAt:       timestamp("sent_at"),
+  submittedAt:  timestamp("submitted_at"),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * payment_transactions — Razorpay (and other gateway) transaction ledger.
+ * One order can have multiple transactions (e.g., a failed attempt + a success).
+ */
+export const paymentTransactions = pgTable("payment_transactions", {
+  id:               serial("id").primaryKey(),
+  orderId:          integer("order_id").notNull(),
+  gateway:          text("gateway").notNull().default("razorpay"),     // razorpay | cash | card | upi_manual
+  gatewayOrderId:   text("gateway_order_id"),                          // Razorpay order_id
+  gatewayPaymentId: text("gateway_payment_id"),                        // Razorpay payment_id
+  gatewaySignature: text("gateway_signature"),
+  amount:           decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency:         text("currency").notNull().default("INR"),
+  status:           text("status").notNull().default("pending"),       // pending | success | failed | refunded
+  method:           text("method"),                                    // upi | card | netbanking | wallet
+  errorCode:        text("error_code"),
+  errorDescription: text("error_description"),
+  raw:              json("raw").$type<Record<string, unknown>>(),
+  createdAt:        timestamp("created_at").notNull().defaultNow(),
+  completedAt:      timestamp("completed_at"),
+});
+
+/**
+ * daily_digests — Owner end-of-day AI summaries (history log).
+ */
+export const dailyDigests = pgTable("daily_digests", {
+  id:           serial("id").primaryKey(),
+  digestDate:   text("digest_date").notNull().unique(),                // YYYY-MM-DD
+  summary:      text("summary").notNull(),
+  metrics:      json("metrics").$type<Record<string, unknown>>().notNull(),
+  sentAt:       timestamp("sent_at"),
+  sentTo:       text("sent_to"),
+  status:       text("status").notNull().default("generated"),         // generated | sent | failed
+  error:        text("error"),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── Relations for new tables ──────────────────────────────────────────────────
+
+export const couponsRelations = relations(coupons, ({ many }) => ({
+  redemptions: many(couponRedemptions),
+}));
+
+export const couponRedemptionsRelations = relations(couponRedemptions, ({ one }) => ({
+  coupon: one(coupons,    { fields: [couponRedemptions.couponId], references: [coupons.id] }),
+  order:  one(orders,     { fields: [couponRedemptions.orderId],  references: [orders.id] }),
+}));
+
+export const feedbackRelations = relations(feedback, ({ one }) => ({
+  order:           one(orders,  { fields: [feedback.orderId],          references: [orders.id] }),
+  recoveryCoupon:  one(coupons, { fields: [feedback.recoveryCouponId], references: [coupons.id] }),
+}));
+
+export const paymentTransactionsRelations = relations(paymentTransactions, ({ one }) => ({
+  order: one(orders, { fields: [paymentTransactions.orderId], references: [orders.id] }),
+}));
+
+// ── Insert schemas + types ────────────────────────────────────────────────────
+
+export const insertCouponSchema             = createInsertSchema(coupons).omit({ id: true, createdAt: true });
+export const insertCouponRedemptionSchema   = createInsertSchema(couponRedemptions).omit({ id: true, redeemedAt: true });
+export const insertLoyaltyPointSchema       = createInsertSchema(loyaltyPoints).omit({ id: true, createdAt: true });
+export const insertFeedbackSchema           = createInsertSchema(feedback).omit({ id: true, createdAt: true });
+export const insertPaymentTransactionSchema = createInsertSchema(paymentTransactions).omit({ id: true, createdAt: true });
+export const insertDailyDigestSchema        = createInsertSchema(dailyDigests).omit({ id: true, createdAt: true });
+
+export type Coupon             = typeof coupons.$inferSelect;
+export type InsertCoupon       = z.infer<typeof insertCouponSchema>;
+export type CouponRedemption   = typeof couponRedemptions.$inferSelect;
+export type InsertCouponRedemption = z.infer<typeof insertCouponRedemptionSchema>;
+export type LoyaltyPoint       = typeof loyaltyPoints.$inferSelect;
+export type InsertLoyaltyPoint = z.infer<typeof insertLoyaltyPointSchema>;
+export type Feedback           = typeof feedback.$inferSelect;
+export type InsertFeedback     = z.infer<typeof insertFeedbackSchema>;
+export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
+export type InsertPaymentTransaction = z.infer<typeof insertPaymentTransactionSchema>;
+export type DailyDigest        = typeof dailyDigests.$inferSelect;
+export type InsertDailyDigest  = z.infer<typeof insertDailyDigestSchema>;

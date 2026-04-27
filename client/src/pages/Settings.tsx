@@ -10,9 +10,10 @@ import {
   Loader2, Store, Receipt, ShieldCheck, RefreshCw, Database,
   Trash2, Archive, FileText, Monitor, KeyRound, X, AlertTriangle,
   CheckCircle2, ChevronRight, Settings2, Upload, FileUp, Download,
-  Printer,
+  Printer, Sparkles,
 } from "lucide-react";
 import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
+import { GrowthSettingsPanel } from "@/components/GrowthSettingsPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ type ModalId =
   | "check-machine"
   | "generate-code"
   | "print-settings"
+  | "growth-settings"
   | null;
 
 // ── Action card definitions ───────────────────────────────────────────────────
@@ -114,6 +116,12 @@ const ACTION_CARDS: {
     label: "Generate",
     sublabel: "Code",
     icon: KeyRound,
+  },
+  {
+    id: "growth-settings",
+    label: "Growth",
+    sublabel: "& Payments",
+    icon: Sparkles,
   },
   {
     id: "print-settings" as const,
@@ -1106,6 +1114,13 @@ export default function Settings() {
       {activeModal === "generate-code" && (
         <Modal title="Generate Pairing Code" onClose={closeModal}>
           <GenerateCodePanel />
+        </Modal>
+      )}
+
+      {/* Growth Settings (Razorpay, NPS, Birthday, Daily Digest) */}
+      {activeModal === "growth-settings" && (
+        <Modal title="Growth & Payments" onClose={closeModal}>
+          <GrowthSettingsPanel onClose={closeModal} />
         </Modal>
       )}
 

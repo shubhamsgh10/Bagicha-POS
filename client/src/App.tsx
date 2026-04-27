@@ -20,6 +20,7 @@ import CustomerDashboard from "@/pages/CustomerDashboard";
 import KOT from "@/pages/KOT";
 import MobilePOS from "@/pages/MobilePOS";
 import Kitchen from "@/pages/Kitchen";
+import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
@@ -95,6 +96,9 @@ function Router() {
       </div>
     );
   }
+
+  // Public, no-auth routes — render before the auth gate
+  if (location.startsWith("/feedback/")) return <PublicFeedback />;
 
   // Full-screen routes — skip push wrapper and page transitions
   if (isAuthenticated && location.startsWith("/pos"))        return <POS />;

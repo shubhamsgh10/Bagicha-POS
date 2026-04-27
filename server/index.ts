@@ -7,6 +7,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
 import { seedDefaultRules } from "./services/crm/automationRuleEngine";
+import { startDailyScheduler } from "./services/dailyScheduler";
 
 const MemoryStoreSession = MemoryStore(session);
 
@@ -97,5 +98,7 @@ app.use((req, res, next) => {
     startSegmentationScheduler(1);
     // Seed default automation rules if none exist
     seedDefaultRules().catch(e => console.warn("[CRM] seed rules failed:", e));
+    // Start daily scheduler (feedback dispatch, birthday, AI digest)
+    startDailyScheduler();
   });
 })();
