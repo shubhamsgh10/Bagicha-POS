@@ -9,5 +9,16 @@
   "metaAccessToken": "502f249fff8fa63bce7dc489de00fd22",
   "anthropicApiKey": "",
   "restaurantName": "Bagicha",
-  "trackingBaseUrl": ""
+  "trackingBaseUrl": "",
+  "razorpayKeyId": "rzp_test_SibmePVC6KbeDM",
+  "razorpayKeySecret": "ETLloCmZv82Z3B5yqHkwrxD1",
+  "razorpayWebhookSecret": "",
+  "ownerWhatsappPhone": "",
+  "dailyDigestEnabled": false,
+  "dailyDigestHour": 23,
+  "feedbackEnabled": false,
+  "feedbackDelayMinutes": 120,
+  "feedbackBaseUrl": "",
+  "birthdayEnabled": false,
+  "birthdayHour": 9
 }
