@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -19,12 +20,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Receipt, CreditCard, DollarSign, Printer, CheckCircle2, Clock } from "lucide-react";
+import {
+  Receipt, CreditCard, DollarSign, Printer, CheckCircle2,
+  Tag, Star, Loader2, ShieldCheck,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(amount);
+
+// ── Razorpay checkout loader ──────────────────────────────────────────────────
+
+function ensureRazorpayScript(): Promise<boolean> {
+  return new Promise(resolve => {
+    if ((window as any).Razorpay) return resolve(true);
+    const existing = document.querySelector<HTMLScriptElement>('script[src*="checkout.razorpay.com"]');
+    if (existing) {
+      existing.addEventListener("load",  () => resolve(true), { once: true });
+      existing.addEventListener("error", () => resolve(false), { once: true });
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.async = true;
+    s.onload  = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+}
 
 function printBill(order: any, items: any[] = [], settings?: any) {
   const win = window.open("", "_blank", "width=450,height=700");
@@ -100,8 +124,20 @@ export default function Billing() {
   const { toast } = useToast();
   const [payingOrder, setPayingOrder] = useState<any | null>(null);
   const [paymentMethod, setPaymentMethod] = useState("cash");
-  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
-  const [orderItems, setOrderItems] = useState<any[]>([]);
+
+  // ── Coupon state ─────────────────────────────────────────────────────────
+  const [couponCode, setCouponCode]   = useState("");
+  const [couponBusy, setCouponBusy]   = useState(false);
+  const [couponMsg,  setCouponMsg]    = useState<{ ok: boolean; text: string } | null>(null);
+
+  // ── Loyalty state ────────────────────────────────────────────────────────
+  const [loyalty, setLoyalty] = useState<{ balance: number; redeemable: number; rupeeValue: number; minRedeemPoints: number } | null>(null);
+  const [loyaltyBusy, setLoyaltyBusy] = useState(false);
+
+  // ── Razorpay status ──────────────────────────────────────────────────────
+  const { data: rzpStatus } = useQuery<{ configured: boolean; keyId: string | null }>({
+    queryKey: ["/api/razorpay/status"],
+  });
 
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
 
@@ -110,6 +146,20 @@ export default function Billing() {
     select: (data: any[]) =>
       data.filter((o: any) => ["pending", "preparing", "ready", "served"].includes(o.status)),
   });
+
+  // Reload loyalty when paying order opens
+  useEffect(() => {
+    setLoyalty(null);
+    setCouponCode("");
+    setCouponMsg(null);
+    if (!payingOrder) return;
+    const key = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
+    if (!key) return;
+    fetch(`/api/loyalty/${encodeURIComponent(key)}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setLoyalty(d); })
+      .catch(() => {});
+  }, [payingOrder?.id]);
 
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method }: { id: number; method: string }) =>
@@ -135,12 +185,176 @@ export default function Billing() {
 
   const fetchAndPrint = async (order: any) => {
     try {
-      const data: any = await apiRequest("GET", `/api/orders/${order.id}`);
+      const res = await apiRequest("GET", `/api/orders/${order.id}`);
+      const data: any = await res.json();
       printBill(order, data.items || [], settings);
     } catch {
       printBill(order, [], settings);
     }
   };
+
+  // ── Coupon apply ────────────────────────────────────────────────────────
+  async function applyCoupon() {
+    if (!payingOrder || !couponCode.trim()) return;
+    setCouponBusy(true);
+    setCouponMsg(null);
+    try {
+      const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
+      const res = await apiRequest("POST", "/api/coupons/apply", {
+        // First validate to get id
+        couponId: 0,
+        orderId:  payingOrder.id,
+        customerKey,
+      });
+      // We instead use validate then apply
+      void res;
+    } catch {
+      // ignore — fall through to two-step flow below
+    }
+    try {
+      const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
+      const orderAmount = parseFloat(payingOrder.totalAmount) - parseFloat(payingOrder.taxAmount);
+
+      const validateRes = await apiRequest("POST", "/api/coupons/validate", {
+        code: couponCode.trim(),
+        orderAmount,
+        customerKey,
+      });
+      const validation: any = await validateRes.json();
+      if (!validation.ok) {
+        setCouponMsg({ ok: false, text: validation.reason || "Invalid coupon" });
+        return;
+      }
+
+      const applyRes = await apiRequest("POST", "/api/coupons/apply", {
+        couponId:    validation.couponId,
+        orderId:     payingOrder.id,
+        customerKey,
+      });
+      const applyData: any = await applyRes.json();
+      if (applyData.ok) {
+        setCouponMsg({ ok: true, text: `Applied — ₹${Math.round(applyData.discount)} off` });
+        setPayingOrder(applyData.order);
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      } else {
+        setCouponMsg({ ok: false, text: applyData.error || "Could not apply" });
+      }
+    } catch (e: any) {
+      setCouponMsg({ ok: false, text: e?.message || "Coupon error" });
+    } finally {
+      setCouponBusy(false);
+    }
+  }
+
+  // ── Loyalty redeem ──────────────────────────────────────────────────────
+  async function redeemLoyalty() {
+    if (!payingOrder || !loyalty || !loyalty.redeemable) return;
+    const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
+    if (!customerKey) return;
+    setLoyaltyBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/loyalty/redeem", {
+        customerKey,
+        points:  loyalty.redeemable,
+        orderId: payingOrder.id,
+      });
+      const data: any = await res.json();
+      if (data.ok) {
+        toast({ title: "Points redeemed", description: `₹${data.discount} off` });
+        // Re-fetch order
+        const ordRes = await apiRequest("GET", `/api/orders/${payingOrder.id}`);
+        const orderData: any = await ordRes.json();
+        setPayingOrder(orderData);
+        // Re-fetch loyalty
+        const loyRes = await fetch(`/api/loyalty/${encodeURIComponent(customerKey)}`, { credentials: "include" });
+        if (loyRes.ok) setLoyalty(await loyRes.json());
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      } else {
+        toast({ title: "Redeem failed", description: data.error || "Try again", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Redeem failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setLoyaltyBusy(false);
+    }
+  }
+
+  // ── Razorpay pay ────────────────────────────────────────────────────────
+  async function payViaRazorpay() {
+    if (!payingOrder) return;
+    if (!rzpStatus?.configured) {
+      toast({
+        title: "Razorpay not configured",
+        description: "Add keys in Settings → Payment integration.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const ok = await ensureRazorpayScript();
+    if (!ok) {
+      toast({ title: "Could not load checkout", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const res = await apiRequest("POST", "/api/razorpay/create-order", {
+        orderId: payingOrder.id,
+        amount:  parseFloat(payingOrder.totalAmount),
+      });
+      const rzp: any = await res.json();
+
+      const w: any = window;
+      const checkout = new w.Razorpay({
+        key:        rzp.keyId,
+        amount:     rzp.amount,
+        currency:   rzp.currency,
+        order_id:   rzp.orderId,
+        name:       settings?.restaurantName ?? "Bagicha",
+        description: `Order ${payingOrder.orderNumber}`,
+        prefill: {
+          name:    payingOrder.customerName ?? "",
+          contact: payingOrder.customerPhone ?? "",
+        },
+        theme: { color: "#10b981" },
+        handler: async (response: any) => {
+          try {
+            const verifyRes = await apiRequest("POST", "/api/razorpay/verify", {
+              razorpay_order_id:   response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature:  response.razorpay_signature,
+              posOrderId:          payingOrder.id,
+            });
+            const verifyData: any = await verifyRes.json();
+            if (verifyData.ok) {
+              toast({ title: "Payment successful!" });
+              queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+              setPayingOrder(null);
+              fetch('/api/print/bill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ orderId: payingOrder.id }),
+                credentials: 'include',
+              }).catch(() => {});
+            } else {
+              toast({ title: "Verification failed", variant: "destructive" });
+            }
+          } catch {
+            toast({ title: "Verification error", variant: "destructive" });
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            // user cancelled — no toast needed
+          },
+        },
+      });
+      checkout.open();
+    } catch (e: any) {
+      toast({ title: "Razorpay error", description: e?.message, variant: "destructive" });
+    }
+  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -290,14 +504,73 @@ export default function Billing() {
 
       {/* Payment Dialog */}
       <Dialog open={!!payingOrder} onOpenChange={() => setPayingOrder(null)}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Collect Payment</DialogTitle>
             <DialogDescription>
               {payingOrder?.orderNumber} — {formatCurrency(parseFloat(payingOrder?.totalAmount || "0"))}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 max-h-[70vh] overflow-y-auto">
+            {/* ── Coupon row ── */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5" /> Coupon Code
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={couponCode}
+                  onChange={e => setCouponCode(e.target.value.toUpperCase())}
+                  placeholder="Enter code (optional)"
+                  className="text-sm font-mono"
+                  disabled={couponBusy}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={applyCoupon}
+                  disabled={couponBusy || !couponCode.trim()}
+                >
+                  {couponBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
+                </Button>
+              </div>
+              {couponMsg && (
+                <p className={`text-xs ${couponMsg.ok ? "text-emerald-600" : "text-red-600"}`}>
+                  {couponMsg.text}
+                </p>
+              )}
+            </div>
+
+            {/* ── Loyalty redeem ── */}
+            {loyalty && loyalty.balance > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5" />
+                    Loyalty: {loyalty.balance} pts available
+                  </p>
+                  {loyalty.redeemable > 0 && (
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-amber-500 hover:bg-amber-600"
+                      onClick={redeemLoyalty}
+                      disabled={loyaltyBusy}
+                    >
+                      {loyaltyBusy
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : `Redeem ${loyalty.redeemable} pts → ₹${loyalty.rupeeValue}`}
+                    </Button>
+                  )}
+                </div>
+                {loyalty.redeemable === 0 && (
+                  <p className="text-[11px] text-amber-700">
+                    Need {loyalty.minRedeemPoints - loyalty.balance} more pts to unlock redemption.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Method ── */}
             <div>
               <p className="text-sm font-medium mb-2">Select Payment Method</p>
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
@@ -305,16 +578,25 @@ export default function Billing() {
                 <SelectContent>
                   <SelectItem value="cash">Cash</SelectItem>
                   <SelectItem value="card">Card</SelectItem>
-                  <SelectItem value="upi">UPI</SelectItem>
+                  <SelectItem value="upi">UPI (manual)</SelectItem>
                   <SelectItem value="online">Online</SelectItem>
+                  <SelectItem value="due">Due / Pay later</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {/* ── Totals ── */}
             <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
                 <span>{formatCurrency(parseFloat(payingOrder?.totalAmount || "0") - parseFloat(payingOrder?.taxAmount || "0"))}</span>
               </div>
+              {payingOrder && parseFloat(payingOrder.discountAmount || "0") > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span>Discount</span>
+                  <span>-{formatCurrency(parseFloat(payingOrder.discountAmount))}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Tax</span>
                 <span>{formatCurrency(parseFloat(payingOrder?.taxAmount || "0"))}</span>
@@ -325,16 +607,27 @@ export default function Billing() {
                 <span>{formatCurrency(parseFloat(payingOrder?.totalAmount || "0"))}</span>
               </div>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setPayingOrder(null)}>Cancel</Button>
+
+            {/* ── Action buttons ── */}
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => setPayingOrder(null)}>Cancel</Button>
               <Button
-                className="flex-1"
                 disabled={processPaymentMutation.isPending}
                 onClick={() => processPaymentMutation.mutate({ id: payingOrder.id, method: paymentMethod })}
               >
                 {processPaymentMutation.isPending ? "Processing..." : "Mark as Paid"}
               </Button>
             </div>
+
+            {rzpStatus?.configured && (
+              <Button
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={payViaRazorpay}
+              >
+                <ShieldCheck className="w-4 h-4 mr-1.5" />
+                Pay via Razorpay (UPI / Card)
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
