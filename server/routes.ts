@@ -50,6 +50,7 @@ import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
+import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 
@@ -102,13 +103,13 @@ passport.deserializeUser(async (id: any, done) => {
 });
 
 // Middleware to require authentication
-function requireAuth(req: any, res: any, next: any) {
+export function requireAuth(req: any, res: any, next: any) {
   if (req.isAuthenticated()) return next();
   res.status(401).json({ message: "Unauthorized" });
 }
 
 // Middleware to require admin role
-function requireAdmin(req: any, res: any, next: any) {
+export function requireAdmin(req: any, res: any, next: any) {
   if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
   if (req.user?.role !== "admin") return res.status(403).json({ message: "Admin access required" });
   next();
@@ -528,6 +529,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Phase 1 growth routes (Razorpay, Coupons, Loyalty, Feedback, Digest) ─────
   registerPublicGrowthRoutes(app);
   registerGrowthRoutes(app, broadcast);
+
+  // ── Staff management + attendance routes ──────────────────────────────────
+  registerStaffRoutes(app);
 
   // ── Settings ──────────────────────────────────────────────────────────────────
 

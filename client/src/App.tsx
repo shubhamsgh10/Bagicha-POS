@@ -17,6 +17,8 @@ import Tables from "@/pages/Tables";
 import LiveAnalytics from "@/pages/LiveAnalytics";
 import LiveTablesDashboard from "@/pages/LiveTablesDashboard";
 import CustomerDashboard from "@/pages/CustomerDashboard";
+import Billing from "@/pages/Billing";
+import Staff from "@/pages/Staff";
 import KOT from "@/pages/KOT";
 import MobilePOS from "@/pages/MobilePOS";
 import Kitchen from "@/pages/Kitchen";
@@ -176,6 +178,8 @@ function Router() {
                       <Route path="/"               component={Tables} />
                       <Route path="/tables"         component={Tables} />
                       <Route path="/dashboard"      component={Dashboard} />
+                      <Route path="/billing"        component={Billing} />
+                      <Route path="/staff"          component={Staff} />
                       <Route path="/orders"         component={Orders} />
                       <Route path="/menu"           component={Menu} />
                       <Route path="/inventory"      component={Inventory} />
