@@ -105,5 +105,29 @@
     "status": "failed",
     "error": "Invalid or missing phone number",
     "campaign": "WIN_BACK"
+  },
+  {
+    "id": "31b56c6a-cede-4a5a-bb39-0abcd919df23",
+    "customerId": "9752486454",
+    "customerName": "Shubham",
+    "phone": "9752486454",
+    "trigger": "WELCOME",
+    "message": "Hi Shubham! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-04-27T09:24:43.481Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "3a416a10-ad16-438b-9cd2-733797d83460",
+    "customerId": "9981636949",
+    "customerName": "parul",
+    "phone": "9981636949",
+    "trigger": "WELCOME",
+    "message": "Hi parul! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-04-27T14:15:55.369Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WELCOME"
   }
 ]
