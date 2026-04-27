@@ -998,7 +998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { items, ...orderInfo } = req.body;
       const orderNumber = `ORD${Date.now()}`;
-      const order = await storage.createOrder({ ...orderInfo, orderNumber });
+      const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: (req.user as any)?.id ?? null });
 
       // Create order items
       if (items && items.length > 0) {
