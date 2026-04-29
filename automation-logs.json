@@ -129,5 +129,29 @@
     "status": "failed",
     "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
     "campaign": "WELCOME"
+  },
+  {
+    "id": "6eaa1d80-a951-4662-a975-e6ae8465b649",
+    "customerId": "9752486454",
+    "customerName": "Shubham",
+    "phone": "9752486454",
+    "trigger": "WIN_BACK",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 31 days since your last visit (especially your favourite *Tandoori Momos*). Come back and enjoy *10% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-04-29T09:11:55.562Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WIN_BACK"
+  },
+  {
+    "id": "8bf6a9bc-5274-4117-8896-b9d34f0e2328",
+    "customerId": "9109550322",
+    "customerName": "Shubham",
+    "phone": "9109550322",
+    "trigger": "WIN_BACK",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 32 days since your last visit (especially your favourite *Shakshuka*). Come back and enjoy *15% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-04-29T09:11:58.567Z",
+    "status": "failed",
+    "error": "Invalid or missing phone number",
+    "campaign": "WIN_BACK"
   }
 ]

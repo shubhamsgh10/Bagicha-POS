@@ -570,3 +570,16 @@ export const insertAttendanceSyncLogSchema = createInsertSchema(attendanceSyncLo
 export type AttendanceRecord       = typeof attendanceRecords.$inferSelect;
 export type InsertAttendanceRecord = z.infer<typeof insertAttendanceRecordSchema>;
 export type AttendanceSyncLog      = typeof attendanceSyncLog.$inferSelect;
+
+// ── Staff Members (separate from system users — for the staff selector login) ─
+export const staffMembers = pgTable("staff_members", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  pin: text("pin"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertStaffMemberSchema = createInsertSchema(staffMembers).omit({ id: true, createdAt: true });
+export type StaffMember       = typeof staffMembers.$inferSelect;
+export type InsertStaffMember = z.infer<typeof insertStaffMemberSchema>;
