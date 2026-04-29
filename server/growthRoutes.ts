@@ -8,6 +8,7 @@
  */
 
 import type { Express, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import { db } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
@@ -165,6 +166,14 @@ export function registerPublicGrowthRoutes(app: Express): void {
 
 // ── Authenticated routes ──────────────────────────────────────────────────────
 
+const razorpayVerifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many payment verification requests." },
+});
+
 export function registerGrowthRoutes(app: Express, broadcast: (data: any) => void): void {
   // ── Razorpay ────────────────────────────────────────────────────────────────
 
@@ -213,7 +222,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
   });
 
   /** Verify payment signature returned by Razorpay Checkout. */
-  app.post("/api/razorpay/verify", requireAuth, async (req, res) => {
+  app.post("/api/razorpay/verify", requireAuth, razorpayVerifyLimiter, async (req, res) => {
     try {
       const { razorpay_order_id, razorpay_payment_id, razorpay_signature, posOrderId, method } = req.body;
 

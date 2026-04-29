@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "child_process";
 import { storage } from "./storage";
@@ -155,9 +156,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // ── Rate Limiters ────────────────────────────────────────────────────────────
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,   // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many login attempts. Try again in 15 minutes." },
+  });
+
+  const pinLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,    // 5 minutes
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { valid: false, message: "Too many PIN attempts. Try again in 5 minutes." },
+  });
+
+  const staffPinLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many PIN attempts. Try again in 5 minutes." },
+  });
+
+  const razorpayVerifyLimiter = rateLimit({
+    windowMs: 60 * 1000,        // 1 minute
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many payment verification requests." },
+  });
+
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", loginLimiter, (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
@@ -196,7 +231,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Staff PIN login — uses staffMembers table (not system users) ────────────
-  app.post("/api/auth/staff-pin-login", async (req, res, next) => {
+  app.post("/api/auth/staff-pin-login", staffPinLimiter, async (req, res, next) => {
     try {
       const { staffId, pin } = req.body;
       if (!staffId || !pin) return res.status(400).json({ message: "staffId and pin required" });
@@ -279,7 +314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
+  app.post("/api/auth/verify-pin", requireAuth, pinLimiter, async (req, res) => {
     try {
       const { pin, requiredRole } = req.body;
       if (!pin) return res.status(400).json({ valid: false });
