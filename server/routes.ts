@@ -90,13 +90,18 @@ passport.use(new LocalStrategy(async (username, password, done) => {
 }));
 
 passport.serializeUser((user: any, done) => {
-  done(null, user.id);
+  done(null, user._isStaffMember ? `sm:${user.id}` : user.id);
 });
 
-passport.deserializeUser(async (id: any, done) => {
+passport.deserializeUser(async (key: any, done) => {
   try {
-    const user = await storage.getUser(Number(id));
-    done(null, user || false);
+    if (typeof key === "string" && key.startsWith("sm:")) {
+      const sm = await storage.getStaffMember(Number(key.slice(3)));
+      done(null, sm ? { id: sm.id, username: sm.name, role: "staff", _isStaffMember: true } : false);
+    } else {
+      const user = await storage.getUser(Number(key));
+      done(null, user || false);
+    }
   } catch (err) {
     done(err);
   }
@@ -190,22 +195,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ isLocalNetwork, isMobile });
   });
 
-  // ── Staff PIN login — no password, just userId + 4-digit PIN ────────────────
+  // ── Staff PIN login — uses staffMembers table (not system users) ────────────
   app.post("/api/auth/staff-pin-login", async (req, res, next) => {
     try {
-      const { userId, pin } = req.body;
-      if (!userId || !pin) return res.status(400).json({ message: "userId and pin required" });
+      const { staffId, pin } = req.body;
+      if (!staffId || !pin) return res.status(400).json({ message: "staffId and pin required" });
 
-      const user = await storage.getUser(Number(userId));
-      if (!user) return res.status(401).json({ message: "User not found" });
-      if (user.role !== "staff") return res.status(403).json({ message: "PIN login is only for staff accounts" });
-      if (!user.pin) return res.status(401).json({ message: "No PIN set for this user. Ask your manager to set one." });
-      if (user.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
+      const sm = await storage.getStaffMember(Number(staffId));
+      if (!sm || !sm.isActive) return res.status(401).json({ message: "Staff member not found" });
+      if (!sm.pin) return res.status(401).json({ message: "No PIN set. Ask manager to set one in Settings → Staff Selector." });
+      if (sm.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
 
-      req.logIn(user, (err) => {
+      const staffUser = { id: sm.id, username: sm.name, role: "staff", _isStaffMember: true };
+      req.logIn(staffUser as any, (err) => {
         if (err) return next(err);
-        const { password, pin: _pin, ...safeUser } = user;
-        res.json(safeUser);
+        res.json({ id: sm.id, username: sm.name, role: "staff" });
       });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -327,6 +331,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Update PIN error:", err);
       res.status(500).json({ message: "Failed to update PIN" });
     }
+  });
+
+  // ── Staff Members — public selector list (no auth) ───────────────────────────
+  app.get("/api/staff-members", async (_req, res) => {
+    try {
+      const all = await storage.getStaffMembers();
+      res.json(all.filter(s => s.isActive).map(({ id, name }) => ({ id, name })));
+    } catch {
+      res.status(500).json({ message: "Failed to fetch staff members" });
+    }
+  });
+
+  // ── Staff Members CRUD (admin only) ──────────────────────────────────────────
+  app.get("/api/staff-members/all", requireAdmin, async (_req, res) => {
+    try {
+      const all = await storage.getStaffMembers();
+      res.json(all.map(({ id, name, pin, isActive, createdAt }) => ({ id, name, hasPin: !!pin, isActive, createdAt })));
+    } catch {
+      res.status(500).json({ message: "Failed to fetch staff members" });
+    }
+  });
+
+  app.post("/api/staff-members", requireAdmin, async (req, res) => {
+    try {
+      const { name, pin } = req.body;
+      if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
+      if (pin && !/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ message: "PIN must be 4–6 digits" });
+      const sm = await storage.createStaffMember({ name: name.trim(), pin: pin ? String(pin) : null, isActive: true });
+      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.put("/api/staff-members/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { name, pin, isActive } = req.body;
+      if (pin !== undefined && pin !== null && pin !== "" && !/^\d{4,6}$/.test(String(pin))) {
+        return res.status(400).json({ message: "PIN must be 4–6 digits" });
+      }
+      const updates: any = {};
+      if (name !== undefined) updates.name = name.trim();
+      if (pin !== undefined) updates.pin = pin === "" ? null : String(pin);
+      if (isActive !== undefined) updates.isActive = isActive;
+      const sm = await storage.updateStaffMember(id, updates);
+      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.delete("/api/staff-members/:id", requireAdmin, async (req, res) => {
+    try {
+      await storage.deleteStaffMember(Number(req.params.id));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ── Manager page access settings ──────────────────────────────────────────────
+  app.get("/api/settings/manager-pages", requireAuth, (_req, res) => {
+    const s = getSettings();
+    res.json({ managerAllowedPages: s.managerAllowedPages });
+  });
+
+  app.post("/api/settings/manager-pages", requireAdmin, (req, res) => {
+    const { managerAllowedPages } = req.body;
+    const updated = saveSettings({ managerAllowedPages: managerAllowedPages ?? null });
+    res.json({ managerAllowedPages: updated.managerAllowedPages });
   });
 
   // ── User Management (Admin only) ──────────────────────────────────────────────

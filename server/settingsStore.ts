@@ -66,6 +66,7 @@ export interface RestaurantSettings {
   footerNote: string;
   posRoleTimeout: number;
   printSettings: PrintConfigSettings;
+  managerAllowedPages: string[] | null; // null = all pages allowed
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -112,6 +113,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   footerNote: "Thank you for dining with us!",
   posRoleTimeout: 2,
   printSettings: DEFAULT_PRINT_SETTINGS,
+  managerAllowedPages: null,
 };
 
 export function getSettings(): RestaurantSettings {
