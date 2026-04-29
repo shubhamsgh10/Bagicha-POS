@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -117,16 +117,30 @@ export default function Staff() {
 
   const { data: attendanceSettings } = useQuery<AttendanceSettings>({
     queryKey: ["/api/attendance/settings"],
-    select: (d) => {
-      setSheetUrl(d.sheetUrl ?? "");
-      setAutoSyncHour(String(d.autoSyncHour ?? -1));
-      if (d.columnMapping) setColMapping(prev => ({ ...prev, ...d.columnMapping }));
-      return d;
+    queryFn: async () => {
+      const res = await fetch("/api/attendance/settings", { credentials: "include" });
+      if (!res.ok) return { sheetUrl: "", columnMapping: null, autoSyncHour: -1 };
+      return res.json();
     },
   });
 
+  // Sync settings into local form state when data loads
+  useEffect(() => {
+    if (!attendanceSettings) return;
+    setSheetUrl(attendanceSettings.sheetUrl ?? "");
+    setAutoSyncHour(String(attendanceSettings.autoSyncHour ?? -1));
+    if (attendanceSettings.columnMapping) {
+      setColMapping(prev => ({ ...prev, ...attendanceSettings.columnMapping }));
+    }
+  }, [attendanceSettings]);
+
   const { data: employees = [] } = useQuery<string[]>({
     queryKey: ["/api/attendance/employees"],
+    queryFn: async () => {
+      const res = await fetch("/api/attendance/employees", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
   });
 
   const { data: attendance = [], isLoading: attLoading } = useQuery<AttendanceRecord[]>({
@@ -135,6 +149,7 @@ export default function Staff() {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
       if (empFilter !== "all") params.set("employee", empFilter);
       const res = await fetch(`/api/attendance?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
   });
@@ -144,6 +159,7 @@ export default function Staff() {
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
       const res = await fetch(`/api/attendance/summary?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
   });
@@ -153,12 +169,18 @@ export default function Staff() {
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
       const res = await fetch(`/api/staff/performance?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
   });
 
   const { data: syncLog = [] } = useQuery<any[]>({
     queryKey: ["/api/attendance/sync-log"],
+    queryFn: async () => {
+      const res = await fetch("/api/attendance/sync-log", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
   });
 
   // ── mutations ────────────────────────────────────────────────────────────────
