@@ -9,6 +9,7 @@ import {
   Settings, LogOut, ClipboardList, Menu, X, ChefHat, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -43,9 +44,23 @@ export function TopNav() {
   const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRoleContext();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const visibleNav = NAV_ITEMS.filter(item =>
-    !item.roles || item.roles.includes(activeRole)
-  );
+  const { data: settings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/settings", { credentials: "include" });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 30000,
+  });
+
+  const visibleNav = NAV_ITEMS.filter(item => {
+    if (item.roles && !item.roles.includes(activeRole)) return false;
+    if (activeRole === "manager" && settings?.managerAllowedPages) {
+      if (!settings.managerAllowedPages.includes(item.href)) return false;
+    }
+    return true;
+  });
 
   const handleLogout = async () => {
     try {

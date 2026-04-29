@@ -54,9 +54,14 @@ type OrderSubTab = "running" | "held" | "completed";
 
 /* ─────────────────────── CONSTANTS ─────────────────────────── */
 const STATUS_COLORS: Record<string, string> = {
-  free:    "bg-gray-100 text-gray-500 border-gray-200",
-  running: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  billed:  "bg-amber-50 text-amber-700 border-amber-200",
+  free:    "text-gray-500 border-gray-200/80",
+  running: "text-emerald-700 border-emerald-300/60",
+  billed:  "text-amber-700 border-amber-300/60",
+};
+const STATUS_BG: Record<string, string> = {
+  free:    "rgba(243,244,246,0.70)",
+  running: "rgba(209,250,229,0.55)",
+  billed:  "rgba(254,243,199,0.60)",
 };
 const STATUS_DOT: Record<string, string> = {
   free: "bg-gray-400", running: "bg-emerald-500", billed: "bg-amber-500",
@@ -170,13 +175,22 @@ const TableCard = memo(function TableCard({
   const lp = useLongPress(onLongPress, onTap);
   const colorClass = STATUS_COLORS[table.status] || STATUS_COLORS.free;
   const dotClass   = STATUS_DOT[table.status]   || STATUS_DOT.free;
+  const bgStyle    = STATUS_BG[table.status]    || STATUS_BG.free;
 
   return (
     <motion.button
       {...lp}
-      whileTap={{ scale: 0.94 }}
+      whileTap={{ scale: 0.93 }}
       className={`relative flex flex-col items-start p-3 rounded-2xl border-2 min-h-[80px] w-full
                   touch-manipulation select-none transition-colors ${colorClass}`}
+      style={{
+        background: bgStyle,
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        boxShadow: table.status === "running"
+          ? "0 4px 16px rgba(16,185,129,0.15), 0 1px 0 rgba(255,255,255,0.70) inset"
+          : "0 2px 8px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.60) inset",
+      }}
     >
       <div className="flex items-center justify-between w-full mb-1">
         <span className="font-bold text-sm leading-none">{table.name}</span>
@@ -222,8 +236,15 @@ const MenuItemCard = memo(function MenuItemCard({
     <motion.button
       {...lp}
       whileTap={{ scale: 0.93 }}
-      className="relative flex flex-col items-start bg-gray-50 rounded-2xl p-3 text-left
-                 active:bg-emerald-50 transition-colors touch-manipulation select-none w-full"
+      className="relative flex flex-col items-start rounded-2xl p-3 text-left
+                 transition-colors touch-manipulation select-none w-full"
+      style={{
+        background: "rgba(255,255,255,0.58)",
+        backdropFilter: "blur(16px) saturate(1.6)",
+        WebkitBackdropFilter: "blur(16px) saturate(1.6)",
+        border: "1px solid rgba(255,255,255,0.70)",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.80) inset",
+      }}
     >
       {cartQty > 0 && (
         <span className="absolute top-2 right-2 w-5 h-5 rounded-full bg-emerald-500 text-white
@@ -557,8 +578,14 @@ function OrderCard({ order, onTap }: { order: OrderRow; onTap: () => void }) {
     <motion.button
       whileTap={{ scale: 0.97 }}
       onClick={onTap}
-      className="w-full flex items-center gap-3 bg-white border border-gray-100
-                 rounded-2xl p-3 shadow-sm active:bg-gray-50 transition-colors text-left"
+      className="w-full flex items-center gap-3 rounded-2xl p-3 transition-colors text-left"
+      style={{
+        background: "rgba(255,255,255,0.62)",
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
+        border: "1px solid rgba(255,255,255,0.72)",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.80) inset",
+      }}
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-1">
@@ -881,15 +908,29 @@ export default function MobilePOS() {
   /* ── KOT success animation ── */
   if (kotDone && !showPaySheet) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center bg-white">
+      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center"
+           style={{ background: "linear-gradient(160deg,#f0fdf4 0%,#ecfdf5 35%,#f5f3ff 100%)" }}>
         <motion.div
-          initial={{ scale: 0 }} animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 200, damping: 15 }}
-          className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center"
+          initial={{ scale: 0, rotate: -15 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 220, damping: 14 }}
+          style={{
+            width: 88, height: 88, borderRadius: "50%",
+            background: "linear-gradient(135deg,#10b981,#059669)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 12px 36px rgba(16,185,129,0.40)",
+          }}
         >
-          <CheckCircle2 className="w-10 h-10 text-emerald-600" />
+          <CheckCircle2 className="w-11 h-11 text-white" />
         </motion.div>
-        <h2 className="text-xl font-bold text-gray-800">Done!</h2>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <h2 className="text-2xl font-black text-gray-800">Done!</h2>
+          <p className="text-sm text-gray-400 mt-1">Order sent to kitchen</p>
+        </motion.div>
       </div>
     );
   }
@@ -902,7 +943,8 @@ export default function MobilePOS() {
 
   /* ─────────────────────── RENDER ─────────────────────────── */
   return (
-    <div className="flex flex-col h-full max-w-md mx-auto bg-gray-50 overflow-hidden relative">
+    <div className="flex flex-col h-full max-w-md mx-auto overflow-hidden relative"
+         style={{ background: "linear-gradient(160deg,#f0fdf4 0%,#ecfdf5 35%,#f5f3ff 100%)" }}>
 
       {/* PIN Guard overlay */}
       {managerAuth.pinRequest && (
@@ -953,8 +995,14 @@ export default function MobilePOS() {
       </AnimatePresence>
 
       {/* ── Top Bar ── */}
-      <header className="shrink-0 flex items-center justify-between px-4 py-3
-                         bg-white border-b border-gray-100 shadow-sm">
+      <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b"
+              style={{
+                background: "rgba(255,255,255,0.75)",
+                backdropFilter: "blur(20px) saturate(1.8)",
+                WebkitBackdropFilter: "blur(20px) saturate(1.8)",
+                borderColor: "rgba(255,255,255,0.60)",
+                boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+              }}>
         <div className="flex items-center gap-2">
           {(tab === "menu" || tab === "cart") && (
             <button
@@ -1071,7 +1119,13 @@ export default function MobilePOS() {
         {tab === "menu" && (
           <div className="flex flex-col h-full">
             {/* Sticky: search + categories */}
-            <div className="shrink-0 bg-gray-50 border-b border-gray-100">
+            <div className="shrink-0 border-b"
+                 style={{
+                   background: "rgba(255,255,255,0.65)",
+                   backdropFilter: "blur(16px)",
+                   WebkitBackdropFilter: "blur(16px)",
+                   borderColor: "rgba(255,255,255,0.55)",
+                 }}>
               {/* Search */}
               <div className="px-3 pt-3 pb-2">
                 <div className="relative">
@@ -1171,7 +1225,14 @@ export default function MobilePOS() {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: 10 }}
-                        className="flex items-center gap-3 bg-white rounded-2xl p-3 shadow-sm border border-gray-100"
+                        className="flex items-center gap-3 rounded-2xl p-3"
+                        style={{
+                          background: "rgba(255,255,255,0.70)",
+                          backdropFilter: "blur(14px)",
+                          WebkitBackdropFilter: "blur(14px)",
+                          border: "1px solid rgba(255,255,255,0.75)",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                        }}
                       >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
@@ -1254,7 +1315,14 @@ export default function MobilePOS() {
                   )}
 
                   {/* Collapsible details */}
-                  <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                  <div className="rounded-2xl overflow-hidden"
+                       style={{
+                         background: "rgba(255,255,255,0.68)",
+                         backdropFilter: "blur(14px)",
+                         WebkitBackdropFilter: "blur(14px)",
+                         border: "1px solid rgba(255,255,255,0.72)",
+                         boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                       }}>
                     <button
                       onClick={() => setShowDetails(v => !v)}
                       className="w-full flex items-center justify-between px-4 py-3
@@ -1297,7 +1365,14 @@ export default function MobilePOS() {
                   </div>
 
                   {/* Discount (PIN gated for non-admin) */}
-                  <div className="bg-white rounded-2xl border border-gray-100 px-4 py-3 shadow-sm">
+                  <div className="rounded-2xl px-4 py-3"
+                       style={{
+                         background: "rgba(255,255,255,0.68)",
+                         backdropFilter: "blur(14px)",
+                         WebkitBackdropFilter: "blur(14px)",
+                         border: "1px solid rgba(255,255,255,0.72)",
+                         boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                       }}>
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                         <Percent className="w-4 h-4 text-gray-400" /> Discount
@@ -1336,7 +1411,14 @@ export default function MobilePOS() {
                   </div>
 
                   {/* Summary */}
-                  <div className="bg-white rounded-2xl border border-gray-100 px-4 py-3 shadow-sm space-y-1.5">
+                  <div className="rounded-2xl px-4 py-3 space-y-1.5"
+                       style={{
+                         background: "rgba(255,255,255,0.68)",
+                         backdropFilter: "blur(14px)",
+                         WebkitBackdropFilter: "blur(14px)",
+                         border: "1px solid rgba(255,255,255,0.72)",
+                         boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                       }}>
                     <div className="flex justify-between text-sm text-gray-500">
                       <span>Subtotal</span><span>{fmt(subtotal)}</span>
                     </div>
@@ -1359,7 +1441,14 @@ export default function MobilePOS() {
 
             {/* ── Sticky bottom actions ── */}
             {cart.length > 0 && (
-              <div className="shrink-0 bg-white border-t border-gray-100 px-3 py-3 pb-safe shadow-lg">
+              <div className="shrink-0 px-3 py-3 pb-safe"
+                   style={{
+                     background: "rgba(255,255,255,0.82)",
+                     backdropFilter: "blur(20px)",
+                     WebkitBackdropFilter: "blur(20px)",
+                     borderTop: "1px solid rgba(255,255,255,0.60)",
+                     boxShadow: "0 -4px 16px rgba(0,0,0,0.06)",
+                   }}>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => kotMutation.mutate({})}
@@ -1452,36 +1541,58 @@ export default function MobilePOS() {
       </div>
 
       {/* ── Bottom Navigation ── */}
-      <nav className="shrink-0 absolute bottom-0 left-0 right-0
-                      bg-white/95 border-t border-gray-100 px-2 pt-1 pb-2 z-10">
-        <div className="grid grid-cols-4 gap-0.5">
+      <nav className="shrink-0 absolute bottom-0 left-0 right-0 px-3 pt-2 pb-3 z-10"
+           style={{
+             background: "rgba(255,255,255,0.82)",
+             backdropFilter: "blur(24px) saturate(1.8)",
+             WebkitBackdropFilter: "blur(24px) saturate(1.8)",
+             borderTop: "1px solid rgba(255,255,255,0.65)",
+             boxShadow: "0 -4px 20px rgba(0,0,0,0.07)",
+           }}>
+        <div className="grid grid-cols-4 gap-1">
           {([
-            { id: "tables", icon: LayoutGrid,   label: "Tables",  badge: 0 },
-            { id: "menu",   icon: UtensilsCrossed, label: "Menu", badge: 0 },
-            { id: "cart",   icon: ShoppingCart,  label: "Cart",   badge: cartCount },
-            { id: "orders", icon: ClipboardList, label: "Orders", badge: runningOrders.length },
-          ] as const).map(({ id, icon: Icon, label, badge }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`relative flex flex-col items-center justify-center py-2 rounded-xl
-                          transition-all min-h-[56px] ${
-                tab === id ? "bg-emerald-50 text-emerald-600" : "text-gray-400"
-              }`}
-            >
-              <div className="relative">
-                <Icon className="w-5 h-5" />
-                {badge > 0 && (
-                  <span className="absolute -top-1.5 -right-2 w-4 h-4 rounded-full
-                                   bg-emerald-500 text-white text-[9px] font-bold
-                                   flex items-center justify-center leading-none">
-                    {badge > 9 ? "9+" : badge}
-                  </span>
+            { id: "tables", icon: LayoutGrid,     label: "Tables",  badge: 0 },
+            { id: "menu",   icon: UtensilsCrossed, label: "Menu",    badge: 0 },
+            { id: "cart",   icon: ShoppingCart,    label: "Cart",    badge: cartCount },
+            { id: "orders", icon: ClipboardList,   label: "Orders",  badge: runningOrders.length },
+          ] as const).map(({ id, icon: Icon, label, badge }) => {
+            const active = tab === id;
+            return (
+              <motion.button
+                key={id}
+                onClick={() => setTab(id)}
+                whileTap={{ scale: 0.90 }}
+                className="relative flex flex-col items-center justify-center py-2 rounded-2xl transition-colors min-h-[54px]"
+                style={{
+                  background: active
+                    ? "linear-gradient(135deg,rgba(16,185,129,0.15),rgba(5,150,105,0.10))"
+                    : "transparent",
+                  color: active ? "#059669" : "#9ca3af",
+                  boxShadow: active ? "0 2px 8px rgba(16,185,129,0.15)" : "none",
+                }}
+              >
+                <div className="relative">
+                  <Icon className="w-[22px] h-[22px]" strokeWidth={active ? 2.2 : 1.8} />
+                  {badge > 0 && (
+                    <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 rounded-full
+                                     bg-emerald-500 text-white text-[9px] font-bold
+                                     flex items-center justify-center leading-none px-1">
+                      {badge > 9 ? "9+" : badge}
+                    </span>
+                  )}
+                </div>
+                <span className={`text-[10px] mt-0.5 ${active ? "font-bold" : "font-medium"}`}>{label}</span>
+                {active && (
+                  <motion.div
+                    layoutId="nav-pill"
+                    className="absolute inset-0 rounded-2xl"
+                    style={{ border: "1.5px solid rgba(16,185,129,0.30)" }}
+                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  />
                 )}
-              </div>
-              <span className="text-[10px] font-semibold mt-0.5">{label}</span>
-            </button>
-          ))}
+              </motion.button>
+            );
+          })}
         </div>
       </nav>
     </div>

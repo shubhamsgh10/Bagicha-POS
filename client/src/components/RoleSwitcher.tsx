@@ -30,8 +30,8 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
   admin:   <ShieldCheck className="w-3 h-3" />,
 };
 
-/** Ordered display sequence */
-const ROLE_ORDER: UserRole[] = ["staff", "kitchen", "cashier", "manager", "admin"];
+/** Ordered display sequence — only manager and admin are system roles */
+const ROLE_ORDER: UserRole[] = ["manager", "admin"];
 
 function fmtTime(secs: number) {
   const m = Math.floor(secs / 60);
