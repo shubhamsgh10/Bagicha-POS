@@ -9,6 +9,7 @@
 
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
+import { logAudit } from "./services/auditService";
 import { db } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
@@ -346,6 +347,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       } as any);
 
       broadcast({ type: "ORDER_UPDATE", order: updated });
+      logAudit(req, "order.coupon_applied", "order", orderId, { couponId, discount: result.discount, customerKey });
       res.json({ ok: true, discount: result.discount, order: updated });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
@@ -367,6 +369,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
   app.post("/api/coupons/issue", requireAdmin, async (req, res) => {
     try {
       const row = await issueCoupon(req.body as any);
+      logAudit(req, "coupon.issue", "coupon", row.id, { code: row.code, type: row.type, value: row.value });
       res.json(row);
     } catch (err: any) {
       res.status(400).json({ error: err?.message });
@@ -437,6 +440,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
         broadcast({ type: "ORDER_UPDATE", order: updated });
       }
 
+      logAudit(req, "order.loyalty_redeemed", "order", orderId ?? null, { customerKey, points, discount: result.discount });
       res.json({ ok: true, discount: result.discount });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
