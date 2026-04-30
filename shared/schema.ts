@@ -583,3 +583,24 @@ export const staffMembers = pgTable("staff_members", {
 export const insertStaffMemberSchema = createInsertSchema(staffMembers).omit({ id: true, createdAt: true });
 export type StaffMember       = typeof staffMembers.$inferSelect;
 export type InsertStaffMember = z.infer<typeof insertStaffMemberSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUDIT LOG — Immutable append-only trail for all sensitive actions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const auditLogs = pgTable("audit_logs", {
+  id:         serial("id").primaryKey(),
+  actorId:    text("actor_id").notNull(),        // user id or "system"
+  actorName:  text("actor_name").notNull(),
+  actorRole:  text("actor_role").notNull(),
+  action:     text("action").notNull(),           // e.g. "order.payment"
+  entityType: text("entity_type").notNull(),      // "order" | "user" | "coupon" | "settings"
+  entityId:   text("entity_id"),
+  metadata:   json("metadata").$type<Record<string, unknown>>(),
+  ip:         text("ip"),
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
+export type AuditLog       = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

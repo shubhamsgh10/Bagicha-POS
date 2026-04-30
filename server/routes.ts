@@ -54,6 +54,7 @@ import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes
 import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
+import { logAudit, getAuditLogs } from "./services/auditService";
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -343,6 +344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const allUsers = await storage.getUsers();
       await Promise.all(allUsers.map((u) => storage.updateUser(u.id, { pin: null })));
+      logAudit(req, "user.pin_reset_all", "user", null, { count: allUsers.length });
       res.json({ success: true });
     } catch (err) {
       console.error("Reset all PINs error:", err);
@@ -360,6 +362,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "PIN must be 4-6 digits" });
       }
       const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
+      logAudit(req, "user.pin_update", "user", id, { cleared: !pin });
       const { password: _, ...safeUser } = updated;
       res.json(safeUser);
     } catch (err) {
@@ -467,6 +470,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pin: pin ? String(pin) : null,
       });
       const { password: _, pin: userPin, ...safeUser } = user;
+      logAudit(req, "user.create", "user", user.id, { username: user.username, role: user.role });
       res.json({ ...safeUser, pin: !!userPin });
     } catch (err) {
       console.error("Create user error:", err);
@@ -498,6 +502,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const updated = await storage.updateUser(id, updateData);
       const { password: _, pin: updatedPin, ...safeUser } = updated;
+      logAudit(req, "user.update", "user", id, { fields: Object.keys(updateData) });
       res.json({ ...safeUser, pin: !!updatedPin });
     } catch (err) {
       console.error("Update user error:", err);
@@ -511,6 +516,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentUser = req.user as any;
       if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete your own account" });
       await storage.deleteUser(id);
+      logAudit(req, "user.delete", "user", id);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "Failed to delete user" });
@@ -547,6 +553,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/logs", requireAdmin, (_req, res) => {
     res.json(getLogBuffer());
+  });
+
+  app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {
+    try {
+      const limit  = Math.min(parseInt(String(req.query.limit  ?? 50)), 200);
+      const offset = parseInt(String(req.query.offset ?? 0));
+      const action     = req.query.action     ? String(req.query.action)     : undefined;
+      const entityType = req.query.entityType ? String(req.query.entityType) : undefined;
+      const rows = await getAuditLogs({ limit, offset, action, entityType });
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
   });
 
   // ── Data import ───────────────────────────────────────────────────────────────
@@ -697,6 +716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/settings", requireAdmin, (req, res) => {
     try {
       const updated = saveSettings(req.body);
+      logAudit(req, "settings.update", "settings", null, { fields: Object.keys(req.body) });
       res.json(updated);
     } catch (err) {
       res.status(500).json({ message: "Failed to save settings" });
@@ -1311,6 +1331,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       broadcast({ type: 'ORDER_UPDATE', order });
 
+      logAudit(req, "order.payment", "order", id, {
+        paymentMethod: paymentMethod || "cash",
+        paymentStatus: isDue ? "pending" : "paid",
+        amount: (order as any).totalAmount,
+      });
+
       // ── Post-payment hooks (loyalty earn + feedback queue) ──────────────────
       if (!isDue) {
         const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
@@ -1417,6 +1443,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
       }
+      logAudit(req, "order.cancel", "order", id, {
+        orderNumber: (order as any).orderNumber,
+        tableNumber: (order as any).tableNumber,
+        totalAmount: (order as any).totalAmount,
+      });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
