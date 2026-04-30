@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
 import MemoryStore from "memorystore";
+import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
@@ -12,6 +13,17 @@ import { startDailyScheduler } from "./services/dailyScheduler";
 const MemoryStoreSession = MemoryStore(session);
 
 const app = express();
+
+// Sentry — init before any middleware so it can instrument everything.
+// SENTRY_DSN is optional; if absent, Sentry is a no-op.
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: 0.2,
+  });
+  log("Sentry initialised");
+}
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -65,12 +77,19 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  // Sentry v8+ error handler must be registered after routes
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+  }
+
+  // Global error handler — Sentry captures before we respond
+  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
+    if (status >= 500 && process.env.SENTRY_DSN) {
+      Sentry.captureException(err, { extra: { url: req.url, method: req.method } });
+    }
     res.status(status).json({ message });
-    throw err;
   });
 
   // importantly only setup vite in development and after
