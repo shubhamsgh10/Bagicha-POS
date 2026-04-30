@@ -28,12 +28,16 @@ export function TwoFactorPanel() {
     setBusy(true);
     try {
       const r = await fetch("/api/auth/2fa/setup", { method: "POST", credentials: "include" });
-      const data = await r.json();
+      const text = await r.text();
+      let data: any;
+      try { data = JSON.parse(text); } catch { throw new Error(`Server returned non-JSON (${r.status}): ${text.slice(0, 120)}`); }
+      if (!r.ok) throw new Error(data.message ?? `Server error ${r.status}`);
+      if (!data.qrDataURL) throw new Error("No QR code in response");
       setQrDataURL(data.qrDataURL);
       setPhase("setup");
       setToken("");
-    } catch {
-      toast({ title: "Failed to start 2FA setup", variant: "destructive" });
+    } catch (err: any) {
+      toast({ title: "Failed to start 2FA setup", description: err.message, variant: "destructive" });
     } finally {
       setBusy(false);
     }
