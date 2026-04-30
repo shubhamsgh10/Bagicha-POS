@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
 import { GrowthSettingsPanel } from "@/components/GrowthSettingsPanel";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ type ModalId =
   | "generate-code"
   | "print-settings"
   | "growth-settings"
+  | "audit-log"
   | "staff-selector"
   | "manager-access"
   | null;
@@ -131,6 +133,12 @@ const ACTION_CARDS: {
     label: "Growth",
     sublabel: "& Payments",
     icon: Sparkles,
+  },
+  {
+    id: "audit-log",
+    label: "Audit",
+    sublabel: "Log",
+    icon: ShieldCheck,
   },
   {
     id: "print-settings" as const,
@@ -1478,6 +1486,13 @@ export default function Settings() {
       {activeModal === "growth-settings" && (
         <Modal title="Growth & Payments" onClose={closeModal}>
           <GrowthSettingsPanel onClose={closeModal} />
+        </Modal>
+      )}
+
+      {/* Audit Log */}
+      {activeModal === "audit-log" && (
+        <Modal title="Audit Log" onClose={closeModal}>
+          <AuditLogPanel />
         </Modal>
       )}
 
