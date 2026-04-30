@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Delete, ChevronLeft, Eye, EyeOff } from "lucide-react";
+import { Loader2, Delete, ChevronLeft, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import bgImage from "@assets/Login Page Background.png";
 
 /* ─── Types ─── */
@@ -121,6 +121,71 @@ function PinPad({
   );
 }
 
+/* ─── TOTP Step ─── */
+function TotpStep({
+  onSuccess, onBack, glassCard: gc,
+}: {
+  onSuccess: () => void;
+  onBack: () => void;
+  glassCard: React.CSSProperties;
+}) {
+  const { toast } = useToast();
+  const [code, setCode]     = useState("");
+  const [loading, setLoading] = useState(false);
+  const [shake, setShake]   = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (code.length !== 6) return;
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/2fa/complete", { token: code });
+      onSuccess();
+    } catch {
+      setShake(true);
+      setTimeout(() => setShake(false), 400);
+      setCode("");
+      toast({ title: "Invalid code — try again", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <motion.div style={gc} className="p-6 space-y-4">
+      <button onClick={onBack}
+        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
+        <ChevronLeft className="w-3.5 h-3.5" /> Back
+      </button>
+      <div className="flex flex-col items-center gap-1 pt-1">
+        <ShieldCheck className="w-8 h-8 text-emerald-500" />
+        <h2 className="text-lg font-bold text-gray-900 tracking-tight">Two-Factor Auth</h2>
+        <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
+      </div>
+      <form onSubmit={submit} className="space-y-3">
+        <motion.input
+          ref={inputRef}
+          animate={shake ? { x: [0, -9, 9, -7, 7, -4, 4, 0] } : {}}
+          transition={{ duration: 0.38 }}
+          value={code}
+          onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          placeholder="000000"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          className="login-input w-full h-14 px-3 text-center text-2xl font-mono tracking-[0.5em] text-gray-900"
+        />
+        <button type="submit" disabled={loading || code.length !== 6}
+          className="login-btn w-full h-11 flex items-center justify-center gap-2">
+          {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Verifying…</> : "Verify"}
+        </button>
+      </form>
+    </motion.div>
+  );
+}
+
 /* ─── Staff Selector ─── */
 function StaffSelector({ onLoginSuccess }: LoginProps) {
   const { toast } = useToast();
@@ -132,6 +197,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showPw, setShowPw]   = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [showTotp, setShowTotp] = useState(false);
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -170,7 +236,10 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   async function onAdminSubmit(data: LoginForm) {
     setAdminLoading(true);
     try {
-      await apiRequest("POST", "/api/auth/login", data);
+      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
+      if (!r.ok) throw new Error("invalid");
+      const json = await r.json();
+      if (json?.requires2FA) { setShowTotp(true); return; }
       onLoginSuccess();
     } catch {
       toast({ title: "Invalid username or password", variant: "destructive" });
@@ -193,6 +262,9 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
         <div className="flex flex-col items-center mb-5">
           <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img" />
         </div>
+        {showTotp ? (
+          <TotpStep glassCard={glassCard} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
+        ) : (
         <div style={glassCard} className="p-6 space-y-4">
           <button onClick={() => setShowAdmin(false)}
             className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
@@ -230,6 +302,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
             </button>
           </form>
         </div>
+        )}
       </motion.div>
     </div>
   );
@@ -359,6 +432,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [ctx, setCtx]   = useState<DeviceCtx | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw]   = useState(false);
+  const [showTotp, setShowTotp] = useState(false);
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -378,7 +452,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   async function onSubmit(data: LoginForm) {
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/auth/login", data);
+      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
+      if (!r.ok) throw new Error("401");
+      const json = await r.json();
+      if (json?.requires2FA) { setShowTotp(true); return; }
       onLoginSuccess();
     } catch (err: any) {
       toast({
@@ -403,44 +480,48 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           </p>
         </div>
 
-        <div style={glassCard} className="p-6 space-y-4">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900 tracking-tight">Sign in</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Enter your credentials to continue</p>
-          </div>
-
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Username</label>
-              <input {...register("username")} placeholder="admin" autoComplete="username"
-                className="login-input w-full h-11 px-3 text-sm" />
-              {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
+        {showTotp ? (
+          <TotpStep glassCard={glassCard} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
+        ) : (
+          <div style={glassCard} className="p-6 space-y-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 tracking-tight">Sign in</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Enter your credentials to continue</p>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Password</label>
-              <div className="relative">
-                <input {...register("password")}
-                  type={showPw ? "text" : "password"}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  className="login-input w-full h-11 px-3 pr-10 text-sm" />
-                <button type="button" onClick={() => setShowPw(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
-                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Username</label>
+                <input {...register("username")} placeholder="admin" autoComplete="username"
+                  className="login-input w-full h-11 px-3 text-sm" />
+                {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
               </div>
-              {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
-            </div>
 
-            <button type="submit" disabled={loading}
-              className="login-btn w-full h-11 flex items-center justify-center gap-2 mt-1">
-              {loading
-                ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</>
-                : "Sign in"}
-            </button>
-          </form>
-        </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Password</label>
+                <div className="relative">
+                  <input {...register("password")}
+                    type={showPw ? "text" : "password"}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    className="login-input w-full h-11 px-3 pr-10 text-sm" />
+                  <button type="button" onClick={() => setShowPw(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
+              </div>
+
+              <button type="submit" disabled={loading}
+                className="login-btn w-full h-11 flex items-center justify-center gap-2 mt-1">
+                {loading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</>
+                  : "Sign in"}
+              </button>
+            </form>
+          </div>
+        )}
       </motion.div>
     </div>
   );
