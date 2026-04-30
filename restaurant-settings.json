@@ -8,5 +8,47 @@
   "currency": "INR",
   "currencySymbol": "₹",
   "footerNote": "Thank you for dining with us!",
-  "posRoleTimeout": 5
+  "posRoleTimeout": 5,
+  "printSettings": {
+    "printers": [],
+    "kot": {
+      "enabled": true,
+      "printOnBill": true,
+      "printModifiedKOT": true,
+      "printModifiedItemsOnly": true,
+      "printCancelledKOT": true,
+      "printAddons": true,
+      "showDuplicateWatermark": true,
+      "printDeletedItems": true,
+      "printDeletedSeparate": false,
+      "printOnTableMove": false,
+      "kotPrinterId": null,
+      "autoKOTPrint": false,
+      "autoKOTDebounceMs": 1500
+    },
+    "bill": {
+      "taxDisplay": "none",
+      "itemPriceMode": "exclusive",
+      "showBackwardTax": true,
+      "showDuplicate": true,
+      "showCustomerPayment": false,
+      "showKotAsToken": false,
+      "showAddons": true,
+      "mergeDuplicateItems": true,
+      "showOrderBarcode": false,
+      "showQuantityBreakdown": false,
+      "billPrinterId": null
+    }
+  },
+  "managerAllowedPages": [
+    "/tables",
+    "/orders",
+    "/billing",
+    "/kot",
+    "/staff",
+    "/menu",
+    "/inventory",
+    "/live-tables",
+    "/kitchen"
+  ]
 }
