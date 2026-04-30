@@ -251,7 +251,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       (req.session as any).pending2faSecret = secret;
       res.json({ secret, qrDataURL });
     } catch (err) {
-      res.status(500).json({ message: "Failed to generate 2FA setup" });
+      console.error("[2FA setup error]", err);
+      res.status(500).json({ message: "Failed to generate 2FA setup", detail: String(err) });
     }
   });
 
