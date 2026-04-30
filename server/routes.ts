@@ -48,13 +48,14 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
+import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -197,12 +198,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
+
+      // If 2FA is enabled, hold login in a pending session state
+      if (user.totpEnabled && user.totpSecret) {
+        (req.session as any).pending2faUserId = user.id;
+        return res.json({ requires2FA: true });
+      }
+
       req.logIn(user, (err) => {
         if (err) return next(err);
-        const { password, ...safeUser } = user;
+        const { password, pin, totpSecret, ...safeUser } = user;
         res.json(safeUser);
       });
     })(req, res, next);
+  });
+
+  // ── 2FA: complete login after TOTP verified ───────────────────────────────────
+  app.post("/api/auth/2fa/complete", pinLimiter, async (req, res, next) => {
+    try {
+      const pendingId = (req.session as any).pending2faUserId;
+      if (!pendingId) return res.status(400).json({ message: "No pending 2FA session" });
+
+      const { token } = req.body;
+      if (!token) return res.status(400).json({ message: "token required" });
+
+      const [user] = await db.select().from(users).where(eq(users.id, pendingId));
+      if (!user || !user.totpSecret) return res.status(400).json({ message: "Invalid session" });
+
+      if (!verifyToken(String(token), user.totpSecret)) {
+        return res.status(401).json({ message: "Invalid authenticator code" });
+      }
+
+      delete (req.session as any).pending2faUserId;
+
+      req.logIn(user, (err) => {
+        if (err) return next(err);
+        const { password, pin, totpSecret, ...safeUser } = user;
+        res.json(safeUser);
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── 2FA setup: generate secret + QR (admin, already logged in) ───────────────
+  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const secret = generateSecret();
+      const qrDataURL = await generateQRDataURL(actor.username, secret);
+      // Store temp secret in session (not DB yet — only saved after verification)
+      (req.session as any).pending2faSecret = secret;
+      res.json({ secret, qrDataURL });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to generate 2FA setup" });
+    }
+  });
+
+  // ── 2FA setup: verify first code, then persist secret ────────────────────────
+  app.post("/api/auth/2fa/verify-setup", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const { token } = req.body;
+      const secret = (req.session as any).pending2faSecret;
+      if (!secret) return res.status(400).json({ message: "No pending setup — call /setup first" });
+      if (!verifyToken(String(token), secret)) {
+        return res.status(401).json({ message: "Invalid code — try again" });
+      }
+      await db.update(users)
+        .set({ totpSecret: secret, totpEnabled: true })
+        .where(eq(users.id, actor.id));
+      delete (req.session as any).pending2faSecret;
+      logAudit(req, "user.2fa_enabled", "user", actor.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to enable 2FA" });
+    }
+  });
+
+  // ── 2FA disable ───────────────────────────────────────────────────────────────
+  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const { token } = req.body;
+      const [user] = await db.select().from(users).where(eq(users.id, actor.id));
+      if (!user?.totpSecret) return res.status(400).json({ message: "2FA is not enabled" });
+      if (!verifyToken(String(token), user.totpSecret)) {
+        return res.status(401).json({ message: "Invalid code" });
+      }
+      await db.update(users)
+        .set({ totpSecret: null, totpEnabled: false })
+        .where(eq(users.id, actor.id));
+      logAudit(req, "user.2fa_disabled", "user", actor.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to disable 2FA" });
+    }
+  });
+
+  // ── 2FA status ────────────────────────────────────────────────────────────────
+  app.get("/api/auth/2fa/status", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const [user] = await db.select().from(users).where(eq(users.id, actor.id));
+      res.json({ totpEnabled: !!user?.totpEnabled });
+    } catch {
+      res.status(500).json({ message: "Failed to fetch 2FA status" });
+    }
   });
 
   app.post("/api/auth/logout", (req, res, next) => {

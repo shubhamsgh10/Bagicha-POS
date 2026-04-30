@@ -22,6 +22,7 @@ import {
 import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
 import { GrowthSettingsPanel } from "@/components/GrowthSettingsPanel";
 import { AuditLogPanel } from "@/components/AuditLogPanel";
+import { TwoFactorPanel } from "@/components/TwoFactorPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ type ModalId =
   | "print-settings"
   | "growth-settings"
   | "audit-log"
+  | "two-factor"
   | "staff-selector"
   | "manager-access"
   | null;
@@ -138,6 +140,12 @@ const ACTION_CARDS: {
     id: "audit-log",
     label: "Audit",
     sublabel: "Log",
+    icon: ShieldCheck,
+  },
+  {
+    id: "two-factor",
+    label: "2FA",
+    sublabel: "Security",
     icon: ShieldCheck,
   },
   {
@@ -1493,6 +1501,13 @@ export default function Settings() {
       {activeModal === "audit-log" && (
         <Modal title="Audit Log" onClose={closeModal}>
           <AuditLogPanel />
+        </Modal>
+      )}
+
+      {/* Two-Factor Authentication */}
+      {activeModal === "two-factor" && (
+        <Modal title="Two-Factor Authentication" onClose={closeModal}>
+          <TwoFactorPanel />
         </Modal>
       )}
 
