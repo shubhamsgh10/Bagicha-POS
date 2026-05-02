@@ -189,5 +189,17 @@
     "status": "failed",
     "error": "Invalid or missing phone number",
     "campaign": "WIN_BACK"
+  },
+  {
+    "id": "b71b0176-c04f-4e55-be78-ba492df35579",
+    "customerId": "9981636949",
+    "customerName": "parul",
+    "phone": "9981636949",
+    "trigger": "WELCOME",
+    "message": "Hi parul! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-04-30T12:28:50.002Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WELCOME"
   }
 ]
