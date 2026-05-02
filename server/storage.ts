@@ -1,9 +1,13 @@
 import {
   users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
+  staffProfiles, attendance, leaves, shifts, shiftAssignments,
   type User, type InsertUser, type Category, type InsertCategory, type MenuItem, type InsertMenuItem,
   type Inventory, type InsertInventory, type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
   type KotTicket, type InsertKotTicket, type DeliveryIntegration, type InsertDeliveryIntegration,
-  type Sales, type InsertSales, type Table, type InsertTable
+  type Sales, type InsertSales, type Table, type InsertTable,
+  type StaffProfile, type InsertStaffProfile, type Attendance, type InsertAttendance,
+  type Leave, type InsertLeave, type Shift, type InsertShift,
+  type ShiftAssignment, type InsertShiftAssignment,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
@@ -109,6 +113,26 @@ export interface IStorage {
 
   // Reports
   getTopSellingItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
+
+  // Staff Management
+  getStaffProfiles(): Promise<(StaffProfile & { user: User })[]>;
+  getStaffProfile(userId: number): Promise<StaffProfile | null>;
+  upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile>;
+  getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]>;
+  getTodayAttendance(): Promise<(Attendance & { user: User })[]>;
+  upsertAttendance(userId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
+  updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance>;
+  getAttendanceReport(month: string): Promise<any[]>;
+  getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]>;
+  createLeave(data: InsertLeave): Promise<Leave>;
+  updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave>;
+  getShifts(): Promise<Shift[]>;
+  createShift(data: InsertShift): Promise<Shift>;
+  updateShift(id: number, data: Partial<InsertShift>): Promise<Shift>;
+  getRoster(week: string): Promise<any[]>;
+  upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
+  deleteShiftAssignment(id: number): Promise<void>;
+  getPayrollReport(month: string): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -660,6 +684,216 @@ export class DatabaseStorage implements IStorage {
       totalSold: Number(r.totalSold),
       revenue: Number(r.revenue),
     }));
+  }
+
+  // ============================================================
+  // STAFF MANAGEMENT
+  // ============================================================
+
+  async getStaffProfiles(): Promise<(StaffProfile & { user: User })[]> {
+    const allUsers = await db.select().from(users).orderBy(asc(users.id));
+    const profiles = await db.select().from(staffProfiles);
+    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    return allUsers.map(u => ({
+      ...(profileMap.get(u.id) ?? {
+        id: 0, userId: u.id, biometricId: null, department: null, designation: null,
+        monthlySalary: "0", joiningDate: null, emergencyContact: null, address: null,
+        bankAccountNo: null, bankName: null, isActive: true, updatedAt: new Date(),
+      }),
+      user: u,
+    })) as (StaffProfile & { user: User })[];
+  }
+
+  async getStaffProfile(userId: number): Promise<StaffProfile | null> {
+    const [p] = await db.select().from(staffProfiles).where(eq(staffProfiles.userId, userId));
+    return p ?? null;
+  }
+
+  async upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile> {
+    const existing = await this.getStaffProfile(userId);
+    if (existing) {
+      const [updated] = await db.update(staffProfiles)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(staffProfiles.userId, userId))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(staffProfiles)
+      .values({ userId, monthlySalary: "0", ...data })
+      .returning();
+    return created;
+  }
+
+  async getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]> {
+    const conditions: any[] = [];
+    if (filters.userId) conditions.push(eq(attendance.userId, filters.userId));
+    if (filters.date)   conditions.push(eq(attendance.date, filters.date));
+    if (filters.month)  conditions.push(sql`${attendance.date} LIKE ${filters.month + '-%'}`);
+    const rows = conditions.length
+      ? await db.select().from(attendance).where(and(...conditions)).orderBy(desc(attendance.date))
+      : await db.select().from(attendance).orderBy(desc(attendance.date));
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+  }
+
+  async getTodayAttendance(): Promise<(Attendance & { user: User })[]> {
+    const today = new Date().toISOString().split('T')[0];
+    return this.getAttendance({ date: today });
+  }
+
+  async upsertAttendance(userId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance> {
+    const [existing] = await db.select().from(attendance)
+      .where(and(eq(attendance.userId, userId), eq(attendance.date, date)));
+    if (existing) {
+      const [updated] = await db.update(attendance).set(data).where(eq(attendance.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(attendance).values({ userId, date, status: "present", ...data }).returning();
+    return created;
+  }
+
+  async updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance> {
+    const [updated] = await db.update(attendance).set(data).where(eq(attendance.id, id)).returning();
+    return updated;
+  }
+
+  async getAttendanceReport(month: string): Promise<any[]> {
+    const allUsers = await db.select().from(users);
+    const monthAttendance = await db.select().from(attendance)
+      .where(sql`${attendance.date} LIKE ${month + '-%'}`);
+    return allUsers.map(u => {
+      const records = monthAttendance.filter(a => a.userId === u.id);
+      const present   = records.filter(a => a.status === 'present').length;
+      const halfDay   = records.filter(a => a.status === 'half-day').length;
+      const onLeave   = records.filter(a => a.status === 'on-leave').length;
+      const absent    = records.filter(a => a.status === 'absent').length;
+      const totalHours = records.reduce((sum, a) => sum + parseFloat(a.workingHours ?? '0'), 0);
+      return { userId: u.id, username: u.username, role: u.role, present, halfDay, onLeave, absent, totalHours: totalHours.toFixed(1) };
+    });
+  }
+
+  async getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]> {
+    const conditions: any[] = [];
+    if (filters.userId) conditions.push(eq(leaves.userId, filters.userId));
+    if (filters.status && filters.status !== '') conditions.push(eq(leaves.status, filters.status));
+    if (filters.month)  conditions.push(sql`${leaves.startDate} LIKE ${filters.month + '-%'}`);
+    const rows = conditions.length
+      ? await db.select().from(leaves).where(and(...conditions)).orderBy(desc(leaves.createdAt))
+      : await db.select().from(leaves).orderBy(desc(leaves.createdAt));
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+  }
+
+  async createLeave(data: InsertLeave): Promise<Leave> {
+    const [created] = await db.insert(leaves).values(data).returning();
+    return created;
+  }
+
+  async updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave> {
+    const [updated] = await db.update(leaves).set(data).where(eq(leaves.id, id)).returning();
+    return updated;
+  }
+
+  async getShifts(): Promise<Shift[]> {
+    return db.select().from(shifts).where(eq(shifts.isActive, true)).orderBy(asc(shifts.id));
+  }
+
+  async createShift(data: InsertShift): Promise<Shift> {
+    const [created] = await db.insert(shifts).values(data).returning();
+    return created;
+  }
+
+  async updateShift(id: number, data: Partial<InsertShift>): Promise<Shift> {
+    const [updated] = await db.update(shifts).set(data).where(eq(shifts.id, id)).returning();
+    return updated;
+  }
+
+  async getRoster(week: string): Promise<any[]> {
+    const [year, weekNum] = week.split('-').map(Number);
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const weekStart = new Date(jan4);
+    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (weekNum - 1) * 7);
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      dates.push(d.toISOString().split('T')[0]);
+    }
+    const allUsers = await db.select().from(users);
+    const assignments = await db.select().from(shiftAssignments)
+      .where(sql`${shiftAssignments.date} = ANY(ARRAY[${sql.join(dates.map(d => sql`${d}`), sql`, `)}])`);
+    const allShifts = await db.select().from(shifts);
+    const shiftMap = new Map(allShifts.map(s => [s.id, s]));
+    return allUsers.map(u => {
+      const userAssignments: Record<string, any> = {};
+      dates.forEach(d => {
+        const a = assignments.find(x => x.userId === u.id && x.date === d);
+        userAssignments[d] = a ? { assignmentId: a.id, shift: shiftMap.get(a.shiftId) } : null;
+      });
+      return { userId: u.id, username: u.username, role: u.role, dates, assignments: userAssignments };
+    });
+  }
+
+  async upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment> {
+    const [existing] = await db.select().from(shiftAssignments)
+      .where(and(eq(shiftAssignments.userId, userId), eq(shiftAssignments.date, date)));
+    if (existing) {
+      const [updated] = await db.update(shiftAssignments)
+        .set({ shiftId, createdBy })
+        .where(eq(shiftAssignments.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(shiftAssignments).values({ userId, date, shiftId, createdBy }).returning();
+    return created;
+  }
+
+  async deleteShiftAssignment(id: number): Promise<void> {
+    await db.delete(shiftAssignments).where(eq(shiftAssignments.id, id));
+  }
+
+  async getPayrollReport(month: string): Promise<any[]> {
+    const [year, mon] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    let sundays = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(year, mon - 1, d).getDay() === 0) sundays++;
+    }
+    const workingDays = daysInMonth - sundays;
+    const allUsers = await db.select().from(users);
+    const profiles = await db.select().from(staffProfiles);
+    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    const monthAttendance = await db.select().from(attendance)
+      .where(sql`${attendance.date} LIKE ${month + '-%'}`);
+    const monthLeaves = await db.select().from(leaves)
+      .where(and(sql`${leaves.startDate} LIKE ${month + '-%'}`, eq(leaves.status, 'approved')));
+    return allUsers.map(u => {
+      const profile = profileMap.get(u.id);
+      const salary = parseFloat(profile?.monthlySalary ?? '0');
+      const records = monthAttendance.filter(a => a.userId === u.id);
+      const daysPresent = records.filter(a => a.status === 'present').length;
+      const halfDays = records.filter(a => a.status === 'half-day').length;
+      const approvedLeaves = monthLeaves.filter(l => l.userId === u.id).reduce((s, l) => s + l.totalDays, 0);
+      const paidDays = daysPresent + (halfDays * 0.5) + approvedLeaves;
+      const absentDays = Math.max(0, workingDays - paidDays);
+      const dailyRate = workingDays > 0 ? salary / workingDays : 0;
+      const deductions = absentDays * dailyRate;
+      const overtimeHours = records.reduce((s, a) => s + parseFloat(a.overtimeHours ?? '0'), 0);
+      const overtimePay = overtimeHours * (dailyRate / 8);
+      const netSalary = salary - deductions + overtimePay;
+      return {
+        userId: u.id, username: u.username, role: u.role,
+        monthlySalary: salary, workingDays, daysPresent, halfDays,
+        approvedLeaves, absentDays: Math.round(absentDays * 10) / 10,
+        deductions: Math.round(deductions * 100) / 100,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+        overtimePay: Math.round(overtimePay * 100) / 100,
+        netSalary: Math.round(netSalary * 100) / 100,
+      };
+    });
   }
 }
 
