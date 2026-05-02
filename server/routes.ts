@@ -2037,7 +2037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         imported++;
       }
 
-      res.json({ imported, unmatched: [...new Set(unmatched)] });
+      res.json({ imported, unmatched: Array.from(new Set(unmatched)) });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
