@@ -49,6 +49,10 @@ import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
+import * as XLSX from "xlsx";
+import multer from "multer";
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -1912,6 +1916,237 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
+  });
+
+  // ==========================================================================
+  // STAFF MANAGEMENT ROUTES
+  // ==========================================================================
+
+  // GET /api/staff — all users with staff profiles
+  app.get("/api/staff", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getStaffProfiles());
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/staff/:id/profile — upsert staff profile (salary, biometricId, dept, etc.)
+  app.put("/api/staff/:id/profile", requireAuth, async (req, res) => {
+    try {
+      const profile = await storage.upsertStaffProfile(parseInt(req.params.id), req.body);
+      res.json(profile);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance — list with optional ?userId=&date=&month=YYYY-MM
+  app.get("/api/attendance", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, month } = req.query as Record<string, string>;
+      res.json(await storage.getAttendance({
+        userId: userId ? parseInt(userId) : undefined,
+        date: date || undefined,
+        month: month || undefined,
+      }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/today
+  app.get("/api/attendance/today", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getTodayAttendance());
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/report?month=YYYY-MM
+  app.get("/api/attendance/report", requireAuth, async (req, res) => {
+    try {
+      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      res.json(await storage.getAttendanceReport(month));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/import — upload biometric Excel (.xlsx/.xls/.csv)
+  app.post("/api/attendance/import", requireAuth, upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      const profiles = await storage.getStaffProfiles();
+      const bioMap = new Map<string, number>();
+      profiles.forEach(p => { if (p.biometricId) bioMap.set(p.biometricId.toString().trim(), p.userId); });
+      const nameMap = new Map<string, number>();
+      profiles.forEach(p => nameMap.set(p.user.username.toLowerCase(), p.userId));
+
+      let imported = 0;
+      const unmatched: string[] = [];
+
+      for (const row of rows) {
+        const empId   = String(row["Emp ID"] ?? row["EmpID"] ?? row["Employee ID"] ?? row["emp_id"] ?? "").trim();
+        const empName = String(row["Name"] ?? row["Employee Name"] ?? row["EmpName"] ?? "").trim();
+        const dateStr = row["Date"] ?? row["date"] ?? "";
+        const inTime  = String(row["In-Time"] ?? row["InTime"] ?? row["Clock In"] ?? row["in_time"] ?? "").trim();
+        const outTime = String(row["Out-Time"] ?? row["OutTime"] ?? row["Clock Out"] ?? row["out_time"] ?? "").trim();
+
+        if (!dateStr) continue;
+
+        let parsedDate: string;
+        if (typeof dateStr === "number") {
+          const d = XLSX.SSF.parse_date_code(dateStr);
+          parsedDate = `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+        } else {
+          const d = new Date(String(dateStr));
+          if (isNaN(d.getTime())) continue;
+          parsedDate = d.toISOString().split('T')[0];
+        }
+
+        const userId = bioMap.get(empId) ?? nameMap.get(empName.toLowerCase());
+        if (!userId) { if (empName) unmatched.push(empName); continue; }
+
+        let workingHours: string | undefined;
+        let status: string = "present";
+
+        const parseTimeToMinutes = (t: string): number | null => {
+          const m = t.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+          if (!m) return null;
+          let h = parseInt(m[1]);
+          const min = parseInt(m[2]);
+          if (m[3]?.toUpperCase() === "PM" && h < 12) h += 12;
+          if (m[3]?.toUpperCase() === "AM" && h === 12) h = 0;
+          return h * 60 + min;
+        };
+
+        if (inTime && outTime) {
+          const inMin = parseTimeToMinutes(inTime);
+          const outMin = parseTimeToMinutes(outTime);
+          if (inMin !== null && outMin !== null && outMin > inMin) {
+            const hours = (outMin - inMin) / 60;
+            workingHours = hours.toFixed(2);
+            if (hours < 4) status = "half-day";
+          }
+        } else {
+          status = "absent";
+        }
+
+        await storage.upsertAttendance(userId, parsedDate, {
+          clockIn: inTime || undefined,
+          clockOut: outTime || undefined,
+          status,
+          workingHours: workingHours ?? undefined,
+        });
+        imported++;
+      }
+
+      res.json({ imported, unmatched: [...new Set(unmatched)] });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/attendance/:id — admin override
+  app.put("/api/attendance/:id", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.updateAttendance(parseInt(req.params.id), {
+        ...req.body,
+        markedBy: (req.user as any)?.id,
+      });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/manual — admin marks attendance manually
+  app.post("/api/attendance/manual", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, status, clockIn, clockOut, notes } = req.body;
+      const record = await storage.upsertAttendance(userId, date, {
+        status, clockIn, clockOut, notes,
+        markedBy: (req.user as any)?.id,
+      });
+      res.json(record);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/leaves — ?status=&month=&userId=
+  app.get("/api/leaves", requireAuth, async (req, res) => {
+    try {
+      const { userId, month, status } = req.query as Record<string, string>;
+      res.json(await storage.getLeaves({
+        userId: userId ? parseInt(userId) : undefined,
+        month: month || undefined,
+        status: status || undefined,
+      }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/leaves
+  app.post("/api/leaves", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.createLeave(req.body));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/leaves/:id — approve or reject
+  app.put("/api/leaves/:id", requireAuth, async (req, res) => {
+    try {
+      const { status, notes } = req.body;
+      const updated = await storage.updateLeave(parseInt(req.params.id), {
+        status, notes,
+        reviewedBy: (req.user as any)?.id,
+        reviewedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/shifts
+  app.get("/api/shifts", requireAuth, async (req, res) => {
+    try { res.json(await storage.getShifts()); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/shifts
+  app.post("/api/shifts", requireAuth, async (req, res) => {
+    try { res.json(await storage.createShift(req.body)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/shifts/:id
+  app.put("/api/shifts/:id", requireAuth, async (req, res) => {
+    try { res.json(await storage.updateShift(parseInt(req.params.id), req.body)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/shifts/roster?week=YYYY-WW
+  app.get("/api/shifts/roster", requireAuth, async (req, res) => {
+    try {
+      const week = req.query.week as string || (() => {
+        const now = new Date();
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+        return `${now.getFullYear()}-${String(weekNum).padStart(2, '0')}`;
+      })();
+      res.json(await storage.getRoster(week));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/shifts/roster — assign shift to staff on a date
+  app.post("/api/shifts/roster", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, shiftId } = req.body;
+      res.json(await storage.upsertShiftAssignment(userId, date, shiftId, (req.user as any)?.id));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // DELETE /api/shifts/roster/:id
+  app.delete("/api/shifts/roster/:id", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteShiftAssignment(parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/payroll/report/:month — YYYY-MM
+  app.get("/api/payroll/report/:month", requireAuth, async (req, res) => {
+    try { res.json(await storage.getPayrollReport(req.params.month)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   return httpServer;
