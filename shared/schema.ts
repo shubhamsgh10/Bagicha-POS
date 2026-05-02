@@ -361,3 +361,88 @@ export const CRM_EVENT_TYPES = {
 } as const;
 
 export type CrmEventType = typeof CRM_EVENT_TYPES[keyof typeof CRM_EVENT_TYPES];
+
+// =============================================================================
+// STAFF MANAGEMENT TABLES
+// =============================================================================
+
+export const staffProfiles = pgTable("staff_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().unique(),
+  biometricId: text("biometric_id"),
+  department: text("department"),
+  designation: text("designation"),
+  monthlySalary: decimal("monthly_salary", { precision: 10, scale: 2 }).notNull().default("0"),
+  joiningDate: text("joining_date"),
+  emergencyContact: text("emergency_contact"),
+  address: text("address"),
+  bankAccountNo: text("bank_account_no"),
+  bankName: text("bank_name"),
+  isActive: boolean("is_active").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const attendance = pgTable("attendance", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  date: text("date").notNull(),        // "YYYY-MM-DD"
+  clockIn: text("clock_in"),           // "HH:MM" or "HH:MM AM/PM"
+  clockOut: text("clock_out"),         // "HH:MM" or "HH:MM AM/PM"
+  status: text("status").notNull().default("present"), // present|absent|half-day|on-leave|holiday
+  workingHours: decimal("working_hours", { precision: 4, scale: 2 }),
+  overtimeHours: decimal("overtime_hours", { precision: 4, scale: 2 }).default("0"),
+  notes: text("notes"),
+  markedBy: integer("marked_by"),      // null = biometric import; userId = admin override
+  importedAt: timestamp("imported_at").defaultNow(),
+});
+
+export const leaves = pgTable("leaves", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  leaveType: text("leave_type").notNull().default("casual"), // sick|casual|earned|unpaid
+  startDate: text("start_date").notNull(),  // "YYYY-MM-DD"
+  endDate: text("end_date").notNull(),      // "YYYY-MM-DD"
+  totalDays: integer("total_days").notNull().default(1),
+  reason: text("reason"),
+  status: text("status").notNull().default("pending"), // pending|approved|rejected
+  reviewedBy: integer("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const shifts = pgTable("shifts", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  startTime: text("start_time").notNull(),  // "HH:MM"
+  endTime: text("end_time").notNull(),      // "HH:MM"
+  durationHours: decimal("duration_hours", { precision: 4, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const shiftAssignments = pgTable("shift_assignments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  shiftId: integer("shift_id").notNull(),
+  date: text("date").notNull(),  // "YYYY-MM-DD"
+  createdBy: integer("created_by").notNull(),
+});
+
+// -- Staff Insert Schemas
+export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, updatedAt: true });
+export const insertAttendanceSchema = createInsertSchema(attendance).omit({ id: true, importedAt: true });
+export const insertLeaveSchema = createInsertSchema(leaves).omit({ id: true, createdAt: true });
+export const insertShiftSchema = createInsertSchema(shifts).omit({ id: true });
+export const insertShiftAssignmentSchema = createInsertSchema(shiftAssignments).omit({ id: true });
+
+// -- Staff Types
+export type StaffProfile = typeof staffProfiles.$inferSelect;
+export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
+export type Attendance = typeof attendance.$inferSelect;
+export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
+export type Leave = typeof leaves.$inferSelect;
+export type InsertLeave = z.infer<typeof insertLeaveSchema>;
+export type Shift = typeof shifts.$inferSelect;
+export type InsertShift = z.infer<typeof insertShiftSchema>;
+export type ShiftAssignment = typeof shiftAssignments.$inferSelect;
+export type InsertShiftAssignment = z.infer<typeof insertShiftAssignmentSchema>;
