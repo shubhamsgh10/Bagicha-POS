@@ -33,6 +33,49 @@ export interface AutomationConfig {
   anthropicApiKey: string;      // if set → use Claude for message generation
   restaurantName: string;
   trackingBaseUrl: string;      // e.g. https://your-pos.com — appended to tracking links
+
+  // ── Phase 1 growth additions ──────────────────────────────────────────────
+  /** Razorpay API key (public). Set via Settings → Payment integration. */
+  razorpayKeyId: string;
+  /** Razorpay secret. Server-side only — never returned to client unmasked. */
+  razorpayKeySecret: string;
+  /** Razorpay webhook secret for signature verification. */
+  razorpayWebhookSecret: string;
+
+  /** Owner WhatsApp number that receives the daily AI digest (e.g. 919812345678). */
+  ownerWhatsappPhone: string;
+  /** Daily digest enable flag. */
+  dailyDigestEnabled: boolean;
+  /** Hour of day (0–23, restaurant local time) to send the digest. Default 23. */
+  dailyDigestHour: number;
+
+  /** NPS / feedback enable flag. When true, payment auto-triggers feedback send. */
+  feedbackEnabled: boolean;
+  /** Minutes after payment before the feedback message goes out (default 120). */
+  feedbackDelayMinutes: number;
+  /** Public-facing base URL used in feedback links (defaults to trackingBaseUrl). */
+  feedbackBaseUrl: string;
+
+  /** Birthday automation enable flag. */
+  birthdayEnabled: boolean;
+  /** Hour of day (0–23) to fire birthday/anniversary scan. Default 9. */
+  birthdayHour: number;
+
+  // ── Staff / Attendance ────────────────────────────────────────────────────
+  /** Google Sheet URL for biometric attendance export. */
+  attendanceSheetUrl: string;
+  /** Maps sheet column headers to attendance fields. */
+  attendanceColumnMapping: {
+    employeeName:  string;
+    employeeCode?: string;
+    date:          string;
+    punchIn?:      string;
+    punchOut?:     string;
+    hoursWorked?:  string;
+    status?:       string;
+  } | null;
+  /** Auto-sync attendance daily at this hour (0–23). -1 = disabled. */
+  attendanceAutoSyncHour: number;
 }
 
 export interface AutomationLog {
@@ -67,6 +110,20 @@ const DEFAULT_CONFIG: AutomationConfig = {
   anthropicApiKey: "",
   restaurantName: "Bagicha",
   trackingBaseUrl: "",
+  razorpayKeyId: "",
+  razorpayKeySecret: "",
+  razorpayWebhookSecret: "",
+  ownerWhatsappPhone: "",
+  dailyDigestEnabled: false,
+  dailyDigestHour: 23,
+  feedbackEnabled: false,
+  feedbackDelayMinutes: 120,
+  feedbackBaseUrl: "",
+  birthdayEnabled: false,
+  birthdayHour: 9,
+  attendanceSheetUrl: "",
+  attendanceColumnMapping: null,
+  attendanceAutoSyncHour: -1,
 };
 
 // ── Generic JSON helpers ───────────────────────────────────────────────────────

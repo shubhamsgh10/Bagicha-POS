@@ -1,6 +1,7 @@
 import {
   users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
   staffProfiles, attendance, leaves, shifts, shiftAssignments,
+  staffMembers,
   type User, type InsertUser, type Category, type InsertCategory, type MenuItem, type InsertMenuItem,
   type Inventory, type InsertInventory, type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
   type KotTicket, type InsertKotTicket, type DeliveryIntegration, type InsertDeliveryIntegration,
@@ -8,6 +9,7 @@ import {
   type StaffProfile, type InsertStaffProfile, type Attendance, type InsertAttendance,
   type Leave, type InsertLeave, type Shift, type InsertShift,
   type ShiftAssignment, type InsertShiftAssignment,
+  type StaffMember, type InsertStaffMember,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
@@ -133,6 +135,12 @@ export interface IStorage {
   upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
   deleteShiftAssignment(id: number): Promise<void>;
   getPayrollReport(month: string): Promise<any[]>;
+  // Staff Members (separate from system users)
+  getStaffMembers(): Promise<StaffMember[]>;
+  getStaffMember(id: number): Promise<StaffMember | undefined>;
+  createStaffMember(data: InsertStaffMember): Promise<StaffMember>;
+  updateStaffMember(id: number, data: Partial<InsertStaffMember>): Promise<StaffMember>;
+  deleteStaffMember(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -894,6 +902,30 @@ export class DatabaseStorage implements IStorage {
         netSalary: Math.round(netSalary * 100) / 100,
       };
     });
+  }
+
+  // Staff Members
+  async getStaffMembers(): Promise<StaffMember[]> {
+    return db.select().from(staffMembers).orderBy(staffMembers.name);
+  }
+
+  async getStaffMember(id: number): Promise<StaffMember | undefined> {
+    const [sm] = await db.select().from(staffMembers).where(eq(staffMembers.id, id));
+    return sm || undefined;
+  }
+
+  async createStaffMember(data: InsertStaffMember): Promise<StaffMember> {
+    const [sm] = await db.insert(staffMembers).values(data).returning();
+    return sm;
+  }
+
+  async updateStaffMember(id: number, data: Partial<InsertStaffMember>): Promise<StaffMember> {
+    const [sm] = await db.update(staffMembers).set(data).where(eq(staffMembers.id, id)).returning();
+    return sm;
+  }
+
+  async deleteStaffMember(id: number): Promise<void> {
+    await db.delete(staffMembers).where(eq(staffMembers.id, id));
   }
 }
 

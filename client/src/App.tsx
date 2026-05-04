@@ -17,9 +17,12 @@ import Tables from "@/pages/Tables";
 import LiveAnalytics from "@/pages/LiveAnalytics";
 import LiveTablesDashboard from "@/pages/LiveTablesDashboard";
 import CustomerDashboard from "@/pages/CustomerDashboard";
+import Billing from "@/pages/Billing";
+import Staff from "@/pages/Staff";
 import KOT from "@/pages/KOT";
 import MobilePOS from "@/pages/MobilePOS";
 import Kitchen from "@/pages/Kitchen";
+import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
@@ -95,6 +98,9 @@ function Router() {
       </div>
     );
   }
+
+  // Public, no-auth routes — render before the auth gate
+  if (location.startsWith("/feedback/")) return <PublicFeedback />;
 
   // Full-screen routes — skip push wrapper and page transitions
   if (isAuthenticated && location.startsWith("/pos"))        return <POS />;
@@ -172,6 +178,8 @@ function Router() {
                       <Route path="/"               component={Tables} />
                       <Route path="/tables"         component={Tables} />
                       <Route path="/dashboard"      component={Dashboard} />
+                      <Route path="/billing"        component={Billing} />
+                      <Route path="/staff"          component={Staff} />
                       <Route path="/orders"         component={Orders} />
                       <Route path="/menu"           component={Menu} />
                       <Route path="/inventory"      component={Inventory} />

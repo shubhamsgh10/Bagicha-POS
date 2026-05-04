@@ -52,14 +52,14 @@ const passwordSchema = z.object({
 const newUserSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters"),
   password: z.string().min(6, "Password must be at least 6 characters"),
-  role: z.enum(["admin", "manager", "cashier", "kitchen", "staff"]),
+  role: z.enum(["admin", "manager"]),
 });
 
 type UsernameForm = z.infer<typeof usernameSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 type NewUserForm = z.infer<typeof newUserSchema>;
 
-const ROLES = ["admin", "manager", "cashier", "kitchen", "staff"] as const;
+const ROLES = ["admin", "manager"] as const;
 
 const roleColors: Record<string, string> = {
   admin: "bg-red-100 text-red-800",
@@ -94,7 +94,7 @@ function UsersTab() {
 
   const newUserForm = useForm<NewUserForm>({
     resolver: zodResolver(newUserSchema),
-    defaultValues: { username: "", password: "", role: "staff" },
+    defaultValues: { username: "", password: "", role: "manager" },
   });
 
   const createUserMutation = useMutation({
@@ -241,7 +241,7 @@ function RolesTab() {
   const [pinDialogError, setPinDialogError] = useState("");
   const [resetConfirm, setResetConfirm] = useState(false);
   const [showAddRole, setShowAddRole] = useState(false);
-  const [addForm, setAddForm] = useState({ username: "", password: "", role: "staff", pin: "", pinConfirm: "" });
+  const [addForm, setAddForm] = useState({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
   const [addFormError, setAddFormError] = useState("");
 
   const { data: users = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
@@ -296,7 +296,7 @@ function RolesTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setShowAddRole(false);
-      setAddForm({ username: "", password: "", role: "staff", pin: "", pinConfirm: "" });
+      setAddForm({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
       setAddFormError("");
     },
     onError: (err: any) => {
@@ -348,9 +348,6 @@ function RolesTab() {
   const roleDescriptions: Record<string, string> = {
     admin: "Full access to all features",
     manager: "Menu, orders, reports & POS",
-    cashier: "POS & billing only",
-    kitchen: "KOT & kitchen display",
-    staff: "Basic POS access",
   };
 
   return (
