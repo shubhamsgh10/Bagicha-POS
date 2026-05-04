@@ -18,12 +18,14 @@ import { getAutomationConfig } from "./automationStore";
 import { processPendingFeedback } from "./feedbackService";
 import { runBirthdayAutomation } from "./birthdayService";
 import { generateAndSendDailyDigest } from "./dailyDigestService";
+import { runBackup, isConfigured as backupConfigured } from "./backupService";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let tickerTimer: ReturnType<typeof setInterval> | null = null;
 let lastBirthdayDate: string | null = null;   // YYYY-MM-DD
 let lastDigestDate:   string | null = null;
+let lastBackupDate:   string | null = null;
 
 const TICK_INTERVAL_MS = 60 * 1000; // every minute
 
@@ -77,6 +79,17 @@ async function tick(): Promise<void> {
       }
     } else {
       lastDigestDate = today;
+    }
+  }
+
+  // 4. Daily backup — once per day at 2am
+  if (backupConfigured() && hour >= 2 && lastBackupDate !== today) {
+    try {
+      lastBackupDate = today;
+      const result = await runBackup();
+      console.log(`[DailyScheduler] backup complete: ${result.key} (${result.sizeBytes} bytes, ${result.durationMs}ms)`);
+    } catch (err: any) {
+      console.warn("[DailyScheduler] backup error:", err?.message ?? err);
     }
   }
 }
