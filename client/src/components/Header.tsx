@@ -1,14 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { Plus, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 
 interface HeaderProps {
   title: string;
   description: string;
   onNewOrder?: () => void;
+  action?: React.ReactNode;
 }
 
-export function Header({ title, description, onNewOrder }: HeaderProps) {
+export function Header({ title, description, onNewOrder, action }: HeaderProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -41,11 +43,9 @@ export function Header({ title, description, onNewOrder }: HeaderProps) {
               {formatTime(currentTime)}
             </span>
           </div>
+          {action}
           {onNewOrder && (
-            <Button 
-              onClick={onNewOrder}
-              className="touch-button"
-            >
+            <Button onClick={onNewOrder} className="touch-button">
               <Plus className="w-4 h-4 mr-2" />
               New Order
             </Button>

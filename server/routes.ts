@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "child_process";
 import { storage } from "./storage";
@@ -47,10 +48,17 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import multer from "multer";
+import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
+import { registerStaffRoutes } from "./staffRoutes";
+import { earnPointsForOrder } from "./services/loyaltyService";
+import { scheduleFeedbackForOrder } from "./services/feedbackService";
+import { logAudit, getAuditLogs } from "./services/auditService";
+import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
+import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -90,26 +98,31 @@ passport.use(new LocalStrategy(async (username, password, done) => {
 }));
 
 passport.serializeUser((user: any, done) => {
-  done(null, user.id);
+  done(null, user._isStaffMember ? `sm:${user.id}` : user.id);
 });
 
-passport.deserializeUser(async (id: any, done) => {
+passport.deserializeUser(async (key: any, done) => {
   try {
-    const user = await storage.getUser(Number(id));
-    done(null, user || false);
+    if (typeof key === "string" && key.startsWith("sm:")) {
+      const sm = await storage.getStaffMember(Number(key.slice(3)));
+      done(null, sm ? { id: sm.id, username: sm.name, role: "staff", _isStaffMember: true } : false);
+    } else {
+      const user = await storage.getUser(Number(key));
+      done(null, user || false);
+    }
   } catch (err) {
     done(err);
   }
 });
 
 // Middleware to require authentication
-function requireAuth(req: any, res: any, next: any) {
+export function requireAuth(req: any, res: any, next: any) {
   if (req.isAuthenticated()) return next();
   res.status(401).json({ message: "Unauthorized" });
 }
 
 // Middleware to require admin role
-function requireAdmin(req: any, res: any, next: any) {
+export function requireAdmin(req: any, res: any, next: any) {
   if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
   if (req.user?.role !== "admin") return res.status(403).json({ message: "Admin access required" });
   next();
@@ -150,18 +163,154 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // ── Rate Limiters ────────────────────────────────────────────────────────────
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,   // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many login attempts. Try again in 15 minutes." },
+  });
+
+  const pinLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,    // 5 minutes
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { valid: false, message: "Too many PIN attempts. Try again in 5 minutes." },
+  });
+
+  const staffPinLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many PIN attempts. Try again in 5 minutes." },
+  });
+
+  const razorpayVerifyLimiter = rateLimit({
+    windowMs: 60 * 1000,        // 1 minute
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many payment verification requests." },
+  });
+
   // ── Auth Routes ──────────────────────────────────────────────────────────────
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", loginLimiter, (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
       if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
+
+      // If 2FA is enabled, hold login in a pending session state
+      if (user.totpEnabled && user.totpSecret) {
+        (req.session as any).pending2faUserId = user.id;
+        return res.json({ requires2FA: true });
+      }
+
       req.logIn(user, (err) => {
         if (err) return next(err);
-        const { password, ...safeUser } = user;
+        const { password, pin, totpSecret, ...safeUser } = user;
         res.json(safeUser);
       });
     })(req, res, next);
+  });
+
+  // ── 2FA: complete login after TOTP verified ───────────────────────────────────
+  app.post("/api/auth/2fa/complete", pinLimiter, async (req, res, next) => {
+    try {
+      const pendingId = (req.session as any).pending2faUserId;
+      if (!pendingId) return res.status(400).json({ message: "No pending 2FA session" });
+
+      const { token } = req.body;
+      if (!token) return res.status(400).json({ message: "token required" });
+
+      const [user] = await db.select().from(users).where(eq(users.id, pendingId));
+      if (!user || !user.totpSecret) return res.status(400).json({ message: "Invalid session" });
+
+      if (!verifyToken(String(token), user.totpSecret)) {
+        return res.status(401).json({ message: "Invalid authenticator code" });
+      }
+
+      delete (req.session as any).pending2faUserId;
+
+      req.logIn(user, (err) => {
+        if (err) return next(err);
+        const { password, pin, totpSecret, ...safeUser } = user;
+        res.json(safeUser);
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── 2FA setup: generate secret + QR (admin, already logged in) ───────────────
+  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const secret = generateSecret();
+      const qrDataURL = await generateQRDataURL(actor.username, secret);
+      // Store temp secret in session (not DB yet — only saved after verification)
+      (req.session as any).pending2faSecret = secret;
+      res.json({ secret, qrDataURL });
+    } catch (err) {
+      console.error("[2FA setup error]", err);
+      res.status(500).json({ message: "Failed to generate 2FA setup", detail: String(err) });
+    }
+  });
+
+  // ── 2FA setup: verify first code, then persist secret ────────────────────────
+  app.post("/api/auth/2fa/verify-setup", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const { token } = req.body;
+      const secret = (req.session as any).pending2faSecret;
+      if (!secret) return res.status(400).json({ message: "No pending setup — call /setup first" });
+      if (!verifyToken(String(token), secret)) {
+        return res.status(401).json({ message: "Invalid code — try again" });
+      }
+      await db.update(users)
+        .set({ totpSecret: secret, totpEnabled: true })
+        .where(eq(users.id, actor.id));
+      delete (req.session as any).pending2faSecret;
+      logAudit(req, "user.2fa_enabled", "user", actor.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to enable 2FA" });
+    }
+  });
+
+  // ── 2FA disable ───────────────────────────────────────────────────────────────
+  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const { token } = req.body;
+      const [user] = await db.select().from(users).where(eq(users.id, actor.id));
+      if (!user?.totpSecret) return res.status(400).json({ message: "2FA is not enabled" });
+      if (!verifyToken(String(token), user.totpSecret)) {
+        return res.status(401).json({ message: "Invalid code" });
+      }
+      await db.update(users)
+        .set({ totpSecret: null, totpEnabled: false })
+        .where(eq(users.id, actor.id));
+      logAudit(req, "user.2fa_disabled", "user", actor.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to disable 2FA" });
+    }
+  });
+
+  // ── 2FA status ────────────────────────────────────────────────────────────────
+  app.get("/api/auth/2fa/status", requireAuth, async (req, res) => {
+    try {
+      const actor = req.user as any;
+      const [user] = await db.select().from(users).where(eq(users.id, actor.id));
+      res.json({ totpEnabled: !!user?.totpEnabled });
+    } catch {
+      res.status(500).json({ message: "Failed to fetch 2FA status" });
+    }
   });
 
   app.post("/api/auth/logout", (req, res, next) => {
@@ -169,6 +318,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (err) return next(err);
       res.json({ success: true });
     });
+  });
+
+  // ── Device context — tells client if request is from local network + mobile ──
+  app.get("/api/auth/context", (req, res) => {
+    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+      || req.socket.remoteAddress
+      || "";
+    const isLocalNetwork =
+      ip === "::1" ||
+      ip === "127.0.0.1" ||
+      /^::ffff:127\./.test(ip) ||
+      /^10\./.test(ip) ||
+      /^192\.168\./.test(ip) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+
+    const ua = req.headers["user-agent"] ?? "";
+    const isMobile = /Mobile|Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+
+    res.json({ isLocalNetwork, isMobile });
+  });
+
+  // ── Staff PIN login — uses staffMembers table (not system users) ────────────
+  app.post("/api/auth/staff-pin-login", staffPinLimiter, async (req, res, next) => {
+    try {
+      const { staffId, pin } = req.body;
+      if (!staffId || !pin) return res.status(400).json({ message: "staffId and pin required" });
+
+      const sm = await storage.getStaffMember(Number(staffId));
+      if (!sm || !sm.isActive) return res.status(401).json({ message: "Staff member not found" });
+      if (!sm.pin) return res.status(401).json({ message: "No PIN set. Ask manager to set one in Settings → Staff Selector." });
+      if (sm.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
+
+      const staffUser = { id: sm.id, username: sm.name, role: "staff", _isStaffMember: true };
+      req.logIn(staffUser as any, (err) => {
+        if (err) return next(err);
+        res.json({ id: sm.id, username: sm.name, role: "staff" });
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
   });
 
   app.get("/api/auth/me", (req, res) => {
@@ -234,7 +423,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/verify-pin", requireAuth, async (req, res) => {
+  app.post("/api/auth/verify-pin", requireAuth, pinLimiter, async (req, res) => {
     try {
       const { pin, requiredRole } = req.body;
       if (!pin) return res.status(400).json({ valid: false });
@@ -263,6 +452,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const allUsers = await storage.getUsers();
       await Promise.all(allUsers.map((u) => storage.updateUser(u.id, { pin: null })));
+      logAudit(req, "user.pin_reset_all", "user", null, { count: allUsers.length });
       res.json({ success: true });
     } catch (err) {
       console.error("Reset all PINs error:", err);
@@ -280,12 +470,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "PIN must be 4-6 digits" });
       }
       const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
+      logAudit(req, "user.pin_update", "user", id, { cleared: !pin });
       const { password: _, ...safeUser } = updated;
       res.json(safeUser);
     } catch (err) {
       console.error("Update PIN error:", err);
       res.status(500).json({ message: "Failed to update PIN" });
     }
+  });
+
+  // ── Staff Members — public selector list (no auth) ───────────────────────────
+  app.get("/api/staff-members", async (_req, res) => {
+    try {
+      const all = await storage.getStaffMembers();
+      res.json(all.filter(s => s.isActive).map(({ id, name }) => ({ id, name })));
+    } catch {
+      res.status(500).json({ message: "Failed to fetch staff members" });
+    }
+  });
+
+  // ── Staff Members CRUD (admin only) ──────────────────────────────────────────
+  app.get("/api/staff-members/all", requireAdmin, async (_req, res) => {
+    try {
+      const all = await storage.getStaffMembers();
+      res.json(all.map(({ id, name, pin, isActive, createdAt }) => ({ id, name, hasPin: !!pin, isActive, createdAt })));
+    } catch {
+      res.status(500).json({ message: "Failed to fetch staff members" });
+    }
+  });
+
+  app.post("/api/staff-members", requireAdmin, async (req, res) => {
+    try {
+      const { name, pin } = req.body;
+      if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
+      if (pin && !/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ message: "PIN must be 4–6 digits" });
+      const sm = await storage.createStaffMember({ name: name.trim(), pin: pin ? String(pin) : null, isActive: true });
+      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.put("/api/staff-members/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { name, pin, isActive } = req.body;
+      if (pin !== undefined && pin !== null && pin !== "" && !/^\d{4,6}$/.test(String(pin))) {
+        return res.status(400).json({ message: "PIN must be 4–6 digits" });
+      }
+      const updates: any = {};
+      if (name !== undefined) updates.name = name.trim();
+      if (pin !== undefined) updates.pin = pin === "" ? null : String(pin);
+      if (isActive !== undefined) updates.isActive = isActive;
+      const sm = await storage.updateStaffMember(id, updates);
+      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.delete("/api/staff-members/:id", requireAdmin, async (req, res) => {
+    try {
+      await storage.deleteStaffMember(Number(req.params.id));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // ── Manager page access settings ──────────────────────────────────────────────
+  app.get("/api/settings/manager-pages", requireAuth, (_req, res) => {
+    const s = getSettings();
+    res.json({ managerAllowedPages: s.managerAllowedPages });
+  });
+
+  app.post("/api/settings/manager-pages", requireAdmin, (req, res) => {
+    const { managerAllowedPages } = req.body;
+    const updated = saveSettings({ managerAllowedPages: managerAllowedPages ?? null });
+    res.json({ managerAllowedPages: updated.managerAllowedPages });
   });
 
   // ── User Management (Admin only) ──────────────────────────────────────────────
@@ -316,6 +578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pin: pin ? String(pin) : null,
       });
       const { password: _, pin: userPin, ...safeUser } = user;
+      logAudit(req, "user.create", "user", user.id, { username: user.username, role: user.role });
       res.json({ ...safeUser, pin: !!userPin });
     } catch (err) {
       console.error("Create user error:", err);
@@ -347,6 +610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const updated = await storage.updateUser(id, updateData);
       const { password: _, pin: updatedPin, ...safeUser } = updated;
+      logAudit(req, "user.update", "user", id, { fields: Object.keys(updateData) });
       res.json({ ...safeUser, pin: !!updatedPin });
     } catch (err) {
       console.error("Update user error:", err);
@@ -360,6 +624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentUser = req.user as any;
       if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete your own account" });
       await storage.deleteUser(id);
+      logAudit(req, "user.delete", "user", id);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "Failed to delete user" });
@@ -396,6 +661,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/logs", requireAdmin, (_req, res) => {
     res.json(getLogBuffer());
+  });
+
+  app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {
+    try {
+      const limit  = Math.min(parseInt(String(req.query.limit  ?? 50)), 200);
+      const offset = parseInt(String(req.query.offset ?? 0));
+      const action     = req.query.action     ? String(req.query.action)     : undefined;
+      const entityType = req.query.entityType ? String(req.query.entityType) : undefined;
+      const rows = await getAuditLogs({ limit, offset, action, entityType });
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
+  // ── DB Backup endpoints ────────────────────────────────────────────────────
+  app.get("/api/admin/backups", requireAdmin, async (_req, res) => {
+    try {
+      const backups = await listBackups();
+      res.json({ configured: backupConfigured(), backups });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Failed to list backups" });
+    }
+  });
+
+  app.post("/api/admin/backups", requireAdmin, async (req, res) => {
+    try {
+      if (!backupConfigured()) {
+        return res.status(400).json({ message: "Backup storage not configured. Set R2_* or AWS_* env vars." });
+      }
+      const result = await runBackup();
+      logAudit(req, "backup.manual", "system", undefined, { key: result.key, sizeBytes: result.sizeBytes });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Backup failed" });
+    }
   });
 
   // ── Data import ───────────────────────────────────────────────────────────────
@@ -526,6 +827,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Print routes ──────────────────────────────────────────────────────────────
   registerPrintRoutes(app);
 
+  // ── Phase 1 growth routes (Razorpay, Coupons, Loyalty, Feedback, Digest) ─────
+  registerPublicGrowthRoutes(app);
+  registerGrowthRoutes(app, broadcast);
+
+  // ── Staff management + attendance routes ──────────────────────────────────
+  registerStaffRoutes(app);
+
   // ── Settings ──────────────────────────────────────────────────────────────────
 
   app.get("/api/settings", requireAuth, (req, res) => {
@@ -539,6 +847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/settings", requireAdmin, (req, res) => {
     try {
       const updated = saveSettings(req.body);
+      logAudit(req, "settings.update", "settings", null, { fields: Object.keys(req.body) });
       res.json(updated);
     } catch (err) {
       res.status(500).json({ message: "Failed to save settings" });
@@ -991,7 +1300,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { items, ...orderInfo } = req.body;
       const orderNumber = `ORD${Date.now()}`;
-      const order = await storage.createOrder({ ...orderInfo, orderNumber });
+      const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: (req.user as any)?.id ?? null });
 
       // Create order items
       if (items && items.length > 0) {
@@ -1152,6 +1461,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         broadcast({ type: 'TABLE_UPDATE' });
       }
       broadcast({ type: 'ORDER_UPDATE', order });
+
+      logAudit(req, "order.payment", "order", id, {
+        paymentMethod: paymentMethod || "cash",
+        paymentStatus: isDue ? "pending" : "paid",
+        amount: (order as any).totalAmount,
+      });
+
+      // ── Post-payment hooks (loyalty earn + feedback queue) ──────────────────
+      if (!isDue) {
+        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
+        if (key) {
+          earnPointsForOrder(
+            key,
+            (order as any).customerName ?? key,
+            id,
+            parseFloat(String((order as any).totalAmount ?? 0)),
+          ).catch(e => console.warn("[Loyalty] earn failed:", e));
+        }
+        scheduleFeedbackForOrder(id).catch(e => console.warn("[Feedback] schedule failed:", e));
+      }
+
       res.json(order);
     } catch (error) {
       console.error("Payment error:", error);
@@ -1244,6 +1574,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
       }
+      logAudit(req, "order.cancel", "order", id, {
+        orderNumber: (order as any).orderNumber,
+        tableNumber: (order as any).tableNumber,
+        totalAmount: (order as any).totalAmount,
+      });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
@@ -1561,9 +1896,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Never expose API keys in full — mask them
     res.json({
       ...config,
-      anthropicApiKey:  config.anthropicApiKey  ? "***configured***" : "",
-      watiApiKey:       config.watiApiKey        ? "***configured***" : "",
-      metaAccessToken:  config.metaAccessToken   ? "***configured***" : "",
+      anthropicApiKey:        config.anthropicApiKey        ? "***configured***" : "",
+      watiApiKey:             config.watiApiKey             ? "***configured***" : "",
+      metaAccessToken:        config.metaAccessToken        ? "***configured***" : "",
+      razorpayKeySecret:      config.razorpayKeySecret      ? "***configured***" : "",
+      razorpayWebhookSecret:  config.razorpayWebhookSecret  ? "***configured***" : "",
     });
   });
 
@@ -1572,9 +1909,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const patch = req.body as Record<string, unknown>;
       // Don't overwrite keys with masked placeholder
-      if (patch.anthropicApiKey === "***configured***") delete patch.anthropicApiKey;
-      if (patch.watiApiKey      === "***configured***") delete patch.watiApiKey;
-      if (patch.metaAccessToken === "***configured***") delete patch.metaAccessToken;
+      if (patch.anthropicApiKey       === "***configured***") delete patch.anthropicApiKey;
+      if (patch.watiApiKey            === "***configured***") delete patch.watiApiKey;
+      if (patch.metaAccessToken       === "***configured***") delete patch.metaAccessToken;
+      if (patch.razorpayKeySecret     === "***configured***") delete patch.razorpayKeySecret;
+      if (patch.razorpayWebhookSecret === "***configured***") delete patch.razorpayWebhookSecret;
 
       const updated = saveAutomationConfig(patch);
       restartScheduler();   // pick up new interval setting immediately

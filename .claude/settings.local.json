@@ -47,7 +47,13 @@
       "Bash(findstr \":5000\")",
       "Bash(findstr \"LISTENING\")",
       "Bash(git add *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('razorpayKeyId:', d.get\\('razorpayKeyId','NOT SET'\\)\\); print\\('razorpayKeySecret set:', bool\\(d.get\\('razorpayKeySecret',''\\)\\)\\); print\\('razorpayWebhookSecret set:', bool\\(d.get\\('razorpayWebhookSecret',''\\)\\)\\)\")",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(cp saas-workflow-orchestrator.skill saas-workflow-orchestrator.zip)",
+      "Bash(powershell.exe -Command \"Expand-Archive -Path 'saas-workflow-orchestrator.zip' -DestinationPath './saas-workflow-orchestrator-extracted' -Force\")"
     ]
   },
   "enabledMcpjsonServers": [

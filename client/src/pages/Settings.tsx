@@ -1,18 +1,29 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Loader2, Store, Receipt, ShieldCheck, RefreshCw, Database,
   Trash2, Archive, FileText, Monitor, KeyRound, X, AlertTriangle,
   CheckCircle2, ChevronRight, Settings2, Upload, FileUp, Download,
-  Printer,
+  Printer, Sparkles, Users, Lock, Pencil, Plus, UserCircle2, ToggleLeft,
 } from "lucide-react";
 import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
+import { GrowthSettingsPanel } from "@/components/GrowthSettingsPanel";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
+import { TwoFactorPanel } from "@/components/TwoFactorPanel";
+import { BackupPanel } from "@/components/BackupPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +52,12 @@ type ModalId =
   | "check-machine"
   | "generate-code"
   | "print-settings"
+  | "growth-settings"
+  | "audit-log"
+  | "two-factor"
+  | "backup"
+  | "staff-selector"
+  | "manager-access"
   | null;
 
 // ── Action card definitions ───────────────────────────────────────────────────
@@ -116,10 +133,46 @@ const ACTION_CARDS: {
     icon: KeyRound,
   },
   {
+    id: "growth-settings",
+    label: "Growth",
+    sublabel: "& Payments",
+    icon: Sparkles,
+  },
+  {
+    id: "audit-log",
+    label: "Audit",
+    sublabel: "Log",
+    icon: ShieldCheck,
+  },
+  {
+    id: "two-factor",
+    label: "2FA",
+    sublabel: "Security",
+    icon: ShieldCheck,
+  },
+  {
+    id: "backup",
+    label: "DB",
+    sublabel: "Backups",
+    icon: Database,
+  },
+  {
     id: "print-settings" as const,
     label: "Print",
     sublabel: "Settings",
     icon: Printer,
+  },
+  {
+    id: "staff-selector" as const,
+    label: "Staff",
+    sublabel: "Selector",
+    icon: Users,
+  },
+  {
+    id: "manager-access" as const,
+    label: "Manager",
+    sublabel: "Access",
+    icon: ToggleLeft,
   },
 ];
 
@@ -797,6 +850,342 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Staff Selector Panel ──────────────────────────────────────────────────────
+
+interface StaffMemberRow { id: number; name: string; hasPin: boolean; isActive: boolean; createdAt: string; }
+
+function StaffSelectorPanel() {
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editRow, setEditRow]       = useState<StaffMemberRow | null>(null);
+  const [form, setForm]             = useState({ name: "", pin: "", pinConfirm: "" });
+  const [formError, setFormError]   = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+
+  const { data: staff = [], isLoading } = useQuery<StaffMemberRow[]>({
+    queryKey: ["/api/staff-members/all"],
+    queryFn: async () => {
+      const r = await fetch("/api/staff-members/all", { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: { name: string; pin: string | null; isActive?: boolean; id?: number }) => {
+      if (payload.id) return apiRequest("PUT", `/api/staff-members/${payload.id}`, payload);
+      return apiRequest("POST", "/api/staff-members", payload);
+    },
+    onSuccess: () => {
+      toast({ title: editRow ? "Staff member updated" : "Staff member added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/staff-members"] });
+      setDialogOpen(false);
+      setEditRow(null);
+      setForm({ name: "", pin: "", pinConfirm: "" });
+      setFormError("");
+    },
+    onError: (e: any) => {
+      const msg = (() => {
+        try { return JSON.parse(e.message.slice(e.message.indexOf("{"))).message; } catch { return e.message || "Failed to save"; }
+      })();
+      setFormError(msg);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/staff-members/${id}`),
+    onSuccess: () => {
+      toast({ title: "Staff member removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/staff-members"] });
+      setDeleteConfirm(null);
+    },
+  });
+
+  const openAdd = () => {
+    setEditRow(null);
+    setForm({ name: "", pin: "", pinConfirm: "" });
+    setFormError("");
+    setDialogOpen(true);
+  };
+
+  const openEdit = (row: StaffMemberRow) => {
+    setEditRow(row);
+    setForm({ name: row.name, pin: "", pinConfirm: "" });
+    setFormError("");
+    setDialogOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!form.name.trim()) { setFormError("Name is required"); return; }
+    if (form.pin && !/^\d{4,6}$/.test(form.pin)) { setFormError("PIN must be 4–6 digits"); return; }
+    if (form.pin && form.pin !== form.pinConfirm) { setFormError("PINs do not match"); return; }
+    saveMutation.mutate({ name: form.name.trim(), pin: form.pin || null, ...(editRow ? { id: editRow.id } : {}) });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {staff.length} staff member{staff.length !== 1 ? "s" : ""}
+        </p>
+        <button
+          onClick={openAdd}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 rounded-lg transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Staff
+        </button>
+      </div>
+
+      {/* Staff list */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1,2].map(i => <div key={i} className="h-14 rounded-xl bg-gray-100 animate-pulse" />)}
+        </div>
+      ) : staff.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+          <UserCircle2 className="w-10 h-10 mb-2 opacity-25" />
+          <p className="text-sm font-medium">No staff members yet</p>
+          <p className="text-xs mt-0.5">Add staff so they can log in on their phones.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {staff.map(s => (
+            <div key={s.id}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-opacity ${!s.isActive ? "opacity-50" : ""}`}
+              style={{ background: "rgba(255,255,255,0.65)", backdropFilter: "blur(12px)", border: "1px solid rgba(0,0,0,0.07)" }}
+            >
+              {/* Avatar */}
+              <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                <UserCircle2 className="w-4 h-4 text-emerald-600" />
+              </div>
+
+              {/* Name + PIN status */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-800 truncate">{s.name}</p>
+                <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${s.hasPin ? "text-emerald-600" : "text-red-500"}`}>
+                  <Lock className="w-2.5 h-2.5" />
+                  {s.hasPin ? "PIN set" : "No PIN"}
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-1 shrink-0">
+                <Switch
+                  checked={s.isActive}
+                  onCheckedChange={() => saveMutation.mutate({ id: s.id, name: s.name, pin: null, isActive: !s.isActive })}
+                />
+                <button
+                  onClick={() => openEdit(s)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                  title="Edit"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                {deleteConfirm === s.id ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => deleteMutation.mutate(s.id)}
+                      className="px-2 py-1 text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+                    >
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirm(null)}
+                      className="px-2 py-1 text-[11px] border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setDeleteConfirm(s.id)}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Info note */}
+      <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[12px] text-blue-700 leading-relaxed">
+        Staff here appear on the phone selector at{" "}
+        <span className="font-mono bg-blue-100 px-1 py-0.5 rounded text-blue-800">192.168.29.33:5000</span>.
+        They are separate from admin/manager accounts.
+      </div>
+
+      {/* ── Add / Edit Dialog (portaled outside modal via shadcn Dialog) ──── */}
+      <Dialog open={dialogOpen} onOpenChange={open => { if (!open) { setDialogOpen(false); setEditRow(null); } }}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>{editRow ? `Edit — ${editRow.name}` : "Add Staff Member"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label htmlFor="sm-name">Name</Label>
+              <Input
+                id="sm-name"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Balawant"
+                autoFocus
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="sm-pin">
+                {editRow
+                  ? "New PIN — 4 to 6 digits (leave blank to keep current)"
+                  : "PIN — 4 to 6 digits"}
+              </Label>
+              <Input
+                id="sm-pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={form.pin}
+                onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
+                placeholder="······"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="sm-pin2">Confirm PIN</Label>
+              <Input
+                id="sm-pin2"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={form.pinConfirm}
+                onChange={e => setForm(f => ({ ...f, pinConfirm: e.target.value }))}
+                placeholder="······"
+              />
+            </div>
+
+            {formError && (
+              <p className="text-[12px] font-medium text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                {formError}
+              </p>
+            )}
+          </div>
+
+          <div className="flex gap-2 justify-end pt-2">
+            <button
+              onClick={() => { setDialogOpen(false); setEditRow(null); }}
+              className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saveMutation.isPending}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-colors disabled:opacity-60"
+            >
+              {saveMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {editRow ? "Save Changes" : "Add Staff"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Manager Access Panel ──────────────────────────────────────────────────────
+
+const MANAGER_PAGES = [
+  { href: "/tables",       label: "Tables" },
+  { href: "/orders",       label: "Orders" },
+  { href: "/billing",      label: "Billing" },
+  { href: "/kot",          label: "KOT" },
+  { href: "/staff",        label: "Staff" },
+  { href: "/menu",         label: "Menu" },
+  { href: "/inventory",    label: "Inventory" },
+  { href: "/live-tables",  label: "Live Tables" },
+  { href: "/kitchen",      label: "Kitchen" },
+  { href: "/customers",    label: "Customers" },
+];
+
+function ManagerAccessPanel() {
+  const { toast } = useToast();
+  const [allowed, setAllowed] = useState<string[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/settings/manager-pages", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => {
+        setAllowed(d.managerAllowedPages ?? null);
+        setFetched(true);
+      })
+      .catch(() => setFetched(true));
+  }, []);
+
+  const isAllowed = (href: string) => allowed === null || allowed.includes(href);
+
+  const toggle = (href: string) => {
+    if (allowed === null) {
+      // All on → turn one off
+      setAllowed(MANAGER_PAGES.map(p => p.href).filter(h => h !== href));
+    } else if (allowed.includes(href)) {
+      const next = allowed.filter(h => h !== href);
+      setAllowed(next.length === MANAGER_PAGES.length ? null : next);
+    } else {
+      const next = [...allowed, href];
+      setAllowed(next.length === MANAGER_PAGES.length ? null : next);
+    }
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/settings/manager-pages", { managerAllowedPages: allowed });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Manager access saved" });
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!fetched) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Choose which pages the <strong>manager</strong> role can access. Admin always has full access.
+      </p>
+      <div className="space-y-1">
+        {MANAGER_PAGES.map(page => (
+          <div key={page.href}
+            className="flex items-center justify-between px-4 py-3 rounded-xl border bg-white/60 transition-all"
+            style={{ backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.7)" }}
+          >
+            <span className="text-sm font-medium text-gray-700">{page.label}</span>
+            <Switch checked={isAllowed(page.href)} onCheckedChange={() => toggle(page.href)} />
+          </div>
+        ))}
+      </div>
+      <button onClick={handleSave} disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl transition-colors disabled:opacity-60">
+        {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+        Save Manager Access
+      </button>
+    </div>
+  );
+}
+
 // ── Main Settings page ────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -1109,12 +1498,54 @@ export default function Settings() {
         </Modal>
       )}
 
+      {/* Growth Settings (Razorpay, NPS, Birthday, Daily Digest) */}
+      {activeModal === "growth-settings" && (
+        <Modal title="Growth & Payments" onClose={closeModal}>
+          <GrowthSettingsPanel onClose={closeModal} />
+        </Modal>
+      )}
+
+      {/* Audit Log */}
+      {activeModal === "audit-log" && (
+        <Modal title="Audit Log" onClose={closeModal}>
+          <AuditLogPanel />
+        </Modal>
+      )}
+
+      {/* Two-Factor Authentication */}
+      {activeModal === "two-factor" && (
+        <Modal title="Two-Factor Authentication" onClose={closeModal}>
+          <TwoFactorPanel />
+        </Modal>
+      )}
+
+      {/* Database Backups */}
+      {activeModal === "backup" && (
+        <Modal title="Database Backups" onClose={closeModal}>
+          <BackupPanel />
+        </Modal>
+      )}
+
       {/* Print Settings */}
       {activeModal === "print-settings" && (
         <PrintSettingsPanel
           currentSettings={formData}
           onClose={closeModal}
         />
+      )}
+
+      {/* Staff Selector */}
+      {activeModal === "staff-selector" && (
+        <Modal title="Staff Selector" onClose={closeModal}>
+          <StaffSelectorPanel />
+        </Modal>
+      )}
+
+      {/* Manager Access */}
+      {activeModal === "manager-access" && (
+        <Modal title="Manager Page Access" onClose={closeModal}>
+          <ManagerAccessPanel />
+        </Modal>
       )}
     </div>
   );

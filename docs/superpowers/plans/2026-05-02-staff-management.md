@@ -1,602 +1,731 @@
-import React, { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+# Staff Management Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add Attendance (biometric Excel import), Shifts, Leaves, and Payroll tabs to the existing Admin page (`client/src/pages/Admin.tsx`), backed by 5 new DB tables, storage methods, and API routes.
+
+**Architecture:** New tables added to `shared/schema.ts` -> storage methods in `server/storage.ts` -> REST endpoints in `server/routes.ts` -> 4 new tab components inlined into `client/src/pages/Admin.tsx`. All tabs are admin/manager visible only, following the existing pattern.
+
+**Tech Stack:** Drizzle ORM (PostgreSQL), Express, React + TanStack Query, shadcn/ui, xlsx (Excel parsing), date-fns (already installed)
+
+---
+
+## File Map
+
+| File | Change |
+|------|--------|
+| `shared/schema.ts` | Add 5 tables + zod schemas + types |
+| `server/storage.ts` | Add IStorage methods + DatabaseStorage impl |
+| `server/routes.ts` | Add 16 staff API routes |
+| `client/src/pages/Admin.tsx` | Add AttendanceTab, ShiftsTab, LeavesTab, PayrollTab + wire into Tabs |
+| `package.json` (root) | Add `xlsx` + `multer` dependencies |
+
+---
+
+## Task 1: Install dependencies and add DB schema
+
+**Files:**
+- Modify: `package.json`
+- Modify: `shared/schema.ts`
+
+- [ ] **Step 1: Install xlsx and multer**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+npm install xlsx multer @types/multer
+```
+
+Expected: packages added successfully.
+
+- [ ] **Step 2: Add 5 new tables to `shared/schema.ts`**
+
+Append the following block at the very end of `shared/schema.ts` (after `export type CrmEventType = ...`).
+
+NOTE: Do NOT add `import { date, time }` — all date/time fields use the existing `text` type. The existing imports already have everything needed.
+
+```typescript
+// =============================================================================
+// STAFF MANAGEMENT TABLES
+// =============================================================================
+
+export const staffProfiles = pgTable("staff_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().unique(),
+  biometricId: text("biometric_id"),
+  department: text("department"),
+  designation: text("designation"),
+  monthlySalary: decimal("monthly_salary", { precision: 10, scale: 2 }).notNull().default("0"),
+  joiningDate: text("joining_date"),
+  emergencyContact: text("emergency_contact"),
+  address: text("address"),
+  bankAccountNo: text("bank_account_no"),
+  bankName: text("bank_name"),
+  isActive: boolean("is_active").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const attendance = pgTable("attendance", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  date: text("date").notNull(),        // "YYYY-MM-DD"
+  clockIn: text("clock_in"),           // "HH:MM" or "HH:MM AM/PM"
+  clockOut: text("clock_out"),         // "HH:MM" or "HH:MM AM/PM"
+  status: text("status").notNull().default("present"), // present|absent|half-day|on-leave|holiday
+  workingHours: decimal("working_hours", { precision: 4, scale: 2 }),
+  overtimeHours: decimal("overtime_hours", { precision: 4, scale: 2 }).default("0"),
+  notes: text("notes"),
+  markedBy: integer("marked_by"),      // null = biometric import; userId = admin override
+  importedAt: timestamp("imported_at").defaultNow(),
+});
+
+export const leaves = pgTable("leaves", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  leaveType: text("leave_type").notNull().default("casual"), // sick|casual|earned|unpaid
+  startDate: text("start_date").notNull(),  // "YYYY-MM-DD"
+  endDate: text("end_date").notNull(),      // "YYYY-MM-DD"
+  totalDays: integer("total_days").notNull().default(1),
+  reason: text("reason"),
+  status: text("status").notNull().default("pending"), // pending|approved|rejected
+  reviewedBy: integer("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const shifts = pgTable("shifts", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  startTime: text("start_time").notNull(),  // "HH:MM"
+  endTime: text("end_time").notNull(),      // "HH:MM"
+  durationHours: decimal("duration_hours", { precision: 4, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const shiftAssignments = pgTable("shift_assignments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  shiftId: integer("shift_id").notNull(),
+  date: text("date").notNull(),  // "YYYY-MM-DD"
+  createdBy: integer("created_by").notNull(),
+});
+
+// -- Staff Insert Schemas
+export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, updatedAt: true });
+export const insertAttendanceSchema = createInsertSchema(attendance).omit({ id: true, importedAt: true });
+export const insertLeaveSchema = createInsertSchema(leaves).omit({ id: true, createdAt: true });
+export const insertShiftSchema = createInsertSchema(shifts).omit({ id: true });
+export const insertShiftAssignmentSchema = createInsertSchema(shiftAssignments).omit({ id: true });
+
+// -- Staff Types
+export type StaffProfile = typeof staffProfiles.$inferSelect;
+export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
+export type Attendance = typeof attendance.$inferSelect;
+export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
+export type Leave = typeof leaves.$inferSelect;
+export type InsertLeave = z.infer<typeof insertLeaveSchema>;
+export type Shift = typeof shifts.$inferSelect;
+export type InsertShift = z.infer<typeof insertShiftSchema>;
+export type ShiftAssignment = typeof shiftAssignments.$inferSelect;
+export type InsertShiftAssignment = z.infer<typeof insertShiftAssignmentSchema>;
+```
+
+- [ ] **Step 3: Push schema to DB**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+npm run db:push
+```
+
+Expected: 5 new tables created (staff_profiles, attendance, leaves, shifts, shift_assignments). No errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add shared/schema.ts package.json package-lock.json
+git commit -m "feat: add staff management DB schema (5 tables) + xlsx/multer deps"
+```
+
+---
+
+## Task 2: Add storage methods to server/storage.ts
+
+**Files:**
+- Modify: `server/storage.ts`
+
+- [ ] **Step 1: Update the import block at top of storage.ts**
+
+Replace the existing import block (lines 1-9, starting with `import { users, categories...`) with:
+
+```typescript
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
+  staffProfiles, attendance, leaves, shifts, shiftAssignments,
+  type User, type InsertUser, type Category, type InsertCategory, type MenuItem, type InsertMenuItem,
+  type Inventory, type InsertInventory, type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
+  type KotTicket, type InsertKotTicket, type DeliveryIntegration, type InsertDeliveryIntegration,
+  type Sales, type InsertSales, type Table, type InsertTable,
+  type StaffProfile, type InsertStaffProfile, type Attendance, type InsertAttendance,
+  type Leave, type InsertLeave, type Shift, type InsertShift,
+  type ShiftAssignment, type InsertShiftAssignment,
+} from "@shared/schema";
+```
+
+- [ ] **Step 2: Add staff methods to the IStorage interface**
+
+Find the line `updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table>;` in `IStorage` and add these lines immediately after it:
+
+```typescript
+  // Staff Management
+  getStaffProfiles(): Promise<(StaffProfile & { user: User })[]>;
+  getStaffProfile(userId: number): Promise<StaffProfile | null>;
+  upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile>;
+  getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]>;
+  getTodayAttendance(): Promise<(Attendance & { user: User })[]>;
+  upsertAttendance(userId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
+  updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance>;
+  getAttendanceReport(month: string): Promise<any[]>;
+  getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]>;
+  createLeave(data: InsertLeave): Promise<Leave>;
+  updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave>;
+  getShifts(): Promise<Shift[]>;
+  createShift(data: InsertShift): Promise<Shift>;
+  updateShift(id: number, data: Partial<InsertShift>): Promise<Shift>;
+  getRoster(week: string): Promise<any[]>;
+  upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
+  deleteShiftAssignment(id: number): Promise<void>;
+  getPayrollReport(month: string): Promise<any[]>;
+```
+
+- [ ] **Step 3: Add implementations to DatabaseStorage class**
+
+Find the closing brace `}` of the `DatabaseStorage` class (the last `}` in the file) and insert the following implementation before it:
+
+```typescript
+  // ============================================================
+  // STAFF MANAGEMENT
+  // ============================================================
+
+  async getStaffProfiles(): Promise<(StaffProfile & { user: User })[]> {
+    const allUsers = await db.select().from(users).orderBy(asc(users.id));
+    const profiles = await db.select().from(staffProfiles);
+    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    return allUsers.map(u => ({
+      ...(profileMap.get(u.id) ?? {
+        id: 0, userId: u.id, biometricId: null, department: null, designation: null,
+        monthlySalary: "0", joiningDate: null, emergencyContact: null, address: null,
+        bankAccountNo: null, bankName: null, isActive: true, updatedAt: new Date(),
+      }),
+      user: u,
+    })) as (StaffProfile & { user: User })[];
+  }
+
+  async getStaffProfile(userId: number): Promise<StaffProfile | null> {
+    const [p] = await db.select().from(staffProfiles).where(eq(staffProfiles.userId, userId));
+    return p ?? null;
+  }
+
+  async upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile> {
+    const existing = await this.getStaffProfile(userId);
+    if (existing) {
+      const [updated] = await db.update(staffProfiles)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(staffProfiles.userId, userId))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(staffProfiles)
+      .values({ userId, monthlySalary: "0", ...data })
+      .returning();
+    return created;
+  }
+
+  async getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]> {
+    const conditions: any[] = [];
+    if (filters.userId) conditions.push(eq(attendance.userId, filters.userId));
+    if (filters.date)   conditions.push(eq(attendance.date, filters.date));
+    if (filters.month)  conditions.push(sql`${attendance.date} LIKE ${filters.month + '-%'}`);
+    const rows = conditions.length
+      ? await db.select().from(attendance).where(and(...conditions)).orderBy(desc(attendance.date))
+      : await db.select().from(attendance).orderBy(desc(attendance.date));
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+  }
+
+  async getTodayAttendance(): Promise<(Attendance & { user: User })[]> {
+    const today = new Date().toISOString().split('T')[0];
+    return this.getAttendance({ date: today });
+  }
+
+  async upsertAttendance(userId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance> {
+    const [existing] = await db.select().from(attendance)
+      .where(and(eq(attendance.userId, userId), eq(attendance.date, date)));
+    if (existing) {
+      const [updated] = await db.update(attendance).set(data).where(eq(attendance.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(attendance).values({ userId, date, status: "present", ...data }).returning();
+    return created;
+  }
+
+  async updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance> {
+    const [updated] = await db.update(attendance).set(data).where(eq(attendance.id, id)).returning();
+    return updated;
+  }
+
+  async getAttendanceReport(month: string): Promise<any[]> {
+    const allUsers = await db.select().from(users);
+    const monthAttendance = await db.select().from(attendance)
+      .where(sql`${attendance.date} LIKE ${month + '-%'}`);
+    return allUsers.map(u => {
+      const records = monthAttendance.filter(a => a.userId === u.id);
+      const present   = records.filter(a => a.status === 'present').length;
+      const halfDay   = records.filter(a => a.status === 'half-day').length;
+      const onLeave   = records.filter(a => a.status === 'on-leave').length;
+      const absent    = records.filter(a => a.status === 'absent').length;
+      const totalHours = records.reduce((sum, a) => sum + parseFloat(a.workingHours ?? '0'), 0);
+      return { userId: u.id, username: u.username, role: u.role, present, halfDay, onLeave, absent, totalHours: totalHours.toFixed(1) };
+    });
+  }
+
+  async getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]> {
+    const conditions: any[] = [];
+    if (filters.userId) conditions.push(eq(leaves.userId, filters.userId));
+    if (filters.status && filters.status !== '') conditions.push(eq(leaves.status, filters.status));
+    if (filters.month)  conditions.push(sql`${leaves.startDate} LIKE ${filters.month + '-%'}`);
+    const rows = conditions.length
+      ? await db.select().from(leaves).where(and(...conditions)).orderBy(desc(leaves.createdAt))
+      : await db.select().from(leaves).orderBy(desc(leaves.createdAt));
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+  }
+
+  async createLeave(data: InsertLeave): Promise<Leave> {
+    const [created] = await db.insert(leaves).values(data).returning();
+    return created;
+  }
+
+  async updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave> {
+    const [updated] = await db.update(leaves).set(data).where(eq(leaves.id, id)).returning();
+    return updated;
+  }
+
+  async getShifts(): Promise<Shift[]> {
+    return db.select().from(shifts).where(eq(shifts.isActive, true)).orderBy(asc(shifts.id));
+  }
+
+  async createShift(data: InsertShift): Promise<Shift> {
+    const [created] = await db.insert(shifts).values(data).returning();
+    return created;
+  }
+
+  async updateShift(id: number, data: Partial<InsertShift>): Promise<Shift> {
+    const [updated] = await db.update(shifts).set(data).where(eq(shifts.id, id)).returning();
+    return updated;
+  }
+
+  async getRoster(week: string): Promise<any[]> {
+    // Compute Mon-Sun for ISO week "YYYY-WW"
+    const [year, weekNum] = week.split('-').map(Number);
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const weekStart = new Date(jan4);
+    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (weekNum - 1) * 7);
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      dates.push(d.toISOString().split('T')[0]);
+    }
+    const allUsers = await db.select().from(users);
+    const assignments = await db.select().from(shiftAssignments)
+      .where(sql`${shiftAssignments.date} = ANY(ARRAY[${sql.join(dates.map(d => sql`${d}`), sql`, `)}])`);
+    const allShifts = await db.select().from(shifts);
+    const shiftMap = new Map(allShifts.map(s => [s.id, s]));
+    return allUsers.map(u => {
+      const userAssignments: Record<string, any> = {};
+      dates.forEach(d => {
+        const a = assignments.find(x => x.userId === u.id && x.date === d);
+        userAssignments[d] = a ? { assignmentId: a.id, shift: shiftMap.get(a.shiftId) } : null;
+      });
+      return { userId: u.id, username: u.username, role: u.role, dates, assignments: userAssignments };
+    });
+  }
+
+  async upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment> {
+    const [existing] = await db.select().from(shiftAssignments)
+      .where(and(eq(shiftAssignments.userId, userId), eq(shiftAssignments.date, date)));
+    if (existing) {
+      const [updated] = await db.update(shiftAssignments)
+        .set({ shiftId, createdBy })
+        .where(eq(shiftAssignments.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(shiftAssignments).values({ userId, date, shiftId, createdBy }).returning();
+    return created;
+  }
+
+  async deleteShiftAssignment(id: number): Promise<void> {
+    await db.delete(shiftAssignments).where(eq(shiftAssignments.id, id));
+  }
+
+  async getPayrollReport(month: string): Promise<any[]> {
+    const [year, mon] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    let sundays = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(year, mon - 1, d).getDay() === 0) sundays++;
+    }
+    const workingDays = daysInMonth - sundays;
+    const allUsers = await db.select().from(users);
+    const profiles = await db.select().from(staffProfiles);
+    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    const monthAttendance = await db.select().from(attendance)
+      .where(sql`${attendance.date} LIKE ${month + '-%'}`);
+    const monthLeaves = await db.select().from(leaves)
+      .where(and(sql`${leaves.startDate} LIKE ${month + '-%'}`, eq(leaves.status, 'approved')));
+    return allUsers.map(u => {
+      const profile = profileMap.get(u.id);
+      const salary = parseFloat(profile?.monthlySalary ?? '0');
+      const records = monthAttendance.filter(a => a.userId === u.id);
+      const daysPresent = records.filter(a => a.status === 'present').length;
+      const halfDays = records.filter(a => a.status === 'half-day').length;
+      const approvedLeaves = monthLeaves.filter(l => l.userId === u.id).reduce((s, l) => s + l.totalDays, 0);
+      const paidDays = daysPresent + (halfDays * 0.5) + approvedLeaves;
+      const absentDays = Math.max(0, workingDays - paidDays);
+      const dailyRate = workingDays > 0 ? salary / workingDays : 0;
+      const deductions = absentDays * dailyRate;
+      const overtimeHours = records.reduce((s, a) => s + parseFloat(a.overtimeHours ?? '0'), 0);
+      const overtimePay = overtimeHours * (dailyRate / 8);
+      const netSalary = salary - deductions + overtimePay;
+      return {
+        userId: u.id, username: u.username, role: u.role,
+        monthlySalary: salary, workingDays, daysPresent, halfDays,
+        approvedLeaves, absentDays: Math.round(absentDays * 10) / 10,
+        deductions: Math.round(deductions * 100) / 100,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+        overtimePay: Math.round(overtimePay * 100) / 100,
+        netSalary: Math.round(netSalary * 100) / 100,
+      };
+    });
+  }
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add server/storage.ts
+git commit -m "feat: add staff management storage methods"
+```
+
+---
+
+## Task 3: Add API routes to server/routes.ts
+
+**Files:**
+- Modify: `server/routes.ts`
+
+- [ ] **Step 1: Add xlsx and multer imports to routes.ts**
+
+Find the line `import { eq, desc } from "drizzle-orm";` near the top of routes.ts and add after it:
+
+```typescript
+import * as XLSX from "xlsx";
+import multer from "multer";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/useAuth";
-import { useActiveRoleContext } from "@/context/ActiveRoleContext";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+  staffProfiles, attendance, leaves, shifts, shiftAssignments,
+} from "@shared/schema";
+
+const upload = multer({ storage: multer.memoryStorage() });
+```
+
+- [ ] **Step 2: Add all staff routes to routes.ts**
+
+Find `return httpServer;` at the very end of the `registerRoutes` function and paste all the following routes immediately BEFORE that line:
+
+```typescript
+  // ==========================================================================
+  // STAFF MANAGEMENT ROUTES
+  // ==========================================================================
+
+  // GET /api/staff — all users with staff profiles
+  app.get("/api/staff", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getStaffProfiles());
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/staff/:id/profile — upsert staff profile (salary, biometricId, dept, etc.)
+  app.put("/api/staff/:id/profile", requireAuth, async (req, res) => {
+    try {
+      const profile = await storage.upsertStaffProfile(parseInt(req.params.id), req.body);
+      res.json(profile);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance — list with optional ?userId=&date=&month=YYYY-MM
+  app.get("/api/attendance", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, month } = req.query as Record<string, string>;
+      res.json(await storage.getAttendance({
+        userId: userId ? parseInt(userId) : undefined,
+        date: date || undefined,
+        month: month || undefined,
+      }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/today
+  app.get("/api/attendance/today", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getTodayAttendance());
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/report?month=YYYY-MM
+  app.get("/api/attendance/report", requireAuth, async (req, res) => {
+    try {
+      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      res.json(await storage.getAttendanceReport(month));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/import — upload biometric Excel (.xlsx/.xls/.csv)
+  app.post("/api/attendance/import", requireAuth, upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      const profiles = await storage.getStaffProfiles();
+      const bioMap = new Map<string, number>();
+      profiles.forEach(p => { if (p.biometricId) bioMap.set(p.biometricId.toString().trim(), p.userId); });
+      const nameMap = new Map<string, number>();
+      profiles.forEach(p => nameMap.set(p.user.username.toLowerCase(), p.userId));
+
+      let imported = 0;
+      const unmatched: string[] = [];
+
+      for (const row of rows) {
+        const empId   = String(row["Emp ID"] ?? row["EmpID"] ?? row["Employee ID"] ?? row["emp_id"] ?? "").trim();
+        const empName = String(row["Name"] ?? row["Employee Name"] ?? row["EmpName"] ?? "").trim();
+        const dateStr = row["Date"] ?? row["date"] ?? "";
+        const inTime  = String(row["In-Time"] ?? row["InTime"] ?? row["Clock In"] ?? row["in_time"] ?? "").trim();
+        const outTime = String(row["Out-Time"] ?? row["OutTime"] ?? row["Clock Out"] ?? row["out_time"] ?? "").trim();
+
+        if (!dateStr) continue;
+
+        let parsedDate: string;
+        if (typeof dateStr === "number") {
+          const d = XLSX.SSF.parse_date_code(dateStr);
+          parsedDate = `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+        } else {
+          const d = new Date(String(dateStr));
+          if (isNaN(d.getTime())) continue;
+          parsedDate = d.toISOString().split('T')[0];
+        }
+
+        const userId = bioMap.get(empId) ?? nameMap.get(empName.toLowerCase());
+        if (!userId) { if (empName) unmatched.push(empName); continue; }
+
+        let workingHours: string | undefined;
+        let status: string = "present";
+
+        const parseTimeToMinutes = (t: string): number | null => {
+          const m = t.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+          if (!m) return null;
+          let h = parseInt(m[1]);
+          const min = parseInt(m[2]);
+          if (m[3]?.toUpperCase() === "PM" && h < 12) h += 12;
+          if (m[3]?.toUpperCase() === "AM" && h === 12) h = 0;
+          return h * 60 + min;
+        };
+
+        if (inTime && outTime) {
+          const inMin = parseTimeToMinutes(inTime);
+          const outMin = parseTimeToMinutes(outTime);
+          if (inMin !== null && outMin !== null && outMin > inMin) {
+            const hours = (outMin - inMin) / 60;
+            workingHours = hours.toFixed(2);
+            if (hours < 4) status = "half-day";
+          }
+        } else {
+          status = "absent";
+        }
+
+        await storage.upsertAttendance(userId, parsedDate, {
+          clockIn: inTime || undefined,
+          clockOut: outTime || undefined,
+          status,
+          workingHours: workingHours ?? undefined,
+        });
+        imported++;
+      }
+
+      res.json({ imported, unmatched: [...new Set(unmatched)] });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/attendance/:id — admin override
+  app.put("/api/attendance/:id", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.updateAttendance(parseInt(req.params.id), {
+        ...req.body,
+        markedBy: (req.user as any)?.id,
+      });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/manual — admin marks attendance manually
+  app.post("/api/attendance/manual", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, status, clockIn, clockOut, notes } = req.body;
+      const record = await storage.upsertAttendance(userId, date, {
+        status, clockIn, clockOut, notes,
+        markedBy: (req.user as any)?.id,
+      });
+      res.json(record);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/leaves — ?status=&month=&userId=
+  app.get("/api/leaves", requireAuth, async (req, res) => {
+    try {
+      const { userId, month, status } = req.query as Record<string, string>;
+      res.json(await storage.getLeaves({
+        userId: userId ? parseInt(userId) : undefined,
+        month: month || undefined,
+        status: status || undefined,
+      }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/leaves
+  app.post("/api/leaves", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.createLeave(req.body));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/leaves/:id — approve or reject
+  app.put("/api/leaves/:id", requireAuth, async (req, res) => {
+    try {
+      const { status, notes } = req.body;
+      const updated = await storage.updateLeave(parseInt(req.params.id), {
+        status, notes,
+        reviewedBy: (req.user as any)?.id,
+        reviewedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/shifts
+  app.get("/api/shifts", requireAuth, async (req, res) => {
+    try { res.json(await storage.getShifts()); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/shifts
+  app.post("/api/shifts", requireAuth, async (req, res) => {
+    try { res.json(await storage.createShift(req.body)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/shifts/:id
+  app.put("/api/shifts/:id", requireAuth, async (req, res) => {
+    try { res.json(await storage.updateShift(parseInt(req.params.id), req.body)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/shifts/roster?week=YYYY-WW
+  app.get("/api/shifts/roster", requireAuth, async (req, res) => {
+    try {
+      const week = req.query.week as string || (() => {
+        const now = new Date();
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+        return `${now.getFullYear()}-${String(weekNum).padStart(2, '0')}`;
+      })();
+      res.json(await storage.getRoster(week));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/shifts/roster — assign shift to staff on a date
+  app.post("/api/shifts/roster", requireAuth, async (req, res) => {
+    try {
+      const { userId, date, shiftId } = req.body;
+      res.json(await storage.upsertShiftAssignment(userId, date, shiftId, (req.user as any)?.id));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // DELETE /api/shifts/roster/:id
+  app.delete("/api/shifts/roster/:id", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteShiftAssignment(parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/payroll/report/:month — YYYY-MM
+  app.get("/api/payroll/report/:month", requireAuth, async (req, res) => {
+    try { res.json(await storage.getPayrollReport(req.params.month)); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add server/routes.ts
+git commit -m "feat: add staff management API routes (attendance, leaves, shifts, payroll)"
+```
+
+---
+
+## Task 4: Build frontend — add imports and AttendanceTab to Admin.tsx
+
+**Files:**
+- Modify: `client/src/pages/Admin.tsx`
+
+- [ ] **Step 1: Add new icon imports to Admin.tsx**
+
+Find the existing lucide-react import line:
+```typescript
+import {
+  Loader2, User, KeyRound, Users, Plus, Trash2, Shield, ShieldCheck,
+} from "lucide-react";
+```
+
+Replace it with:
+```typescript
 import {
   Loader2, User, KeyRound, Users, Plus, Trash2, Shield, ShieldCheck,
   Calendar, Clock, Upload, CheckCircle2, XCircle,
   ChevronLeft, ChevronRight, UserCheck, FileText, DollarSign, ClipboardList,
 } from "lucide-react";
+```
 
-// ── Schemas ──────────────────────────────────────────────────────────────────
+- [ ] **Step 2: Add Textarea import**
 
-const usernameSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters").max(50),
-});
+Find the line with `import { Input } from "@/components/ui/input";` and add after it:
+```typescript
+import { Textarea } from "@/components/ui/textarea";
+```
 
-const passwordSchema = z.object({
-  currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(6, "New password must be at least 6 characters"),
-  confirmPassword: z.string().min(1, "Please confirm your new password"),
-}).refine((d) => d.newPassword === d.confirmPassword, {
-  message: "Passwords do not match",
-  path: ["confirmPassword"],
-});
+- [ ] **Step 3: Add AttendanceTab component**
 
-const newUserSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  role: z.enum(["admin", "manager"]),
-});
+Add this entire component just before the line `// ── Main Admin Page ───────────────────────────────────────────────────────────`:
 
-type UsernameForm = z.infer<typeof usernameSchema>;
-type PasswordForm = z.infer<typeof passwordSchema>;
-type NewUserForm = z.infer<typeof newUserSchema>;
-
-const ROLES = ["admin", "manager"] as const;
-
-const roleColors: Record<string, string> = {
-  admin: "bg-red-100 text-red-800",
-  manager: "bg-blue-100 text-blue-800",
-  cashier: "bg-green-100 text-green-800",
-  kitchen: "bg-orange-100 text-orange-800",
-  staff: "bg-gray-100 text-gray-800",
-};
-
-// ── Helper ────────────────────────────────────────────────────────────────────
-
-function parseError(err: any): string {
-  const raw: string = err?.message ?? "";
-  const jsonStart = raw.indexOf("{");
-  if (jsonStart !== -1) {
-    try {
-      const parsed = JSON.parse(raw.slice(jsonStart));
-      if (parsed?.message) return parsed.message;
-    } catch {}
-  }
-  return raw || "Something went wrong";
-}
-
-// ── Users Tab (username & password management only) ───────────────────────────
-
-function UsersTab() {
-  const { toast } = useToast();
-  const { user: currentUser } = useAuth();
-  const [showAddUser, setShowAddUser] = useState(false);
-
-  const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
-
-  const newUserForm = useForm<NewUserForm>({
-    resolver: zodResolver(newUserSchema),
-    defaultValues: { username: "", password: "", role: "manager" },
-  });
-
-  const createUserMutation = useMutation({
-    mutationFn: async (data: NewUserForm) => apiRequest("POST", "/api/users", data),
-    onSuccess: () => {
-      toast({ title: "User created successfully" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setShowAddUser(false);
-      newUserForm.reset();
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to create user", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const deleteUserMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
-    onSuccess: () => {
-      toast({ title: "User deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to delete user", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{users?.length || 0} users in the system</p>
-        <Button size="sm" onClick={() => setShowAddUser(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add User
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-16 skeleton-glass" />)}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {users?.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between p-3 rounded-xl transition-all duration-200 hover:scale-[1.005]"
-              style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(16px) saturate(1.8)",
-                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-                border: "1px solid rgba(255,255,255,0.72)",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
-              }}>
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-                  <User className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <p className="font-medium text-sm">{u.username}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Joined {new Date(u.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[u.role] || roleColors.staff}`}>
-                  {u.role}
-                </span>
-                {u.id === currentUser?.id ? (
-                  <Badge variant="outline" className="text-xs">You</Badge>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => {
-                      if (confirm(`Delete user "${u.username}"?`)) deleteUserMutation.mutate(u.id);
-                    }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add User Dialog */}
-      <Dialog open={showAddUser} onOpenChange={setShowAddUser}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
-            <DialogDescription>Create a new user account</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={newUserForm.handleSubmit((d) => createUserMutation.mutate(d))} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Username</Label>
-              <Input {...newUserForm.register("username")} placeholder="Enter username" />
-              {newUserForm.formState.errors.username && (
-                <p className="text-xs text-destructive">{newUserForm.formState.errors.username.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Password</Label>
-              <Input {...newUserForm.register("password")} type="password" placeholder="Min 6 characters" />
-              {newUserForm.formState.errors.password && (
-                <p className="text-xs text-destructive">{newUserForm.formState.errors.password.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Initial Role</Label>
-              <Select
-                value={newUserForm.watch("role")}
-                onValueChange={(v) => newUserForm.setValue("role", v as any)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map(r => (
-                    <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowAddUser(false)}>Cancel</Button>
-              <Button type="submit" disabled={createUserMutation.isPending}>
-                {createUserMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</> : "Create User"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-// ── Roles Tab ─────────────────────────────────────────────────────────────────
-
-function RolesTab() {
-  const { toast } = useToast();
-  const { user: currentUser } = useAuth();
-  const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
-  const [pinDialogMode, setPinDialogMode] = useState<"set" | "remove">("set");
-  const [newPin, setNewPin] = useState("");
-  const [newPinConfirm, setNewPinConfirm] = useState("");
-  const [pinDialogError, setPinDialogError] = useState("");
-  const [resetConfirm, setResetConfirm] = useState(false);
-  const [showAddRole, setShowAddRole] = useState(false);
-  const [addForm, setAddForm] = useState({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
-  const [addFormError, setAddFormError] = useState("");
-
-  const { data: users = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
-
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ id, role }: { id: number; role: string }) =>
-      apiRequest("PUT", `/api/users/${id}`, { role }),
-    onSuccess: () => {
-      toast({ title: "Role updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update role", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const setPinMutation = useMutation({
-    mutationFn: async ({ id, pin }: { id: number; pin: string | null }) =>
-      apiRequest("PUT", `/api/users/${id}/pin`, { pin }),
-    onSuccess: () => {
-      toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setPinDialogUser(null);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update PIN", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const resetAllPinsMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/users/reset-all-pins", {}),
-    onSuccess: () => {
-      toast({ title: "All PINs cleared" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setResetConfirm(false);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to reset PINs", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const createRoleMutation = useMutation({
-    mutationFn: async (data: typeof addForm) =>
-      apiRequest("POST", "/api/users", {
-        username: data.username.trim(),
-        password: data.password,
-        role: data.role,
-        pin: data.pin || undefined,
-      }),
-    onSuccess: () => {
-      toast({ title: "Role created successfully" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-      setShowAddRole(false);
-      setAddForm({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
-      setAddFormError("");
-    },
-    onError: (err: any) => {
-      setAddFormError(parseError(err));
-    },
-  });
-
-  const deleteUserMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
-    onSuccess: () => {
-      toast({ title: "User deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to delete user", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const handleAddRole = () => {
-    setAddFormError("");
-    if (!addForm.username.trim()) { setAddFormError("Username is required"); return; }
-    if (addForm.password.length < 6) { setAddFormError("Password must be at least 6 characters"); return; }
-    if (addForm.pin) {
-      if (addForm.pin.length !== 4 && addForm.pin.length !== 6) { setAddFormError("PIN must be 4 or 6 digits"); return; }
-      if (addForm.pin !== addForm.pinConfirm) { setAddFormError("PINs do not match"); return; }
-    }
-    createRoleMutation.mutate(addForm);
-  };
-
-  const openPinDialog = (user: any, mode: "set" | "remove") => {
-    setPinDialogUser(user);
-    setPinDialogMode(mode);
-    setNewPin("");
-    setNewPinConfirm("");
-    setPinDialogError("");
-  };
-
-  const handlePinSave = () => {
-    if (pinDialogMode === "remove") {
-      setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
-      return;
-    }
-    if (newPin.length !== 4 && newPin.length !== 6) { setPinDialogError("PIN must be 4 or 6 digits"); return; }
-    if (newPin !== newPinConfirm) { setPinDialogError("PINs do not match"); return; }
-    setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
-  };
-
-  const roleDescriptions: Record<string, string> = {
-    admin: "Full access to all features",
-    manager: "Menu, orders, reports & POS",
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center gap-2 flex-wrap">
-        <p className="text-sm text-muted-foreground">Assign roles and manage POS PINs for each user</p>
-        <div className="flex items-center gap-2 flex-wrap">
-          {resetConfirm ? (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
-              <Button size="sm" variant="destructive" disabled={resetAllPinsMutation.isPending}
-                onClick={() => resetAllPinsMutation.mutate()}>
-                {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Resetting...</> : "Yes, Reset"}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
-            </div>
-          ) : (
-            <Button size="sm" variant="outline" className="text-destructive border-red-200 hover:bg-red-50"
-              onClick={() => setResetConfirm(true)}>
-              Reset All PINs
-            </Button>
-          )}
-          <Button size="sm" onClick={() => { setShowAddRole(true); setAddFormError(""); }}>
-            <Plus className="w-4 h-4 mr-1" /> Add Role
-          </Button>
-        </div>
-      </div>
-
-      {/* Role legend */}
-      <div className="rounded-2xl"
-        style={{
-          background: "rgba(255,255,255,0.46)",
-          backdropFilter: "blur(16px) saturate(1.7)",
-          WebkitBackdropFilter: "blur(16px) saturate(1.7)",
-          border: "1px solid rgba(255,255,255,0.68)",
-          boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
-        }}>
-        <div className="pt-4 pb-3 px-5">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Role Permissions</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {ROLES.map(r => (
-              <div key={r} className="flex items-start gap-2">
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5 ${roleColors[r]}`}>{r}</span>
-                <span className="text-xs text-muted-foreground">{roleDescriptions[r]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-20 skeleton-glass" />)}
-        </div>
-      ) : (
-        <>
-        {users.length === 0 && (
-          <p className="text-sm text-muted-foreground text-center py-6">No users found. Make sure you are logged in as admin.</p>
-        )}
-        <div className="space-y-2">
-          {users.map((u: any) => (
-            <div key={u.id} className="rounded-xl p-4 space-y-3 transition-all duration-200"
-              style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(16px) saturate(1.8)",
-                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-                border: "1px solid rgba(255,255,255,0.72)",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
-              }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center">
-                    <User className="w-4 h-4 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm">{u.username}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {u.pin ? <span className="text-green-600 flex items-center gap-1"><Shield className="w-3 h-3" />PIN set</span> : <span className="text-muted-foreground">No PIN</span>}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {u.id === currentUser?.id && <Badge variant="outline" className="text-xs">You</Badge>}
-                  {u.id !== currentUser?.id && (
-                    <Button
-                      size="sm" variant="ghost"
-                      className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-red-50"
-                      onClick={() => { if (confirm(`Delete "${u.username}"?`)) deleteUserMutation.mutate(u.id); }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* Role selector */}
-                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                  <Label className="text-xs text-muted-foreground shrink-0">Role:</Label>
-                  <Select
-                    value={u.role}
-                    onValueChange={(v) => updateRoleMutation.mutate({ id: u.id, role: v })}
-                    disabled={u.id === currentUser?.id}
-                  >
-                    <SelectTrigger className="h-8 text-xs flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map(r => (
-                        <SelectItem key={r} value={r} className="text-xs capitalize">{r}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* PIN buttons — all users */}
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                    onClick={() => openPinDialog(u, "set")}
-                  >
-                    <Shield className="w-3 h-3" />
-                    {u.pin ? "Change PIN" : "Set PIN"}
-                  </Button>
-                  {u.pin && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs gap-1 text-destructive border-red-200 hover:bg-red-50"
-                      onClick={() => openPinDialog(u, "remove")}
-                    >
-                      Remove PIN
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        </>
-      )}
-
-      {/* Add Role Dialog */}
-      <Dialog open={showAddRole} onOpenChange={(o) => { setShowAddRole(o); setAddFormError(""); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-primary" /> Add Role
-            </DialogTitle>
-            <DialogDescription>Create a new user with a role and optional PIN.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Username</Label>
-              <Input placeholder="e.g. manager2" value={addForm.username}
-                onChange={(e) => setAddForm(f => ({ ...f, username: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Password</Label>
-              <Input type="password" placeholder="Min 6 characters" value={addForm.password}
-                onChange={(e) => setAddForm(f => ({ ...f, password: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Role</Label>
-              <Select value={addForm.role} onValueChange={(v) => setAddForm(f => ({ ...f, role: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>PIN <span className="text-muted-foreground font-normal text-xs">(optional, 4 or 6 digits)</span></Label>
-              <Input type="password" inputMode="numeric" maxLength={6} placeholder="4 or 6 digits"
-                value={addForm.pin}
-                onChange={(e) => setAddForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))} />
-            </div>
-            {addForm.pin.length > 0 && (
-              <div className="space-y-1.5">
-                <Label>Confirm PIN</Label>
-                <Input type="password" inputMode="numeric" maxLength={6} placeholder="Re-enter PIN"
-                  value={addForm.pinConfirm}
-                  onChange={(e) => setAddForm(f => ({ ...f, pinConfirm: e.target.value.replace(/\D/g, "") }))} />
-              </div>
-            )}
-            {addFormError && <p className="text-xs text-destructive">{addFormError}</p>}
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={() => setShowAddRole(false)}>Cancel</Button>
-              <Button disabled={createRoleMutation.isPending} onClick={handleAddRole}>
-                {createRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</> : "Create Role"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* PIN Dialog */}
-      <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-blue-600" />
-              {pinDialogMode === "remove" ? "Remove PIN" : pinDialogUser?.pin ? "Change PIN" : "Set PIN"}
-            </DialogTitle>
-            <DialogDescription>
-              {pinDialogMode === "remove"
-                ? `Remove the PIN for "${pinDialogUser?.username}".`
-                : `${pinDialogUser?.pin ? "Change" : "Set a"} 4 or 6-digit PIN for "${pinDialogUser?.username}".`}
-            </DialogDescription>
-          </DialogHeader>
-          {pinDialogMode === "remove" ? (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">Are you sure you want to remove this user's PIN?</p>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button variant="destructive" disabled={setPinMutation.isPending} onClick={handlePinSave}>
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Removing...</> : "Remove PIN"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>New PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="4 or 6 digits"
-                  value={newPin} onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
-              </div>
-              <div className="space-y-2">
-                <Label>Confirm PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="Re-enter PIN"
-                  value={newPinConfirm} onChange={(e) => { setNewPinConfirm(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
-              </div>
-              {pinDialogError && <p className="text-xs text-destructive">{pinDialogError}</p>}
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button disabled={setPinMutation.isPending || !newPin} onClick={handlePinSave}>
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : "Save PIN"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
+```typescript
 // ── Attendance Tab ────────────────────────────────────────────────────────────
 
 const statusColor: Record<string, string> = {
@@ -765,7 +894,7 @@ function AttendanceTab() {
       {viewMode !== "monthly" && (
         <>
           {attLoading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{[...Array(6)].map((_,i) => <div key={i} className="h-20 rounded-xl bg-white/40" />)}</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{[...Array(6)].map((_,i) => <div key={i} className="h-20 skeleton-glass rounded-xl" />)}</div>
           ) : (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -896,7 +1025,28 @@ function AttendanceTab() {
     </div>
   );
 }
+```
 
+- [ ] **Step 4: Commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add client/src/pages/Admin.tsx
+git commit -m "feat: add AttendanceTab component"
+```
+
+---
+
+## Task 5: Add ShiftsTab and LeavesTab to Admin.tsx
+
+**Files:**
+- Modify: `client/src/pages/Admin.tsx`
+
+- [ ] **Step 1: Add ShiftsTab component**
+
+Add this component right after `AttendanceTab` closes (before `// ── Main Admin Page`):
+
+```typescript
 // ── Shifts Tab ────────────────────────────────────────────────────────────────
 
 const shiftColors = ["bg-blue-100 text-blue-800","bg-orange-100 text-orange-800","bg-purple-100 text-purple-800","bg-green-100 text-green-800"];
@@ -1125,7 +1275,7 @@ function LeavesTab() {
       </Dialog>
 
       {isLoading ? (
-        <div className="space-y-2">{[...Array(3)].map((_,i) => <div key={i} className="h-24 rounded-xl bg-white/40" />)}</div>
+        <div className="space-y-2">{[...Array(3)].map((_,i) => <div key={i} className="h-24 skeleton-glass rounded-xl" />)}</div>
       ) : leavesData.length === 0 ? (
         <p className="text-center py-10 text-sm text-gray-400">No leave requests found</p>
       ) : (
@@ -1164,7 +1314,28 @@ function LeavesTab() {
     </div>
   );
 }
+```
 
+- [ ] **Step 2: Commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add client/src/pages/Admin.tsx
+git commit -m "feat: add ShiftsTab and LeavesTab components"
+```
+
+---
+
+## Task 6: Add PayrollTab to Admin.tsx
+
+**Files:**
+- Modify: `client/src/pages/Admin.tsx`
+
+- [ ] **Step 1: Add PayrollTab and StaffProfileRow components**
+
+Add both components right before `// ── Main Admin Page`:
+
+```typescript
 // ── Payroll Tab ───────────────────────────────────────────────────────────────
 
 function StaffProfileRow({ staff }: { staff: any }) {
@@ -1250,7 +1421,7 @@ function PayrollTab() {
         ))}
       </div>
 
-      {isLoading ? <div className="h-40 rounded-2xl bg-white/40" /> : (
+      {isLoading ? <div className="h-40 skeleton-glass rounded-2xl" /> : (
         <div className="rounded-2xl overflow-hidden" style={glassStyle}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -1277,7 +1448,7 @@ function PayrollTab() {
                     <td className="p-3 text-center">
                       {editingSalary?.userId === row.userId ? (
                         <div className="flex items-center gap-1 justify-center">
-                          <Input type="number" value={editingSalary!.salary} className="h-6 w-24 text-xs text-center"
+                          <Input type="number" value={editingSalary.salary} className="h-6 w-24 text-xs text-center"
                             onChange={e => setEditingSalary(s => s ? { ...s, salary: e.target.value } : null)} />
                           <Button size="sm" className="h-6 text-[10px] px-2" disabled={updateSalaryMutation.isPending}
                             onClick={() => updateSalaryMutation.mutate({ userId: row.userId, salary: editingSalary!.salary })}>
@@ -1323,172 +1494,55 @@ function PayrollTab() {
     </div>
   );
 }
+```
 
-// ── Main Admin Page ───────────────────────────────────────────────────────────
+- [ ] **Step 2: Commit**
 
-export default function Admin() {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const [usernameLoading, setUsernameLoading] = useState(false);
-  const [passwordLoading, setPasswordLoading] = useState(false);
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add client/src/pages/Admin.tsx
+git commit -m "feat: add PayrollTab and StaffProfileRow components"
+```
 
-  const usernameForm = useForm<UsernameForm>({
-    resolver: zodResolver(usernameSchema),
-    defaultValues: { username: user?.username ?? "" },
-  });
+---
 
-  const passwordForm = useForm<PasswordForm>({
-    resolver: zodResolver(passwordSchema),
-    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
-  });
+## Task 7: Wire tabs into Admin() and final verification
 
-  const onUsernameSubmit = async (data: UsernameForm) => {
-    setUsernameLoading(true);
-    try {
-      await apiRequest("PUT", "/api/auth/profile", { username: data.username });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      toast({ title: "Username updated successfully" });
-    } catch (err: any) {
-      toast({ title: "Failed to update username", description: parseError(err), variant: "destructive" });
-    } finally {
-      setUsernameLoading(false);
-    }
-  };
+**Files:**
+- Modify: `client/src/pages/Admin.tsx`
 
-  const onPasswordSubmit = async (data: PasswordForm) => {
-    setPasswordLoading(true);
-    try {
-      await apiRequest("PUT", "/api/auth/password", {
-        currentPassword: data.currentPassword,
-        newPassword: data.newPassword,
-      });
-      passwordForm.reset();
-      toast({ title: "Password changed successfully" });
-    } catch (err: any) {
-      toast({ title: "Failed to change password", description: parseError(err), variant: "destructive" });
-    } finally {
-      setPasswordLoading(false);
-    }
-  };
+- [ ] **Step 1: Expand TabsList from grid-cols-4 to grid-cols-8 for admin**
 
-  const { activeRole } = useActiveRoleContext();
-  const isAdmin = activeRole === "admin";
+Find this line in the `Admin()` function:
+```typescript
+        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"} rounded-xl p-1`}
+```
 
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" style={{ background: "transparent" }}>
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage users, categories, and your account</p>
-      </div>
-
-      <Tabs defaultValue={isAdmin ? "users" : "profile"}>
+Replace with:
+```typescript
         <TabsList className={`grid w-full ${isAdmin ? "grid-cols-8" : "grid-cols-2"} rounded-xl p-1`}
-          style={{
-            background: "rgba(255,255,255,0.50)",
-            backdropFilter: "blur(16px) saturate(1.8)",
-            WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-            border: "1px solid rgba(255,255,255,0.70)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
-          }}>
-          {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
-          <TabsTrigger value="profile"><User className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
+```
+
+- [ ] **Step 2: Add 4 new TabsTriggers**
+
+Find the existing triggers block ending with:
+```typescript
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
+```
+
+Add these 4 lines immediately after it (still inside the `TabsList`):
+```typescript
           {isAdmin && <TabsTrigger value="attendance"><Clock className="w-4 h-4 mr-1.5" />Attendance</TabsTrigger>}
           {isAdmin && <TabsTrigger value="shifts"><Calendar className="w-4 h-4 mr-1.5" />Shifts</TabsTrigger>}
           {isAdmin && <TabsTrigger value="leaves"><ClipboardList className="w-4 h-4 mr-1.5" />Leaves</TabsTrigger>}
           {isAdmin && <TabsTrigger value="payroll"><DollarSign className="w-4 h-4 mr-1.5" />Payroll</TabsTrigger>}
-        </TabsList>
+```
 
-        {/* Users Tab */}
-        {isAdmin && (
-          <TabsContent value="users" className="mt-6">
-            <UsersTab />
-          </TabsContent>
-        )}
+- [ ] **Step 3: Add 4 new TabsContent blocks**
 
-        {/* Roles Tab */}
-        {isAdmin && (
-          <TabsContent value="roles" className="mt-6">
-            <RolesTab />
-          </TabsContent>
-        )}
+Find the closing `</Tabs>` tag and add these 4 TabsContent blocks immediately before it:
 
-        {/* Profile Tab */}
-        <TabsContent value="profile" className="mt-6">
-          <div className="rounded-2xl p-5"
-            style={{
-              background: "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(18px) saturate(1.8)",
-              WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-              border: "1px solid rgba(255,255,255,0.72)",
-              boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
-            }}>
-            <div className="flex items-center gap-2 mb-1">
-              <User className="w-5 h-5 text-emerald-600" />
-              <h3 className="font-semibold text-gray-800">Change Username</h3>
-            </div>
-            <p className="text-xs text-gray-500 mb-4">Update the username used to sign in</p>
-            <form onSubmit={usernameForm.handleSubmit(onUsernameSubmit)} className="space-y-4">
-              <div className="space-y-2">
-                <Label>New Username</Label>
-                <Input placeholder="Enter new username" {...usernameForm.register("username")} className="bg-white/60 border-white/50" />
-                {usernameForm.formState.errors.username && (
-                  <p className="text-xs text-destructive">{usernameForm.formState.errors.username.message}</p>
-                )}
-              </div>
-              <Button type="submit" disabled={usernameLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
-                {usernameLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Username"}
-              </Button>
-            </form>
-          </div>
-        </TabsContent>
-
-        {/* Password Tab */}
-        <TabsContent value="password" className="mt-6">
-          <div className="rounded-2xl p-5"
-            style={{
-              background: "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(18px) saturate(1.8)",
-              WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-              border: "1px solid rgba(255,255,255,0.72)",
-              boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
-            }}>
-            <div className="flex items-center gap-2 mb-1">
-              <KeyRound className="w-5 h-5 text-emerald-600" />
-              <h3 className="font-semibold text-gray-800">Change Password</h3>
-            </div>
-            <p className="text-xs text-gray-500 mb-4">Choose a strong password with at least 6 characters</p>
-            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Current Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="current-password" {...passwordForm.register("currentPassword")} className="bg-white/60 border-white/50" />
-                {passwordForm.formState.errors.currentPassword && (
-                  <p className="text-xs text-destructive">{passwordForm.formState.errors.currentPassword.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>New Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("newPassword")} className="bg-white/60 border-white/50" />
-                {passwordForm.formState.errors.newPassword && (
-                  <p className="text-xs text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>Confirm New Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("confirmPassword")} className="bg-white/60 border-white/50" />
-                {passwordForm.formState.errors.confirmPassword && (
-                  <p className="text-xs text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
-                )}
-              </div>
-              <Button type="submit" disabled={passwordLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
-                {passwordLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Changing...</> : "Change Password"}
-              </Button>
-            </form>
-          </div>
-        </TabsContent>
-
+```typescript
         {isAdmin && (
           <TabsContent value="attendance" className="mt-6">
             <AttendanceTab />
@@ -1509,8 +1563,44 @@ export default function Admin() {
             <PayrollTab />
           </TabsContent>
         )}
-      </Tabs>
-    </div>
-    </div>
-  );
-}
+```
+
+- [ ] **Step 4: Run TypeScript check**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+npm run check
+```
+
+Expected: No TypeScript errors. If there are errors, fix them before continuing.
+
+- [ ] **Step 5: Start dev server and verify all features**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+npm run dev
+```
+
+Manual test checklist:
+- [ ] Go to `/admin` as admin — see 8 tabs: Users, Roles, Profile, Password, Attendance, Shifts, Leaves, Payroll
+- [ ] Attendance tab: today's board shows all staff cards
+- [ ] Manual mark attendance for a staff member — record appears
+- [ ] Upload a test Excel with columns [Emp ID, Name, Date, In-Time, Out-Time] — see import count
+- [ ] Switch to "Monthly" view — see summary table with per-staff rows
+- [ ] Shifts tab: create "Morning" shift 09:00-17:00 — appears in definitions
+- [ ] Weekly roster shows all staff × 7 days; assign a shift via dropdown
+- [ ] Leaves tab: apply leave for a staff member — appears as pending
+- [ ] Approve the leave — status changes to approved, badge clears
+- [ ] Payroll tab: month picker loads all staff with Rs.0 salary
+- [ ] Click salary cell — inline edit — save — net pay updates
+- [ ] Set biometric ID in Payroll tab staff profile section — save
+- [ ] Re-import same Excel — attendance maps correctly to that staff
+- [ ] Print Register button — Blob URL opens in new tab, print dialog appears
+
+- [ ] **Step 6: Final commit**
+
+```bash
+cd "E:\Claude Code\BagichaOrderMaster\BagichaOrderMaster\.claude\worktrees\happy-pasteur-47c427"
+git add client/src/pages/Admin.tsx
+git commit -m "feat: wire Attendance, Shifts, Leaves, Payroll tabs into Admin page — staff management complete"
+```
