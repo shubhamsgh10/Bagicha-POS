@@ -23,6 +23,7 @@ import { PrintSettingsPanel } from "@/components/PrintSettingsPanel";
 import { GrowthSettingsPanel } from "@/components/GrowthSettingsPanel";
 import { AuditLogPanel } from "@/components/AuditLogPanel";
 import { TwoFactorPanel } from "@/components/TwoFactorPanel";
+import { BackupPanel } from "@/components/BackupPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ type ModalId =
   | "growth-settings"
   | "audit-log"
   | "two-factor"
+  | "backup"
   | "staff-selector"
   | "manager-access"
   | null;
@@ -147,6 +149,12 @@ const ACTION_CARDS: {
     label: "2FA",
     sublabel: "Security",
     icon: ShieldCheck,
+  },
+  {
+    id: "backup",
+    label: "DB",
+    sublabel: "Backups",
+    icon: Database,
   },
   {
     id: "print-settings" as const,
@@ -1508,6 +1516,13 @@ export default function Settings() {
       {activeModal === "two-factor" && (
         <Modal title="Two-Factor Authentication" onClose={closeModal}>
           <TwoFactorPanel />
+        </Modal>
+      )}
+
+      {/* Database Backups */}
+      {activeModal === "backup" && (
+        <Modal title="Database Backups" onClose={closeModal}>
+          <BackupPanel />
         </Modal>
       )}
 
