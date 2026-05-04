@@ -6,9 +6,10 @@ import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid, History, UtensilsCrossed, Package,
   BarChart3, Activity, Monitor, User, Users,
-  Settings, LogOut, ClipboardList, Menu, X, ChefHat,
+  Settings, LogOut, ClipboardList, Menu, X, ChefHat, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -22,6 +23,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Tables",      href: "/tables",        icon: LayoutGrid },
   { label: "Orders",      href: "/orders",         icon: History },
+  { label: "Billing",     href: "/billing",        icon: CreditCard },
+  { label: "Staff",       href: "/staff",          icon: UserCheck,        roles: ["admin", "manager"] },
   { label: "KOT",         href: "/kot",            icon: ClipboardList },
   { label: "Menu",        href: "/menu",           icon: UtensilsCrossed,  roles: ["admin", "manager"] },
   { label: "Inventory",   href: "/inventory",      icon: Package,          roles: ["admin", "manager"] },
@@ -41,9 +44,23 @@ export function TopNav() {
   const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRoleContext();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const visibleNav = NAV_ITEMS.filter(item =>
-    !item.roles || item.roles.includes(activeRole)
-  );
+  const { data: settings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/settings", { credentials: "include" });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 30000,
+  });
+
+  const visibleNav = NAV_ITEMS.filter(item => {
+    if (item.roles && !item.roles.includes(activeRole)) return false;
+    if (activeRole === "manager" && settings?.managerAllowedPages) {
+      if (!settings.managerAllowedPages.includes(item.href)) return false;
+    }
+    return true;
+  });
 
   const handleLogout = async () => {
     try {
