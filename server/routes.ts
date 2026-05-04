@@ -55,6 +55,7 @@ import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
+import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
 // Password hashing helpers using Node's built-in crypto
@@ -668,6 +669,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(rows);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
+  // ── DB Backup endpoints ────────────────────────────────────────────────────
+  app.get("/api/admin/backups", requireAdmin, async (_req, res) => {
+    try {
+      const backups = await listBackups();
+      res.json({ configured: backupConfigured(), backups });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Failed to list backups" });
+    }
+  });
+
+  app.post("/api/admin/backups", requireAdmin, async (req, res) => {
+    try {
+      if (!backupConfigured()) {
+        return res.status(400).json({ message: "Backup storage not configured. Set R2_* or AWS_* env vars." });
+      }
+      const result = await runBackup();
+      logAudit(req, "backup.manual", "system", undefined, { key: result.key, sizeBytes: result.sizeBytes });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message ?? "Backup failed" });
     }
   });
 
