@@ -10,7 +10,6 @@ dist/
 code-review-graph/
 .code-review-graph/
 docs/
-attached_assets/
 CustomerDashboard_Summary.html
 automation-logs.json
 .remember/
@@ -20,5 +19,4 @@ replit.md
 replit.nix
 .replit
 .claude/
-migrations/
 package-lock.json
