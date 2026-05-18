@@ -8,18 +8,8 @@ import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
-// ── In-memory log ring buffer (last 200 entries) ──────────────────────────────
-const LOG_BUFFER: { ts: string; source: string; message: string }[] = [];
-const MAX_LOG_ENTRIES = 200;
-
-function pushLog(source: string, message: string) {
-  LOG_BUFFER.push({ ts: new Date().toISOString(), source, message });
-  if (LOG_BUFFER.length > MAX_LOG_ENTRIES) LOG_BUFFER.shift();
-}
-
-export function getLogBuffer() {
-  return [...LOG_BUFFER];
-}
+export { getLogBuffer } from "./logBuffer";
+import { pushLog } from "./logBuffer";
 
 // Capture console.error into the buffer as well
 const _origError = console.error.bind(console);
