@@ -10,7 +10,7 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
 import { getSettings, saveSettings } from "./settingsStore";
-import { getLogBuffer } from "./vite";
+import { getLogBuffer } from "./logBuffer";
 import {
   getAutomationConfig,
   saveAutomationConfig,
