@@ -2,7 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
 import MemoryStore from "memorystore";
-import { registerRoutes } from "../server/routes";
+import { registerRoutes } from "./server/routes";
 import path from "path";
 import { fileURLToPath } from "url";
 
