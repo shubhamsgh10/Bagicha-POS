@@ -1,12 +1,14 @@
 {
   "version": 2,
-  "buildCommand": "vite build && esbuild server-fn.ts --platform=node --packages=external --bundle --format=esm --outfile=api/index.js",
+  "buildCommand": "vite build && esbuild server-fn.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/app-bundle.js",
+  "outputDirectory": "dist/public",
   "functions": {
-    "api/index.js": {
+    "api/index.ts": {
       "maxDuration": 30
     }
   },
-  "routes": [
-    { "src": "/(.*)", "dest": "/api/index.js" }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index.ts" },
+    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
   ]
 }
