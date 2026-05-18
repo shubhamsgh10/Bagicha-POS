@@ -1,10 +1,11 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
-import MemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 
-const MemoryStoreSession = MemoryStore(session);
+const PgSession = connectPgSimple(session);
 const app = express();
 
 // Trust Vercel's reverse proxy so secure cookies work correctly
@@ -18,7 +19,11 @@ app.use(
     secret: process.env.SESSION_SECRET || "bagicha-secret-key-2024",
     resave: false,
     saveUninitialized: false,
-    store: new MemoryStoreSession({ checkPeriod: 86400000 }),
+    store: new PgSession({
+      pool,
+      tableName: "sessions",
+      createTableIfMissing: true,
+    }),
     cookie: {
       maxAge: 24 * 60 * 60 * 1000,
       httpOnly: true,
