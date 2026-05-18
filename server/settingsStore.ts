@@ -146,6 +146,10 @@ export function saveSettings(settings: Partial<RestaurantSettings>): RestaurantS
       bill: { ...current.printSettings.bill, ...(settings.printSettings.bill ?? {}) },
     };
   }
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2));
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2));
+  } catch {
+    // Filesystem may be read-only (e.g. Vercel serverless) — return in-memory value
+  }
   return updated;
 }
