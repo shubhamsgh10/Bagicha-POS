@@ -1,13 +1,10 @@
 {
   "version": 2,
-  "buildCommand": "vite build",
-  "functions": {
-    "api/index.ts": {
-      "maxDuration": 30,
-      "memory": 1024
-    }
-  },
+  "buildCommand": "vite build && esbuild api/index.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/server.js",
+  "builds": [
+    { "src": "dist/server.js", "use": "@vercel/node" }
+  ],
   "routes": [
-    { "src": "/(.*)", "dest": "/api/index.ts" }
+    { "src": "/(.*)", "dest": "/dist/server.js" }
   ]
 }
