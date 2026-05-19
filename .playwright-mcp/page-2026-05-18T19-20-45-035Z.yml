@@ -1,0 +1,22 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - generic [ref=e10]:
+    - generic [ref=e11]:
+      - img "Bagicha" [ref=e12]
+      - paragraph [ref=e13]: Restaurant POS
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - heading "Sign in" [level=2] [ref=e16]
+        - paragraph [ref=e17]: Enter your credentials to continue
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - text: Username
+          - textbox "admin" [ref=e20]
+        - generic [ref=e21]:
+          - text: Password
+          - generic [ref=e22]:
+            - textbox "••••••••" [ref=e23]
+            - button [ref=e24] [cursor=pointer]:
+              - img [ref=e25]
+        - button "Sign in" [ref=e28] [cursor=pointer]

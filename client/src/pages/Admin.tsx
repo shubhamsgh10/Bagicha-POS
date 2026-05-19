@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Loader2, User, KeyRound, Users, Plus, Trash2, Shield, ShieldCheck,
@@ -263,6 +262,7 @@ function RolesTab() {
     onSuccess: () => {
       toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setPinDialogUser(null);
     },
     onError: (err: any) => {
@@ -275,6 +275,7 @@ function RolesTab() {
     onSuccess: () => {
       toast({ title: "All PINs cleared" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setResetConfirm(false);
     },
     onError: (err: any) => {
@@ -291,7 +292,7 @@ function RolesTab() {
         pin: data.pin || undefined,
       }),
     onSuccess: () => {
-      toast({ title: "Role created successfully" });
+      toast({ title: "User created successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setShowAddRole(false);
@@ -643,19 +644,18 @@ export default function Admin() {
     }
   };
 
-  const { activeRole } = useActiveRoleContext();
-  const isAdmin = activeRole === "admin";
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" style={{ background: "transparent" }}>
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-3 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Admin Panel</h1>
         <p className="text-sm text-gray-500 mt-1">Manage users, categories, and your account</p>
       </div>
 
       <Tabs defaultValue={isAdmin ? "users" : "profile"}>
-        <TabsList className={`grid w-full ${isAdmin ? "grid-cols-4" : "grid-cols-2"} rounded-xl p-1`}
+        <TabsList className={`flex w-full overflow-x-auto rounded-xl p-1`}
           style={{
             background: "rgba(255,255,255,0.50)",
             backdropFilter: "blur(16px) saturate(1.8)",

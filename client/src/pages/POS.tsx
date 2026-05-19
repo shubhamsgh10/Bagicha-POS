@@ -1143,7 +1143,7 @@ export default function POS() {
               className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 px-2 py-1.5 rounded hover:bg-gray-100 transition-colors font-medium"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Tables
+              <span className="hidden sm:inline">Tables</span>
             </button>
 
             {/* Active mode badge — dynamically reflects current orderType */}
@@ -1156,24 +1156,24 @@ export default function POS() {
               );
               if (ot === "takeaway") return (
                 <div className="flex items-center gap-1.5 bg-orange-500 text-white px-2.5 py-1 rounded text-xs font-bold">
-                  📦 <span>Pick Up</span>
+                  📦 <span>Pickup</span>
                 </div>
               );
               return (
-                <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold">
+                <div className="flex items-center gap-1.5 bg-green-600 text-white px-2.5 py-1 rounded text-xs font-bold max-w-[160px] sm:max-w-none overflow-hidden">
                   🍽️
                   {isEditMode && existingOrder?.createdAt && (
                     <POSTimer startedAt={existingOrder.createdAt} />
                   )}
-                  <span>{tableLabel ?? "Dine In"}</span>
+                  <span className="truncate">{tableLabel ?? "Dine In"}</span>
                   {isEditMode && existingOrder?.orderNumber && (
-                    <span className="opacity-75">#{existingOrder.orderNumber}</span>
+                    <span className="opacity-75 hidden md:inline">#{existingOrder.orderNumber}</span>
                   )}
                 </div>
               );
             })()}
 
-            <div className="w-px h-5 bg-gray-200 mx-1" />
+            <div className="w-px h-5 bg-gray-200 mx-1 hidden sm:block" />
 
             {/* Role Switcher — outside overflow container so dropdown isn't clipped */}
             <RoleSwitcher
@@ -1185,13 +1185,13 @@ export default function POS() {
               onRevert={revertRole}
             />
 
-            <div className="w-px h-5 bg-gray-200" />
+            <div className="w-px h-5 bg-gray-200 hidden md:block" />
 
-            {/* New Order */}
+            {/* New Order — hidden on mobile */}
             <button
               disabled={!can("newOrder")}
               onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
-              className="text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+              className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
               + New Order
               {!can("newOrder") && <Lock className="w-3 h-3 opacity-60" />}
@@ -1216,8 +1216,8 @@ export default function POS() {
               )}
             </div>
 
-            {/* Short Code */}
-            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 w-[130px] shrink-0">
+            {/* Short Code — hidden on mobile */}
+            <div className="hidden md:flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 w-[130px] shrink-0">
               <input
                 placeholder="Short code + ↵"
                 value={shortCode}
@@ -1228,8 +1228,8 @@ export default function POS() {
             </div>
           </div>
 
-          {/* ── RIGHT FIXED: order types, customer, phone, actions ── */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* ── RIGHT FIXED: order types, customer, phone, actions — hidden on mobile ── */}
+          <div className="hidden md:flex items-center gap-2 shrink-0">
 
             {/* Order type tabs — locked to single mode when posMode is set */}
             <div className="flex items-center gap-1">

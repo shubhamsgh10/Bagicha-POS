@@ -334,7 +334,7 @@ const q = search.trim().toLowerCase();
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Orders" description="Loading orders..." />
-        <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 space-y-3">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-16 skeleton-glass" />
           ))}
@@ -359,7 +359,7 @@ const q = search.trim().toLowerCase();
       <Header title="Order History" description="View and manage all restaurant orders" />
 
       {/* ── Toolbar ── */}
-      <div className="px-6 pt-4 flex items-center gap-2 flex-wrap">
+      <div className="px-3 sm:px-6 pt-3 sm:pt-4 flex items-center gap-2 flex-wrap">
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={() => navigate("/tables")}
@@ -401,9 +401,9 @@ const q = search.trim().toLowerCase();
       </div>
 
       {/* ── Tabs + Orders ── */}
-      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-6 pt-4 pb-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-3 sm:px-6 pt-3 sm:pt-4 pb-6">
         <Tabs defaultValue="all" className="w-full">
-          <TabsList className="grid w-full grid-cols-6 rounded-xl p-1 mb-4"
+          <TabsList className="flex w-full overflow-x-auto rounded-xl p-1 mb-4 gap-0.5"
             style={{
               background: "rgba(255,255,255,0.50)",
               backdropFilter: "blur(16px) saturate(1.8)",
@@ -415,7 +415,7 @@ const q = search.trim().toLowerCase();
               <TabsTrigger
                 key={t}
                 value={t}
-                className="rounded-lg text-xs font-semibold capitalize
+                className="rounded-lg text-xs font-semibold capitalize shrink-0 px-3 min-h-[36px]
                            data-[state=active]:bg-white data-[state=active]:shadow-sm
                            data-[state=active]:text-emerald-700 transition-all"
               >

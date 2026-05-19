@@ -1,0 +1,774 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - generic [ref=e5]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - img "Bagicha" [ref=e12]
+        - paragraph [ref=e13]: Restaurant POS
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - heading "Sign in" [level=2] [ref=e16]
+          - paragraph [ref=e17]: Enter your credentials to continue
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - text: Username
+            - textbox "admin" [ref=e20]
+          - generic [ref=e21]:
+            - text: Password
+            - generic [ref=e22]:
+              - textbox "••••••••" [ref=e23]: admin123
+              - button [ref=e24] [cursor=pointer]:
+                - img [ref=e25]
+          - button "Sign in" [ref=e28] [cursor=pointer]
+    - generic [ref=e29]:
+      - banner [ref=e30]:
+        - generic [ref=e32]:
+          - img "Bagicha logo" [ref=e33]
+          - generic [ref=e34]: BAGICHA
+        - navigation [ref=e36]:
+          - link "Tables" [ref=e37] [cursor=pointer]:
+            - /url: /tables
+            - generic [ref=e38]:
+              - img [ref=e39]
+              - generic [ref=e44]: Tables
+          - link "Orders" [active] [ref=e45] [cursor=pointer]:
+            - /url: /orders
+            - generic [ref=e46]:
+              - img [ref=e47]
+              - generic [ref=e51]: Orders
+          - link "Billing" [ref=e52] [cursor=pointer]:
+            - /url: /billing
+            - generic [ref=e53]:
+              - img [ref=e54]
+              - generic [ref=e56]: Billing
+          - link "Staff" [ref=e57] [cursor=pointer]:
+            - /url: /staff
+            - generic [ref=e58]:
+              - img [ref=e59]
+              - generic [ref=e63]: Staff
+          - link "KOT" [ref=e64] [cursor=pointer]:
+            - /url: /kot
+            - generic [ref=e65]:
+              - img [ref=e66]
+              - generic [ref=e69]: KOT
+          - link "Menu" [ref=e70] [cursor=pointer]:
+            - /url: /menu
+            - generic [ref=e71]:
+              - img [ref=e72]
+              - generic [ref=e77]: Menu
+          - link "Inventory" [ref=e78] [cursor=pointer]:
+            - /url: /inventory
+            - generic [ref=e79]:
+              - img [ref=e80]
+              - generic [ref=e84]: Inventory
+          - link "Live Tables" [ref=e85] [cursor=pointer]:
+            - /url: /live-tables
+            - generic [ref=e86]:
+              - img [ref=e87]
+              - generic [ref=e89]: Live Tables
+          - link "Kitchen" [ref=e90] [cursor=pointer]:
+            - /url: /kitchen
+            - generic [ref=e91]:
+              - img [ref=e92]
+              - generic [ref=e94]: Kitchen
+          - link "Customers" [ref=e95] [cursor=pointer]:
+            - /url: /customers
+            - generic [ref=e96]:
+              - img [ref=e97]
+              - generic [ref=e102]: Customers
+          - link "Live View" [ref=e103] [cursor=pointer]:
+            - /url: /live-analytics
+            - generic [ref=e104]:
+              - img [ref=e105]
+              - generic [ref=e107]: Live View
+          - link "Reports" [ref=e108] [cursor=pointer]:
+            - /url: /reports
+            - generic [ref=e109]:
+              - img [ref=e110]
+              - generic [ref=e112]: Reports
+          - link "Admin" [ref=e113] [cursor=pointer]:
+            - /url: /admin
+            - generic [ref=e114]:
+              - img [ref=e115]
+              - generic [ref=e118]: Admin
+          - link "Settings" [ref=e119] [cursor=pointer]:
+            - /url: /settings
+            - generic [ref=e120]:
+              - img [ref=e121]
+              - generic [ref=e124]: Settings
+        - button "Admin" [ref=e127] [cursor=pointer]:
+          - img [ref=e128]
+          - text: Admin
+          - img [ref=e131]
+        - generic [ref=e134]:
+          - generic [ref=e135]:
+            - generic [ref=e136]: admin
+            - generic [ref=e137]: admin
+          - button "Logout" [ref=e138] [cursor=pointer]:
+            - img [ref=e139]
+            - generic [ref=e142]: Logout
+      - generic [ref=e238]:
+        - banner [ref=e239]:
+          - generic [ref=e240]:
+            - generic [ref=e241]:
+              - heading "Order History" [level=1] [ref=e242]
+              - paragraph [ref=e243]: View and manage all restaurant orders
+            - generic [ref=e245]:
+              - img [ref=e246]
+              - generic [ref=e249]: 12:56 AM
+        - generic [ref=e250]:
+          - button "New Order" [ref=e251] [cursor=pointer]:
+            - img [ref=e252]
+            - text: New Order
+          - button "Refresh" [ref=e253] [cursor=pointer]:
+            - img [ref=e254]
+            - text: Refresh
+          - generic [ref=e259]:
+            - img [ref=e260]
+            - textbox "Search order, customer, phone, table…" [ref=e263]
+        - main [ref=e264]:
+          - generic [ref=e265]:
+            - tablist [ref=e266]:
+              - tab "all" [selected] [ref=e267] [cursor=pointer]
+              - tab "pending" [ref=e268] [cursor=pointer]
+              - tab "preparing" [ref=e269] [cursor=pointer]
+              - tab "ready" [ref=e270] [cursor=pointer]
+              - tab "served" [ref=e271] [cursor=pointer]
+              - tab "delivered" [ref=e272] [cursor=pointer]
+            - tabpanel "all" [ref=e273]:
+              - generic [ref=e275] [cursor=pointer]:
+                - generic [ref=e276]:
+                  - generic [ref=e277]: "80"
+                  - generic [ref=e278]:
+                    - generic [ref=e279]:
+                      - generic [ref=e280]: ORD1779128180680
+                      - generic [ref=e281]: Table 1
+                      - generic [ref=e282]: dine in
+                    - generic [ref=e283]:
+                      - generic [ref=e284]: Walk-in
+                      - generic [ref=e285]: 18 May, 11:46 pm
+                - generic [ref=e286]:
+                  - paragraph [ref=e288]: ₹1,098.3
+                  - combobox [ref=e292]:
+                    - generic: pending
+                    - img [ref=e293]
+                  - img [ref=e296]
+              - generic [ref=e299] [cursor=pointer]:
+                - generic [ref=e300]:
+                  - generic [ref=e301]: "39"
+                  - generic [ref=e302]:
+                    - generic [ref=e303]:
+                      - generic [ref=e304]: ORD1777314762339
+                      - generic [ref=e305]: Table 1
+                      - generic [ref=e306]: dine in
+                    - generic [ref=e307]:
+                      - generic [ref=e308]: Walk-in
+                      - generic [ref=e309]: 28 Apr, 12:02 am
+                - generic [ref=e310]:
+                  - paragraph [ref=e312]: ₹680.4
+                  - combobox [ref=e316]:
+                    - generic: served
+                    - img [ref=e317]
+                  - img [ref=e320]
+              - generic [ref=e323] [cursor=pointer]:
+                - generic [ref=e324]:
+                  - generic [ref=e325]: "92"
+                  - generic [ref=e326]:
+                    - generic [ref=e327]:
+                      - generic [ref=e328]: ORD1777273942792
+                      - generic [ref=e329]: Table 1
+                      - generic [ref=e330]: dine in
+                    - generic [ref=e331]:
+                      - generic [ref=e332]: Walk-in
+                      - generic [ref=e333]: 27 Apr, 12:42 pm
+                - generic [ref=e334]:
+                  - paragraph [ref=e336]: ₹1,150.8
+                  - combobox [ref=e340]:
+                    - generic: served
+                    - img [ref=e341]
+                  - img [ref=e344]
+              - generic [ref=e347] [cursor=pointer]:
+                - generic [ref=e348]:
+                  - generic [ref=e349]: "66"
+                  - generic [ref=e350]:
+                    - generic [ref=e351]:
+                      - generic [ref=e352]: ORD1777199876266
+                      - generic [ref=e353]: Table 1
+                      - generic [ref=e354]: dine in
+                    - generic [ref=e355]:
+                      - generic [ref=e356]: Walk-in
+                      - generic [ref=e357]: 26 Apr, 04:07 pm
+                - generic [ref=e358]:
+                  - paragraph [ref=e360]: ₹1,307.25
+                  - combobox [ref=e364]:
+                    - generic: served
+                    - img [ref=e365]
+                  - img [ref=e368]
+              - generic [ref=e371] [cursor=pointer]:
+                - generic [ref=e372]:
+                  - generic [ref=e373]: "30"
+                  - generic [ref=e374]:
+                    - generic [ref=e375]:
+                      - generic [ref=e376]: ORD1777108559230
+                      - generic [ref=e377]: Table 1
+                      - generic [ref=e378]: dine in
+                    - generic [ref=e379]:
+                      - generic [ref=e380]: Walk-in
+                      - generic [ref=e381]: 25 Apr, 02:45 pm
+                - generic [ref=e382]:
+                  - paragraph [ref=e384]: ₹1,778.7
+                  - combobox [ref=e388]:
+                    - generic: served
+                    - img [ref=e389]
+                  - img [ref=e392]
+              - generic [ref=e395] [cursor=pointer]:
+                - generic [ref=e396]:
+                  - generic [ref=e397]: "25"
+                  - generic [ref=e398]:
+                    - generic [ref=e399]:
+                      - generic [ref=e400]: ORD1777107838725
+                      - generic [ref=e401]: Table 2
+                      - generic [ref=e402]: dine in
+                    - generic [ref=e403]:
+                      - generic [ref=e404]: Walk-in
+                      - generic [ref=e405]: 25 Apr, 02:33 pm
+                - generic [ref=e406]:
+                  - paragraph [ref=e408]: ₹1,308.3
+                  - combobox [ref=e412]:
+                    - generic: served
+                    - img [ref=e413]
+                  - img [ref=e416]
+              - generic [ref=e419] [cursor=pointer]:
+                - generic [ref=e420]:
+                  - generic [ref=e421]: "42"
+                  - generic [ref=e422]:
+                    - generic [ref=e423]:
+                      - generic [ref=e424]: ORD1776173857242
+                      - generic [ref=e425]: takeaway
+                    - generic [ref=e426]:
+                      - generic [ref=e427]:
+                        - img [ref=e428]
+                        - text: parul
+                      - generic [ref=e431]:
+                        - img [ref=e432]
+                        - text: "9981636949"
+                      - generic [ref=e434]: 14 Apr, 07:07 pm
+                - generic [ref=e435]:
+                  - paragraph [ref=e437]: ₹710.4
+                  - combobox [ref=e441]:
+                    - generic: pending
+                    - img [ref=e442]
+                  - img [ref=e445]
+              - generic [ref=e448] [cursor=pointer]:
+                - generic [ref=e449]:
+                  - generic [ref=e450]: "76"
+                  - generic [ref=e451]:
+                    - generic [ref=e452]:
+                      - generic [ref=e453]: ORD1775923860076
+                      - generic [ref=e454]: takeaway
+                    - generic [ref=e455]:
+                      - generic [ref=e456]: Walk-in
+                      - generic [ref=e457]: 11 Apr, 09:40 pm
+                - generic [ref=e458]:
+                  - paragraph [ref=e460]: ₹328.95
+                  - combobox [ref=e464]:
+                    - generic: pending
+                    - img [ref=e465]
+                  - img [ref=e468]
+              - generic [ref=e471] [cursor=pointer]:
+                - generic [ref=e472]:
+                  - generic [ref=e473]: "39"
+                  - generic [ref=e474]:
+                    - generic [ref=e475]:
+                      - generic [ref=e476]: ORD1775327416739
+                      - generic [ref=e477]: takeaway
+                    - generic [ref=e478]:
+                      - generic [ref=e479]: Walk-in
+                      - generic [ref=e480]: 05 Apr, 12:00 am
+                - generic [ref=e481]:
+                  - paragraph [ref=e483]: ₹522.9
+                  - combobox [ref=e487]:
+                    - generic: pending
+                    - img [ref=e488]
+                  - img [ref=e491]
+              - generic [ref=e494] [cursor=pointer]:
+                - generic [ref=e495]:
+                  - generic [ref=e496]: "70"
+                  - generic [ref=e497]:
+                    - generic [ref=e498]:
+                      - generic [ref=e499]: ORD1775143727170
+                      - generic [ref=e500]: takeaway
+                    - generic [ref=e501]:
+                      - generic [ref=e502]: Walk-in
+                      - generic [ref=e503]: 02 Apr, 08:58 pm
+                - generic [ref=e504]:
+                  - paragraph [ref=e506]: ₹381.45
+                  - combobox [ref=e510]:
+                    - generic: pending
+                    - img [ref=e511]
+                  - img [ref=e514]
+              - generic [ref=e517] [cursor=pointer]:
+                - generic [ref=e518]:
+                  - generic [ref=e519]: "67"
+                  - generic [ref=e520]:
+                    - generic [ref=e521]:
+                      - generic [ref=e522]: ORD1774696284067
+                      - generic [ref=e523]: Table 1
+                      - generic [ref=e524]: dine in
+                    - generic [ref=e525]:
+                      - generic [ref=e526]:
+                        - img [ref=e527]
+                        - text: Shubham
+                      - generic [ref=e530]:
+                        - img [ref=e531]
+                        - text: "9752486454"
+                      - generic [ref=e533]: 28 Mar, 04:41 pm
+                - generic [ref=e534]:
+                  - paragraph [ref=e536]: ₹1,348.2
+                  - combobox [ref=e540]:
+                    - generic: served
+                    - img [ref=e541]
+                  - img [ref=e544]
+              - generic [ref=e547] [cursor=pointer]:
+                - generic [ref=e548]:
+                  - generic [ref=e549]: "24"
+                  - generic [ref=e550]:
+                    - generic [ref=e551]:
+                      - generic [ref=e552]: ORD1774685183424
+                      - generic [ref=e553]: Table 1
+                      - generic [ref=e554]: dine in
+                    - generic [ref=e555]:
+                      - generic [ref=e556]:
+                        - img [ref=e557]
+                        - text: Shubham
+                      - generic [ref=e560]:
+                        - img [ref=e561]
+                        - text: "9109550322"
+                      - generic [ref=e563]: 28 Mar, 01:36 pm
+                - generic [ref=e564]:
+                  - paragraph [ref=e566]: ₹627.9
+                  - combobox [ref=e570]:
+                    - generic: preparing
+                    - img [ref=e571]
+                  - img [ref=e574]
+              - generic [ref=e577] [cursor=pointer]:
+                - generic [ref=e578]:
+                  - generic [ref=e579]: "12"
+                  - generic [ref=e580]:
+                    - generic [ref=e581]:
+                      - generic [ref=e582]: ORD1774685113512
+                      - generic [ref=e583]: Table 1
+                      - generic [ref=e584]: dine in
+                    - generic [ref=e585]:
+                      - generic [ref=e586]: Walk-in
+                      - generic [ref=e587]: 28 Mar, 01:35 pm
+                - generic [ref=e588]:
+                  - paragraph [ref=e590]: ₹732.9
+                  - combobox [ref=e594]:
+                    - generic: served
+                    - img [ref=e595]
+                  - img [ref=e598]
+              - generic [ref=e601] [cursor=pointer]:
+                - generic [ref=e602]:
+                  - generic [ref=e603]: "86"
+                  - generic [ref=e604]:
+                    - generic [ref=e605]:
+                      - generic [ref=e606]: ORD1774685086786
+                      - generic [ref=e607]: Table 1
+                      - generic [ref=e608]: dine in
+                    - generic [ref=e609]:
+                      - generic [ref=e610]: Walk-in
+                      - generic [ref=e611]: 28 Mar, 01:34 pm
+                - generic [ref=e612]:
+                  - paragraph [ref=e614]: ₹522.9
+                  - combobox [ref=e618]:
+                    - generic: served
+                    - img [ref=e619]
+                  - img [ref=e622]
+              - generic [ref=e625] [cursor=pointer]:
+                - generic [ref=e626]:
+                  - generic [ref=e627]: "28"
+                  - generic [ref=e628]:
+                    - generic [ref=e629]:
+                      - generic [ref=e630]: ORD1774684287128
+                      - generic [ref=e631]: Table 1
+                      - generic [ref=e632]: dine in
+                    - generic [ref=e633]:
+                      - generic [ref=e634]: Walk-in
+                      - generic [ref=e635]: 28 Mar, 01:21 pm
+                - generic [ref=e636]:
+                  - paragraph [ref=e638]: ₹732.9
+                  - combobox [ref=e642]:
+                    - generic: served
+                    - img [ref=e643]
+                  - img [ref=e646]
+              - generic [ref=e649] [cursor=pointer]:
+                - generic [ref=e650]:
+                  - generic [ref=e651]: "27"
+                  - generic [ref=e652]:
+                    - generic [ref=e653]:
+                      - generic [ref=e654]: ORD1774684135027
+                      - generic [ref=e655]: Table 1
+                      - generic [ref=e656]: dine in
+                    - generic [ref=e657]:
+                      - generic [ref=e658]:
+                        - img [ref=e659]
+                        - text: Shubham
+                      - generic [ref=e662]:
+                        - img [ref=e663]
+                        - text: "9109550322"
+                      - generic [ref=e665]: 28 Mar, 01:18 pm
+                - generic [ref=e666]:
+                  - paragraph [ref=e668]: ₹627.9
+                  - combobox [ref=e672]:
+                    - generic: served
+                    - img [ref=e673]
+                  - img [ref=e676]
+              - generic [ref=e679] [cursor=pointer]:
+                - generic [ref=e680]:
+                  - generic [ref=e681]: "75"
+                  - generic [ref=e682]:
+                    - generic [ref=e683]:
+                      - generic [ref=e684]: ORD1774683652075
+                      - generic [ref=e685]: dine in
+                    - generic [ref=e686]:
+                      - generic [ref=e687]:
+                        - img [ref=e688]
+                        - text: Shubham
+                      - generic [ref=e691]:
+                        - img [ref=e692]
+                        - text: "9109550322"
+                      - generic [ref=e694]: 28 Mar, 01:10 pm
+                - generic [ref=e695]:
+                  - paragraph [ref=e697]: ₹459.9
+                  - combobox [ref=e701]:
+                    - generic: pending
+                    - img [ref=e702]
+                  - img [ref=e705]
+              - generic [ref=e708] [cursor=pointer]:
+                - generic [ref=e709]:
+                  - generic [ref=e710]: "40"
+                  - generic [ref=e711]:
+                    - generic [ref=e712]:
+                      - generic [ref=e713]: ORD1774611745340
+                      - generic [ref=e714]: dine in
+                    - generic [ref=e715]:
+                      - generic [ref=e716]: Walk-in
+                      - generic [ref=e717]: 27 Mar, 05:12 pm
+                - generic [ref=e718]:
+                  - paragraph [ref=e720]: ₹522.9
+                  - combobox [ref=e724]:
+                    - img [ref=e725]
+                  - img [ref=e728]
+              - generic [ref=e731] [cursor=pointer]:
+                - generic [ref=e732]:
+                  - generic [ref=e733]: "04"
+                  - generic [ref=e734]:
+                    - generic [ref=e735]:
+                      - generic [ref=e736]: ORD1774596753304
+                      - generic [ref=e737]: Table 1
+                      - generic [ref=e738]: dine in
+                    - generic [ref=e739]:
+                      - generic [ref=e740]:
+                        - img [ref=e741]
+                        - text: Shubham
+                      - generic [ref=e744]:
+                        - img [ref=e745]
+                        - text: "9109550322"
+                      - generic [ref=e747]: 27 Mar, 01:02 pm
+                - generic [ref=e748]:
+                  - paragraph [ref=e750]: ₹1,360.8
+                  - combobox [ref=e754]:
+                    - generic: served
+                    - img [ref=e755]
+                  - img [ref=e758]
+              - generic [ref=e761] [cursor=pointer]:
+                - generic [ref=e762]:
+                  - generic [ref=e763]: "19"
+                  - generic [ref=e764]:
+                    - generic [ref=e765]:
+                      - generic [ref=e766]: ORD1774547789719
+                      - generic [ref=e767]: Table 1
+                      - generic [ref=e768]: dine in
+                    - generic [ref=e769]:
+                      - generic [ref=e770]: Walk-in
+                      - generic [ref=e771]: 26 Mar, 11:26 pm
+                - generic [ref=e772]:
+                  - paragraph [ref=e774]: ₹1,352.28
+                  - combobox [ref=e778]:
+                    - generic: served
+                    - img [ref=e779]
+                  - img [ref=e782]
+              - generic [ref=e785] [cursor=pointer]:
+                - generic [ref=e786]:
+                  - generic [ref=e787]: "42"
+                  - generic [ref=e788]:
+                    - generic [ref=e789]:
+                      - generic [ref=e790]: ORD1774526137542
+                      - generic [ref=e791]: Table 2
+                      - generic [ref=e792]: dine in
+                    - generic [ref=e793]:
+                      - generic [ref=e794]: Walk-in
+                      - generic [ref=e795]: 26 Mar, 05:25 pm
+                - generic [ref=e796]:
+                  - paragraph [ref=e798]: ₹823.64
+                  - combobox [ref=e802]:
+                    - generic: served
+                    - img [ref=e803]
+                  - img [ref=e806]
+              - generic [ref=e809] [cursor=pointer]:
+                - generic [ref=e810]:
+                  - generic [ref=e811]: "91"
+                  - generic [ref=e812]:
+                    - generic [ref=e813]:
+                      - generic [ref=e814]: ORD1774521388491
+                      - generic [ref=e815]: Table 1
+                      - generic [ref=e816]: dine in
+                    - generic [ref=e817]:
+                      - generic [ref=e818]: Walk-in
+                      - generic [ref=e819]: 26 Mar, 04:06 pm
+                - generic [ref=e820]:
+                  - paragraph [ref=e822]: ₹764.64
+                  - combobox [ref=e826]:
+                    - generic: served
+                    - img [ref=e827]
+                  - img [ref=e830]
+              - generic [ref=e833] [cursor=pointer]:
+                - generic [ref=e834]:
+                  - generic [ref=e835]: "73"
+                  - generic [ref=e836]:
+                    - generic [ref=e837]:
+                      - generic [ref=e838]: ORD1774518751273
+                      - generic [ref=e839]: Table 1
+                      - generic [ref=e840]: dine in
+                    - generic [ref=e841]:
+                      - generic [ref=e842]: Walk-in
+                      - generic [ref=e843]: 26 Mar, 03:22 pm
+                - generic [ref=e844]:
+                  - paragraph [ref=e846]: ₹705.64
+                  - combobox [ref=e850]:
+                    - generic: cancelled
+                    - img [ref=e851]
+                  - img [ref=e854]
+              - generic [ref=e857] [cursor=pointer]:
+                - generic [ref=e858]:
+                  - generic [ref=e859]: "11"
+                  - generic [ref=e860]:
+                    - generic [ref=e861]:
+                      - generic [ref=e862]: ORD1774517368011
+                      - generic [ref=e863]: Table 2
+                      - generic [ref=e864]: dine in
+                    - generic [ref=e865]:
+                      - generic [ref=e866]: Walk-in
+                      - generic [ref=e867]: 26 Mar, 02:59 pm
+                - generic [ref=e868]:
+                  - paragraph [ref=e870]: ₹587.64
+                  - combobox [ref=e874]:
+                    - generic: cancelled
+                    - img [ref=e875]
+                  - img [ref=e878]
+              - generic [ref=e881] [cursor=pointer]:
+                - generic [ref=e882]:
+                  - generic [ref=e883]: "87"
+                  - generic [ref=e884]:
+                    - generic [ref=e885]:
+                      - generic [ref=e886]: ORD1774456323687
+                      - generic [ref=e887]: Table 2
+                      - generic [ref=e888]: dine in
+                    - generic [ref=e889]:
+                      - generic [ref=e890]: Walk-in
+                      - generic [ref=e891]: 25 Mar, 10:02 pm
+                - generic [ref=e892]:
+                  - paragraph [ref=e894]: ₹822.46
+                  - combobox [ref=e898]:
+                    - generic: served
+                    - img [ref=e899]
+                  - img [ref=e902]
+              - generic [ref=e905] [cursor=pointer]:
+                - generic [ref=e906]:
+                  - generic [ref=e907]: "49"
+                  - generic [ref=e908]:
+                    - generic [ref=e909]:
+                      - generic [ref=e910]: ORD1774408779149
+                      - generic [ref=e911]: Table 1
+                      - generic [ref=e912]: dine in
+                    - generic [ref=e913]:
+                      - generic [ref=e914]: Walk-in
+                      - generic [ref=e915]: 25 Mar, 08:49 am
+                - generic [ref=e916]:
+                  - paragraph [ref=e918]: ₹175.82
+                  - combobox [ref=e922]:
+                    - generic: cancelled
+                    - img [ref=e923]
+                  - img [ref=e926]
+              - generic [ref=e929] [cursor=pointer]:
+                - generic [ref=e930]:
+                  - generic [ref=e931]: "37"
+                  - generic [ref=e932]:
+                    - generic [ref=e933]:
+                      - generic [ref=e934]: ORD1774407097837
+                      - generic [ref=e935]: Table 1
+                      - generic [ref=e936]: dine in
+                    - generic [ref=e937]:
+                      - generic [ref=e938]: Walk-in
+                      - generic [ref=e939]: 25 Mar, 08:21 am
+                - generic [ref=e940]:
+                  - paragraph [ref=e942]: ₹1,293.28
+                  - combobox [ref=e946]:
+                    - generic: cancelled
+                    - img [ref=e947]
+                  - img [ref=e950]
+              - generic [ref=e953] [cursor=pointer]:
+                - generic [ref=e954]:
+                  - generic [ref=e955]: "28"
+                  - generic [ref=e956]:
+                    - generic [ref=e957]:
+                      - generic [ref=e958]: ORD1774405220028
+                      - generic [ref=e959]: Table 1
+                      - generic [ref=e960]: dine in
+                    - generic [ref=e961]:
+                      - generic [ref=e962]: Walk-in
+                      - generic [ref=e963]: 25 Mar, 07:50 am
+                - generic [ref=e964]:
+                  - paragraph [ref=e966]: ₹1,058.46
+                  - combobox [ref=e970]:
+                    - generic: served
+                    - img [ref=e971]
+                  - img [ref=e974]
+              - generic [ref=e977] [cursor=pointer]:
+                - generic [ref=e978]:
+                  - generic [ref=e979]: "45"
+                  - generic [ref=e980]:
+                    - generic [ref=e981]:
+                      - generic [ref=e982]: ORD1774347042445
+                      - generic [ref=e983]: Table 1
+                      - generic [ref=e984]: dine in
+                    - generic [ref=e985]:
+                      - generic [ref=e986]: Walk-in
+                      - generic [ref=e987]: 24 Mar, 03:40 pm
+                - generic [ref=e988]:
+                  - paragraph [ref=e990]: ₹1,587.1
+                  - combobox [ref=e994]:
+                    - generic: served
+                    - img [ref=e995]
+                  - img [ref=e998]
+              - generic [ref=e1001] [cursor=pointer]:
+                - generic [ref=e1002]:
+                  - generic [ref=e1003]: "88"
+                  - generic [ref=e1004]:
+                    - generic [ref=e1005]:
+                      - generic [ref=e1006]: ORD1774337115588
+                      - generic [ref=e1007]: Table 1
+                      - generic [ref=e1008]: dine in
+                    - generic [ref=e1009]:
+                      - generic [ref=e1010]: Walk-in
+                      - generic [ref=e1011]: 24 Mar, 12:55 pm
+                - generic [ref=e1012]:
+                  - paragraph [ref=e1014]: ₹941.64
+                  - combobox [ref=e1018]:
+                    - generic: served
+                    - img [ref=e1019]
+                  - img [ref=e1022]
+              - generic [ref=e1025] [cursor=pointer]:
+                - generic [ref=e1026]:
+                  - generic [ref=e1027]: "17"
+                  - generic [ref=e1028]:
+                    - generic [ref=e1029]:
+                      - generic [ref=e1030]: ORD1774335393817
+                      - generic [ref=e1031]: dine in
+                    - generic [ref=e1032]:
+                      - generic [ref=e1033]: Walk-in
+                      - generic [ref=e1034]: 24 Mar, 12:26 pm
+                - generic [ref=e1035]:
+                  - paragraph [ref=e1037]: ₹352.82
+                  - combobox [ref=e1041]:
+                    - generic: pending
+                    - img [ref=e1042]
+                  - img [ref=e1045]
+              - generic [ref=e1048] [cursor=pointer]:
+                - generic [ref=e1049]:
+                  - generic [ref=e1050]: "66"
+                  - generic [ref=e1051]:
+                    - generic [ref=e1052]:
+                      - generic [ref=e1053]: ORD1774335225166
+                      - generic [ref=e1054]: dine in
+                    - generic [ref=e1055]:
+                      - generic [ref=e1056]: Walk-in
+                      - generic [ref=e1057]: 24 Mar, 12:23 pm
+                - generic [ref=e1058]:
+                  - paragraph [ref=e1060]: ₹411.82
+                  - combobox [ref=e1064]:
+                    - generic: served
+                    - img [ref=e1065]
+                  - img [ref=e1068]
+              - generic [ref=e1071] [cursor=pointer]:
+                - generic [ref=e1072]:
+                  - generic [ref=e1073]: "17"
+                  - generic [ref=e1074]:
+                    - generic [ref=e1075]:
+                      - generic [ref=e1076]: ORD1774334757517
+                      - generic [ref=e1077]: dine in
+                    - generic [ref=e1078]:
+                      - generic [ref=e1079]: Walk-in
+                      - generic [ref=e1080]: 24 Mar, 12:15 pm
+                - generic [ref=e1081]:
+                  - paragraph [ref=e1083]: ₹411.82
+                  - combobox [ref=e1087]:
+                    - generic: served
+                    - img [ref=e1088]
+                  - img [ref=e1091]
+              - generic [ref=e1094] [cursor=pointer]:
+                - generic [ref=e1095]:
+                  - generic [ref=e1096]: "44"
+                  - generic [ref=e1097]:
+                    - generic [ref=e1098]:
+                      - generic [ref=e1099]: ORD1774334447444
+                      - generic [ref=e1100]: dine in
+                    - generic [ref=e1101]:
+                      - generic [ref=e1102]: Walk-in
+                      - generic [ref=e1103]: 24 Mar, 12:10 pm
+                - generic [ref=e1104]:
+                  - paragraph [ref=e1106]: ₹411.82
+                  - combobox [ref=e1110]:
+                    - generic: served
+                    - img [ref=e1111]
+                  - img [ref=e1114]
+              - generic [ref=e1117] [cursor=pointer]:
+                - generic [ref=e1118]:
+                  - generic [ref=e1119]: "92"
+                  - generic [ref=e1120]:
+                    - generic [ref=e1121]:
+                      - generic [ref=e1122]: ORD1774332617992
+                      - generic [ref=e1123]: dine in
+                    - generic [ref=e1124]:
+                      - generic [ref=e1125]: Walk-in
+                      - generic [ref=e1126]: 24 Mar, 11:40 am
+                - generic [ref=e1127]:
+                  - paragraph [ref=e1129]: ₹1,176.46
+                  - combobox [ref=e1133]:
+                    - generic: served
+                    - img [ref=e1134]
+                  - img [ref=e1137]
+              - generic [ref=e1140] [cursor=pointer]:
+                - generic [ref=e1141]:
+                  - generic [ref=e1142]: "94"
+                  - generic [ref=e1143]:
+                    - generic [ref=e1144]:
+                      - generic [ref=e1145]: ORD1774182629894
+                      - generic [ref=e1146]: Table 01
+                      - generic [ref=e1147]: dine in
+                    - generic [ref=e1148]:
+                      - generic [ref=e1149]:
+                        - img [ref=e1150]
+                        - text: Shubham
+                      - generic [ref=e1153]:
+                        - img [ref=e1154]
+                        - text: "9109550322"
+                      - generic [ref=e1156]: 22 Mar, 06:00 pm
+                - generic [ref=e1157]:
+                  - paragraph [ref=e1159]: ₹506.22
+                  - combobox [ref=e1163]:
+                    - generic: served
+                    - img [ref=e1164]
+                  - img [ref=e1167]

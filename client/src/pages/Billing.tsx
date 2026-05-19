@@ -395,7 +395,7 @@ export default function Billing() {
         description={`${orders?.length || 0} orders pending payment`}
       />
 
-      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-6">
         {orders?.length === 0 ? (
           <div className="text-center py-20">
             <DollarSign className="w-14 h-14 text-muted-foreground mx-auto mb-4 opacity-30" />
