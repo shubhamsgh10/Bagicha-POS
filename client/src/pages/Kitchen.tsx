@@ -255,7 +255,7 @@ function KanbanColumn({
 
   return (
     <div
-      className="flex flex-col min-w-[200px] w-full flex-1"
+      className="flex flex-col min-w-[160px] sm:min-w-[200px] w-full flex-1"
       onDragOver={e => { e.preventDefault(); setDragOverCol(col.id); }}
       onDragLeave={() => setDragOverCol(null)}
       onDrop={e => { e.preventDefault(); setDragOverCol(null); onDrop(col.id); }}
@@ -543,9 +543,9 @@ export default function Kitchen() {
 
       {/* ── Kanban board ─────────────────────────────────────────────────────── */}
       {isLoading ? (
-        <div className="flex-1 p-4 flex gap-3 overflow-x-auto">
+        <div className="flex-1 p-2 sm:p-4 flex gap-2 sm:gap-3 overflow-x-auto">
           {COLUMNS.map(col => (
-            <div key={col.id} className="flex flex-col min-w-[200px] flex-1 gap-2">
+            <div key={col.id} className="flex flex-col min-w-[160px] sm:min-w-[200px] flex-1 gap-2">
               <div className={`h-9 rounded-xl ${col.color} animate-pulse`} />
               {Array.from({ length: 2 }).map((_, i) => (
                 <div key={i} className="h-28 rounded-xl bg-white border border-gray-100 animate-pulse" />

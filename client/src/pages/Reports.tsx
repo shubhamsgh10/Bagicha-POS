@@ -267,7 +267,7 @@ export default function Reports() {
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
         <Header title="Reports" description="Loading reports..." />
-        <div className="min-h-0 flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-32 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
           ))}
@@ -312,7 +312,7 @@ export default function Reports() {
     <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
       <Header title="Reports" description="Analytics and insights for your restaurant performance" />
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Toolbar */}
         <div className="mb-6 flex justify-between items-center flex-wrap gap-3">
           <div>

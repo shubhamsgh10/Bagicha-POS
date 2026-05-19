@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Lock, ShieldCheck, User, UserCog, ChefHat, CreditCard } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -42,6 +42,22 @@ function fmtTime(secs: number) {
 export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, onElevate, onRevert }: RoleSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [pinTarget, setPinTarget] = useState<UserRole | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
+  }, [open]);
 
   // Fetch which roles have PINs configured in the admin panel
   const { data: switchableData } = useQuery({
@@ -93,20 +109,19 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
       )}
 
       <div className="flex items-center gap-1 shrink-0">
-        <div className="relative">
+        <div className="relative" ref={containerRef}>
           <button
             onClick={() => setOpen((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-semibold transition-colors ${meta.bg} ${meta.color} ${meta.border}`}
+            className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded border text-xs font-semibold transition-colors ${meta.bg} ${meta.color} ${meta.border}`}
           >
             {ROLE_ICONS[activeRole] ?? ROLE_ICONS.staff}
-            {meta.label}
+            <span className="hidden sm:inline">{meta.label}</span>
             <ChevronDown className="w-3 h-3 opacity-60" />
           </button>
 
           {open && (
             <div
-              className="absolute left-0 top-full mt-1 z-50 w-40 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden"
-              onMouseLeave={() => setOpen(false)}
+              className="absolute right-0 top-full mt-1 z-50 w-40 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden"
             >
               {visibleRoles.map((role) => {
                 const m = ROLE_META[role] ?? ROLE_META.staff;
@@ -145,17 +160,17 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
         {isElevated && (
           <>
             {secondsLeft > 0 && (
-              <span className="text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+              <span className="hidden sm:inline text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
                 {fmtTime(secondsLeft)}
               </span>
             )}
             <button
               onClick={onRevert}
               title="Revert to your login role"
-              className="flex items-center gap-1 text-[10px] font-semibold text-gray-500 hover:text-red-500 border border-gray-200 hover:border-red-300 px-2 py-1.5 rounded transition-colors"
+              className="flex items-center gap-1 text-[10px] font-semibold text-gray-500 hover:text-red-500 border border-gray-200 hover:border-red-300 px-1.5 sm:px-2 py-1.5 rounded transition-colors"
             >
               <Lock className="w-3 h-3" />
-              Lock
+              <span className="hidden sm:inline">Lock</span>
             </button>
           </>
         )}

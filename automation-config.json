@@ -20,5 +20,8 @@
   "feedbackDelayMinutes": 120,
   "feedbackBaseUrl": "",
   "birthdayEnabled": false,
-  "birthdayHour": 9
+  "birthdayHour": 9,
+  "attendanceSheetUrl": "",
+  "attendanceColumnMapping": null,
+  "attendanceAutoSyncHour": -1
 }

@@ -226,7 +226,7 @@ export default function KOT() {
         description={`${pending.length} pending · ${inProgress.length} cooking · ${completed.length} ready`}
       />
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Glass Tabs */}
         <div className="rounded-xl bg-white/40 border border-white/30 p-1 flex flex-wrap gap-1 mb-5">
           {tabs.map(tab => (

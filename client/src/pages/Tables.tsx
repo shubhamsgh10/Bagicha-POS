@@ -267,7 +267,7 @@ export default function Tables() {
     <div className="h-full flex flex-col overflow-hidden" style={{ background: "transparent" }}>
 
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
-      <div className="shrink-0 flex items-center px-4 gap-2 py-2 overflow-x-auto scrollbar-hide flex-nowrap md:flex-wrap"
+      <div className="shrink-0 px-3 sm:px-4 py-2"
         style={{
           background: "rgba(255,255,255,0.52)",
           backdropFilter: "blur(16px) saturate(1.7)",
@@ -276,84 +276,90 @@ export default function Tables() {
           boxShadow: "0 1px 0 rgba(255,255,255,0.92) inset, 0 2px 12px rgba(0,0,0,0.05)",
         }}
       >
+        {/* Row 1: Status pills + desktop action buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
 
-        {/* Running Tables */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
-          style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.18)", boxShadow: "0 1px 4px rgba(239,68,68,0.08)" }}>
-          <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-          <span className="text-xs text-red-600 font-semibold">Running</span>
-          <span className="text-sm font-bold text-red-700 min-w-[1ch] text-center">
-            {liveStatus?.runningTables ?? runningTables.length}
-          </span>
+          {/* Running Tables */}
+          <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
+            style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.18)", boxShadow: "0 1px 4px rgba(239,68,68,0.08)" }}>
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-red-500 shrink-0" />
+            <span className="text-[10px] sm:text-xs text-red-600 font-semibold">Running</span>
+            <span className="text-xs sm:text-sm font-bold text-red-700 min-w-[1ch] text-center">
+              {liveStatus?.runningTables ?? runningTables.length}
+            </span>
+          </div>
+
+          {/* Free Tables */}
+          <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
+            style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.20)", boxShadow: "0 1px 4px rgba(16,185,129,0.08)" }}>
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span className="text-[10px] sm:text-xs text-emerald-600 font-semibold">Free</span>
+            <span className="text-xs sm:text-sm font-bold text-emerald-700 min-w-[1ch] text-center">
+              {liveStatus?.freeTables ?? freeTables.length}
+            </span>
+          </div>
+
+          {/* Active Orders */}
+          <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
+            style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.20)", boxShadow: "0 1px 4px rgba(59,130,246,0.08)" }}>
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-blue-500 shrink-0" />
+            <span className="text-[10px] sm:text-xs text-blue-600 font-semibold">Orders</span>
+            <span className="text-xs sm:text-sm font-bold text-blue-700 min-w-[1ch] text-center">
+              {liveStatus?.activeOrders ?? 0}
+            </span>
+          </div>
+
+          {/* Today Sales */}
+          <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
+            style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-violet-500 shrink-0" />
+            <span className="text-[10px] sm:text-xs text-violet-600 font-semibold">Sales</span>
+            <span className="text-xs sm:text-sm font-bold text-violet-700">
+              ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
+            </span>
+          </div>
+
+          {/* Desktop: spacer + action buttons */}
+          <div className="hidden sm:block flex-1" />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="hidden sm:flex h-7 text-xs gap-1 shrink-0"
+            onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
+          >
+            <Plus className="w-3 h-3" /> Add Table
+          </Button>
+          <Button size="sm" className="hidden sm:flex h-7 text-xs gap-1 shrink-0 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => navigate("/pos?mode=delivery")}>
+            🛵 Delivery
+          </Button>
+          <Button size="sm" className="hidden sm:flex h-7 text-xs gap-1 shrink-0 bg-orange-500 hover:bg-orange-600 text-white" onClick={() => navigate("/pos?mode=pickup")}>
+            📦 Pick Up
+          </Button>
         </div>
 
-        {/* Free Tables */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
-          style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.20)", boxShadow: "0 1px 4px rgba(16,185,129,0.08)" }}>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-          <span className="text-xs text-emerald-600 font-semibold">Free</span>
-          <span className="text-sm font-bold text-emerald-700 min-w-[1ch] text-center">
-            {liveStatus?.freeTables ?? freeTables.length}
-          </span>
+        {/* Row 2: Action buttons — mobile only */}
+        <div className="flex items-center gap-1.5 mt-1.5 sm:hidden">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1 h-7 text-[10px] gap-1"
+            onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
+          >
+            <Plus className="w-3 h-3" /> Add Table
+          </Button>
+          <Button size="sm" className="h-7 text-[10px] gap-1 bg-blue-600 hover:bg-blue-700 text-white px-2.5" onClick={() => navigate("/pos?mode=delivery")}>
+            🛵 Delivery
+          </Button>
+          <Button size="sm" className="h-7 text-[10px] gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5" onClick={() => navigate("/pos?mode=pickup")}>
+            📦 Pickup
+          </Button>
         </div>
-
-        {/* Active Orders */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
-          style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.20)", boxShadow: "0 1px 4px rgba(59,130,246,0.08)" }}>
-          <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-          <span className="text-xs text-blue-600 font-semibold">Orders</span>
-          <span className="text-sm font-bold text-blue-700 min-w-[1ch] text-center">
-            {liveStatus?.activeOrders ?? 0}
-          </span>
-        </div>
-
-        {/* Today Sales */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
-          style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
-          <span className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
-          <span className="text-xs text-violet-600 font-semibold">Sales</span>
-          <span className="text-sm font-bold text-violet-700">
-            ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
-          </span>
-        </div>
-
-        <div className="flex-1" />
-
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 text-xs gap-1 shrink-0"
-          onClick={() => {
-            setEditTable(null);
-            setForm({ name: "", capacity: "4", section: "inner" });
-            setShowAdd(true);
-          }}
-        >
-          <Plus className="w-3 h-3" />
-          Add Table
-        </Button>
-
-        <Button
-          size="sm"
-          className="h-7 text-xs gap-1 shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
-          onClick={() => navigate("/pos?mode=delivery")}
-        >
-          🛵 Delivery
-        </Button>
-
-        <Button
-          size="sm"
-          className="h-7 text-xs gap-1 shrink-0 bg-orange-500 hover:bg-orange-600 text-white"
-          onClick={() => navigate("/pos?mode=pickup")}
-        >
-          📦 Pick Up
-        </Button>
       </div>
 
       {/* ── Table Grid ─────────────────────────────────────────────────────────── */}
-      <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-8">
+      <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 sm:space-y-8">
         {isLoading ? (
-          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
+          <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 gap-3">
             {[...Array(16)].map((_, i) => (
               <div key={i} className="h-20 skeleton-glass" />
             ))}
@@ -507,7 +513,7 @@ export default function Tables() {
         open={showAdd}
         onOpenChange={o => { if (!o) { setShowAdd(false); setEditTable(null); } }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="w-full max-w-sm mx-4 sm:mx-auto max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editTable ? "Edit Table" : "Add New Table"}</DialogTitle>
           </DialogHeader>
