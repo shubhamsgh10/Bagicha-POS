@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Delete, ChevronLeft, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import bgImage from "@assets/Login Page Background.png";
+import pizzaBgImage from "@assets/Wood-Fire-Pizza.png";
 
 /* ─── Types ─── */
 interface LoginProps  { onLoginSuccess: () => void; }
@@ -43,11 +44,11 @@ function getInitials(name: string) {
 
 /* ─── Shared glass card style ─── */
 const glassCard: React.CSSProperties = {
-  background:      "rgba(255,255,255,0.42)",
-  backdropFilter:  "blur(28px) saturate(1.9)",
-  WebkitBackdropFilter: "blur(28px) saturate(1.9)",
-  border:          "1px solid rgba(255,255,255,0.60)",
-  boxShadow:       "0 12px 40px rgba(0,0,0,0.10), 0 1px 0 rgba(255,255,255,0.85) inset",
+  background:      "rgba(255,255,255,0.60)",
+  backdropFilter:  "blur(4px) saturate(1.6)",
+  WebkitBackdropFilter: "blur(4px) saturate(1.6)",
+  border:          "1px solid rgba(255,255,255,0.70)",
+  boxShadow:       "0 8px 32px rgba(0,0,0,0.14), 0 1px 0 rgba(255,255,255,0.90) inset",
   borderRadius:    "20px",
 };
 
@@ -157,13 +158,13 @@ function TotpStep({
   return (
     <motion.div style={gc} className="p-6 space-y-4">
       <button onClick={onBack}
-        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
+        className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors -mb-1">
         <ChevronLeft className="w-3.5 h-3.5" /> Back
       </button>
       <div className="flex flex-col items-center gap-1 pt-1">
         <ShieldCheck className="w-8 h-8 text-emerald-500" />
         <h2 className="text-lg font-bold text-gray-900 tracking-tight">Two-Factor Auth</h2>
-        <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
+        <p className="text-xs text-gray-700 text-center">Enter the 6-digit code from your authenticator app</p>
       </div>
       <form onSubmit={submit} className="space-y-3">
         <motion.input
@@ -257,8 +258,9 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   /* ── Admin login ── */
   if (showAdmin) return (
     <div className="login-bg" style={bgStyle}>
+      <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
       <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-[22rem] px-5">
+        className="w-full max-w-[22rem] px-5 relative z-10">
         <div className="flex flex-col items-center mb-5">
           <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img" />
         </div>
@@ -267,22 +269,22 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
         ) : (
         <div style={glassCard} className="p-6 space-y-4">
           <button onClick={() => setShowAdmin(false)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
+            className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors -mb-1">
             <ChevronLeft className="w-3.5 h-3.5" /> Back to staff
           </button>
           <div>
             <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager Login</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Restricted access — credentials required</p>
+            <p className="text-xs text-gray-700 mt-0.5">Restricted access — credentials required</p>
           </div>
           <form onSubmit={handleSubmit(onAdminSubmit)} className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Username</label>
+              <label className="text-xs font-semibold text-gray-900">Username</label>
               <input {...register("username")} placeholder="admin" autoComplete="username"
                 className="login-input w-full h-11 px-3 text-sm" />
               {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Password</label>
+              <label className="text-xs font-semibold text-gray-900">Password</label>
               <div className="relative">
                 <input {...register("password")}
                   type={showPw ? "text" : "password"}
@@ -290,7 +292,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
                   autoComplete="current-password"
                   className="login-input w-full h-11 px-3 pr-10 text-sm" />
                 <button type="button" onClick={() => setShowPw(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800">
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -312,9 +314,10 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
     const [from, to] = getAvatarColors(selected.name);
     return (
       <div className="login-bg" style={bgStyle}>
+        <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
         <motion.div initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }}
           transition={{ type: "spring", stiffness: 280, damping: 26 }}
-          className="w-full max-w-[22rem] px-5">
+          className="w-full max-w-[22rem] px-5 relative z-10">
           <div className="flex flex-col items-center mb-5">
             <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img" />
           </div>
@@ -333,7 +336,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
             </motion.div>
 
             <h2 className="text-[15px] font-bold text-gray-900">{selected.name}</h2>
-            <p className="text-xs text-gray-400 mt-0.5 mb-1">Enter your 6-digit PIN</p>
+            <p className="text-xs text-gray-600 mt-0.5 mb-1">Enter your 6-digit PIN</p>
 
             <PinDots value={pin} shake={shake} />
 
@@ -350,7 +353,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
             )}
 
             <button onClick={() => { setSelected(null); setPin(""); }}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mx-auto mt-4 transition-colors">
+              className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 mx-auto mt-4 transition-colors">
               <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
           </div>
@@ -362,11 +365,12 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   /* ── Staff grid ── */
   return (
     <div className="login-bg" style={bgStyle}>
+      <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
       <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-[22rem] px-5">
+        className="w-full max-w-[22rem] px-5 relative z-10">
         <div className="flex flex-col items-center mb-5">
           <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-1" />
-          <p className="text-[11px] text-gray-400 uppercase tracking-[0.12em] mt-1 font-medium">
+          <p className="text-[11px] text-gray-600 uppercase tracking-[0.12em] mt-1 font-medium">
             Who are you?
           </p>
         </div>
@@ -374,8 +378,8 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
         <div style={glassCard} className="px-4 pt-5 pb-4">
           {staff.length === 0 ? (
             <div className="text-center py-8 space-y-1">
-              <p className="text-sm text-gray-400">No staff accounts found.</p>
-              <p className="text-xs text-gray-300">Ask admin to create accounts.</p>
+              <p className="text-sm text-gray-700">No staff accounts found.</p>
+              <p className="text-xs text-gray-600">Ask admin to create accounts.</p>
             </div>
           ) : (
             <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
@@ -416,7 +420,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
 
           <div className="mt-4 pt-3.5 border-t border-white/50 text-center">
             <button onClick={() => setShowAdmin(true)}
-              className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium">
+              className="text-[11px] text-gray-600 hover:text-gray-900 transition-colors font-medium">
               Manager / Admin Login →
             </button>
           </div>
@@ -470,9 +474,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   return (
     <div className="login-bg" style={{ backgroundImage: `url(${bgImage})` }}>
+      <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 260, damping: 24 }}
-        className="w-full max-w-[22rem] px-5">
+        className="w-full max-w-[22rem] px-5 relative z-10">
         <div className="flex flex-col items-center mb-6">
           <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-2" />
           <p className="text-[11px] text-gray-400 uppercase tracking-[0.12em] font-medium">
@@ -486,19 +491,19 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <div style={glassCard} className="p-6 space-y-4">
             <div>
               <h2 className="text-xl font-bold text-gray-900 tracking-tight">Sign in</h2>
-              <p className="text-xs text-gray-500 mt-0.5">Enter your credentials to continue</p>
+              <p className="text-xs text-gray-700 mt-0.5">Enter your credentials to continue</p>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Username</label>
+                <label className="text-xs font-semibold text-gray-900">Username</label>
                 <input {...register("username")} placeholder="admin" autoComplete="username"
                   className="login-input w-full h-11 px-3 text-sm" />
                 {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Password</label>
+                <label className="text-xs font-semibold text-gray-900">Password</label>
                 <div className="relative">
                   <input {...register("password")}
                     type={showPw ? "text" : "password"}
@@ -506,7 +511,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     autoComplete="current-password"
                     className="login-input w-full h-11 px-3 pr-10 text-sm" />
                   <button type="button" onClick={() => setShowPw(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800 transition-colors">
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
