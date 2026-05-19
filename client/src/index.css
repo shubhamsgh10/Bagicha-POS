@@ -428,14 +428,14 @@
 
 /* ── 6. Inputs ──────────────────────────────────────────────── */
 .login-input {
-  background: rgba(255, 255, 255, 0.75) !important;
-  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  border: 1px solid rgba(0, 0, 0, 0.18) !important;
   color: #111827 !important;
   border-radius: 9px !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
 }
 .login-input::placeholder {
-  color: #9CA3AF !important;
+  color: #6B7280 !important;
 }
 .login-input:focus {
   background: rgba(255, 255, 255, 0.95) !important;
