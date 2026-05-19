@@ -488,6 +488,20 @@
 /* ── 9. Responsive ──────────────────────────────────────────── */
 @media (max-width: 640px) {
   .login-content { padding: 0 1rem; }
+  /* Hide ambient orbs on small screens for performance */
+  .orb { display: none; }
+}
+
+/* ── 10. Global touch targets ─────────────────────────────── */
+button, [role="button"], a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+/* Prevent iOS zoom on input focus */
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: max(16px, 1em);
+  }
 }
 
 

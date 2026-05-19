@@ -71,7 +71,7 @@ export default function Inventory() {
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
         <Header title="Inventory" description="Loading inventory..." />
-        <div className="min-h-0 flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
           ))}
@@ -84,9 +84,9 @@ export default function Inventory() {
     <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
       <Header title="Inventory" description="Track stock levels and manage inventory items" />
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5 mb-4 sm:mb-6">
           {[
             { label: "Total Items", value: inventory.length, icon: <Package className="w-6 h-6 text-blue-500" />, color: "text-blue-600" },
             { label: "Low Stock Items", value: lowStockItems.length, icon: <AlertTriangle className="w-6 h-6 text-red-500" />, color: "text-red-600" },

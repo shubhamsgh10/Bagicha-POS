@@ -1,0 +1,26 @@
+[    3575ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://bagicha-pos.vercel.app/api/settings:0
+[    5606ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://bagicha-pos.vercel.app/api/auth/me:0
+[   86189ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://bagicha-pos.vercel.app/api/tables:0
+[   86198ms] [ERROR] TypeError: e.reduce is not a function
+    at SIe (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:1001:2047)
+    at UI (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:1001:3609)
+    at qk (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:38:17018)
+    at uS (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:3139)
+    at SD (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:44833)
+    at bD (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39790)
+    at NH (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39718)
+    at Ox (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39570)
+    at wS (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:35934)
+    at U5 (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:36738) @ https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:39
+[   86208ms] TypeError: e.reduce is not a function
+    at SIe (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:1001:2047)
+    at UI (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:1001:3609)
+    at qk (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:38:17018)
+    at uS (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:3139)
+    at SD (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:44833)
+    at bD (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39790)
+    at NH (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39718)
+    at Ox (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:39570)
+    at wS (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:35934)
+    at U5 (https://bagicha-pos.vercel.app/assets/index-CmxeOplo.js:40:36738)
+[   86599ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://bagicha-pos.vercel.app/api/live-status:0

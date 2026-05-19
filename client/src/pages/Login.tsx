@@ -95,7 +95,7 @@ function PinPad({
   };
 
   return (
-    <div className="grid grid-cols-3 gap-2.5 w-64 mx-auto">
+    <div className="grid grid-cols-3 gap-2 sm:gap-2.5 w-full max-w-[280px] mx-auto">
       {PIN_KEYS.map((k, i) => {
         if (k === "") return <div key={i} />;
         if (k === "⌫") return (

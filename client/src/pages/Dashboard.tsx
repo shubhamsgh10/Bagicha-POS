@@ -161,7 +161,7 @@ export default function Dashboard() {
         onNewOrder={() => navigate('/pos')}
       />
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-5 space-y-5">
+      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5 space-y-3 sm:space-y-5">
 
         {/* ── Stat Cards ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
@@ -173,7 +173,7 @@ export default function Dashboard() {
               animate="visible"
               variants={cardAnim}
               whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
-              className="rounded-2xl p-4"
+              className="rounded-2xl p-3 sm:p-4"
               style={{
                 background: `rgba(255,255,255,0.50)`,
                 backdropFilter: "blur(16px) saturate(1.8)",
@@ -198,7 +198,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.45, duration: 0.4 }}
-            className="lg:col-span-2 rounded-2xl p-5 glass-card"
+            className="lg:col-span-2 rounded-2xl p-3 sm:p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-4">Sales — Last 7 Days</p>
             <ResponsiveContainer width="100%" height={200}>
@@ -217,7 +217,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.55, duration: 0.4 }}
-            className="rounded-2xl p-5 glass-card"
+            className="rounded-2xl p-3 sm:p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-3">Sales by Category</p>
             {categorySales.length === 0 ? (
@@ -256,7 +256,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.65, duration: 0.4 }}
-            className="lg:col-span-2 rounded-2xl p-5 glass-card"
+            className="lg:col-span-2 rounded-2xl p-3 sm:p-5 glass-card"
           >
             <p className="text-sm font-semibold mb-4">Top Items Today</p>
             {topItems.length === 0 ? (
@@ -282,7 +282,7 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.75, duration: 0.4 }}
-            className="rounded-2xl p-5 glass-card"
+            className="rounded-2xl p-3 sm:p-5 glass-card"
           >
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm font-semibold">Low Stock Alerts</p>

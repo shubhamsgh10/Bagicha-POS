@@ -213,7 +213,7 @@ export default function Menu() {
     <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
       <Header title="Menu" description="Manage your restaurant menu items and categories" />
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Tab Bar */}
         <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-white/40 border border-white/30 shadow-sm w-fit">
           <button

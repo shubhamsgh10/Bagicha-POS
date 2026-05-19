@@ -1,0 +1,130 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - generic [ref=e5]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - img "Bagicha" [ref=e12]
+        - paragraph [ref=e13]: Restaurant POS
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - heading "Sign in" [level=2] [ref=e16]
+          - paragraph [ref=e17]: Enter your credentials to continue
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - text: Username
+            - textbox "admin" [ref=e20]
+          - generic [ref=e21]:
+            - text: Password
+            - generic [ref=e22]:
+              - textbox "••••••••" [ref=e23]: admin123
+              - button [ref=e24] [cursor=pointer]:
+                - img [ref=e25]
+          - button "Sign in" [ref=e28] [cursor=pointer]
+    - generic [ref=e29]:
+      - banner [ref=e30]:
+        - generic [ref=e32]:
+          - img "Bagicha logo" [ref=e33]
+          - generic [ref=e34]: BAGICHA
+        - navigation [ref=e36]:
+          - link "Tables" [ref=e37] [cursor=pointer]:
+            - /url: /tables
+            - generic [ref=e38]:
+              - img [ref=e39]
+              - generic [ref=e44]: Tables
+          - link "Orders" [ref=e45] [cursor=pointer]:
+            - /url: /orders
+            - generic [ref=e46]:
+              - img [ref=e47]
+              - generic [ref=e51]: Orders
+          - link "Billing" [ref=e52] [cursor=pointer]:
+            - /url: /billing
+            - generic [ref=e53]:
+              - img [ref=e54]
+              - generic [ref=e56]: Billing
+          - link "Staff" [ref=e57] [cursor=pointer]:
+            - /url: /staff
+            - generic [ref=e58]:
+              - img [ref=e59]
+              - generic [ref=e63]: Staff
+          - link "KOT" [ref=e64] [cursor=pointer]:
+            - /url: /kot
+            - generic [ref=e65]:
+              - img [ref=e66]
+              - generic [ref=e69]: KOT
+          - link "Menu" [ref=e70] [cursor=pointer]:
+            - /url: /menu
+            - generic [ref=e71]:
+              - img [ref=e72]
+              - generic [ref=e77]: Menu
+          - link "Inventory" [ref=e78] [cursor=pointer]:
+            - /url: /inventory
+            - generic [ref=e79]:
+              - img [ref=e80]
+              - generic [ref=e84]: Inventory
+          - link "Live Tables" [ref=e85] [cursor=pointer]:
+            - /url: /live-tables
+            - generic [ref=e86]:
+              - img [ref=e87]
+              - generic [ref=e89]: Live Tables
+          - link "Kitchen" [ref=e90] [cursor=pointer]:
+            - /url: /kitchen
+            - generic [ref=e91]:
+              - img [ref=e92]
+              - generic [ref=e94]: Kitchen
+          - link "Customers" [ref=e95] [cursor=pointer]:
+            - /url: /customers
+            - generic [ref=e96]:
+              - img [ref=e97]
+              - generic [ref=e102]: Customers
+          - link "Live View" [ref=e103] [cursor=pointer]:
+            - /url: /live-analytics
+            - generic [ref=e104]:
+              - img [ref=e105]
+              - generic [ref=e107]: Live View
+          - link "Reports" [ref=e108] [cursor=pointer]:
+            - /url: /reports
+            - generic [ref=e109]:
+              - img [ref=e110]
+              - generic [ref=e112]: Reports
+          - link "Admin" [ref=e113] [cursor=pointer]:
+            - /url: /admin
+            - generic [ref=e114]:
+              - img [ref=e115]
+              - generic [ref=e118]: Admin
+          - link "Settings" [ref=e119] [cursor=pointer]:
+            - /url: /settings
+            - generic [ref=e120]:
+              - img [ref=e121]
+              - generic [ref=e124]: Settings
+        - button "Admin" [ref=e127] [cursor=pointer]:
+          - img [ref=e128]
+          - text: Admin
+          - img [ref=e131]
+        - generic [ref=e134]:
+          - generic [ref=e135]:
+            - generic [ref=e136]: admin
+            - generic [ref=e137]: admin
+          - button "Logout" [ref=e138] [cursor=pointer]:
+            - img [ref=e139]
+            - generic [ref=e142]: Logout
+      - generic [ref=e145]:
+        - generic [ref=e146]:
+          - generic [ref=e147]:
+            - generic [ref=e149]: Running
+            - generic [ref=e150]: "0"
+          - generic [ref=e151]:
+            - generic [ref=e153]: Free
+            - generic [ref=e154]: "0"
+          - generic [ref=e155]:
+            - generic [ref=e157]: Orders
+            - generic [ref=e158]: "0"
+          - generic [ref=e159]:
+            - generic [ref=e161]: Sales
+            - generic [ref=e162]: ₹0
+          - button "Add Table" [ref=e163] [cursor=pointer]:
+            - img
+            - text: Add Table
+          - button "🛵 Delivery" [ref=e164] [cursor=pointer]
+          - button "📦 Pick Up" [ref=e165] [cursor=pointer]
+        - main [ref=e166]

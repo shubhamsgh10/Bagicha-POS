@@ -8,3 +8,4 @@ code-review-graph/
 .env
 .env.local
 .env.*.local
+.vercel
