@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
@@ -202,17 +203,17 @@ function ConfirmDialog({
           <p className="text-xs text-red-500 mt-0.5">{description}</p>
         </div>
       </div>
-      <div className="flex gap-2 justify-end">
+      <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
         <button
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          className="w-full sm:w-auto min-h-[44px] px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors touch-manipulation"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={loading}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-60"
+          className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-60 touch-manipulation"
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
           {confirmLabel}
@@ -233,50 +234,62 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  return (
+  // Portal escapes framer-motion's willChange:transform containing block in App.tsx,
+  // which was causing fixed positioning to resolve relative to the page wrapper.
+  return createPortal(
     <AnimatePresence>
       <motion.div
         key="backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+        transition={{ duration: 0.2 }}
+        className="fixed inset-0 z-[9999] flex flex-col justify-end sm:items-center sm:justify-center bg-black/50 sm:bg-black/40 sm:px-4"
         onClick={onClose}
       >
         <motion.div
           key="panel"
-          initial={{ opacity: 0, scale: 0.96, y: 12 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 12 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+          initial={{ opacity: 0, y: 48 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 48 }}
+          transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+          className="w-full sm:max-w-lg max-h-[90vh] sm:max-h-[85vh] flex flex-col rounded-t-3xl sm:rounded-2xl overflow-hidden"
           style={{
-            background: "rgba(255,255,255,0.86)",
+            background: "rgba(255,255,255,0.97)",
             backdropFilter: "blur(24px) saturate(1.9)",
             WebkitBackdropFilter: "blur(24px) saturate(1.9)",
-            border: "1px solid rgba(255,255,255,0.72)",
-            boxShadow: "0 8px 40px rgba(100,110,160,0.16), 0 1px 0 rgba(255,255,255,0.95) inset",
+            border: "1px solid rgba(255,255,255,0.80)",
+            boxShadow: "0 -4px 32px rgba(0,0,0,0.14), 0 8px 40px rgba(100,110,160,0.12)",
           }}
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Drag handle pill — mobile only */}
+          <div className="sm:hidden flex justify-center pt-2.5 pb-0.5 shrink-0">
+            <div className="w-9 h-1 rounded-full bg-gray-300" />
+          </div>
+
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between px-5 py-3 sm:py-4 border-b border-gray-100 shrink-0">
             <div className="flex items-center gap-2">
               <Settings2 className="w-4 h-4 text-emerald-600" />
               <h2 className="font-semibold text-gray-800 text-sm">{title}</h2>
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 transition-colors touch-manipulation"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
-          {/* Body */}
-          <div className="p-5">{children}</div>
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto overscroll-contain p-5 pb-8">
+            {children}
+          </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 
@@ -1260,7 +1273,7 @@ export default function Settings() {
   if (isLoading) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="p-6 max-w-5xl mx-auto">
+        <div className="px-3 sm:px-6 py-4 sm:py-6 max-w-5xl mx-auto">
           <div className="grid grid-cols-3 md:grid-cols-5 gap-4 mt-8">
             {Array.from({ length: 9 }).map((_, i) => (
               <div key={i} className="h-24 skeleton-glass" />
@@ -1298,7 +1311,7 @@ export default function Settings() {
                 whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => { setActiveModal(card.id); setConfirmStep(false); }}
-                className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200"
+                className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200 touch-manipulation"
                 style={{
                   background: card.destructive ? "rgba(254,242,242,0.60)" : "rgba(255,255,255,0.52)",
                   backdropFilter: "blur(16px) saturate(1.8)",
