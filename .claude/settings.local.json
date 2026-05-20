@@ -54,7 +54,8 @@
       "Bash(git push *)",
       "Bash(cp saas-workflow-orchestrator.skill saas-workflow-orchestrator.zip)",
       "Bash(powershell.exe -Command \"Expand-Archive -Path 'saas-workflow-orchestrator.zip' -DestinationPath './saas-workflow-orchestrator-extracted' -Force\")",
-      "Bash(vercel --version)"
+      "Bash(vercel --version)",
+      "mcp__plugin_vercel_vercel__list_deployments"
     ]
   },
   "enabledMcpjsonServers": [
