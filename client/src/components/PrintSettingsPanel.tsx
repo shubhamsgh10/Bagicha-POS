@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X } from "lucide-react";
@@ -339,23 +340,27 @@ export function PrintSettingsPanel({
     { id: 'printers' as const, label: 'Printer Setup' },
   ];
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-[9999] flex flex-col justify-end sm:items-center sm:justify-center bg-black/50 sm:bg-black/40 sm:px-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl max-h-[92vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl"
+        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col rounded-t-3xl sm:rounded-2xl overflow-hidden shadow-2xl"
         style={{ background: 'rgba(255,255,255,0.97)', border: '1px solid rgba(0,0,0,0.08)' }}
         onClick={e => e.stopPropagation()}
       >
+        {/* Drag handle — mobile only */}
+        <div className="sm:hidden flex justify-center pt-2.5 pb-0.5 shrink-0">
+          <div className="w-9 h-1 rounded-full bg-gray-300" />
+        </div>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 sm:py-4 border-b border-gray-100 shrink-0">
           <div>
             <h2 className="font-semibold text-gray-800">Print Settings</h2>
             <p className="text-xs text-gray-400 mt-0.5">Configure thermal printer behavior</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors">
+          <button onClick={onClose} className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 transition-colors touch-manipulation">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -533,17 +538,17 @@ export function PrintSettingsPanel({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50/60">
+        <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50/60">
           <button
             onClick={onClose}
-            className="px-5 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-100 transition-colors"
+            className="w-full sm:w-auto min-h-[44px] px-5 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-100 transition-colors touch-manipulation"
           >
             Cancel
           </button>
           <button
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
-            className="flex items-center gap-2 px-6 py-2 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl transition-colors disabled:opacity-60"
+            className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-6 py-2 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl transition-colors disabled:opacity-60 touch-manipulation"
           >
             {saveMutation.isPending
               ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -552,6 +557,7 @@ export function PrintSettingsPanel({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
