@@ -168,6 +168,8 @@ export default function POS() {
   const [shortCode, setShortCode] = useState("");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
+  // Mobile customer autocomplete dropdown
+  const [showMobileCustomerDropdown, setShowMobileCustomerDropdown] = useState(false);
   // Discount input ref (for re-focus after PIN unlock)
   const discountInputRef = useRef<HTMLInputElement>(null);
 
@@ -386,6 +388,11 @@ export default function POS() {
       });
       const data = await res.json();
       if (!res.ok) {
+        toast({
+          title: 'KOT print failed',
+          description: data?.message ?? 'Printer error — showing preview instead.',
+          variant: 'destructive',
+        });
         if (order) showKOTPreview(order);
       } else if (data.printed === false) {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
@@ -1124,7 +1131,7 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
-      <div className="shrink-0 relative z-20"
+      <div className="shrink-0 relative z-40"
         style={{
           background: "rgba(255,255,255,0.88)",
           backdropFilter: "blur(20px) saturate(1.8)",
@@ -1268,6 +1275,9 @@ export default function POS() {
               return (
                 <div className="relative">
                   <input
+                    id="customer-name-desktop"
+                    name="customerName"
+                    autoComplete="off"
                     placeholder="Customer name"
                     value={nameValue}
                     onChange={(e) => {
@@ -1535,6 +1545,56 @@ export default function POS() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped ── */}
+      <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
+        style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(12px)" }}>
+        {(() => {
+          const nameVal = form.watch("customerName") || "";
+          const filtered = nameVal.trim()
+            ? uniqueCustomers.filter(c => c.name.toLowerCase().includes(nameVal.toLowerCase()))
+            : uniqueCustomers.slice(0, 8);
+          return (
+            <div className="relative flex-1">
+              <input
+                id="customer-name-mobile"
+                name="customerName"
+                autoComplete="off"
+                placeholder="Customer name"
+                value={nameVal}
+                onChange={e => { form.setValue("customerName", e.target.value); setShowMobileCustomerDropdown(true); }}
+                onFocus={() => setShowMobileCustomerDropdown(true)}
+                onBlur={() => setTimeout(() => setShowMobileCustomerDropdown(false), 150)}
+                className="w-full px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
+              />
+              {showMobileCustomerDropdown && filtered.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
+                  {filtered.map((c, i) => (
+                    <button key={i} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => {
+                        form.setValue("customerName", c.name);
+                        form.setValue("customerPhone", c.phone);
+                        setShowMobileCustomerDropdown(false);
+                      }}
+                      className="w-full text-left px-3 py-2.5 hover:bg-emerald-50 border-b border-gray-50 last:border-0 transition-colors"
+                    >
+                      <div className="text-sm font-semibold text-gray-800">{c.name}</div>
+                      {c.phone && <div className="text-xs text-gray-400 mt-0.5">{c.phone}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        <input
+          placeholder="Phone number"
+          type="tel"
+          {...form.register("customerPhone")}
+          className="w-32 px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
+        />
+      </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
            MAIN: Category | Items | Billing

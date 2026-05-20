@@ -238,11 +238,11 @@ function RunLogRow({ entry }: { entry: RunLogEntry }) {
   return (
     <div className="border border-gray-100 rounded-lg overflow-hidden">
       <div
-        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
+        className="flex items-start gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
         onClick={() => setShow(s => !s)}
       >
         <span
-          className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+          className={`mt-0.5 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
             entry.type === "success"
               ? "bg-emerald-100 text-emerald-700"
               : "bg-red-100 text-red-600"
@@ -253,7 +253,7 @@ function RunLogRow({ entry }: { entry: RunLogEntry }) {
         <div className="flex-1 min-w-0">
           {entry.type === "success" ? (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-gray-800 truncate">{entry.customerName}</span>
+              <span className="text-xs font-medium text-gray-800">{entry.customerName}</span>
               {meta && <TriggerBadge trigger={entry.trigger!} />}
               {entry.provider && (
                 <span className="text-[9px] text-gray-400">
@@ -262,11 +262,11 @@ function RunLogRow({ entry }: { entry: RunLogEntry }) {
               )}
             </div>
           ) : (
-            <span className="text-xs text-red-600 truncate">{entry.errorMessage}</span>
+            <p className="text-xs text-red-600 break-words">{entry.errorMessage}</p>
           )}
+          <p className="text-[9px] text-gray-400 mt-0.5">{time}</p>
         </div>
-        <span className="text-[9px] text-gray-400 shrink-0">{time}</span>
-        {show ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />}
+        {show ? <ChevronUp className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" /> : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" />}
       </div>
       {show && entry.message && (
         <div className="px-3 pb-2 bg-gray-50 border-t border-gray-100 text-[10px] text-gray-600">
@@ -301,11 +301,11 @@ function ServerLogRow({ entry }: { entry: ServerLog }) {
   return (
     <div className="border border-gray-100 rounded-lg overflow-hidden">
       <div
-        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
+        className="flex items-start gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
         onClick={() => setShow(s => !s)}
       >
         <span
-          className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+          className={`mt-0.5 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
             entry.status === "sent"
               ? "bg-emerald-100 text-emerald-700"
               : entry.status === "failed"
@@ -315,13 +315,15 @@ function ServerLogRow({ entry }: { entry: ServerLog }) {
         >
           {entry.status === "sent" ? "✓" : entry.status === "failed" ? "✗" : "—"}
         </span>
-        <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-medium text-gray-800 truncate">{entry.customerName}</span>
-          <TriggerBadge trigger={entry.trigger} />
-          <span className="text-[9px] text-gray-400">🤖 WATI</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-gray-800">{entry.customerName}</span>
+            <TriggerBadge trigger={entry.trigger} />
+            <span className="text-[9px] text-gray-400">🤖 WATI</span>
+          </div>
+          <p className="text-[9px] text-gray-400 mt-0.5">{time}</p>
         </div>
-        <span className="text-[9px] text-gray-400 shrink-0">{time}</span>
-        {show ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />}
+        {show ? <ChevronUp className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" /> : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" />}
       </div>
       {show && (
         <div className="px-3 pb-2 bg-gray-50 border-t border-gray-100 space-y-1">
@@ -842,9 +844,9 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
             key={t.key}
             type="button"
             onClick={() => setPanelTab(t.key)}
-            className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold border-b-2 transition-colors ${
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-[11px] font-semibold border-b-2 transition-colors touch-manipulation ${
               panelTab === t.key
-                ? "border-indigo-600 text-indigo-700 bg-white"
+                ? "border-green-700 text-green-700 bg-white"
                 : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
@@ -943,25 +945,30 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
               <StatCard label="VIP"          value={vip}           sub="loyalty"         color="bg-amber-50 border-amber-200 text-amber-700" />
             </div>
 
-            {/* Run Now card */}
-            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-              <div className="flex items-center gap-3 p-4">
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-gray-800">Run Now</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">
-                    {!settings.enabled
-                      ? "Automation is OFF — enable it in Settings first"
-                      : provider === "unconfigured"
-                      ? `⚠️ Configure ${settings.whatsappMode === "meta" ? "Meta API" : "WATI"} credentials in Settings before running`
-                      : quietHoursActive
-                      ? `Quiet hours active (${settings.quietHours.start}:00 – ${settings.quietHours.end}:00)`
-                      : `Evaluates all ${customers.length} customers · ${
-                          settings.whatsappMode === "meta" ? "Sends via Meta WhatsApp Cloud API" :
-                          settings.whatsappMode === "api"  ? "Sends via WATI API" :
-                                                             "Opens WhatsApp for each eligible one"
-                        }`}
-                  </p>
+            {/* Instant Execution card */}
+            <div className="rounded-2xl bg-green-800 text-white overflow-hidden">
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap className="w-4 h-4 text-green-300" />
+                  <p className="text-sm font-bold">Instant Execution</p>
                 </div>
+                <p className="text-[11px] text-green-200 mb-1.5 leading-relaxed">
+                  {!settings.enabled
+                    ? "Automation is OFF — enable it in Settings first."
+                    : provider === "unconfigured"
+                    ? `⚠️ Configure ${settings.whatsappMode === "meta" ? "Meta API" : "WATI"} credentials in Settings before running.`
+                    : quietHoursActive
+                    ? `Quiet hours active (${settings.quietHours.start}:00 – ${settings.quietHours.end}:00).`
+                    : `Force sync all pending automations for the current queue immediately. This action bypasses scheduled intervals.`}
+                </p>
+                <p className="text-[10px] text-green-300/70 mb-4">
+                  {!settings.enabled || provider === "unconfigured" || quietHoursActive ? "" :
+                    `Evaluates all ${customers.length} customers · ${
+                      settings.whatsappMode === "meta" ? "Meta WhatsApp Cloud API" :
+                      settings.whatsappMode === "api"  ? "WATI API" :
+                                                         "WhatsApp Web"
+                    }`}
+                </p>
                 <button
                   type="button"
                   onClick={handleRunAutomation}
@@ -970,77 +977,77 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
                     !settings.enabled ||
                     (settings.whatsappMode === "api" && provider === "unconfigured")
                   }
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white text-xs font-semibold rounded-lg transition-colors shrink-0 ${
+                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border text-white text-sm font-semibold transition-colors min-h-[44px] touch-manipulation ${
                     !settings.enabled ||
                     (settings.whatsappMode === "api" && provider === "unconfigured")
-                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      ? "bg-green-900/50 border-green-700/30 text-green-400/60 cursor-not-allowed"
                       : running
-                      ? "bg-indigo-400 cursor-wait"
-                      : "bg-indigo-600 hover:bg-indigo-700"
+                      ? "bg-green-600/50 border-green-400/40 cursor-wait"
+                      : "bg-green-600/50 hover:bg-green-600/70 border-green-400/40"
                   }`}
                 >
                   {running
-                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running…</>
-                    : <><Play className="w-3.5 h-3.5" /> Run</>}
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Running…</>
+                    : <><Play className="w-4 h-4" /> Run Now</>}
                 </button>
               </div>
 
               {/* Run error */}
               {runError && (
-                <div className="border-t border-red-100 px-4 py-3 bg-red-50 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-red-700 font-medium">{runError}</p>
+                <div className="border-t border-red-400/30 px-5 py-3 bg-red-900/40 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-200 font-medium">{runError}</p>
                 </div>
               )}
 
               {/* Run result */}
               {runResult && !runError && (
-                <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
-                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                <div className="border-t border-green-700/40 px-5 py-3 bg-green-900/30">
+                  <p className="text-[10px] font-semibold text-green-300 uppercase tracking-wide mb-2">
                     Run Complete {runResult.mode === "api" ? "· WATI API" : "· WhatsApp Web"}
                   </p>
                   <div className="grid grid-cols-4 gap-2 text-center">
                     <div>
-                      <p className="text-lg font-bold text-gray-800">{runResult.scanned}</p>
-                      <p className="text-[9px] text-gray-500">Scanned</p>
+                      <p className="text-lg font-bold text-white">{runResult.scanned}</p>
+                      <p className="text-[9px] text-green-300">Scanned</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-blue-600">{runResult.eligible}</p>
-                      <p className="text-[9px] text-gray-500">Eligible</p>
+                      <p className="text-lg font-bold text-blue-300">{runResult.eligible}</p>
+                      <p className="text-[9px] text-green-300">Eligible</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-emerald-600">{runResult.sent}</p>
-                      <p className="text-[9px] text-gray-500">Sent</p>
+                      <p className="text-lg font-bold text-emerald-300">{runResult.sent}</p>
+                      <p className="text-[9px] text-green-300">Sent</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-red-500">{runResult.failed}</p>
-                      <p className="text-[9px] text-gray-500">Failed</p>
+                      <p className="text-lg font-bold text-red-300">{runResult.failed}</p>
+                      <p className="text-[9px] text-green-300">Failed</p>
                     </div>
                   </div>
                   {runResult.skipped > 0 && (
-                    <p className="text-[10px] text-gray-400 mt-2">
+                    <p className="text-[10px] text-green-300/70 mt-2">
                       {runResult.skipped} customer{runResult.skipped !== 1 ? "s" : ""} skipped
                       (no phone / opted out / cooldown)
                     </p>
                   )}
                   {runResult.dryRun !== undefined && runResult.dryRun > 0 && (
-                    <p className="text-[10px] text-orange-600 mt-1">
+                    <p className="text-[10px] text-orange-300 mt-1">
                       ⚠ {runResult.dryRun} sent as dry-run (WATI not fully configured on server)
                     </p>
                   )}
                   {runResult.blockedByQuietHours && (
-                    <p className="text-[10px] text-orange-600 mt-2 flex items-center gap-1">
+                    <p className="text-[10px] text-orange-300 mt-2 flex items-center gap-1">
                       <Moon className="w-3 h-3" /> Quiet hours active — adjust in Settings to send now
                     </p>
                   )}
                   {runResult.failures.length > 0 && (
                     <details className="mt-2">
-                      <summary className="text-[10px] text-red-600 cursor-pointer">
+                      <summary className="text-[10px] text-red-300 cursor-pointer">
                         {runResult.failures.length} failure{runResult.failures.length !== 1 ? "s" : ""} — click to expand
                       </summary>
                       <ul className="mt-1 space-y-0.5">
                         {runResult.failures.map((f, i) => (
-                          <li key={i} className="text-[10px] text-red-600">
+                          <li key={i} className="text-[10px] text-red-300">
                             • {f.name}: {f.error}
                           </li>
                         ))}
@@ -1052,22 +1059,14 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
             </div>
 
             {/* How it works */}
-            <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-              <Zap className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-              <div className="text-[11px] text-blue-700 leading-relaxed space-y-1">
-                <p>
-                  <span className="font-semibold">How it works:</span> Click{" "}
-                  <strong>Run</strong> to evaluate all customers. Eligible customers
-                  appear in the Queue tab.
-                </p>
-                <p>
-                  In <strong>WhatsApp Web Mode</strong>, clicking Run opens WhatsApp
-                  with a personalised message pre-filled. You confirm before it sends.
-                </p>
-                <p>
-                  In <strong>WATI API Mode</strong>, messages are sent automatically
-                  via the server. Add your WATI credentials in Settings.
-                </p>
+            <div className="rounded-xl bg-white border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-gray-100">
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">How It Works</p>
+              </div>
+              <div className="px-4 py-3 text-[11px] text-gray-600 leading-relaxed space-y-2">
+                <p>Click <strong className="text-gray-800">Run Now</strong> to evaluate all customers. Eligible customers appear in the Queue tab.</p>
+                <p>In <strong className="text-gray-800">WhatsApp Web Mode</strong>, Run opens WhatsApp with a personalised message pre-filled. You confirm before it sends.</p>
+                <p>In <strong className="text-gray-800">WATI / Meta API Mode</strong>, messages are sent automatically via the server. Add credentials in Settings.</p>
               </div>
             </div>
           </>

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRole, UserRole, ROLE_LEVEL } from "./useRole";
+import { useAuth } from "./useAuth";
 
 /**
  * Manages the active POS role — separate from the login role.
@@ -12,7 +13,11 @@ import { useRole, UserRole, ROLE_LEVEL } from "./useRole";
  */
 export function useActiveRole() {
   const loginRole = useRole();
-  const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
+  const { isAuthenticated } = useAuth();
+  const { data: settings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    enabled: isAuthenticated,
+  });
   const timeoutMinutes: number = settings?.posRoleTimeout ?? 2;
 
   const [activeRole, setActiveRole] = useState<UserRole>(loginRole);

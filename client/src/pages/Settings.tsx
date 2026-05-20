@@ -234,8 +234,8 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  // Portal escapes framer-motion's willChange:transform containing block in App.tsx,
-  // which was causing fixed positioning to resolve relative to the page wrapper.
+  // Portal escapes App.tsx's motion.div willChange:transform containing block,
+  // which caused position:fixed to resolve relative to the page wrapper, not viewport.
   return createPortal(
     <AnimatePresence>
       <motion.div
@@ -263,11 +263,10 @@ function Modal({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Drag handle pill — mobile only */}
+          {/* Drag handle — mobile only */}
           <div className="sm:hidden flex justify-center pt-2.5 pb-0.5 shrink-0">
             <div className="w-9 h-1 rounded-full bg-gray-300" />
           </div>
-
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 sm:py-4 border-b border-gray-100 shrink-0">
             <div className="flex items-center gap-2">
@@ -281,7 +280,6 @@ function Modal({
               <X className="w-4 h-4" />
             </button>
           </div>
-
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto overscroll-contain p-5 pb-8">
             {children}

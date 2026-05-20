@@ -249,5 +249,29 @@
     "status": "failed",
     "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
     "campaign": "WIN_BACK"
+  },
+  {
+    "id": "90bc0c2e-a108-4482-8e78-e3093c525498",
+    "customerId": "9981636949",
+    "customerName": "parul",
+    "phone": "9981636949",
+    "trigger": "WIN_BACK",
+    "message": "Hi parul! 🌿 We've been missing you at *Bagicha*! It's been 35 days since your last visit (especially your favourite *Tikka*). Come back and enjoy *10% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-05-20T11:35:09.767Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WIN_BACK"
+  },
+  {
+    "id": "41ec984e-b3ac-489b-a371-ba5a84e4a2d1",
+    "customerId": "9752486454",
+    "customerName": "Shubham",
+    "phone": "9752486454",
+    "trigger": "WIN_BACK",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 53 days since your last visit (especially your favourite *Tandoori Momos*). Come back and enjoy *10% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-05-20T11:35:13.184Z",
+    "status": "failed",
+    "error": "Meta API 401: Invalid OAuth access token - Cannot parse access token",
+    "campaign": "WIN_BACK"
   }
 ]
