@@ -203,17 +203,17 @@ function ConfirmDialog({
           <p className="text-xs text-red-500 mt-0.5">{description}</p>
         </div>
       </div>
-      <div className="flex gap-2 justify-end">
+      <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
         <button
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          className="w-full sm:w-auto min-h-[44px] px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors touch-manipulation"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={loading}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-60"
+          className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-60 touch-manipulation"
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
           {confirmLabel}
@@ -1271,7 +1271,7 @@ export default function Settings() {
   if (isLoading) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="p-6 max-w-5xl mx-auto">
+        <div className="px-3 sm:px-6 py-4 sm:py-6 max-w-5xl mx-auto">
           <div className="grid grid-cols-3 md:grid-cols-5 gap-4 mt-8">
             {Array.from({ length: 9 }).map((_, i) => (
               <div key={i} className="h-24 skeleton-glass" />
@@ -1309,7 +1309,7 @@ export default function Settings() {
                 whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => { setActiveModal(card.id); setConfirmStep(false); }}
-                className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200"
+                className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200 touch-manipulation"
                 style={{
                   background: card.destructive ? "rgba(254,242,242,0.60)" : "rgba(255,255,255,0.52)",
                   backdropFilter: "blur(16px) saturate(1.8)",

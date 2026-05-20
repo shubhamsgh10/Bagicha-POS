@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Delete, ChevronLeft, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import bgImage from "@assets/Login Page Background.png";
+import pizzaBgImage from "@assets/Wood-Fire-Pizza.png";
 
 /* ─── Types ─── */
 interface LoginProps  { onLoginSuccess: () => void; }
@@ -43,11 +44,11 @@ function getInitials(name: string) {
 
 /* ─── Shared glass card style ─── */
 const glassCard: React.CSSProperties = {
-  background:      "rgba(255,255,255,0.42)",
-  backdropFilter:  "blur(28px) saturate(1.9)",
-  WebkitBackdropFilter: "blur(28px) saturate(1.9)",
-  border:          "1px solid rgba(255,255,255,0.60)",
-  boxShadow:       "0 12px 40px rgba(0,0,0,0.10), 0 1px 0 rgba(255,255,255,0.85) inset",
+  background:      "rgba(255,255,255,0.60)",
+  backdropFilter:  "blur(4px) saturate(1.6)",
+  WebkitBackdropFilter: "blur(4px) saturate(1.6)",
+  border:          "1px solid rgba(255,255,255,0.70)",
+  boxShadow:       "0 8px 32px rgba(0,0,0,0.14), 0 1px 0 rgba(255,255,255,0.90) inset",
   borderRadius:    "20px",
 };
 
@@ -157,13 +158,13 @@ function TotpStep({
   return (
     <motion.div style={gc} className="p-6 space-y-4">
       <button onClick={onBack}
-        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
+        className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors -mb-1">
         <ChevronLeft className="w-3.5 h-3.5" /> Back
       </button>
       <div className="flex flex-col items-center gap-1 pt-1">
         <ShieldCheck className="w-8 h-8 text-emerald-500" />
         <h2 className="text-lg font-bold text-gray-900 tracking-tight">Two-Factor Auth</h2>
-        <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
+        <p className="text-xs text-gray-700 text-center">Enter the 6-digit code from your authenticator app</p>
       </div>
       <form onSubmit={submit} className="space-y-3">
         <motion.input
@@ -248,41 +249,50 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
     }
   }
 
-  const bgStyle: React.CSSProperties = {
-    backgroundImage:    `url(${bgImage})`,
-    backgroundSize:     "100% 100%",
-    backgroundPosition: "center",
-  };
+  /* ── Shared two-zone layout: illustration top, login panel bottom ── */
+  const twoZoneWrap = (children: React.ReactNode) => (
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-white">
+      {/* Top zone: illustration — fixed 48% height, anchored top */}
+      <div className="shrink-0 overflow-hidden" style={{ height: "48%" }}>
+        <img
+          src={pizzaBgImage}
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ objectPosition: "top center", display: "block" }}
+        />
+      </div>
+      {/* Bottom zone: login panel — remaining height, scrollable */}
+      <div className="flex-1 overflow-y-auto bg-white border-t border-gray-100">
+        <div className="w-full max-w-[22rem] mx-auto px-5 pt-4 pb-8">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 
   /* ── Admin login ── */
-  if (showAdmin) return (
-    <div className="login-bg" style={bgStyle}>
-      <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-[22rem] px-5">
-        <div className="flex flex-col items-center mb-5">
-          <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img" />
-        </div>
-        {showTotp ? (
-          <TotpStep glassCard={glassCard} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
-        ) : (
-        <div style={glassCard} className="p-6 space-y-4">
+  if (showAdmin) return twoZoneWrap(
+    showTotp
+      ? <TotpStep glassCard={{ background: "transparent", border: "none", borderRadius: "0", boxShadow: "none" }} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
+      : (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           <button onClick={() => setShowAdmin(false)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors -mb-1">
+            className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors">
             <ChevronLeft className="w-3.5 h-3.5" /> Back to staff
           </button>
           <div>
             <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager Login</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Restricted access — credentials required</p>
+            <p className="text-xs text-gray-600 mt-0.5">Restricted access — credentials required</p>
           </div>
           <form onSubmit={handleSubmit(onAdminSubmit)} className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Username</label>
+              <label className="text-xs font-semibold text-gray-900">Username</label>
               <input {...register("username")} placeholder="admin" autoComplete="username"
                 className="login-input w-full h-11 px-3 text-sm" />
               {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Password</label>
+              <label className="text-xs font-semibold text-gray-900">Password</label>
               <div className="relative">
                 <input {...register("password")}
                   type={showPw ? "text" : "password"}
@@ -290,7 +300,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
                   autoComplete="current-password"
                   className="login-input w-full h-11 px-3 pr-10 text-sm" />
                 <button type="button" onClick={() => setShowPw(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800">
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -301,128 +311,109 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
               {adminLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</> : "Sign in"}
             </button>
           </form>
-        </div>
-        )}
-      </motion.div>
-    </div>
+        </motion.div>
+      )
   );
 
   /* ── PIN entry ── */
   if (selected) {
     const [from, to] = getAvatarColors(selected.name);
-    return (
-      <div className="login-bg" style={bgStyle}>
-        <motion.div initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }}
-          transition={{ type: "spring", stiffness: 280, damping: 26 }}
-          className="w-full max-w-[22rem] px-5">
-          <div className="flex flex-col items-center mb-5">
-            <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img" />
-          </div>
-          <div style={glassCard} className="px-6 pt-6 pb-5 text-center">
-            {/* Avatar */}
-            <motion.div
-              initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", stiffness: 320, damping: 22 }}
-              className="w-[68px] h-[68px] rounded-full mx-auto mb-2.5 flex items-center justify-center text-white font-bold text-xl"
-              style={{
-                background:  `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
-                boxShadow:   `0 6px 20px ${from}55, 0 2px 6px rgba(0,0,0,0.12)`,
-              }}
-            >
-              {getInitials(selected.name)}
-            </motion.div>
-
-            <h2 className="text-[15px] font-bold text-gray-900">{selected.name}</h2>
-            <p className="text-xs text-gray-400 mt-0.5 mb-1">Enter your 6-digit PIN</p>
-
-            <PinDots value={pin} shake={shake} />
-
-            {loading ? (
-              <div className="flex justify-center py-7">
-                <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
-              </div>
-            ) : (
-              <PinPad
-                onDigit={d => setPin(p => p.length < 6 ? p + d : p)}
-                onDelete={() => setPin(p => p.slice(0, -1))}
-                disabled={loading}
-              />
-            )}
-
-            <button onClick={() => { setSelected(null); setPin(""); }}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mx-auto mt-4 transition-colors">
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
-          </div>
+    return twoZoneWrap(
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+        transition={{ type: "spring", stiffness: 280, damping: 26 }}
+        className="flex flex-col items-center pt-2">
+        <motion.div
+          initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 320, damping: 22 }}
+          className="w-[68px] h-[68px] rounded-full mb-2.5 flex items-center justify-center text-white font-bold text-xl"
+          style={{
+            background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
+            boxShadow: `0 6px 20px ${from}55, 0 2px 6px rgba(0,0,0,0.12)`,
+          }}
+        >
+          {getInitials(selected.name)}
         </motion.div>
-      </div>
+        <h2 className="text-[15px] font-bold text-gray-900">{selected.name}</h2>
+        <p className="text-xs text-gray-600 mt-0.5 mb-1">Enter your 6-digit PIN</p>
+        <PinDots value={pin} shake={shake} />
+        {loading ? (
+          <div className="flex justify-center py-7">
+            <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
+          </div>
+        ) : (
+          <PinPad
+            onDigit={d => setPin(p => p.length < 6 ? p + d : p)}
+            onDelete={() => setPin(p => p.slice(0, -1))}
+            disabled={loading}
+          />
+        )}
+        <button onClick={() => { setSelected(null); setPin(""); }}
+          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 mt-4 transition-colors">
+          <ChevronLeft className="w-3.5 h-3.5" /> Back
+        </button>
+      </motion.div>
     );
   }
 
   /* ── Staff grid ── */
-  return (
-    <div className="login-bg" style={bgStyle}>
-      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-[22rem] px-5">
-        <div className="flex flex-col items-center mb-5">
-          <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-1" />
-          <p className="text-[11px] text-gray-400 uppercase tracking-[0.12em] mt-1 font-medium">
-            Who are you?
-          </p>
-        </div>
+  return twoZoneWrap(
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="flex flex-col items-center mb-3">
+        <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-1" />
+        <p className="text-[11px] text-gray-500 uppercase tracking-[0.12em] mt-1 font-medium">
+          Who are you?
+        </p>
+      </div>
 
-        <div style={glassCard} className="px-4 pt-5 pb-4">
-          {staff.length === 0 ? (
-            <div className="text-center py-8 space-y-1">
-              <p className="text-sm text-gray-400">No staff accounts found.</p>
-              <p className="text-xs text-gray-300">Ask admin to create accounts.</p>
-            </div>
-          ) : (
-            <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
-              {staff.map((s, idx) => {
-                const [from, to] = getAvatarColors(s.name);
-                return (
-                  <motion.button
-                    key={s.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
-                    whileTap={{ scale: 0.91 }}
-                    onClick={() => { setSelected(s); setPin(""); }}
-                    className="group flex flex-col items-center gap-2.5 py-4 px-2 rounded-2xl transition-all duration-200 active:brightness-95"
-                    style={{
-                      background:  "rgba(255,255,255,0.58)",
-                      border:      "1px solid rgba(255,255,255,0.75)",
-                      boxShadow:   "0 2px 10px rgba(0,0,0,0.06)",
-                    }}
-                  >
-                    <div
-                      className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-[1.1rem] transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
-                      style={{
-                        background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
-                        boxShadow:  `0 4px 14px ${from}44`,
-                      }}
-                    >
-                      {getInitials(s.name)}
-                    </div>
-                    <span className="text-[11.5px] font-semibold text-gray-700 text-center leading-tight px-1">
-                      {s.name}
-                    </span>
-                  </motion.button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="mt-4 pt-3.5 border-t border-white/50 text-center">
-            <button onClick={() => setShowAdmin(true)}
-              className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors font-medium">
-              Manager / Admin Login →
-            </button>
-          </div>
+      {staff.length === 0 ? (
+        <div className="text-center py-8 space-y-1">
+          <p className="text-sm text-gray-700">No staff accounts found.</p>
+          <p className="text-xs text-gray-500">Ask admin to create accounts.</p>
         </div>
-      </motion.div>
-    </div>
+      ) : (
+        <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
+          {staff.map((s, idx) => {
+            const [from, to] = getAvatarColors(s.name);
+            return (
+              <motion.button
+                key={s.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
+                whileTap={{ scale: 0.91 }}
+                onClick={() => { setSelected(s); setPin(""); }}
+                className="group flex flex-col items-center gap-2.5 py-4 px-2 rounded-2xl transition-all duration-200 active:brightness-95"
+                style={{
+                  background: "#F9FAFB",
+                  border: "1px solid #E5E7EB",
+                  boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
+                }}
+              >
+                <div
+                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-[1.1rem] transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
+                  style={{
+                    background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
+                    boxShadow: `0 4px 14px ${from}44`,
+                  }}
+                >
+                  {getInitials(s.name)}
+                </div>
+                <span className="text-[11.5px] font-semibold text-gray-700 text-center leading-tight px-1">
+                  {s.name}
+                </span>
+              </motion.button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-4 pt-3.5 border-t border-gray-100 text-center">
+        <button onClick={() => setShowAdmin(true)}
+          className="text-[11px] text-gray-600 hover:text-gray-900 transition-colors font-medium">
+          Manager / Admin Login →
+        </button>
+      </div>
+    </motion.div>
   );
 }
 
@@ -470,9 +461,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   return (
     <div className="login-bg" style={{ backgroundImage: `url(${bgImage})` }}>
+      <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 260, damping: 24 }}
-        className="w-full max-w-[22rem] px-5">
+        className="w-full max-w-[22rem] px-5 relative z-10">
         <div className="flex flex-col items-center mb-6">
           <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-2" />
           <p className="text-[11px] text-gray-400 uppercase tracking-[0.12em] font-medium">
@@ -486,19 +478,19 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <div style={glassCard} className="p-6 space-y-4">
             <div>
               <h2 className="text-xl font-bold text-gray-900 tracking-tight">Sign in</h2>
-              <p className="text-xs text-gray-500 mt-0.5">Enter your credentials to continue</p>
+              <p className="text-xs text-gray-700 mt-0.5">Enter your credentials to continue</p>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Username</label>
+                <label className="text-xs font-semibold text-gray-900">Username</label>
                 <input {...register("username")} placeholder="admin" autoComplete="username"
                   className="login-input w-full h-11 px-3 text-sm" />
                 {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Password</label>
+                <label className="text-xs font-semibold text-gray-900">Password</label>
                 <div className="relative">
                   <input {...register("password")}
                     type={showPw ? "text" : "password"}
@@ -506,7 +498,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     autoComplete="current-password"
                     className="login-input w-full h-11 px-3 pr-10 text-sm" />
                   <button type="button" onClick={() => setShowPw(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800 transition-colors">
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
