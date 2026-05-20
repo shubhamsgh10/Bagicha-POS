@@ -131,8 +131,19 @@ export function requireAdmin(req: any, res: any, next: any) {
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // WebSocket server for real-time updates
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  // WebSocket server for real-time updates.
+  // Use noServer mode + manual upgrade routing so the ws library does NOT destroy
+  // upgrade requests for other paths (e.g. Vite HMR /?token=...).
+  const wss = new WebSocketServer({ noServer: true });
+  httpServer.on('upgrade', (request, socket, head) => {
+    const pathname = request.url?.split('?')[0] ?? '';
+    if (pathname === '/ws') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    }
+    // All other upgrade paths (Vite HMR, etc.) fall through untouched.
+  });
 
   const broadcast = (data: any) => {
     wss.clients.forEach((client) => {
@@ -361,7 +372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/me", (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    if (!req.isAuthenticated()) return res.status(200).json(null);
     const user = req.user as any;
     const { password, ...safeUser } = user;
     res.json(safeUser);
@@ -828,8 +839,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPrintRoutes(app);
 
   // ── Phase 1 growth routes (Razorpay, Coupons, Loyalty, Feedback, Digest) ─────
-  registerPublicGrowthRoutes(app);
+  // registerGrowthRoutes must come first: its specific /api/feedback/stats route
+  // must be registered before registerPublicGrowthRoutes' /api/feedback/:token
+  // wildcard, otherwise Express matches "stats" as a :token and returns 404.
   registerGrowthRoutes(app, broadcast);
+  registerPublicGrowthRoutes(app);
 
   // ── Staff management + attendance routes ──────────────────────────────────
   registerStaffRoutes(app);

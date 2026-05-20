@@ -134,6 +134,17 @@ export default function LiveTablesDashboard() {
   const [compact,       setCompact]       = useState(false);
   const [isRefreshing,  setIsRefreshing]  = useState(false);
 
+  // On mobile (< 640px) always use compact tiles regardless of toggle
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth < 640
+  );
+  useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  const useCompact = compact || isMobile;
+
   const isConnected = connectionStatus === "Open";
   const isLoading   = tablesLoading || ordersLoading;
 
@@ -265,83 +276,80 @@ export default function LiveTablesDashboard() {
   }), [allOrders, channelCounts, statusCounts]);
 
   // ── Grid columns ──────────────────────────────────────────────────────────
-  const gridCols = compact
-    ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+  const gridCols = useCompact
+    ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
     : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
 
       {/* ── Page header ────────────────────────────────────────── */}
-      <div className="shrink-0 px-5 pt-4 pb-3 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-emerald-100/80 shadow-sm">
-            <Monitor className="w-5 h-5 text-emerald-600" />
+      <div className="shrink-0 px-3 sm:px-5 pt-2.5 sm:pt-4 pb-2 sm:pb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-emerald-100/80">
+            <Monitor className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900 leading-tight">Live View</h1>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {allOrders.length} active order{allOrders.length !== 1 ? "s" : ""} · real-time feed
+            <h1 className="text-base sm:text-xl font-bold text-gray-900 leading-tight">Live View</h1>
+            <p className="text-[10px] sm:text-xs text-gray-400">
+              {allOrders.length} order{allOrders.length !== 1 ? "s" : ""} · live
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           {/* Connection */}
-          <div className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full border ${
+          <div className={`flex items-center gap-1 text-[10px] sm:text-xs font-semibold px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-full border ${
             isConnected
               ? "bg-emerald-50 text-emerald-600 border-emerald-200"
               : "bg-gray-50 text-gray-400 border-gray-200"
           }`}>
             {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-            <span>{isConnected ? "Live" : "Reconnecting"}</span>
+            <span className="hidden xs:inline">{isConnected ? "Live" : "..."}</span>
             {isConnected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
           </div>
-
-          {/* Sound */}
-          <button
-            onClick={() => setSoundEnabled(v => !v)}
-            title={soundEnabled ? "Mute" : "Sound on"}
-            className={`p-2 rounded-xl transition-colors ${
-              soundEnabled ? "text-emerald-600 bg-emerald-50" : "text-gray-400 hover:bg-gray-100"
-            }`}
-          >
-            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          <button onClick={() => setSoundEnabled(v => !v)} title={soundEnabled ? "Mute" : "Sound on"}
+            className={`p-1.5 rounded-lg transition-colors ${soundEnabled ? "text-emerald-600 bg-emerald-50" : "text-gray-400 hover:bg-gray-100"}`}>
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
-
-          {/* Compact */}
-          <button
-            onClick={() => setCompact(v => !v)}
-            title={compact ? "Comfortable view" : "Compact view"}
-            className={`p-2 rounded-xl transition-colors ${
-              compact ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:bg-gray-100"
-            }`}
-          >
-            {compact ? <LayoutGrid className="w-4 h-4" /> : <Rows3 className="w-4 h-4" />}
+          <button onClick={() => setCompact(v => !v)} title={compact ? "Comfortable view" : "Compact view"}
+            className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${compact ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:bg-gray-100"}`}>
+            {compact ? <LayoutGrid className="w-3.5 h-3.5" /> : <Rows3 className="w-3.5 h-3.5" />}
           </button>
-
-          {/* Refresh */}
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors disabled:opacity-40"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} />
+          <button onClick={handleRefresh} disabled={isRefreshing}
+            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors disabled:opacity-40">
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
-      {/* ── Stats pills ────────────────────────────────────────── */}
-      <div className="shrink-0 px-5 pb-3 flex gap-2 overflow-x-auto scrollbar-hide">
-        <StatPill label="Total"    value={stats.total}    color="text-gray-700"     />
-        <StatPill label="Dine-in"  value={stats.dineIn}   color="text-emerald-600"  />
-        <StatPill label="Delivery" value={stats.delivery} color="text-blue-600"     />
-        <StatPill label="Pickup"   value={stats.pickup}   color="text-orange-500"   />
-        <StatPill label="Ready"    value={stats.ready}    color="text-green-600"    />
-      </div>
+      {/* ── Stats + Channel tabs combined row ──────────────────── */}
+      <div className="shrink-0 border-b border-gray-200 bg-white">
+        {/* Stats — compact inline row on mobile */}
+        <div className="flex items-center gap-1.5 px-3 sm:px-5 pt-1.5 pb-1.5 overflow-x-auto scrollbar-none sm:hidden">
+          {[
+            { label: "Total",    value: stats.total,    color: "text-gray-700"    },
+            { label: "Dine-in",  value: stats.dineIn,   color: "text-emerald-600" },
+            { label: "Delivery", value: stats.delivery, color: "text-blue-600"    },
+            { label: "Pickup",   value: stats.pickup,   color: "text-orange-500"  },
+            { label: "Ready",    value: stats.ready,    color: "text-green-600"   },
+          ].map(s => (
+            <div key={s.label} className="shrink-0 flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1">
+              <span className={`text-sm font-bold leading-none ${s.color}`}>{s.value}</span>
+              <span className="text-[9px] text-gray-400 font-medium">{s.label}</span>
+            </div>
+          ))}
+        </div>
+        {/* Stats — original pill row on desktop */}
+        <div className="hidden sm:flex shrink-0 px-5 pb-3 gap-2 overflow-x-auto scrollbar-hide">
+          <StatPill label="Total"    value={stats.total}    color="text-gray-700"     />
+          <StatPill label="Dine-in"  value={stats.dineIn}   color="text-emerald-600"  />
+          <StatPill label="Delivery" value={stats.delivery} color="text-blue-600"     />
+          <StatPill label="Pickup"   value={stats.pickup}   color="text-orange-500"   />
+          <StatPill label="Ready"    value={stats.ready}    color="text-green-600"    />
+        </div>
 
-      {/* ── Channel tabs ───────────────────────────────────────── */}
-      <div className="shrink-0 bg-white border-b border-gray-200">
+        {/* Channel tabs */}
         <div className="flex">
           {CHANNEL_TABS.map(tab => {
             const active = channelFilter === tab.key;
@@ -350,14 +358,14 @@ export default function LiveTablesDashboard() {
               <button
                 key={tab.key}
                 onClick={() => { setChannelFilter(tab.key); setStatusFilter("all"); }}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 px-2 relative transition-colors ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-3 px-2 relative transition-colors touch-manipulation ${
                   active ? "text-red-500" : "text-gray-400 hover:text-gray-600"
                 }`}
               >
-                <tab.icon className="w-5 h-5" />
-                <span className="text-[11px] font-semibold">{tab.label}</span>
+                <tab.icon className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                <span className="text-[10px] sm:text-[11px] font-semibold">{tab.label}</span>
                 {count > 0 && (
-                  <span className={`absolute top-1.5 right-[calc(50%-18px)] text-[8px] font-bold px-1 py-px rounded-full leading-none ${
+                  <span className={`text-[8px] font-bold px-1 py-px rounded-full leading-none ${
                     active ? "bg-red-500 text-white" : "bg-gray-200 text-gray-600"
                   }`}>
                     {count}
@@ -371,44 +379,36 @@ export default function LiveTablesDashboard() {
       </div>
 
       {/* ── Filter + search bar ────────────────────────────────── */}
-      <div className="shrink-0 px-5 py-2.5 bg-white/60 border-b border-gray-100/60 flex items-center gap-2 flex-wrap">
-        {/* Status quick filters */}
+      <div className="shrink-0 px-3 sm:px-5 py-1.5 sm:py-2.5 bg-white/60 border-b border-gray-100/60 flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none">
         {([
-          { key: "food-ready" as StatusFilter,  label: "Food Ready",  count: statusCounts["food-ready"],  active: "bg-green-600 text-white",  inactive: "text-gray-600 bg-white"  },
-          { key: "dispatched" as StatusFilter,  label: "Dispatched",  count: statusCounts.dispatched,     active: "bg-blue-600 text-white",   inactive: "text-gray-600 bg-white"  },
-          { key: "delivered"  as StatusFilter,  label: "Delivered",   count: statusCounts.delivered,      active: "bg-gray-700 text-white",   inactive: "text-gray-600 bg-white"  },
+          { key: "food-ready" as StatusFilter, label: "Food Ready", short: "Ready",      count: statusCounts["food-ready"], active: "bg-green-600 text-white", inactive: "text-gray-600 bg-white" },
+          { key: "dispatched" as StatusFilter, label: "Dispatched", short: "Dispatched", count: statusCounts.dispatched,    active: "bg-blue-600 text-white",  inactive: "text-gray-600 bg-white" },
+          { key: "delivered"  as StatusFilter, label: "Delivered",  short: "Delivered",  count: statusCounts.delivered,     active: "bg-gray-700 text-white",  inactive: "text-gray-600 bg-white" },
         ] as const).map(sf => (
-          <button
-            key={sf.key}
+          <button key={sf.key}
             onClick={() => setStatusFilter(prev => prev === sf.key ? "all" : sf.key)}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
-              statusFilter === sf.key ? sf.active + " border-transparent" : sf.inactive + " border-gray-200 hover:border-gray-300"
+            className={`shrink-0 flex items-center gap-1 text-[10px] sm:text-xs font-semibold px-2 py-1 sm:px-3 sm:py-1.5 rounded-full border transition-colors touch-manipulation ${
+              statusFilter === sf.key ? sf.active + " border-transparent" : sf.inactive + " border-gray-200"
             }`}
           >
-            {sf.label}
-            <span className={`text-[10px] font-bold px-1 py-px rounded-full ${
+            <span className="sm:hidden">{sf.short}</span>
+            <span className="hidden sm:inline">{sf.label}</span>
+            <span className={`text-[9px] font-bold px-1 py-px rounded-full ${
               statusFilter === sf.key ? "bg-white/25 text-current" : "bg-gray-100 text-gray-500"
-            }`}>
-              {sf.count}
-            </span>
+            }`}>{sf.count}</span>
           </button>
         ))}
-
-        {/* Search */}
-        <div className="relative flex-1 max-w-xs min-w-[160px] ml-auto">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Table, order #, item…"
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-300 placeholder:text-gray-300"
+        <div className="relative flex-1 min-w-[100px] ml-auto shrink-0">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-full pl-6 pr-2 py-1 text-base sm:text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-300 placeholder:text-gray-300"
           />
         </div>
       </div>
 
       {/* ── Order feed ─────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-5 py-5">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-3 sm:py-5">
         {isLoading ? (
           <div className={`grid gap-3 items-start ${gridCols}`}>
             {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -448,6 +448,7 @@ export default function LiveTablesDashboard() {
                     order={order}
                     index={i}
                     restaurantName={restaurantName}
+                    compact={useCompact}
                     onStatusChange={handleStatusChange}
                   />
                 ))}
