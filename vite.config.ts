@@ -31,7 +31,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     hmr: {
-      clientPort: 5000,
+      ...(process.env.REPL_ID ? { clientPort: 5000 } : {}),
     },
     fs: {
       strict: true,

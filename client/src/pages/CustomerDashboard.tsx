@@ -3,10 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Users, Phone, ShoppingBag, TrendingUp, Clock, Star, AlertTriangle,
-  UserCheck, UserPlus, Search, X, ChevronRight, Flame, Lightbulb,
+  UserCheck, UserPlus, Search, X, Flame, Lightbulb,
   CalendarDays, BarChart2, Loader2, Send, Bell, BellOff, Edit2,
-  LayoutList, Brain, Zap, Activity, Database, Sparkles, Award,
-  Target, BarChart,
+  LayoutList, Brain, Zap, Activity, Database, Sparkles,
+  Target, BarChart, SlidersHorizontal, ChevronRight,
 } from "lucide-react";
 import {
   useCustomerIntelligence,
@@ -455,21 +455,24 @@ function CustomerListingView({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-      {/* Controls */}
-      <div className="shrink-0 px-5 py-3 border-b border-gray-200 flex items-center gap-3">
-        <div className="relative flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden">
-          <Search className="w-3.5 h-3.5 text-gray-400 ml-3 shrink-0" />
+      {/* Search bar */}
+      <div className="shrink-0 px-4 pt-3 pb-2 border-b border-gray-100">
+        <div className="relative flex items-center bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+          <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search"
-            className="pl-2 pr-3 py-1.5 text-sm bg-transparent outline-none placeholder-gray-400 w-40"
+            placeholder="Search customers by name or phone…"
+            className="w-full pl-10 pr-10 py-2.5 text-base bg-transparent outline-none placeholder-gray-400"
           />
-          <button className="border-l border-gray-200 px-2 py-1.5">
-            <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+          <SlidersHorizontal className="absolute right-3 w-4 h-4 text-gray-400 pointer-events-none" />
         </div>
-        <span className="text-xs text-gray-400 ml-auto">{displayed.length} customers</span>
+      </div>
+
+      {/* Section header */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+        <span className="text-sm font-semibold text-gray-800">Recent Customers</span>
+        <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{displayed.length} TOTAL</span>
       </div>
 
       {/* Table */}
@@ -491,81 +494,59 @@ function CustomerListingView({
             </p>
           </div>
         ) : (
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600">Mobile</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600">Email</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600">Name</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600 hidden md:table-cell">Add</th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-600">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayed.map((c, i) => {
-                const ex = extras[c.key] ?? defaultExtra();
-                const notifOn = ex.notificationEnabled;
-                return (
-                  <motion.tr
-                    key={c.key}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: i * 0.01 }}
-                    className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                  >
-                    {/* Mobile */}
-                    <td className="px-5 py-3.5 text-sm font-mono text-gray-800">
-                      {c.phone || <span className="text-gray-400">—</span>}
-                    </td>
+          <div className="divide-y divide-gray-100">
+            {displayed.map((c, i) => {
+              const ex = extras[c.key] ?? defaultExtra();
+              const notifOn = ex.notificationEnabled;
+              return (
+                <motion.div
+                  key={c.key}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: i * 0.01 }}
+                  className="px-4 py-3.5"
+                >
+                  {/* Name + tag */}
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-sm font-bold text-gray-900 truncate">
+                      {c.name !== "Unknown" ? c.name : <span className="text-gray-400">Unknown</span>}
+                    </span>
+                    <TagBadge tag={c.tag} />
+                  </div>
 
-                    {/* Email */}
-                    <td className="px-5 py-3.5 text-sm text-gray-600">
-                      {ex.email || <span className="text-gray-300">—</span>}
-                    </td>
+                  {/* Phone */}
+                  <div className="flex items-center gap-1.5 mb-3">
+                    <Phone className="w-3 h-3 text-gray-400 shrink-0" />
+                    <span className="text-xs text-gray-500">{c.phone || "—"}</span>
+                  </div>
 
-                    {/* Name */}
-                    <td className="px-5 py-3.5 text-sm text-gray-800">
-                      {c.name !== "Unknown" ? c.name : <span className="text-gray-300">—</span>}
-                    </td>
-
-                    {/* Add (tags / locality) */}
-                    <td className="px-5 py-3.5 text-xs text-gray-500 hidden md:table-cell">
-                      {ex.tags || ex.locality || <span className="text-gray-300">—</span>}
-                    </td>
-
-                    {/* Action */}
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center justify-end gap-3">
-                        {/* Edit pencil */}
-                        <button
-                          onClick={() => onEdit(c)}
-                          title="Edit customer"
-                          className="text-gray-500 hover:text-blue-600 transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-
-                        {/* Notification Status */}
-                        <button
-                          onClick={() => onToggleNotif(c.key)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded transition-all ${
-                            notifOn
-                              ? "border-gray-300 text-gray-600 hover:border-gray-400 bg-white"
-                              : "border-red-200 text-red-500 bg-red-50 hover:bg-red-100"
-                          }`}
-                        >
-                          {notifOn
-                            ? <><Bell className="w-3 h-3" /> Notification Status</>
-                            : <><BellOff className="w-3 h-3" /> Muted</>
-                          }
-                        </button>
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
-            </tbody>
-          </table>
+                  {/* Action buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => onEdit(c)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 border border-gray-200 rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-50 min-h-[44px] touch-manipulation transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => onToggleNotif(c.key)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold min-h-[44px] touch-manipulation transition-colors ${
+                        notifOn
+                          ? "bg-green-700 text-white hover:bg-green-800"
+                          : "bg-red-50 border border-red-200 text-red-500 hover:bg-red-100"
+                      }`}
+                    >
+                      {notifOn
+                        ? <><Bell className="w-3.5 h-3.5" /> Notification Status</>
+                        : <><BellOff className="w-3.5 h-3.5" /> Muted</>
+                      }
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -733,7 +714,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto px-5 py-4 pb-20 sm:pb-4 space-y-5">
         <section>
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Metrics</h3>
           <div className="grid grid-cols-3 gap-2">
@@ -912,12 +893,28 @@ function IntelligenceView({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-      {/* Stats row */}
-      <div className="shrink-0 px-5 pb-3 pt-3 flex gap-2">
-        <StatPill icon={Users}         label="Total"        value={stats.total}       color="text-gray-700" />
-        <StatPill icon={UserCheck}     label="Active Today" value={stats.activeToday} color="text-indigo-600" />
-        <StatPill icon={Star}          label="VIP"          value={stats.vip}         color="text-amber-500" />
-        <StatPill icon={AlertTriangle} label="At Risk"      value={stats.atRisk}      color="text-red-500" />
+      {/* Stats grid — 2×2 cards */}
+      <div className="shrink-0 grid grid-cols-4 gap-2 px-4 pt-2.5 pb-2.5">
+        <div className="bg-white border border-gray-100 rounded-xl px-2.5 py-2 shadow-sm flex flex-col items-center text-center">
+          <Users className="w-3.5 h-3.5 text-gray-500 mb-1" />
+          <div className="text-lg font-bold text-gray-800 leading-none">{stats.total}</div>
+          <div className="text-[9px] text-gray-400 font-medium mt-0.5">Total</div>
+        </div>
+        <div className="bg-white border border-gray-100 rounded-xl px-2.5 py-2 shadow-sm flex flex-col items-center text-center">
+          <UserCheck className="w-3.5 h-3.5 text-green-600 mb-1" />
+          <div className="text-lg font-bold text-gray-800 leading-none">{stats.activeToday}</div>
+          <div className="text-[9px] text-gray-400 font-medium mt-0.5">Active</div>
+        </div>
+        <div className="bg-white border border-gray-100 rounded-xl px-2.5 py-2 shadow-sm flex flex-col items-center text-center">
+          <Star className="w-3.5 h-3.5 text-amber-500 mb-1" />
+          <div className="text-lg font-bold text-gray-800 leading-none">{stats.vip}</div>
+          <div className="text-[9px] text-gray-400 font-medium mt-0.5">VIP</div>
+        </div>
+        <div className="bg-white border border-gray-100 rounded-xl px-2.5 py-2 shadow-sm flex flex-col items-center text-center">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-500 mb-1" />
+          <div className="text-lg font-bold text-gray-800 leading-none">{stats.atRisk}</div>
+          <div className="text-[9px] text-gray-400 font-medium mt-0.5">At Risk</div>
+        </div>
       </div>
 
       {/* CRM Engine status banner */}
@@ -928,24 +925,29 @@ function IntelligenceView({
         <FeedbackWidget />
       </div>
 
-      {/* Filters + search */}
-      <div className="shrink-0 px-5 pb-3 flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-white/60 border border-white/50 rounded-xl p-1 shadow-sm">
-          {FILTERS.map(f => (
-            <button key={f.key} onClick={() => setFilter(f.key)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 whitespace-nowrap ${
-              filter === f.key ? "bg-gradient-to-br from-gray-500 to-gray-600 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-            }`}>{f.label}</button>
-          ))}
-        </div>
-        <div className="relative flex-1 max-w-xs min-w-[160px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+      {/* Search bar */}
+      <div className="shrink-0 px-4 pb-2 border-b border-gray-100">
+        <div className="relative flex items-center bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+          <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Name or phone…"
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white/60 border border-white/50 rounded-xl shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-300 placeholder:text-gray-300"
+            placeholder="Search customers by name or phone…"
+            className="w-full pl-10 pr-10 py-2.5 text-base bg-transparent outline-none placeholder-gray-400"
           />
+          <SlidersHorizontal className="absolute right-3 w-4 h-4 text-gray-400 pointer-events-none" />
+        </div>
+      </div>
+
+      {/* Filter pills — horizontally scrollable */}
+      <div className="shrink-0 px-4 py-2.5 border-b border-gray-100">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none pb-0.5">
+          {FILTERS.map(f => (
+            <button key={f.key} onClick={() => setFilter(f.key)} className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap touch-manipulation min-h-[36px] transition-colors ${
+              filter === f.key ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}>{f.label}</button>
+          ))}
         </div>
       </div>
 
@@ -1066,7 +1068,7 @@ export default function CustomerDashboard() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-0">
+        <div className="flex overflow-x-auto scrollbar-none">
           {([
             { key: "listing",      label: "Customer Listing", icon: LayoutList },
             { key: "intelligence", label: "Intelligence",     icon: Brain },
@@ -1075,13 +1077,13 @@ export default function CustomerDashboard() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap touch-manipulation ${
                 tab === t.key
-                  ? "border-blue-600 text-blue-700 bg-blue-50/50"
+                  ? "border-green-700 text-green-700"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
               }`}
             >
-              <t.icon className="w-3.5 h-3.5" />
+              <t.icon className="w-3.5 h-3.5 shrink-0" />
               {t.label}
             </button>
           ))}

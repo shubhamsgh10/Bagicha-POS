@@ -170,7 +170,7 @@ export function useCrmTimeline(
   const enabled = !!customerKey;
 
   const { data, isLoading, isError } = useQuery<TimelineEntry[]>({
-    queryKey:  [`/api/crm/customers/${encodeURIComponent(customerKey ?? "")}/events`, { limit }],
+    queryKey:  [`/api/crm/customers/${encodeURIComponent(customerKey ?? "")}/events?limit=${limit}`],
     enabled,
     staleTime: 20_000,
     retry:     1,

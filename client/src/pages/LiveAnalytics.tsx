@@ -1,15 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { useLocation } from "wouter";
-import { BagichaLogo } from "@/components/BagichaLogo";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
   IndianRupee, ShoppingBag, Clock, TrendingUp, AlertTriangle,
-  Star, LayoutGrid, ArrowLeft, Calendar, ChevronDown, Check,
+  Star, LayoutGrid, Calendar, ChevronDown, Check,
 } from "lucide-react";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
@@ -73,7 +71,8 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
+        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
+                   min-h-[44px] touch-manipulation
                    bg-muted border border-border text-foreground
                    hover:bg-muted/80 transition-all"
       >
@@ -142,7 +141,7 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                         value={customStart}
                         max={customEnd || today()}
                         onChange={e => setCustomStart(e.target.value)}
-                        className="w-full text-xs border border-border rounded-lg px-2 py-1.5
+                        className="w-full text-base sm:text-xs border border-border rounded-lg px-2 py-1.5
                                    bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
                       />
                     </div>
@@ -154,7 +153,7 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                         min={customStart}
                         max={today()}
                         onChange={e => setCustomEnd(e.target.value)}
-                        className="w-full text-xs border border-border rounded-lg px-2 py-1.5
+                        className="w-full text-base sm:text-xs border border-border rounded-lg px-2 py-1.5
                                    bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
                       />
                     </div>
@@ -226,7 +225,7 @@ function SlidingGlassPanel({ isOpen, children }: { isOpen: boolean; children: Re
           transition={{ duration: 0.25, ease: "easeInOut" }}
           className="overflow-hidden"
         >
-          <div className="backdrop-blur-md bg-white/60 dark:bg-black/40 border border-white/30 shadow-lg rounded-2xl p-4 mt-2">
+          <div className="bg-card/95 border border-border shadow-lg rounded-2xl p-4 mt-2">
             {children}
           </div>
         </motion.div>
@@ -238,7 +237,6 @@ function SlidingGlassPanel({ isOpen, children }: { isOpen: boolean; children: Re
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function LiveAnalytics() {
-  const [, navigate] = useLocation();
   const [openCard, setOpenCard] = useState<string | null>(null);
   const toggleCard = (id: string) => setOpenCard(prev => (prev === id ? null : id));
   const now = new Date();
@@ -410,46 +408,38 @@ export default function LiveAnalytics() {
       : `Sales by Category — ${dateRange.label}`;
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-background overflow-hidden">
+    <div className="h-[100dvh] w-screen flex flex-col bg-background overflow-hidden">
 
       {/* ── Top Bar ─────────────────────────────────────────────────────────── */}
-      <header className="shrink-0 h-14 bg-card border-b border-border flex items-center px-4 gap-3 shadow-sm">
-        <button
-          onClick={() => navigate("/tables")}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground
-                     transition-colors px-2 py-1.5 rounded-lg hover:bg-muted"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Table View
-        </button>
+      <header className="shrink-0 bg-card border-b border-border shadow-sm">
+        <div className="flex items-center justify-between px-4 h-14 gap-3">
 
-        <div className="w-px h-6 bg-border shrink-0" />
-        <BagichaLogo size="sm" />
-        <div className="w-px h-6 bg-border shrink-0" />
+          {/* Left: title + auto-refresh badge (badge hidden on mobile) */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-base font-bold text-foreground tracking-tight whitespace-nowrap">
+              Live Analytics
+            </span>
+            <span className="hidden sm:block text-[11px] text-muted-foreground bg-muted/60 px-2 py-1 rounded-lg whitespace-nowrap">
+              Auto-refresh · 5s
+            </span>
+          </div>
 
-        <span className="text-base font-bold text-foreground tracking-tight">
-          Live Analytics
-        </span>
+          {/* Right: clock (hidden on mobile) + date picker */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5">
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-xs font-medium text-foreground">
+                {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
+              </span>
+            </div>
+            <DateRangePicker value={dateRange} onChange={setDateRange} />
+          </div>
 
-        <div className="flex-1" />
-
-        {/* Date Range Picker */}
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
-
-        <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5">
-          <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium text-foreground">
-            {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
-          </span>
         </div>
-
-        <span className="text-[11px] text-muted-foreground bg-muted/60 px-2 py-1 rounded-lg">
-          Auto-refresh · 5s
-        </span>
       </header>
 
       {/* ── Content ─────────────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto p-5 space-y-5 min-h-0">
+      <main className="flex-1 overflow-y-auto px-5 pt-5 pb-28 md:pb-8 space-y-5 min-h-0 overscroll-contain">
 
         {/* ── Stat Cards (always today) ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
