@@ -20,7 +20,6 @@ import CustomerDashboard from "@/pages/CustomerDashboard";
 import Billing from "@/pages/Billing";
 import Staff from "@/pages/Staff";
 import KOT from "@/pages/KOT";
-import MobilePOS from "@/pages/MobilePOS";
 import Kitchen from "@/pages/Kitchen";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
@@ -104,7 +103,6 @@ function Router() {
 
   // Full-screen routes — skip push wrapper and page transitions
   if (isAuthenticated && location.startsWith("/pos"))        return <POS />;
-  if (isAuthenticated && location.startsWith("/mobile-pos")) return <MobilePOS />;
 
   const pushTransition = { duration: PUSH_DURATION / 1000, ease: [0.4, 0, 0.2, 1] as const };
 
