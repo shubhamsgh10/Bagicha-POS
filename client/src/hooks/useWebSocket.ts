@@ -5,61 +5,53 @@ interface WebSocketMessage {
   [key: string]: any;
 }
 
-export function useWebSocket(url: string) {
+const MIN_DELAY = 2_000;
+const MAX_DELAY = 30_000;
+
+export function useWebSocket(_url: string) {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'Connecting' | 'Open' | 'Closed'>('Connecting');
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const delayRef = useRef(MIN_DELAY);
 
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
-    
+
     const connect = () => {
       const ws = new WebSocket(wsUrl);
-      
+
       ws.onopen = () => {
+        delayRef.current = MIN_DELAY;
         setConnectionStatus('Open');
         setSocket(ws);
-        console.log('WebSocket connected');
       };
 
       ws.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data);
-          setLastMessage(message);
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
+          setLastMessage(JSON.parse(event.data));
+        } catch {}
       };
 
       ws.onclose = () => {
         setConnectionStatus('Closed');
         setSocket(null);
-        console.log('WebSocket disconnected, attempting to reconnect...');
-        
-        // Attempt to reconnect after 3 seconds
         reconnectTimeoutRef.current = setTimeout(() => {
           connect();
-        }, 3000);
+        }, delayRef.current);
+        delayRef.current = Math.min(delayRef.current * 2, MAX_DELAY);
       };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-      };
+      ws.onerror = () => ws.close();
     };
 
     connect();
 
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (socket) {
-        socket.close();
-      }
+      clearTimeout(reconnectTimeoutRef.current);
     };
-  }, [url]);
+  }, []);
 
   const sendMessage = (message: WebSocketMessage) => {
     if (socket && socket.readyState === WebSocket.OPEN) {
