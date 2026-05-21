@@ -1,20 +1,40 @@
-/**
- * BottomNav.tsx — Mobile bottom navigation bar
- * Visible only on screens < md (768px).
- */
-
 import { useLocation } from "wouter";
-import { LayoutGrid, ChefHat, Users, Settings } from "lucide-react";
+import { LayoutGrid, History, CreditCard, Monitor } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useActiveRoleContext } from "@/context/ActiveRoleContext";
+import { toPosRole } from "@/hooks/useRole";
 
 const NAV_ITEMS = [
-  { href: "/tables",    icon: LayoutGrid, label: "Orders"   },
-  { href: "/kitchen",   icon: ChefHat,    label: "Kitchen"  },
-  { href: "/customers", icon: Users,      label: "Customers"},
-  { href: "/settings",  icon: Settings,   label: "Settings" },
+  { href: "/tables",      icon: LayoutGrid, label: "Tables"      },
+  { href: "/orders",      icon: History,    label: "Orders"      },
+  { href: "/billing",     icon: CreditCard, label: "Billing"     },
+  { href: "/live-tables", icon: Monitor,    label: "Live Tables" },
 ] as const;
 
 export function BottomNav() {
   const [location, navigate] = useLocation();
+  const { activeRole } = useActiveRoleContext();
+
+  const { data: settings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/settings", { credentials: "include" });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const visibleItems = NAV_ITEMS.filter(item => {
+    const posRole = toPosRole(activeRole);
+    if (posRole === "staff" && settings?.staffAllowedPages != null) {
+      return (settings.staffAllowedPages as string[]).includes(item.href);
+    }
+    if (posRole === "manager" && settings?.managerAllowedPages != null) {
+      return (settings.managerAllowedPages as string[]).includes(item.href);
+    }
+    return true;
+  });
 
   return (
     <nav className="md:hidden shrink-0 safe-bottom"
@@ -27,7 +47,7 @@ export function BottomNav() {
       }}
     >
       <div className="flex items-center h-[56px]">
-        {NAV_ITEMS.map(item => {
+        {visibleItems.map(item => {
           const Icon     = item.icon;
           const isActive = location === item.href || location.startsWith(item.href + "/");
 

@@ -56,14 +56,16 @@ export function TopNav() {
   });
 
   const visibleNav = NAV_ITEMS.filter(item => {
-    if (item.roles && !item.roles.includes(activeRole)) return false;
     const posRole = toPosRole(activeRole);
-    if (posRole === "manager" && settings?.managerAllowedPages) {
-      if (!settings.managerAllowedPages.includes(item.href)) return false;
+    // Dynamic settings take full ownership when configured — override static item.roles
+    if (posRole === "staff" && settings?.staffAllowedPages != null) {
+      return (settings.staffAllowedPages as string[]).includes(item.href);
     }
-    if (posRole === "staff" && settings?.staffAllowedPages) {
-      if (!settings.staffAllowedPages.includes(item.href)) return false;
+    if (posRole === "manager" && settings?.managerAllowedPages != null) {
+      return (settings.managerAllowedPages as string[]).includes(item.href);
     }
+    // Fallback: static role-based filter
+    if (item.roles && !item.roles.includes(activeRole)) return false;
     return true;
   });
 
