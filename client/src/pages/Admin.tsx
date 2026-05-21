@@ -187,7 +187,7 @@ function AccountsTab() {
                     {user.role}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-gray-500 text-xs">Username + Password</td>
+                <td className="px-4 py-3 text-gray-500 text-xs">Username + Password{(user as any).pin ? " + PIN" : ""}</td>
                 <td className="px-4 py-3 text-gray-400 text-xs">—</td>
                 <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                   <button className="text-blue-500 text-xs hover:underline" onClick={() => setEditAccount(user)}>Edit</button>
@@ -269,9 +269,10 @@ function AccountDialog({
   onSave: (data: { username: string; password: string; role: string; pin?: string }) => void;
   isPending?: boolean;
 }) {
+  const PIN_MASK = "****";
   const form = useForm({ defaultValues: { username: "", password: "", role: "staff", pin: "" } });
   useEffect(() => {
-    if (initial) form.reset({ username: initial.username, password: "", role: initial.role, pin: (initial as any).pin ?? "" });
+    if (initial) form.reset({ username: initial.username, password: "", role: initial.role, pin: (initial as any).pin ? PIN_MASK : "" });
     else form.reset({ username: "", password: "", role: "staff", pin: "" });
   }, [initial, open, form]);
 
@@ -284,7 +285,19 @@ function AccountDialog({
             {initial ? "Update account details." : "Create a new login account."}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={form.handleSubmit((d) => onSave({ ...d, pin: d.pin || undefined }))} className="space-y-4">
+        <form onSubmit={form.handleSubmit((d) => {
+          if (d.pin === PIN_MASK) {
+            // User didn't touch the PIN field — keep existing, don't send pin
+            const { pin, ...rest } = d;
+            onSave(rest as any);
+          } else if (initial) {
+            // Editing: empty = clear PIN, digits = update PIN
+            onSave(d);
+          } else {
+            // Creating: omit pin entirely if left blank
+            onSave({ ...d, pin: d.pin || undefined });
+          }
+        })} className="space-y-4">
           <div>
             <label className="text-sm font-medium">Username</label>
             <Input {...form.register("username", { required: true })} placeholder="e.g. manager2" className="mt-1" />
@@ -306,8 +319,8 @@ function AccountDialog({
           </div>
           <div>
             <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(optional, 4 or 6 digits — for POS role switching)</span></label>
-            <Input {...form.register("pin", {
-              validate: (v) => !v || /^\d{4}$|\d{6}$/.test(v) || "PIN must be exactly 4 or 6 digits",
+            <Input type="password" {...form.register("pin", {
+              validate: (v) => !v || v === PIN_MASK || /^\d{4,6}$/.test(v) || "PIN must be exactly 4 or 6 digits",
             })} placeholder="4 or 6 digits" maxLength={6} inputMode="numeric" className="mt-1" />
             {form.formState.errors.pin && (
               <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message as string}</p>

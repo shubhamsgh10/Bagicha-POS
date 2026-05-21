@@ -9,24 +9,17 @@ import { UserRole } from "@/hooks/useRole";
  * Admin always has full access (handled in canAccess).
  */
 const ROUTE_ROLES: Record<string, UserRole[]> = {
-  // ── Admin only ──────────────────────────────────────────────
+  // ── Always admin-only (never configurable via Role Permissions UI) ──
   "/dashboard":      ["admin"],
   "/live-analytics": ["admin"],
-  "/live-tables":    ["admin", "manager"],
   "/reports":        ["admin"],
-  "/menu":           ["admin", "manager"],
-  "/inventory":      ["admin", "manager"],
   "/admin":          ["admin"],
   "/settings":       ["admin"],
 
-  // ── Manager + Admin ─────────────────────────────────────────
-  "/orders":         ["admin", "manager"],
-  "/customers":      ["admin", "manager"],
-  "/kitchen":        ["admin", "manager"],
-  "/kot":            ["admin", "manager"],
-
-  // ── All roles (explicit; also covers unlisted paths below) ──
-  // "/tables", "/pos", "/mobile-pos" → no entry = open to all
+  // All other pages (orders, kot, kitchen, customers, menu, inventory,
+  // live-tables, etc.) are configurable via Admin > Role Permissions.
+  // Their access is enforced by staffAllowedPages / managerAllowedPages
+  // in the TopNav filter — not here.
 };
 
 /** Safe landing page per role when a redirect is forced. */

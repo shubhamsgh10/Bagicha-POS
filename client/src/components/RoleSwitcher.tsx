@@ -30,8 +30,8 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
   admin:   <ShieldCheck className="w-3 h-3" />,
 };
 
-/** Ordered display sequence — only manager and admin are system roles */
-const ROLE_ORDER: UserRole[] = ["manager", "admin"];
+/** Ordered display sequence for role switcher dropdown */
+const ROLE_ORDER: UserRole[] = ["staff", "manager", "admin"];
 
 function fmtTime(secs: number) {
   const m = Math.floor(secs / 60);
@@ -59,21 +59,22 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
     };
   }, [open]);
 
-  // Fetch which roles have PINs configured in the admin panel
+  // Fetch all existing roles + which have PINs configured
   const { data: switchableData } = useQuery({
     queryKey: ["/api/auth/switchable-roles"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/auth/switchable-roles");
-      return res.json() as Promise<{ roles: string[] }>;
+      return res.json() as Promise<{ roles: string[]; rolesWithPin: string[] }>;
     },
     staleTime: 30_000,
   });
 
-  const rolesWithPin: UserRole[] = (switchableData?.roles ?? []) as UserRole[];
+  const existingRoles: UserRole[] = (switchableData?.roles ?? []) as UserRole[];
+  const rolesWithPin: UserRole[] = (switchableData?.rolesWithPin ?? []) as UserRole[];
 
-  // Show: the current user's own login role (always) + any role with a PIN configured
+  // Show: the current user's own login role (always) + any role that has at least one user
   const visibleRoles = ROLE_ORDER.filter(
-    (r) => r === loginRole || rolesWithPin.includes(r)
+    (r) => r === loginRole || existingRoles.includes(r)
   );
 
   const meta = ROLE_META[activeRole] ?? ROLE_META.staff;
@@ -83,11 +84,13 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
     if (role === activeRole) return;
     const targetLevel = ROLE_LEVEL[role] ?? 0;
     const currentLevel = ROLE_LEVEL[activeRole] ?? 0;
-    if (targetLevel <= currentLevel) {
-      onElevate(role);
-      return;
+    const isUpward = targetLevel > currentLevel;
+    const hasPin = rolesWithPin.includes(role);
+    if (isUpward && hasPin) {
+      setPinTarget(role); // upward + PIN configured → ask for PIN
+    } else {
+      onElevate(role);   // downward, or upward with no PIN → direct switch
     }
-    setPinTarget(role);
   };
 
   const handlePinSuccess = () => {
@@ -125,9 +128,7 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
             >
               {visibleRoles.map((role) => {
                 const m = ROLE_META[role] ?? ROLE_META.staff;
-                const targetLevel = ROLE_LEVEL[role] ?? 0;
                 const currentLevel = ROLE_LEVEL[activeRole] ?? 0;
-                const needsPin = targetLevel > currentLevel;
                 const isCurrent = role === activeRole;
                 const hasPin = rolesWithPin.includes(role);
 
@@ -135,8 +136,7 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
                   <button
                     key={role}
                     onClick={() => handleSelect(role)}
-                    disabled={needsPin && !hasPin}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-semibold transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed ${
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-semibold transition-colors text-left ${
                       isCurrent ? `${m.bg} ${m.color}` : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
@@ -144,10 +144,8 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
                       {ROLE_ICONS[role] ?? ROLE_ICONS.staff}
                       {m.label}
                     </span>
-                    {needsPin && !isCurrent && (
-                      hasPin
-                        ? <Lock className="w-2.5 h-2.5 opacity-50" />
-                        : <span className="text-[9px] text-gray-400">no PIN</span>
+                    {!isCurrent && (ROLE_LEVEL[role] ?? 0) > currentLevel && hasPin && (
+                      <Lock className="w-2.5 h-2.5 opacity-50" />
                     )}
                     {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
                   </button>

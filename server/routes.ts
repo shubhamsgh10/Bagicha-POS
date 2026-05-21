@@ -423,14 +423,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── PIN verification ──────────────────────────────────────────────────────────
 
-  // Returns which roles have at least one user with a PIN set
+  // Returns all existing roles + which of those have a PIN configured
   app.get("/api/auth/switchable-roles", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getUsers();
+      const roles = Array.from(new Set(allUsers.map((u) => u.role)));
       const rolesWithPin = Array.from(new Set(allUsers.filter((u) => u.pin).map((u) => u.role)));
-      res.json({ roles: rolesWithPin });
+      res.json({ roles, rolesWithPin });
     } catch (err) {
-      res.status(500).json({ roles: [] });
+      res.status(500).json({ roles: [], rolesWithPin: [] });
     }
   });
 
