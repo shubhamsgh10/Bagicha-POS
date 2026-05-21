@@ -1,14 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -23,14 +21,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, User, KeyRound, Users, Plus, Trash2, Shield, ShieldCheck,
-  CheckCircle2, XCircle, UserCheck,
+  Loader2, User as UserIcon, KeyRound, Users, ShieldCheck,
 } from "lucide-react";
+import type { User } from "@shared/schema";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -47,25 +46,32 @@ const passwordSchema = z.object({
   path: ["confirmPassword"],
 });
 
-const newUserSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  role: z.enum(["admin", "manager"]),
-});
-
 type UsernameForm = z.infer<typeof usernameSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
-type NewUserForm = z.infer<typeof newUserSchema>;
 
-const ROLES = ["admin", "manager"] as const;
+const ROLES = ["admin", "manager", "staff"] as const;
+type Role = typeof ROLES[number];
 
 const roleColors: Record<string, string> = {
-  admin: "bg-red-100 text-red-800",
+  admin:   "bg-amber-100 text-amber-800",
   manager: "bg-blue-100 text-blue-800",
-  cashier: "bg-green-100 text-green-800",
-  kitchen: "bg-orange-100 text-orange-800",
-  staff: "bg-gray-100 text-gray-800",
+  staff:   "bg-green-100 text-green-800",
 };
+
+const staffMemberColor = "bg-purple-100 text-purple-800";
+
+const PAGE_ACCESS_LIST = [
+  { label: "Tables",      href: "/tables" },
+  { label: "Orders",      href: "/orders" },
+  { label: "Billing",     href: "/billing" },
+  { label: "KOT",         href: "/kot" },
+  { label: "Staff",       href: "/staff" },
+  { label: "Menu",        href: "/menu" },
+  { label: "Inventory",   href: "/inventory" },
+  { label: "Live Tables", href: "/live-tables" },
+  { label: "Kitchen",     href: "/kitchen" },
+  { label: "Customers",   href: "/customers" },
+];
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -81,518 +87,345 @@ function parseError(err: any): string {
   return raw || "Something went wrong";
 }
 
-// ── Users Tab (username & password management only) ───────────────────────────
+// ── Accounts Tab ──────────────────────────────────────────────────────────────
 
-function UsersTab() {
+function AccountsTab() {
   const { toast } = useToast();
-  const { user: currentUser } = useAuth();
-  const [showAddUser, setShowAddUser] = useState(false);
+  const { data: users = [], refetch } = useQuery<User[]>({ queryKey: ["/api/users"] });
+  const { data: staffList = [], refetch: refetchStaff } = useQuery<any[]>({ queryKey: ["/api/staff-members/all"] });
 
-  const { data: users, isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [editAccount, setEditAccount] = useState<User | null>(null);
+  const [showAddStaff, setShowAddStaff] = useState(false);
+  const [editStaff, setEditStaff] = useState<any | null>(null);
 
-  const newUserForm = useForm<NewUserForm>({
-    resolver: zodResolver(newUserSchema),
-    defaultValues: { username: "", password: "", role: "manager" },
-  });
-
-  const createUserMutation = useMutation({
-    mutationFn: async (data: NewUserForm) => apiRequest("POST", "/api/users", data),
+  const createAccount = useMutation({
+    mutationFn: (data: { username: string; password: string; role: string; pin?: string }) =>
+      apiRequest("POST", "/api/users", data),
     onSuccess: () => {
-      toast({ title: "User created successfully" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setShowAddUser(false);
-      newUserForm.reset();
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
+      setShowAddAccount(false);
+      toast({ title: "Account created" });
     },
     onError: (err: any) => {
-      toast({ title: "Failed to create user", description: parseError(err), variant: "destructive" });
+      toast({ title: "Failed to create account", description: parseError(err), variant: "destructive" });
+    },
+  });
+  const updateAccount = useMutation({
+    mutationFn: ({ id, ...data }: { id: number; username?: string; password?: string; role?: string; pin?: string }) =>
+      apiRequest("PUT", `/api/users/${id}`, data),
+    onSuccess: () => {
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
+      setEditAccount(null);
+      toast({ title: "Account updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update account", description: parseError(err), variant: "destructive" });
+    },
+  });
+  const deleteAccount = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
+    onSuccess: () => {
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
+      toast({ title: "Account deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to delete account", description: parseError(err), variant: "destructive" });
     },
   });
 
-  const deleteUserMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
-    onSuccess: () => {
-      toast({ title: "User deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-    },
+  const createStaffMember = useMutation({
+    mutationFn: (data: { name: string; pin: string }) => apiRequest("POST", "/api/staff-members", data),
+    onSuccess: () => { refetchStaff(); setShowAddStaff(false); toast({ title: "Staff member added" }); },
     onError: (err: any) => {
-      toast({ title: "Failed to delete user", description: parseError(err), variant: "destructive" });
+      toast({ title: "Failed to add staff member", description: parseError(err), variant: "destructive" });
+    },
+  });
+  const updateStaffMember = useMutation({
+    mutationFn: ({ id, ...data }: { id: number; name?: string; pin?: string; isActive?: boolean }) =>
+      apiRequest("PUT", `/api/staff-members/${id}`, data),
+    onSuccess: () => { refetchStaff(); setEditStaff(null); toast({ title: "Staff member updated" }); },
+    onError: (err: any) => {
+      toast({ title: "Failed to update staff member", description: parseError(err), variant: "destructive" });
+    },
+  });
+  const deleteStaffMember = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/staff-members/${id}`),
+    onSuccess: () => { refetchStaff(); toast({ title: "Staff member removed" }); },
+    onError: (err: any) => {
+      toast({ title: "Failed to remove staff member", description: parseError(err), variant: "destructive" });
     },
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{users?.length || 0} users in the system</p>
-        <Button size="sm" onClick={() => setShowAddUser(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add User
-        </Button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-sm text-gray-500">{users.length} accounts · {staffList.length} staff members</p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowAddStaff(true)}>+ Add Staff Member</Button>
+          <Button size="sm" onClick={() => setShowAddAccount(true)}>+ Add Account</Button>
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-16 skeleton-glass" />)}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {users?.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between p-3 rounded-xl transition-all duration-200 hover:scale-[1.005]"
-              style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(16px) saturate(1.8)",
-                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-                border: "1px solid rgba(255,255,255,0.72)",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
-              }}>
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-                  <User className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <p className="font-medium text-sm">{u.username}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Joined {new Date(u.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[u.role] || roleColors.staff}`}>
-                  {u.role}
-                </span>
-                {u.id === currentUser?.id ? (
-                  <Badge variant="outline" className="text-xs">You</Badge>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive hover:text-destructive"
+      <div className="rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Name / Username</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Role</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Login Type</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Mobile Card</th>
+              <th className="px-4 py-3 text-right font-semibold text-gray-700">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {users.map(user => (
+              <tr key={`user-${user.id}`} className="hover:bg-gray-50">
+                <td className="px-4 py-3 font-medium">{user.username}</td>
+                <td className="px-4 py-3">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${roleColors[user.role] ?? "bg-gray-100 text-gray-800"}`}>
+                    {user.role}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-gray-500 text-xs">Username + Password</td>
+                <td className="px-4 py-3 text-gray-400 text-xs">—</td>
+                <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
+                  <button className="text-blue-500 text-xs hover:underline" onClick={() => setEditAccount(user)}>Edit</button>
+                  <button
+                    className="text-red-400 text-xs hover:underline"
                     onClick={() => {
-                      if (confirm(`Delete user "${u.username}"?`)) deleteUserMutation.mutate(u.id);
+                      if (confirm(`Delete account "${user.username}"?`)) deleteAccount.mutate(user.id);
                     }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                  >Delete</button>
+                </td>
+              </tr>
+            ))}
+            {staffList.map((s: any) => (
+              <tr key={`staff-${s.id}`} className="hover:bg-purple-50 bg-purple-50/30">
+                <td className="px-4 py-3 font-medium">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-full bg-purple-500 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
+                      {s.name?.[0]?.toUpperCase() ?? "?"}
+                    </span>
+                    {s.name}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${staffMemberColor}`}>
+                    Staff Member
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-gray-500 text-xs">PIN only</td>
+                <td className="px-4 py-3 text-xs">
+                  {s.isActive ? <span className="text-green-600">✓ Shown</span> : <span className="text-gray-400">Hidden</span>}
+                </td>
+                <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
+                  <button className="text-blue-500 text-xs hover:underline" onClick={() => setEditStaff(s)}>Edit</button>
+                  <button
+                    className="text-red-400 text-xs hover:underline"
+                    onClick={() => {
+                      if (confirm(`Remove staff member "${s.name}"?`)) deleteStaffMember.mutate(s.id);
+                    }}
+                  >Delete</button>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && staffList.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400 text-sm">No accounts or staff members yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
-      {/* Add User Dialog */}
-      <Dialog open={showAddUser} onOpenChange={setShowAddUser}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
-            <DialogDescription>Create a new user account</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={newUserForm.handleSubmit((d) => createUserMutation.mutate(d))} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Username</Label>
-              <Input {...newUserForm.register("username")} placeholder="Enter username" />
-              {newUserForm.formState.errors.username && (
-                <p className="text-xs text-destructive">{newUserForm.formState.errors.username.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Password</Label>
-              <Input {...newUserForm.register("password")} type="password" placeholder="Min 6 characters" />
-              {newUserForm.formState.errors.password && (
-                <p className="text-xs text-destructive">{newUserForm.formState.errors.password.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Initial Role</Label>
-              <Select
-                value={newUserForm.watch("role")}
-                onValueChange={(v) => newUserForm.setValue("role", v as any)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map(r => (
-                    <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowAddUser(false)}>Cancel</Button>
-              <Button type="submit" disabled={createUserMutation.isPending}>
-                {createUserMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</> : "Create User"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <AccountDialog
+        open={showAddAccount || !!editAccount}
+        initial={editAccount}
+        onClose={() => { setShowAddAccount(false); setEditAccount(null); }}
+        onSave={(data) => editAccount ? updateAccount.mutate({ id: editAccount.id, ...data }) : createAccount.mutate(data)}
+      />
+
+      <StaffMemberDialog
+        open={showAddStaff || !!editStaff}
+        initial={editStaff}
+        onClose={() => { setShowAddStaff(false); setEditStaff(null); }}
+        onSave={(data) => editStaff ? updateStaffMember.mutate({ id: editStaff.id, ...data }) : createStaffMember.mutate(data)}
+      />
     </div>
   );
 }
 
-// ── Roles Tab ─────────────────────────────────────────────────────────────────
+// ── Account Dialog ────────────────────────────────────────────────────────────
 
-function RolesTab() {
-  const { toast } = useToast();
-  const { user: currentUser } = useAuth();
-  const [pinDialogUser, setPinDialogUser] = useState<any | null>(null);
-  const [pinDialogMode, setPinDialogMode] = useState<"set" | "remove">("set");
-  const [newPin, setNewPin] = useState("");
-  const [newPinConfirm, setNewPinConfirm] = useState("");
-  const [pinDialogError, setPinDialogError] = useState("");
-  const [resetConfirm, setResetConfirm] = useState(false);
-  const [showAddRole, setShowAddRole] = useState(false);
-  const [addForm, setAddForm] = useState({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
-  const [addFormError, setAddFormError] = useState("");
-
-  const { data: users = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/users"] });
-
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ id, role }: { id: number; role: string }) =>
-      apiRequest("PUT", `/api/users/${id}`, { role }),
-    onSuccess: () => {
-      toast({ title: "Role updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update role", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const setPinMutation = useMutation({
-    mutationFn: async ({ id, pin }: { id: number; pin: string | null }) =>
-      apiRequest("PUT", `/api/users/${id}/pin`, { pin }),
-    onSuccess: () => {
-      toast({ title: pinDialogMode === "remove" ? "PIN removed" : "PIN updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-      setPinDialogUser(null);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to update PIN", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const resetAllPinsMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/users/reset-all-pins", {}),
-    onSuccess: () => {
-      toast({ title: "All PINs cleared" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-      setResetConfirm(false);
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to reset PINs", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const createRoleMutation = useMutation({
-    mutationFn: async (data: typeof addForm) =>
-      apiRequest("POST", "/api/users", {
-        username: data.username.trim(),
-        password: data.password,
-        role: data.role,
-        pin: data.pin || undefined,
-      }),
-    onSuccess: () => {
-      toast({ title: "User created successfully" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-      setShowAddRole(false);
-      setAddForm({ username: "", password: "", role: "manager", pin: "", pinConfirm: "" });
-      setAddFormError("");
-    },
-    onError: (err: any) => {
-      setAddFormError(parseError(err));
-    },
-  });
-
-  const deleteUserMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/users/${id}`),
-    onSuccess: () => {
-      toast({ title: "User deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Failed to delete user", description: parseError(err), variant: "destructive" });
-    },
-  });
-
-  const handleAddRole = () => {
-    setAddFormError("");
-    if (!addForm.username.trim()) { setAddFormError("Username is required"); return; }
-    if (addForm.password.length < 6) { setAddFormError("Password must be at least 6 characters"); return; }
-    if (addForm.pin) {
-      if (addForm.pin.length !== 4 && addForm.pin.length !== 6) { setAddFormError("PIN must be 4 or 6 digits"); return; }
-      if (addForm.pin !== addForm.pinConfirm) { setAddFormError("PINs do not match"); return; }
-    }
-    createRoleMutation.mutate(addForm);
-  };
-
-  const openPinDialog = (user: any, mode: "set" | "remove") => {
-    setPinDialogUser(user);
-    setPinDialogMode(mode);
-    setNewPin("");
-    setNewPinConfirm("");
-    setPinDialogError("");
-  };
-
-  const handlePinSave = () => {
-    if (pinDialogMode === "remove") {
-      setPinMutation.mutate({ id: pinDialogUser.id, pin: null });
-      return;
-    }
-    if (newPin.length !== 4 && newPin.length !== 6) { setPinDialogError("PIN must be 4 or 6 digits"); return; }
-    if (newPin !== newPinConfirm) { setPinDialogError("PINs do not match"); return; }
-    setPinMutation.mutate({ id: pinDialogUser.id, pin: newPin });
-  };
-
-  const roleDescriptions: Record<string, string> = {
-    admin: "Full access to all features",
-    manager: "Menu, orders, reports & POS",
-  };
+function AccountDialog({
+  open, initial, onClose, onSave,
+}: {
+  open: boolean;
+  initial: User | null;
+  onClose: () => void;
+  onSave: (data: { username: string; password: string; role: string; pin?: string }) => void;
+}) {
+  const form = useForm({ defaultValues: { username: "", password: "", role: "staff", pin: "" } });
+  useEffect(() => {
+    if (initial) form.reset({ username: initial.username, password: "", role: initial.role, pin: (initial as any).pin ?? "" });
+    else form.reset({ username: "", password: "", role: "staff", pin: "" });
+  }, [initial, open]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center gap-2 flex-wrap">
-        <p className="text-sm text-muted-foreground">Assign roles and manage POS PINs for each user</p>
-        <div className="flex items-center gap-2 flex-wrap">
-          {resetConfirm ? (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-red-600 font-medium">Sure? This clears all PINs.</span>
-              <Button size="sm" variant="destructive" disabled={resetAllPinsMutation.isPending}
-                onClick={() => resetAllPinsMutation.mutate()}>
-                {resetAllPinsMutation.isPending ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Resetting...</> : "Yes, Reset"}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Button>
-            </div>
-          ) : (
-            <Button size="sm" variant="outline" className="text-destructive border-red-200 hover:bg-red-50"
-              onClick={() => setResetConfirm(true)}>
-              Reset All PINs
-            </Button>
-          )}
-          <Button size="sm" onClick={() => { setShowAddRole(true); setAddFormError(""); }}>
-            <Plus className="w-4 h-4 mr-1" /> Add Role
-          </Button>
-        </div>
-      </div>
-
-      {/* Role legend */}
-      <div className="rounded-2xl"
-        style={{
-          background: "rgba(255,255,255,0.46)",
-          backdropFilter: "blur(16px) saturate(1.7)",
-          WebkitBackdropFilter: "blur(16px) saturate(1.7)",
-          border: "1px solid rgba(255,255,255,0.68)",
-          boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
-        }}>
-        <div className="pt-4 pb-3 px-5">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Role Permissions</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {ROLES.map(r => (
-              <div key={r} className="flex items-start gap-2">
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5 ${roleColors[r]}`}>{r}</span>
-                <span className="text-xs text-muted-foreground">{roleDescriptions[r]}</span>
-              </div>
-            ))}
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{initial ? "Edit Account" : "Add Account"}</DialogTitle>
+          <DialogDescription>
+            {initial ? "Update account details." : "Create a new login account."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={form.handleSubmit((d) => onSave({ ...d, pin: d.pin || undefined }))} className="space-y-4">
+          <div>
+            <label className="text-sm font-medium">Username</label>
+            <Input {...form.register("username", { required: true })} placeholder="e.g. manager2" className="mt-1" />
           </div>
-        </div>
+          <div>
+            <label className="text-sm font-medium">{initial ? "New Password (leave blank to keep)" : "Password"}</label>
+            <Input type="password" {...form.register("password", { required: !initial })} placeholder="Min 6 characters" className="mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Role</label>
+            <Select value={form.watch("role")} onValueChange={(v) => form.setValue("role", v)}>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="manager">Manager</SelectItem>
+                <SelectItem value="staff">Staff</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(optional, 4 or 6 digits — for POS role switching)</span></label>
+            <Input {...form.register("pin")} placeholder="4 or 6 digits" maxLength={6} inputMode="numeric" className="mt-1" />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit">{initial ? "Save Changes" : "Create Account"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Staff Member Dialog ───────────────────────────────────────────────────────
+
+function StaffMemberDialog({
+  open, initial, onClose, onSave,
+}: {
+  open: boolean;
+  initial: any | null;
+  onClose: () => void;
+  onSave: (data: { name: string; pin: string }) => void;
+}) {
+  const form = useForm({ defaultValues: { name: "", pin: "", confirmPin: "" } });
+  useEffect(() => {
+    if (initial) form.reset({ name: initial.name, pin: "", confirmPin: "" });
+    else form.reset({ name: "", pin: "", confirmPin: "" });
+  }, [initial, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{initial ? "Edit Staff Member" : "Add Staff Member"}</DialogTitle>
+          <DialogDescription>
+            Staff members appear as name cards on the mobile login screen and log in with PIN.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={form.handleSubmit((d) => {
+            if (d.pin !== d.confirmPin) { form.setError("confirmPin", { message: "PINs don't match" }); return; }
+            if (d.pin && (d.pin.length !== 4 && d.pin.length !== 6)) { form.setError("pin", { message: "PIN must be 4 or 6 digits" }); return; }
+            onSave({ name: d.name, pin: d.pin });
+          })}
+          className="space-y-4"
+        >
+          <div>
+            <label className="text-sm font-medium">Name</label>
+            <Input {...form.register("name", { required: true })} placeholder="e.g. Balawant" className="mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(4 or 6 digits)</span></label>
+            <Input type="password" inputMode="numeric" {...form.register("pin")} placeholder="4 or 6 digits" maxLength={6} className="mt-1" />
+            {form.formState.errors.pin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message as string}</p>}
+          </div>
+          <div>
+            <label className="text-sm font-medium">Confirm PIN</label>
+            <Input type="password" inputMode="numeric" {...form.register("confirmPin")} placeholder="Re-enter PIN" maxLength={6} className="mt-1" />
+            {form.formState.errors.confirmPin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.confirmPin.message as string}</p>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit">{initial ? "Save Changes" : "Add Staff Member"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Role Permissions Tab ──────────────────────────────────────────────────────
+
+function RolePermissionsTab({
+  managerPages, setManagerPages, saveManagerPages,
+  staffPages, setStaffPages, saveStaffPages,
+}: {
+  managerPages: Record<string, boolean>;
+  setManagerPages: (v: Record<string, boolean>) => void;
+  saveManagerPages: () => void;
+  staffPages: Record<string, boolean>;
+  setStaffPages: (v: Record<string, boolean>) => void;
+  saveStaffPages: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="rounded-xl border border-gray-200 p-5 opacity-50">
+        <h3 className="font-semibold text-sm text-gray-700 mb-3">Admin <span className="text-gray-400 font-normal text-xs">— always full access</span></h3>
+        <p className="text-xs text-gray-400">Admin always has access to all pages. This cannot be changed.</p>
       </div>
 
-      {isLoading ? (
+      <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-5">
+        <h3 className="font-semibold text-sm text-blue-700 mb-4">Manager</h3>
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-20 skeleton-glass" />)}
-        </div>
-      ) : (
-        <>
-        {users.length === 0 && (
-          <p className="text-sm text-muted-foreground text-center py-6">No users found. Make sure you are logged in as admin.</p>
-        )}
-        <div className="space-y-2">
-          {users.map((u: any) => (
-            <div key={u.id} className="rounded-xl p-4 space-y-3 transition-all duration-200"
-              style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(16px) saturate(1.8)",
-                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-                border: "1px solid rgba(255,255,255,0.72)",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
-              }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center">
-                    <User className="w-4 h-4 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm">{u.username}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {u.pin ? <span className="text-green-600 flex items-center gap-1"><Shield className="w-3 h-3" />PIN set</span> : <span className="text-muted-foreground">No PIN</span>}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {u.id === currentUser?.id && <Badge variant="outline" className="text-xs">You</Badge>}
-                  {u.id !== currentUser?.id && (
-                    <Button
-                      size="sm" variant="ghost"
-                      className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-red-50"
-                      onClick={() => { if (confirm(`Delete "${u.username}"?`)) deleteUserMutation.mutate(u.id); }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* Role selector */}
-                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                  <Label className="text-xs text-muted-foreground shrink-0">Role:</Label>
-                  <Select
-                    value={u.role}
-                    onValueChange={(v) => updateRoleMutation.mutate({ id: u.id, role: v })}
-                    disabled={u.id === currentUser?.id}
-                  >
-                    <SelectTrigger className="h-8 text-xs flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map(r => (
-                        <SelectItem key={r} value={r} className="text-xs capitalize">{r}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* PIN buttons — all users */}
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                    onClick={() => openPinDialog(u, "set")}
-                  >
-                    <Shield className="w-3 h-3" />
-                    {u.pin ? "Change PIN" : "Set PIN"}
-                  </Button>
-                  {u.pin && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs gap-1 text-destructive border-red-200 hover:bg-red-50"
-                      onClick={() => openPinDialog(u, "remove")}
-                    >
-                      Remove PIN
-                    </Button>
-                  )}
-                </div>
-              </div>
+          {PAGE_ACCESS_LIST.map(p => (
+            <div key={p.href} className="flex items-center justify-between">
+              <span className="text-sm text-gray-700">{p.label}</span>
+              <Switch
+                checked={managerPages[p.href] ?? true}
+                onCheckedChange={(checked) => setManagerPages({ ...managerPages, [p.href]: checked })}
+              />
             </div>
           ))}
         </div>
-        </>
-      )}
+        <Button className="w-full mt-4" size="sm" onClick={saveManagerPages}>Save Manager Access</Button>
+      </div>
 
-      {/* Add Role Dialog */}
-      <Dialog open={showAddRole} onOpenChange={(o) => { setShowAddRole(o); setAddFormError(""); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-primary" /> Add Role
-            </DialogTitle>
-            <DialogDescription>Create a new user with a role and optional PIN.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Username</Label>
-              <Input placeholder="e.g. manager2" value={addForm.username}
-                onChange={(e) => setAddForm(f => ({ ...f, username: e.target.value }))} />
+      <div className="rounded-xl border border-green-200 bg-green-50/30 p-5">
+        <h3 className="font-semibold text-sm text-green-700 mb-4">Staff</h3>
+        <div className="space-y-3">
+          {PAGE_ACCESS_LIST.map(p => (
+            <div key={p.href} className="flex items-center justify-between">
+              <span className="text-sm text-gray-700">{p.label}</span>
+              <Switch
+                checked={staffPages[p.href] ?? true}
+                onCheckedChange={(checked) => setStaffPages({ ...staffPages, [p.href]: checked })}
+              />
             </div>
-            <div className="space-y-1.5">
-              <Label>Password</Label>
-              <Input type="password" placeholder="Min 6 characters" value={addForm.password}
-                onChange={(e) => setAddForm(f => ({ ...f, password: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Role</Label>
-              <Select value={addForm.role} onValueChange={(v) => setAddForm(f => ({ ...f, role: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>PIN <span className="text-muted-foreground font-normal text-xs">(optional, 4 or 6 digits)</span></Label>
-              <Input type="password" inputMode="numeric" maxLength={6} placeholder="4 or 6 digits"
-                value={addForm.pin}
-                onChange={(e) => setAddForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))} />
-            </div>
-            {addForm.pin.length > 0 && (
-              <div className="space-y-1.5">
-                <Label>Confirm PIN</Label>
-                <Input type="password" inputMode="numeric" maxLength={6} placeholder="Re-enter PIN"
-                  value={addForm.pinConfirm}
-                  onChange={(e) => setAddForm(f => ({ ...f, pinConfirm: e.target.value.replace(/\D/g, "") }))} />
-              </div>
-            )}
-            {addFormError && <p className="text-xs text-destructive">{addFormError}</p>}
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={() => setShowAddRole(false)}>Cancel</Button>
-              <Button disabled={createRoleMutation.isPending} onClick={handleAddRole}>
-                {createRoleMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</> : "Create Role"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* PIN Dialog */}
-      <Dialog open={!!pinDialogUser} onOpenChange={() => setPinDialogUser(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-blue-600" />
-              {pinDialogMode === "remove" ? "Remove PIN" : pinDialogUser?.pin ? "Change PIN" : "Set PIN"}
-            </DialogTitle>
-            <DialogDescription>
-              {pinDialogMode === "remove"
-                ? `Remove the PIN for "${pinDialogUser?.username}".`
-                : `${pinDialogUser?.pin ? "Change" : "Set a"} 4 or 6-digit PIN for "${pinDialogUser?.username}".`}
-            </DialogDescription>
-          </DialogHeader>
-          {pinDialogMode === "remove" ? (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">Are you sure you want to remove this user's PIN?</p>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button variant="destructive" disabled={setPinMutation.isPending} onClick={handlePinSave}>
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Removing...</> : "Remove PIN"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>New PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="4 or 6 digits"
-                  value={newPin} onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
-              </div>
-              <div className="space-y-2">
-                <Label>Confirm PIN</Label>
-                <Input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6} placeholder="Re-enter PIN"
-                  value={newPinConfirm} onChange={(e) => { setNewPinConfirm(e.target.value.replace(/\D/g, "")); setPinDialogError(""); }} />
-              </div>
-              {pinDialogError && <p className="text-xs text-destructive">{pinDialogError}</p>}
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPinDialogUser(null)}>Cancel</Button>
-                <Button disabled={setPinMutation.isPending || !newPin} onClick={handlePinSave}>
-                  {setPinMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : "Save PIN"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+          ))}
+        </div>
+        <Button className="w-full mt-4" size="sm" onClick={saveStaffPages}>Save Staff Access</Button>
+      </div>
     </div>
   );
 }
@@ -604,6 +437,62 @@ export default function Admin() {
   const { toast } = useToast();
   const [usernameLoading, setUsernameLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
+
+  const isAdmin = user?.role === "admin";
+
+  // Manager pages
+  const { data: managerPagesData, refetch: refetchManagerPages } = useQuery<{ managerAllowedPages: string[] | null }>({
+    queryKey: ["/api/settings/manager-pages"],
+  });
+  const [managerPages, setManagerPages] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (managerPagesData) {
+      const allowed = managerPagesData.managerAllowedPages;
+      const init: Record<string, boolean> = {};
+      PAGE_ACCESS_LIST.forEach(p => { init[p.href] = allowed === null || allowed.includes(p.href); });
+      setManagerPages(init);
+    }
+  }, [managerPagesData]);
+
+  const saveManagerPagesMutation = useMutation({
+    mutationFn: async (pages: Record<string, boolean>) => {
+      const allowed = Object.entries(pages).filter(([, v]) => v).map(([href]) => href);
+      const allOn = allowed.length === PAGE_ACCESS_LIST.length;
+      return apiRequest("POST", "/api/settings/manager-pages", { managerAllowedPages: allOn ? null : allowed });
+    },
+    onSuccess: () => { refetchManagerPages(); toast({ title: "Manager page access saved" }); },
+    onError: (err: any) => {
+      toast({ title: "Failed to save", description: parseError(err), variant: "destructive" });
+    },
+  });
+
+  // Staff pages
+  const { data: staffPagesData, refetch: refetchStaffPages } = useQuery<{ staffAllowedPages: string[] | null }>({
+    queryKey: ["/api/settings/staff-pages"],
+  });
+  const [staffPages, setStaffPages] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (staffPagesData) {
+      const allowed = staffPagesData.staffAllowedPages;
+      const init: Record<string, boolean> = {};
+      PAGE_ACCESS_LIST.forEach(p => { init[p.href] = allowed === null || allowed.includes(p.href); });
+      setStaffPages(init);
+    }
+  }, [staffPagesData]);
+
+  const saveStaffPagesMutation = useMutation({
+    mutationFn: async (pages: Record<string, boolean>) => {
+      const allowed = Object.entries(pages).filter(([, v]) => v).map(([href]) => href);
+      const allOn = allowed.length === PAGE_ACCESS_LIST.length;
+      return apiRequest("POST", "/api/settings/staff-pages", { staffAllowedPages: allOn ? null : allowed });
+    },
+    onSuccess: () => { refetchStaffPages(); toast({ title: "Staff page access saved" }); },
+    onError: (err: any) => {
+      toast({ title: "Failed to save", description: parseError(err), variant: "destructive" });
+    },
+  });
 
   const usernameForm = useForm<UsernameForm>({
     resolver: zodResolver(usernameSchema),
@@ -644,17 +533,15 @@ export default function Admin() {
     }
   };
 
-  const isAdmin = user?.role === "admin";
-
   return (
     <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" style={{ background: "transparent" }}>
-    <div className="p-3 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
+    <div className="p-3 sm:p-6 max-w-5xl mx-auto space-y-4 sm:space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Admin Panel</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage users, categories, and your account</p>
+        <p className="text-sm text-gray-500 mt-1">Manage accounts, role permissions, and your profile</p>
       </div>
 
-      <Tabs defaultValue={isAdmin ? "users" : "profile"}>
+      <Tabs defaultValue={isAdmin ? "accounts" : "profile"}>
         <TabsList className={`flex w-full overflow-x-auto rounded-xl p-1`}
           style={{
             background: "rgba(255,255,255,0.50)",
@@ -663,23 +550,28 @@ export default function Admin() {
             border: "1px solid rgba(255,255,255,0.70)",
             boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
           }}>
-          {isAdmin && <TabsTrigger value="users"><Users className="w-4 h-4 mr-1.5" />Users</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="roles"><ShieldCheck className="w-4 h-4 mr-1.5" />Roles</TabsTrigger>}
-          <TabsTrigger value="profile"><User className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
+          {isAdmin && <TabsTrigger value="accounts"><Users className="w-4 h-4 mr-1.5" />Accounts</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="role-permissions"><ShieldCheck className="w-4 h-4 mr-1.5" />Role Permissions</TabsTrigger>}
+          <TabsTrigger value="profile"><UserIcon className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
         </TabsList>
 
-        {/* Users Tab */}
         {isAdmin && (
-          <TabsContent value="users" className="mt-6">
-            <UsersTab />
+          <TabsContent value="accounts" className="mt-6">
+            <AccountsTab />
           </TabsContent>
         )}
 
-        {/* Roles Tab */}
         {isAdmin && (
-          <TabsContent value="roles" className="mt-6">
-            <RolesTab />
+          <TabsContent value="role-permissions" className="mt-6">
+            <RolePermissionsTab
+              managerPages={managerPages}
+              setManagerPages={setManagerPages}
+              saveManagerPages={() => saveManagerPagesMutation.mutate(managerPages)}
+              staffPages={staffPages}
+              setStaffPages={setStaffPages}
+              saveStaffPages={() => saveStaffPagesMutation.mutate(staffPages)}
+            />
           </TabsContent>
         )}
 
@@ -694,7 +586,7 @@ export default function Admin() {
               boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
             }}>
             <div className="flex items-center gap-2 mb-1">
-              <User className="w-5 h-5 text-emerald-600" />
+              <UserIcon className="w-5 h-5 text-emerald-600" />
               <h3 className="font-semibold text-gray-800">Change Username</h3>
             </div>
             <p className="text-xs text-gray-500 mb-4">Update the username used to sign in</p>
