@@ -16,6 +16,10 @@ export function useWebSocket(_url: string) {
   const delayRef = useRef(MIN_DELAY);
 
   useEffect(() => {
+    // WebSocket requires a persistent server — not available on serverless (Vercel).
+    // Only connect in local dev where the Express WS server is running.
+    if (!import.meta.env.DEV) return;
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
