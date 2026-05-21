@@ -49,9 +49,6 @@ const passwordSchema = z.object({
 type UsernameForm = z.infer<typeof usernameSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
-const ROLES = ["admin", "manager", "staff"] as const;
-type Role = typeof ROLES[number];
-
 const roleColors: Record<string, string> = {
   admin:   "bg-amber-100 text-amber-800",
   manager: "bg-blue-100 text-blue-800",
@@ -91,8 +88,8 @@ function parseError(err: any): string {
 
 function AccountsTab() {
   const { toast } = useToast();
-  const { data: users = [], refetch } = useQuery<User[]>({ queryKey: ["/api/users"] });
-  const { data: staffList = [], refetch: refetchStaff } = useQuery<any[]>({ queryKey: ["/api/staff-members/all"] });
+  const { data: users = [] } = useQuery<User[]>({ queryKey: ["/api/users"] });
+  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/staff-members/all"] });
 
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editAccount, setEditAccount] = useState<User | null>(null);
@@ -103,7 +100,7 @@ function AccountsTab() {
     mutationFn: (data: { username: string; password: string; role: string; pin?: string }) =>
       apiRequest("POST", "/api/users", data),
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setShowAddAccount(false);
       toast({ title: "Account created" });
@@ -116,7 +113,7 @@ function AccountsTab() {
     mutationFn: ({ id, ...data }: { id: number; username?: string; password?: string; role?: string; pin?: string }) =>
       apiRequest("PUT", `/api/users/${id}`, data),
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       setEditAccount(null);
       toast({ title: "Account updated" });
@@ -128,7 +125,7 @@ function AccountsTab() {
   const deleteAccount = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/switchable-roles"] });
       toast({ title: "Account deleted" });
     },
@@ -139,7 +136,7 @@ function AccountsTab() {
 
   const createStaffMember = useMutation({
     mutationFn: (data: { name: string; pin: string }) => apiRequest("POST", "/api/staff-members", data),
-    onSuccess: () => { refetchStaff(); setShowAddStaff(false); toast({ title: "Staff member added" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }); setShowAddStaff(false); toast({ title: "Staff member added" }); },
     onError: (err: any) => {
       toast({ title: "Failed to add staff member", description: parseError(err), variant: "destructive" });
     },
@@ -147,14 +144,14 @@ function AccountsTab() {
   const updateStaffMember = useMutation({
     mutationFn: ({ id, ...data }: { id: number; name?: string; pin?: string; isActive?: boolean }) =>
       apiRequest("PUT", `/api/staff-members/${id}`, data),
-    onSuccess: () => { refetchStaff(); setEditStaff(null); toast({ title: "Staff member updated" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }); setEditStaff(null); toast({ title: "Staff member updated" }); },
     onError: (err: any) => {
       toast({ title: "Failed to update staff member", description: parseError(err), variant: "destructive" });
     },
   });
   const deleteStaffMember = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/staff-members/${id}`),
-    onSuccess: () => { refetchStaff(); toast({ title: "Staff member removed" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }); toast({ title: "Staff member removed" }); },
     onError: (err: any) => {
       toast({ title: "Failed to remove staff member", description: parseError(err), variant: "destructive" });
     },
@@ -247,6 +244,7 @@ function AccountsTab() {
         initial={editAccount}
         onClose={() => { setShowAddAccount(false); setEditAccount(null); }}
         onSave={(data) => editAccount ? updateAccount.mutate({ id: editAccount.id, ...data }) : createAccount.mutate(data)}
+        isPending={createAccount.isPending || updateAccount.isPending}
       />
 
       <StaffMemberDialog
@@ -254,6 +252,7 @@ function AccountsTab() {
         initial={editStaff}
         onClose={() => { setShowAddStaff(false); setEditStaff(null); }}
         onSave={(data) => editStaff ? updateStaffMember.mutate({ id: editStaff.id, ...data }) : createStaffMember.mutate(data)}
+        isPending={createStaffMember.isPending || updateStaffMember.isPending}
       />
     </div>
   );
@@ -262,18 +261,19 @@ function AccountsTab() {
 // ── Account Dialog ────────────────────────────────────────────────────────────
 
 function AccountDialog({
-  open, initial, onClose, onSave,
+  open, initial, onClose, onSave, isPending,
 }: {
   open: boolean;
   initial: User | null;
   onClose: () => void;
   onSave: (data: { username: string; password: string; role: string; pin?: string }) => void;
+  isPending?: boolean;
 }) {
   const form = useForm({ defaultValues: { username: "", password: "", role: "staff", pin: "" } });
   useEffect(() => {
     if (initial) form.reset({ username: initial.username, password: "", role: initial.role, pin: (initial as any).pin ?? "" });
     else form.reset({ username: "", password: "", role: "staff", pin: "" });
-  }, [initial, open]);
+  }, [initial, open, form]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -306,11 +306,16 @@ function AccountDialog({
           </div>
           <div>
             <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(optional, 4 or 6 digits — for POS role switching)</span></label>
-            <Input {...form.register("pin")} placeholder="4 or 6 digits" maxLength={6} inputMode="numeric" className="mt-1" />
+            <Input {...form.register("pin", {
+              validate: (v) => !v || /^\d{4}$|\d{6}$/.test(v) || "PIN must be exactly 4 or 6 digits",
+            })} placeholder="4 or 6 digits" maxLength={6} inputMode="numeric" className="mt-1" />
+            {form.formState.errors.pin && (
+              <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message as string}</p>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">{initial ? "Save Changes" : "Create Account"}</Button>
+            <Button type="submit" disabled={isPending}>{initial ? "Save Changes" : "Create Account"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -321,18 +326,19 @@ function AccountDialog({
 // ── Staff Member Dialog ───────────────────────────────────────────────────────
 
 function StaffMemberDialog({
-  open, initial, onClose, onSave,
+  open, initial, onClose, onSave, isPending,
 }: {
   open: boolean;
   initial: any | null;
   onClose: () => void;
   onSave: (data: { name: string; pin: string }) => void;
+  isPending?: boolean;
 }) {
   const form = useForm({ defaultValues: { name: "", pin: "", confirmPin: "" } });
   useEffect(() => {
     if (initial) form.reset({ name: initial.name, pin: "", confirmPin: "" });
     else form.reset({ name: "", pin: "", confirmPin: "" });
-  }, [initial, open]);
+  }, [initial, open, form]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -345,6 +351,7 @@ function StaffMemberDialog({
         </DialogHeader>
         <form
           onSubmit={form.handleSubmit((d) => {
+            if (!initial && !d.pin) { form.setError("pin", { message: "PIN is required" }); return; }
             if (d.pin !== d.confirmPin) { form.setError("confirmPin", { message: "PINs don't match" }); return; }
             if (d.pin && (d.pin.length !== 4 && d.pin.length !== 6)) { form.setError("pin", { message: "PIN must be 4 or 6 digits" }); return; }
             onSave({ name: d.name, pin: d.pin });
@@ -367,7 +374,7 @@ function StaffMemberDialog({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">{initial ? "Save Changes" : "Add Staff Member"}</Button>
+            <Button type="submit" disabled={isPending}>{initial ? "Save Changes" : "Add Staff Member"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -380,6 +387,7 @@ function StaffMemberDialog({
 function RolePermissionsTab({
   managerPages, setManagerPages, saveManagerPages,
   staffPages, setStaffPages, saveStaffPages,
+  savingManager, savingStaff,
 }: {
   managerPages: Record<string, boolean>;
   setManagerPages: (v: Record<string, boolean>) => void;
@@ -387,6 +395,8 @@ function RolePermissionsTab({
   staffPages: Record<string, boolean>;
   setStaffPages: (v: Record<string, boolean>) => void;
   saveStaffPages: () => void;
+  savingManager?: boolean;
+  savingStaff?: boolean;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -408,7 +418,7 @@ function RolePermissionsTab({
             </div>
           ))}
         </div>
-        <Button className="w-full mt-4" size="sm" onClick={saveManagerPages}>Save Manager Access</Button>
+        <Button className="w-full mt-4" size="sm" onClick={saveManagerPages} disabled={savingManager}>Save Manager Access</Button>
       </div>
 
       <div className="rounded-xl border border-green-200 bg-green-50/30 p-5">
@@ -424,7 +434,7 @@ function RolePermissionsTab({
             </div>
           ))}
         </div>
-        <Button className="w-full mt-4" size="sm" onClick={saveStaffPages}>Save Staff Access</Button>
+        <Button className="w-full mt-4" size="sm" onClick={saveStaffPages} disabled={savingStaff}>Save Staff Access</Button>
       </div>
     </div>
   );
@@ -443,6 +453,7 @@ export default function Admin() {
   // Manager pages
   const { data: managerPagesData, refetch: refetchManagerPages } = useQuery<{ managerAllowedPages: string[] | null }>({
     queryKey: ["/api/settings/manager-pages"],
+    enabled: isAdmin,
   });
   const [managerPages, setManagerPages] = useState<Record<string, boolean>>({});
 
@@ -470,6 +481,7 @@ export default function Admin() {
   // Staff pages
   const { data: staffPagesData, refetch: refetchStaffPages } = useQuery<{ staffAllowedPages: string[] | null }>({
     queryKey: ["/api/settings/staff-pages"],
+    enabled: isAdmin,
   });
   const [staffPages, setStaffPages] = useState<Record<string, boolean>>({});
 
@@ -571,6 +583,8 @@ export default function Admin() {
               staffPages={staffPages}
               setStaffPages={setStaffPages}
               saveStaffPages={() => saveStaffPagesMutation.mutate(staffPages)}
+              savingManager={saveManagerPagesMutation.isPending}
+              savingStaff={saveStaffPagesMutation.isPending}
             />
           </TabsContent>
         )}
