@@ -67,6 +67,7 @@ export interface RestaurantSettings {
   posRoleTimeout: number;
   printSettings: PrintConfigSettings;
   managerAllowedPages: string[] | null; // null = all pages allowed
+  staffAllowedPages: string[] | null;   // null = all pages allowed
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -114,6 +115,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   posRoleTimeout: 2,
   printSettings: DEFAULT_PRINT_SETTINGS,
   managerAllowedPages: null,
+  staffAllowedPages: null,
 };
 
 export function getSettings(): RestaurantSettings {
