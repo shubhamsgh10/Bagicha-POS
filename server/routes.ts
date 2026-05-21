@@ -561,6 +561,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ managerAllowedPages: updated.managerAllowedPages });
   });
 
+  // ── Staff page access settings ────────────────────────────────────────────────
+  // GET: Retrieve current staff page restrictions
+  app.get("/api/settings/staff-pages", requireAuth, (_req, res) => {
+    const s = getSettings();
+    res.json({ staffAllowedPages: s.staffAllowedPages });
+  });
+
+  // POST: Update staff page restrictions (admin only)
+  app.post("/api/settings/staff-pages", requireAdmin, (req, res) => {
+    const { staffAllowedPages } = req.body;
+    const updated = saveSettings({ staffAllowedPages: staffAllowedPages ?? null });
+    res.json({ staffAllowedPages: updated.staffAllowedPages });
+  });
+
   // ── User Management (Admin only) ──────────────────────────────────────────────
 
   app.get("/api/users", requireAuth, async (_req, res) => {
