@@ -148,6 +148,7 @@ function useWebSocket(onMessage: (data: any) => void) {
   const ws = useRef<WebSocket | null>(null);
   const reconnect = useRef<ReturnType<typeof setTimeout>>();
   const connect = useCallback(() => {
+    if (!import.meta.env.DEV) return;
     try {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const sock = new WebSocket(`${proto}//${location.host}/ws`);
