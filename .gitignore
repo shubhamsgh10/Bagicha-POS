@@ -9,3 +9,4 @@ code-review-graph/
 .env.local
 .env.*.local
 .vercel
+.worktrees/
