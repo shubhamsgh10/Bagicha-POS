@@ -9,6 +9,7 @@ import {
   Settings, LogOut, ClipboardList, Menu, X, ChefHat, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { toPosRole } from "@/hooks/useRole";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -56,10 +57,11 @@ export function TopNav() {
 
   const visibleNav = NAV_ITEMS.filter(item => {
     if (item.roles && !item.roles.includes(activeRole)) return false;
-    if (activeRole === "manager" && settings?.managerAllowedPages) {
+    const posRole = toPosRole(activeRole);
+    if (posRole === "manager" && settings?.managerAllowedPages) {
       if (!settings.managerAllowedPages.includes(item.href)) return false;
     }
-    if (activeRole === "staff" && settings?.staffAllowedPages) {
+    if (posRole === "staff" && settings?.staffAllowedPages) {
       if (!settings.staffAllowedPages.includes(item.href)) return false;
     }
     return true;
