@@ -281,7 +281,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
             <ChevronLeft className="w-3.5 h-3.5" /> Back to staff
           </button>
           <div>
-            <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager Login</h2>
+            <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager / Admin Login</h2>
             <p className="text-xs text-gray-600 mt-0.5">Restricted access — credentials required</p>
           </div>
           <form onSubmit={handleSubmit(onAdminSubmit)} className="space-y-3">
@@ -436,7 +436,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       .catch(() => setCtx({ isLocalNetwork: false, isMobile: false }));
   }, []);
 
-  if (ctx?.isLocalNetwork && ctx?.isMobile) {
+  if (ctx?.isMobile) {
     return <StaffSelector onLoginSuccess={onLoginSuccess} />;
   }
 
