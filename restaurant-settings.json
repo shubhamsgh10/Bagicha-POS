@@ -45,10 +45,16 @@
     "/orders",
     "/billing",
     "/kot",
-    "/staff",
     "/menu",
     "/inventory",
     "/live-tables",
     "/kitchen"
+  ],
+  "staffAllowedPages": [
+    "/tables",
+    "/orders",
+    "/billing",
+    "/kot",
+    "/live-tables"
   ]
 }
