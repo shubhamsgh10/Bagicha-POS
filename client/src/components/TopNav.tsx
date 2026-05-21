@@ -59,6 +59,9 @@ export function TopNav() {
     if (activeRole === "manager" && settings?.managerAllowedPages) {
       if (!settings.managerAllowedPages.includes(item.href)) return false;
     }
+    if (activeRole === "staff" && settings?.staffAllowedPages) {
+      if (!settings.staffAllowedPages.includes(item.href)) return false;
+    }
     return true;
   });
 
