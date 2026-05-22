@@ -24,6 +24,7 @@ import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines, billLines } from "@/lib/receiptText";
+import { printKOT, printOrderBill } from "@/lib/printBill";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -394,6 +395,11 @@ export default function POS() {
           variant: 'destructive',
         });
         if (order) showKOTPreview(order);
+      } else if (data.browserPrint) {
+        printKOT(
+          { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
+          data.items ?? [],
+        );
       } else if (data.printed === false) {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
       } else {
@@ -415,6 +421,16 @@ export default function POS() {
       const data = await res.json();
       if (!res.ok) {
         if (order) showBillPreview(order);
+      } else if (data.browserPrint) {
+        const [freshOrder, freshSettings] = await Promise.all([
+          fetch(`/api/orders/${orderId}`, { credentials: 'include' }).then(r => r.json()),
+          fetch('/api/settings', { credentials: 'include' }).then(r => r.json()),
+        ]);
+        await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
+        const kotSettings = freshSettings?.printSettings?.kot;
+        if (kotSettings?.printOnBill) {
+          triggerKOTPrint(orderId, order);
+        }
       } else {
         toast({ title: 'Bill sent to printer!' });
         const kotSettings = (settings as any)?.printSettings?.kot;
@@ -518,7 +534,7 @@ export default function POS() {
         const res = await fetch('/api/print/kot', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderId: activeOrderId }),
+          body: JSON.stringify({ orderId: activeOrderId, auto: true }),
           credentials: 'include',
         });
         const data = await res.json();

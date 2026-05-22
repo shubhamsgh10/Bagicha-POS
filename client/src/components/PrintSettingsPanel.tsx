@@ -311,8 +311,8 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
 
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
                 {webUsbSupported
-                  ? 'Click "Scan" to auto-detect. USB requires Zadig WinUSB driver on Windows.'
-                  : 'USB auto-detect requires Chrome or Edge. Find VID/PID in Device Manager.'}
+                  ? 'Click "Scan" to auto-detect your USB printer VID/PID.'
+                  : 'USB auto-detect requires Chrome or Edge. Enter the VID and PID from Device Manager manually.'}
               </p>
             </>
           )}
