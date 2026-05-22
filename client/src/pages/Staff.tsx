@@ -315,7 +315,7 @@ function LeavesPanel() {
               <Label>Staff</Label>
               <Select value={leaveForm.userId} onValueChange={v => setLeaveForm(f => ({ ...f, userId: v }))}>
                 <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
-                <SelectContent>{staffList.map((s: any) => <SelectItem key={s.userId} value={String(s.userId)}>{s.user?.username}</SelectItem>)}</SelectContent>
+                <SelectContent>{staffList.map((s: any, i: number) => <SelectItem key={s.userId ?? i} value={String(s.userId)}>{s.user?.username}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
@@ -361,8 +361,8 @@ function LeavesPanel() {
                 </div>
               </div>
               {leaf.status === "pending" && (
-                <div className="flex items-center gap-2 pt-1">
-                  <Input placeholder="Notes (optional)" value={reviewNotes[leaf.id] ?? ""} className="h-7 text-xs flex-1"
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Input placeholder="Notes (optional)" value={reviewNotes[leaf.id] ?? ""} className="h-7 text-xs flex-1 min-w-[140px]"
                     onChange={e => setReviewNotes(n => ({ ...n, [leaf.id]: e.target.value }))} />
                   <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white gap-1"
                     onClick={() => reviewMutation.mutate({ id: leaf.id, status: "approved" })}>
@@ -487,8 +487,8 @@ function PayrollPanel() {
                 </tr>
               </thead>
               <tbody>
-                {payrollData.map((row: any) => (
-                  <tr key={row.userId} className="border-b border-white/30 hover:bg-white/20">
+                {payrollData.map((row: any, i: number) => (
+                  <tr key={row.userId ?? i} className="border-b border-white/30 hover:bg-white/20">
                     <td className="p-3">
                       <div className="font-medium">{row.username}</div>
                       <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.role}</span>
@@ -536,7 +536,7 @@ function PayrollPanel() {
         <p className="text-sm font-semibold text-gray-700">Staff Profiles &amp; Biometric ID Setup</p>
         <p className="text-xs text-gray-500">Set the Biometric ID matching your fingerprint machine's Employee ID column so imports map correctly.</p>
         <div className="space-y-2">
-          {staffList.map((staff: any) => <StaffProfileRow key={staff.userId} staff={staff} />)}
+          {staffList.map((staff: any, i: number) => <StaffProfileRow key={staff.userId ?? i} staff={staff} />)}
         </div>
       </div>
     </div>
@@ -713,7 +713,7 @@ export default function Staff() {
               onClick={() => setSettingsOpen(true)}
               style={{ ...glass, borderRadius: "10px", padding: "6px 14px", fontSize: "13px", fontWeight: 600, color: "#374151", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}
             >
-              <Settings2 size={14} />Configure Sheet
+              <Settings2 size={14} /><span className="hidden sm:inline">Configure Sheet</span>
             </button>
             <button
               onClick={() => syncMutation.mutate()}
@@ -727,8 +727,8 @@ export default function Staff() {
               }}
             >
               {syncMutation.isPending
-                ? <><Loader2 size={14} className="animate-spin" />Syncing…</>
-                : <><RefreshCw size={14} />Sync Now</>}
+                ? <><Loader2 size={14} className="animate-spin" /><span className="hidden sm:inline">Syncing…</span></>
+                : <><RefreshCw size={14} /><span className="hidden sm:inline">Sync Now</span></>}
             </button>
           </div>
         }
@@ -768,7 +768,7 @@ export default function Staff() {
         {/* Stat strip — shown only on attendance/summary */}
         {summary.length > 0 && (activeTab === "attendance" || activeTab === "summary") && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-            style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}
+            className="grid grid-cols-2 sm:grid-cols-4 gap-3"
           >
             {[
               { label: "Employees",    value: summary.length,       icon: Users,         color: "#6366f1", bg: "rgba(99,102,241,0.10)" },
@@ -806,7 +806,7 @@ export default function Staff() {
               <div key={label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 11, fontWeight: 600, color: "#6b7280", letterSpacing: "0.04em" }}>{label.toUpperCase()}</label>
                 <input type="date" value={value} onChange={e => onChange(e.target.value)}
-                  style={{ ...glass, borderRadius: 10, padding: "6px 10px", fontSize: 13, color: "#111827", outline: "none", height: 34, width: 148 }} />
+                  style={{ ...glass, borderRadius: 10, padding: "6px 10px", fontSize: 13, color: "#111827", outline: "none", height: 34, width: "100%", maxWidth: 148 }} />
               </div>
             ))}
             {activeTab === "attendance" && (
@@ -830,14 +830,15 @@ export default function Staff() {
 
         {/* Tab bar */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.18 }}>
-          <div style={{ display: "inline-flex", gap: 4, background: "rgba(0,0,0,0.05)", borderRadius: 14, padding: 4 }}>
+          <div className="overflow-x-auto pb-1">
+          <div style={{ display: "inline-flex", gap: 4, background: "rgba(0,0,0,0.05)", borderRadius: 14, padding: 4, whiteSpace: "nowrap" }}>
             {TABS.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  padding: "7px 16px", borderRadius: 10, border: "none",
+                  padding: "7px 12px", borderRadius: 10, border: "none",
                   fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.18s ease",
                   ...(activeTab === tab.id
                     ? { background: "rgba(255,255,255,0.85)", color: "#10b981", boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }
@@ -848,6 +849,7 @@ export default function Staff() {
                 {tab.label}
               </button>
             ))}
+          </div>
           </div>
         </motion.div>
 
@@ -869,7 +871,8 @@ export default function Staff() {
                 </div>
               ) : (
                 <div style={{ ...glass, borderRadius: 16, overflow: "hidden" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", padding: "10px 20px", background: "rgba(16,185,129,0.06)", borderBottom: "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                  {/* Desktop header — hidden on mobile */}
+                  <div className="hidden sm:grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", padding: "10px 20px", background: "rgba(16,185,129,0.06)", borderBottom: "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase" }}>
                     <span>Employee</span><span>Date</span><span>Punch In</span><span>Punch Out</span><span>Hours</span><span>Status</span>
                   </div>
                   {attendance.map((rec, i) => {
@@ -877,24 +880,54 @@ export default function Staff() {
                     const sm = statusMeta[rec.status] ?? { bg: "rgba(0,0,0,0.06)", text: "#374151", dot: "#9ca3af" };
                     return (
                       <motion.div key={rec.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i * 0.025, 0.4) }}
-                        style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", padding: "12px 20px", borderBottom: i < attendance.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none", alignItems: "center", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.28)" }}
+                        style={{ borderBottom: i < attendance.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.28)" }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: `linear-gradient(135deg,${c1},${c2})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "white", flexShrink: 0 }}>
-                            {getInitials(rec.employeeName)}
+                        {/* Desktop row */}
+                        <div className="hidden sm:grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", padding: "12px 20px", alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 30, height: 30, borderRadius: "50%", background: `linear-gradient(135deg,${c1},${c2})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "white", flexShrink: 0 }}>
+                              {getInitials(rec.employeeName)}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{rec.employeeName}</div>
+                              {rec.employeeCode && <div style={{ fontSize: 10, color: "#9ca3af" }}>{rec.employeeCode}</div>}
+                            </div>
                           </div>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{rec.employeeName}</div>
-                            {rec.employeeCode && <div style={{ fontSize: 10, color: "#9ca3af" }}>{rec.employeeCode}</div>}
+                          <span style={{ fontSize: 12, color: "#374151" }}>{rec.date}</span>
+                          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchIn ?? "—"}</span>
+                          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchOut ?? "—"}</span>
+                          <span style={{ fontSize: 12, color: "#374151" }}>{fmtHours(parseFloat(rec.hoursWorked ?? "0"))}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: sm.bg, color: sm.text, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, textTransform: "capitalize", width: "fit-content" }}>
+                            <span style={{ width: 5, height: 5, borderRadius: "50%", background: sm.dot, flexShrink: 0 }} />{rec.status}
+                          </span>
+                        </div>
+                        {/* Mobile card */}
+                        <div className="sm:hidden" style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${c1},${c2})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>
+                                {getInitials(rec.employeeName)}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{rec.employeeName}</div>
+                                {rec.employeeCode && <div style={{ fontSize: 10, color: "#9ca3af" }}>{rec.employeeCode}</div>}
+                              </div>
+                            </div>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: sm.bg, color: sm.text, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, textTransform: "capitalize" }}>
+                              <span style={{ width: 5, height: 5, borderRadius: "50%", background: sm.dot, flexShrink: 0 }} />{rec.status}
+                            </span>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
+                            <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>Date</div>
+                            <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>In</div>
+                            <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>Out</div>
+                            <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>Hours</div>
+                            <div style={{ fontSize: 12, color: "#374151" }}>{rec.date}</div>
+                            <div style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchIn ?? "—"}</div>
+                            <div style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchOut ?? "—"}</div>
+                            <div style={{ fontSize: 12, color: "#374151" }}>{fmtHours(parseFloat(rec.hoursWorked ?? "0"))}</div>
                           </div>
                         </div>
-                        <span style={{ fontSize: 12, color: "#374151" }}>{rec.date}</span>
-                        <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchIn ?? "—"}</span>
-                        <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{rec.punchOut ?? "—"}</span>
-                        <span style={{ fontSize: 12, color: "#374151" }}>{fmtHours(parseFloat(rec.hoursWorked ?? "0"))}</span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: sm.bg, color: sm.text, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, textTransform: "capitalize", width: "fit-content" }}>
-                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: sm.dot, flexShrink: 0 }} />{rec.status}
-                        </span>
                       </motion.div>
                     );
                   })}
@@ -1000,7 +1033,7 @@ export default function Staff() {
                       <div key={label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <label style={{ fontSize: 11, fontWeight: 600, color: "#6b7280", letterSpacing: "0.04em" }}>{label.toUpperCase()}</label>
                         <input type="date" value={value} onChange={e => onChange(e.target.value)}
-                          style={{ ...glass, borderRadius: 10, padding: "6px 10px", fontSize: 13, color: "#111827", outline: "none", height: 34, width: 148 }} />
+                          style={{ ...glass, borderRadius: 10, padding: "6px 10px", fontSize: 13, color: "#111827", outline: "none", height: 34, width: "100%", maxWidth: 148 }} />
                       </div>
                     ))}
                   </div>

@@ -566,7 +566,8 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue={isAdmin ? "accounts" : "profile"}>
-        <TabsList className={`flex w-full overflow-x-auto rounded-xl p-1`}
+        <div className="overflow-x-auto">
+        <TabsList className={`flex min-w-full justify-start rounded-xl p-1`}
           style={{
             background: "rgba(255,255,255,0.50)",
             backdropFilter: "blur(16px) saturate(1.8)",
@@ -579,6 +580,7 @@ export default function Admin() {
           <TabsTrigger value="profile"><UserIcon className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
         </TabsList>
+        </div>
 
         {isAdmin && (
           <TabsContent value="accounts" className="mt-6">
