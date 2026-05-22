@@ -557,9 +557,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ managerAllowedPages: s.managerAllowedPages });
   });
 
-  app.post("/api/settings/manager-pages", requireAdmin, (req, res) => {
+  app.post("/api/settings/manager-pages", requireAdmin, async (req, res) => {
     const { managerAllowedPages } = req.body;
-    const updated = saveSettings({ managerAllowedPages: managerAllowedPages ?? null });
+    const updated = await saveSettings({ managerAllowedPages: managerAllowedPages ?? null });
     res.json({ managerAllowedPages: updated.managerAllowedPages });
   });
 
@@ -571,9 +571,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST: Update staff page restrictions (admin only)
-  app.post("/api/settings/staff-pages", requireAdmin, (req, res) => {
+  app.post("/api/settings/staff-pages", requireAdmin, async (req, res) => {
     const { staffAllowedPages } = req.body;
-    const updated = saveSettings({ staffAllowedPages: staffAllowedPages ?? null });
+    const updated = await saveSettings({ staffAllowedPages: staffAllowedPages ?? null });
     res.json({ staffAllowedPages: updated.staffAllowedPages });
   });
 
@@ -880,9 +880,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/settings", requireAdmin, (req, res) => {
+  app.put("/api/settings", requireAdmin, async (req, res) => {
     try {
-      const updated = saveSettings(req.body);
+      const updated = await saveSettings(req.body);
       logAudit(req, "settings.update", "settings", null, { fields: Object.keys(req.body) });
       res.json(updated);
     } catch (err) {

@@ -170,8 +170,8 @@ export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
 }
 
-// Synchronous — updates cache immediately, then persists to DB asynchronously
-export function saveSettings(settings: Partial<RestaurantSettings>): RestaurantSettings {
+// Async — updates cache immediately, then awaits DB write before resolving
+export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
   const current = getSettings();
   const updated: RestaurantSettings = { ...current, ...settings };
   if (settings.printSettings) {
@@ -183,13 +183,11 @@ export function saveSettings(settings: Partial<RestaurantSettings>): RestaurantS
     };
   }
   settingsCache = updated;
-  // Persist to DB — fire and forget so the response isn't blocked
-  db.insert(restaurantSettings)
+  await db.insert(restaurantSettings)
     .values({ id: 1, settings: updated as any, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: restaurantSettings.id,
       set: { settings: updated as any, updatedAt: new Date() },
-    })
-    .catch((e) => console.error("[settings] DB write failed:", e));
+    });
   return updated;
 }
