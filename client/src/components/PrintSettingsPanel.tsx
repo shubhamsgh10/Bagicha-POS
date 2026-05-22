@@ -127,7 +127,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
         ...f,
         vendorId: device.vendorId,
         productId: device.productId,
-        name: f.name?.trim() ? f.name : (device.productName ?? 'USB Printer'),
+        name: f.name?.trim() ? f.name : (device.productName || device.manufacturerName || 'USB Printer'),
       }));
     } catch (err: any) {
       if (err.name !== 'NotFoundError') console.error('WebUSB scan failed:', err);
