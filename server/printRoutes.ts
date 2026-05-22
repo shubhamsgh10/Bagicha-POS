@@ -149,7 +149,7 @@ export function registerPrintRoutes(app: Express): void {
   // ── POST /api/print/kot ───────────────────────────────────────────────────────
   app.post('/api/print/kot', requireAuth, async (req, res) => {
     try {
-      const { orderId, reprint = false } = req.body as { orderId: number; reprint?: boolean };
+      const { orderId, reprint = false, auto = false } = req.body as { orderId: number; reprint?: boolean; auto?: boolean };
       if (!orderId) return res.status(400).json({ message: 'orderId is required' });
 
       const settings = getSettings();
@@ -157,13 +157,6 @@ export function registerPrintRoutes(app: Express): void {
 
       if (!kotSettings.enabled) {
         return res.json({ printed: false, reason: 'kot_disabled' });
-      }
-
-      const printer = printers.find(p => p.id === kotSettings.kotPrinterId);
-      if (!printer) {
-        return res.status(422).json({
-          message: 'No KOT printer configured. Go to Settings → Print Settings → Printer Setup.',
-        });
       }
 
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
@@ -226,6 +219,28 @@ export function registerPrintRoutes(app: Express): void {
         isDelta = true;
       }
 
+      const printer = printers.find(p => p.id === kotSettings.kotPrinterId);
+
+      // No hardware printer → browser print (skip for auto-KOT since popup blockers prevent it)
+      if (!printer) {
+        if (auto) {
+          return res.json({ printed: false, reason: 'no_hardware_printer' });
+        }
+        if (!reprint) {
+          await db.update(orders).set({
+            kotPrintCount: (order.kotPrintCount ?? 0) + 1,
+            lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
+          }).where(eq(orders.id, orderId));
+        }
+        return res.json({
+          browserPrint: true,
+          isDelta,
+          orderNumber: order.orderNumber,
+          tableNumber: order.tableNumber,
+          items: newItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size })),
+        });
+      }
+
       const buffer = generateKOTBuffer({
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
@@ -263,15 +278,18 @@ export function registerPrintRoutes(app: Express): void {
       const settings = getSettings();
       const { bill: billSettings, printers } = settings.printSettings;
 
-      const printer = printers.find(p => p.id === billSettings.billPrinterId);
-      if (!printer) {
-        return res.status(422).json({
-          message: 'No Bill printer configured. Go to Settings → Print Settings → Printer Setup.',
-        });
-      }
-
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
       if (!order) return res.status(404).json({ message: 'Order not found' });
+
+      const printer = printers.find(p => p.id === billSettings.billPrinterId);
+
+      // No hardware printer → browser print
+      if (!printer) {
+        await db.update(orders).set({
+          billPrintCount: (order.billPrintCount ?? 0) + 1,
+        }).where(eq(orders.id, orderId));
+        return res.json({ browserPrint: true });
+      }
 
       const rawItems = await db
         .select({

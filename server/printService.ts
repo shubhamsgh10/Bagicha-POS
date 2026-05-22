@@ -22,20 +22,26 @@ export async function sendToNetworkPrinter(ip: string, port: number, data: Buffe
   });
 }
 
-export async function sendToUsbPrinter(vendorId: number, productId: number, data: Buffer): Promise<void> {
+export async function sendToUsbPrinter(
+  vendorId: number,
+  productId: number,
+  data: Buffer,
+): Promise<void> {
   let usbModule: any;
   try {
     usbModule = await import('usb');
   } catch {
-    throw new Error('USB printing requires the "usb" package (npm install usb) and Zadig WinUSB driver setup on Windows.');
+    throw new Error('USB printing requires the "usb" package. Run: npm install usb');
   }
+
   const device = usbModule.findByIds(vendorId, productId);
   if (!device) {
     throw new Error(
-      `USB printer not found (VID:0x${vendorId.toString(16).padStart(4, '0')} PID:0x${productId.toString(16).padStart(4, '0')}). ` +
-      `Ensure the printer is connected and Zadig WinUSB driver is installed.`
+      `USB printer not found (VID:0x${vendorId.toString(16).padStart(4, '0')} ` +
+      `PID:0x${productId.toString(16).padStart(4, '0')}). Ensure the printer is connected and the WebUSB driver is installed (Zadig).`,
     );
   }
+
   device.open();
   const iface = device.interfaces[0];
   if (iface.isKernelDriverActive?.()) iface.detachKernelDriver();
