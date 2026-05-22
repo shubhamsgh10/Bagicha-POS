@@ -446,7 +446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Switching to "manager" → manager OR admin PIN accepted
       // Any other role         → that role's PIN OR any higher role's PIN accepted
       const ROLE_LEVEL: Record<string, number> = {
-        staff: 0, cashier: 0, kitchen: 0, manager: 1, admin: 2,
+        staff: 0, cashier: 0, manager: 1, admin: 2,
       };
       const targetLevel = ROLE_LEVEL[requiredRole] ?? 1;
       const match = allUsers.find(
@@ -687,6 +687,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/logs", requireAdmin, (_req, res) => {
     res.json(getLogBuffer());
+  });
+
+  app.post("/api/admin/cache-clear", requireAdmin, (_req, res) => {
+    const clientCount = wss.clients.size;
+    broadcast({ type: "CACHE_BUST" });
+    res.json({ ok: true, clients: clientCount });
   });
 
   app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {

@@ -6,7 +6,7 @@ import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid, History, UtensilsCrossed, Package,
   BarChart3, Activity, Monitor, User, Users,
-  Settings, LogOut, ClipboardList, Menu, X, ChefHat, CreditCard, UserCheck,
+  Settings, LogOut, ClipboardList, Menu, X, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { toPosRole } from "@/hooks/useRole";
@@ -30,7 +30,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Menu",        href: "/menu",           icon: UtensilsCrossed,  roles: ["admin", "manager"] },
   { label: "Inventory",   href: "/inventory",      icon: Package,          roles: ["admin", "manager"] },
   { label: "Live Tables", href: "/live-tables",    icon: Monitor,          roles: ["admin", "manager"] },
-  { label: "Kitchen",     href: "/kitchen",        icon: ChefHat,          roles: ["admin", "manager"] },
   { label: "Customers",   href: "/customers",      icon: Users,            roles: ["admin", "manager"] },
   { label: "Live View",   href: "/live-analytics", icon: Activity,         roles: ["admin"] },
   { label: "Reports",     href: "/reports",        icon: BarChart3,        roles: ["admin"] },

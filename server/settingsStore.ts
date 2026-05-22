@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
+import { restaurantSettings } from "@shared/schema";
 
 const SETTINGS_FILE = path.join(process.cwd(), "restaurant-settings.json");
 
@@ -118,25 +121,56 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   staffAllowedPages: null,
 };
 
-export function getSettings(): RestaurantSettings {
+// ── In-memory cache (survives within a single serverless instance) ────────────
+
+let settingsCache: RestaurantSettings | null = null;
+
+function buildSettings(data: Record<string, any>): RestaurantSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...data,
+    printSettings: {
+      ...DEFAULT_PRINT_SETTINGS,
+      ...(data.printSettings ?? {}),
+      kot: { ...DEFAULT_PRINT_SETTINGS.kot, ...(data.printSettings?.kot ?? {}) },
+      bill: { ...DEFAULT_PRINT_SETTINGS.bill, ...(data.printSettings?.bill ?? {}) },
+    },
+  };
+}
+
+function loadFromFile(): RestaurantSettings {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
-      return {
-        ...DEFAULT_SETTINGS,
-        ...data,
-        printSettings: {
-          ...DEFAULT_PRINT_SETTINGS,
-          ...(data.printSettings ?? {}),
-          kot: { ...DEFAULT_PRINT_SETTINGS.kot, ...(data.printSettings?.kot ?? {}) },
-          bill: { ...DEFAULT_PRINT_SETTINGS.bill, ...(data.printSettings?.bill ?? {}) },
-        },
-      };
+      return buildSettings(JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")));
     }
   } catch {}
   return { ...DEFAULT_SETTINGS };
 }
 
+// Call once at server startup — seeds in-memory cache from DB (falls back to file)
+export async function initSettings(): Promise<void> {
+  try {
+    const rows = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
+    if (rows.length > 0) {
+      settingsCache = buildSettings(rows[0].settings as Record<string, any>);
+    } else {
+      // First boot: seed DB from the committed JSON file so existing config is preserved
+      const fileSettings = loadFromFile();
+      settingsCache = fileSettings;
+      await db.insert(restaurantSettings).values({ id: 1, settings: fileSettings as any });
+    }
+  } catch (e) {
+    console.error("[settings] DB init failed, using file fallback:", e);
+    settingsCache = loadFromFile();
+  }
+}
+
+// Synchronous — reads from in-memory cache; falls back to file if cache not yet warm
+export function getSettings(): RestaurantSettings {
+  return settingsCache ?? loadFromFile();
+}
+
+// Synchronous — updates cache immediately, then persists to DB asynchronously
 export function saveSettings(settings: Partial<RestaurantSettings>): RestaurantSettings {
   const current = getSettings();
   const updated: RestaurantSettings = { ...current, ...settings };
@@ -148,10 +182,14 @@ export function saveSettings(settings: Partial<RestaurantSettings>): RestaurantS
       bill: { ...current.printSettings.bill, ...(settings.printSettings.bill ?? {}) },
     };
   }
-  try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2));
-  } catch {
-    // Filesystem may be read-only (e.g. Vercel serverless) — return in-memory value
-  }
+  settingsCache = updated;
+  // Persist to DB — fire and forget so the response isn't blocked
+  db.insert(restaurantSettings)
+    .values({ id: 1, settings: updated as any, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: restaurantSettings.id,
+      set: { settings: updated as any, updatedAt: new Date() },
+    })
+    .catch((e) => console.error("[settings] DB write failed:", e));
   return updated;
 }

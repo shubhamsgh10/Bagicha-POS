@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Lock, ShieldCheck, User, UserCog, ChefHat, CreditCard } from "lucide-react";
+import { ChevronDown, Lock, ShieldCheck, User, UserCog, CreditCard } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { PinGuard } from "./PinGuard";
@@ -16,7 +16,6 @@ interface RoleSwitcherProps {
 
 const ROLE_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
   staff:   { label: "Staff",   color: "text-gray-600",   bg: "bg-gray-100",    border: "border-gray-300"  },
-  kitchen: { label: "Kitchen", color: "text-orange-700", bg: "bg-orange-50",   border: "border-orange-300"},
   cashier: { label: "Cashier", color: "text-purple-700", bg: "bg-purple-50",   border: "border-purple-300"},
   manager: { label: "Manager", color: "text-blue-700",   bg: "bg-blue-50",     border: "border-blue-300"  },
   admin:   { label: "Admin",   color: "text-green-700",  bg: "bg-green-50",    border: "border-green-400" },
@@ -24,7 +23,6 @@ const ROLE_META: Record<string, { label: string; color: string; bg: string; bord
 
 const ROLE_ICONS: Record<string, React.ReactNode> = {
   staff:   <User className="w-3 h-3" />,
-  kitchen: <ChefHat className="w-3 h-3" />,
   cashier: <CreditCard className="w-3 h-3" />,
   manager: <UserCog className="w-3 h-3" />,
   admin:   <ShieldCheck className="w-3 h-3" />,
