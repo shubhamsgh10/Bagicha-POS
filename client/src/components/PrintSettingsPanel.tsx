@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X } from "lucide-react";
+import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X, ScanLine } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -93,6 +93,13 @@ function ToggleRow({ label, description, checked, onChange }: {
 
 // ── Printer Setup Tab ─────────────────────────────────────────────────────────
 
+interface USBDeviceInfo {
+  vendorId: number;
+  productId: number;
+  productName?: string;
+  manufacturerName?: string;
+}
+
 function PrinterSetupTab({ printers, onChange, onTest }: {
   printers: PrinterConfig[];
   onChange: (printers: PrinterConfig[]) => void;
@@ -100,6 +107,41 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
 }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 32 });
+  const [detectedDevices, setDetectedDevices] = useState<USBDeviceInfo[]>([]);
+
+  const webUsbSupported = typeof navigator !== 'undefined' && 'usb' in (navigator as any);
+
+  useEffect(() => {
+    if (form.type !== 'usb' || !webUsbSupported) return;
+    (navigator as any).usb.getDevices().then((devices: USBDeviceInfo[]) => setDetectedDevices(devices));
+  }, [form.type, webUsbSupported]);
+
+  const scanUsbPrinter = async () => {
+    try {
+      const device: USBDeviceInfo = await (navigator as any).usb.requestDevice({ filters: [] });
+      setDetectedDevices(prev => {
+        const exists = prev.some(d => d.vendorId === device.vendorId && d.productId === device.productId);
+        return exists ? prev : [...prev, device];
+      });
+      setForm(f => ({
+        ...f,
+        vendorId: device.vendorId,
+        productId: device.productId,
+        name: f.name?.trim() ? f.name : (device.productName ?? 'USB Printer'),
+      }));
+    } catch (err: any) {
+      if (err.name !== 'NotFoundError') console.error('WebUSB scan failed:', err);
+    }
+  };
+
+  const selectDevice = (d: USBDeviceInfo) => {
+    setForm(f => ({
+      ...f,
+      vendorId: d.vendorId,
+      productId: d.productId,
+      name: f.name?.trim() ? f.name : (d.productName ?? 'USB Printer'),
+    }));
+  };
 
   const inputCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 w-full bg-gray-50 focus:outline-none focus:border-emerald-400 focus:bg-white transition-colors";
 
@@ -208,6 +250,44 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
             </div>
           ) : (
             <>
+              {/* Previously-granted devices — shown without any user prompt */}
+              {detectedDevices.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Detected devices</p>
+                  {detectedDevices.map((d, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => selectDevice(d)}
+                      className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
+                        form.vendorId === d.vendorId && form.productId === d.productId
+                          ? 'bg-purple-50 border-purple-300 text-purple-700'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Usb className="w-3 h-3 shrink-0 text-purple-400" />
+                      <span className="font-medium truncate">{d.productName ?? d.manufacturerName ?? 'USB Device'}</span>
+                      <span className="ml-auto shrink-0 text-gray-400 font-mono">
+                        {`0x${d.vendorId.toString(16).padStart(4,'0')}:0x${d.productId.toString(16).padStart(4,'0')}`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Scan button — Chrome/Edge only */}
+              {webUsbSupported && (
+                <button
+                  type="button"
+                  onClick={scanUsbPrinter}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-purple-600 border border-purple-200 rounded-lg hover:bg-purple-50 transition-colors"
+                >
+                  <ScanLine className="w-3.5 h-3.5" />
+                  Scan / Detect USB Printer
+                </button>
+              )}
+
+              {/* Manual VID/PID entry — always shown as fallback */}
               <div className="grid grid-cols-2 gap-2">
                 <input
                   className={inputCls}
@@ -228,8 +308,11 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                   }}
                 />
               </div>
+
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                USB requires Zadig WinUSB driver setup on Windows. Find VID/PID in Device Manager.
+                {webUsbSupported
+                  ? 'Click "Scan" to auto-detect. USB requires Zadig WinUSB driver on Windows.'
+                  : 'USB auto-detect requires Chrome or Edge. Find VID/PID in Device Manager.'}
               </p>
             </>
           )}
