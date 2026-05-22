@@ -48,7 +48,8 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users, orders, orderItems } from "@shared/schema";
+import { generateKOTBuffer, sendToPrinter } from './printService';
 import { eq, desc } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import multer from "multer";
@@ -1641,6 +1642,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
+
+      // Fire-and-forget KOT print after table move if setting enabled
+      const settings = getSettings();
+      if (settings.printSettings.kot.printOnTableMove && settings.printSettings.kot.kotPrinterId) {
+        const printer = settings.printSettings.printers.find(p => p.id === settings.printSettings.kot.kotPrinterId);
+        if (printer) {
+          (async () => {
+            try {
+              const [movedOrder] = await db.select().from(orders).where(eq(orders.id, id));
+              if (!movedOrder) return;
+              const rawItems = await db
+                .select({ menuItemId: orderItems.menuItemId, name: menuItems.name, quantity: orderItems.quantity, size: orderItems.size, specialInstructions: orderItems.specialInstructions })
+                .from(orderItems)
+                .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+                .where(eq(orderItems.orderId, id));
+              const buf = generateKOTBuffer({
+                orderNumber: movedOrder.orderNumber,
+                tableNumber: movedOrder.tableNumber,
+                isReprint: false,
+                isDelta: false,
+                newItems: rawItems.map(i => ({ itemId: i.menuItemId, name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null })),
+                modifiedItems: [],
+                cancelledItems: [],
+                kotSettings: settings.printSettings.kot,
+                width: printer.width ?? 32,
+              });
+              await sendToPrinter(printer, buf);
+            } catch (e) {
+              console.warn('[Print/TableMove]', e);
+            }
+          })();
+        }
+      }
     } catch (error) {
       res.status(500).json({ error: "Failed to move table" });
     }

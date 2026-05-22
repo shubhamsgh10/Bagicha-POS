@@ -529,8 +529,6 @@ export function PrintSettingsPanel({
                 description="When a KOT is re-printed, it would show Duplicate at the top of the KOT."
                 checked={ps.kot.showDuplicateWatermark} onChange={v => setKot('showDuplicateWatermark', v)}
               />
-              <ToggleRow label="Print Deleted Items In KOT" checked={ps.kot.printDeletedItems} onChange={v => setKot('printDeletedItems', v)} />
-              <ToggleRow label="Print Deleted Items in separate KOT" checked={ps.kot.printDeletedSeparate} onChange={v => setKot('printDeletedSeparate', v)} />
               <ToggleRow
                 label="While moving KOT items from one table to another, print KOT"
                 checked={ps.kot.printOnTableMove} onChange={v => setKot('printOnTableMove', v)}
@@ -550,21 +548,6 @@ export function PrintSettingsPanel({
                 >
                   {printerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
-              </div>
-
-              <div className="py-3 border-b border-gray-100">
-                <p className="text-sm font-medium text-gray-800 mb-2">Tax Display on Bill</p>
-                <div className="flex gap-6">
-                  {(['none', 'category-wise'] as const).map(v => (
-                    <label key={v} className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="taxDisplay" checked={ps.bill.taxDisplay === v}
-                        onChange={() => setBill('taxDisplay', v)} className="accent-emerald-500" />
-                      <span className="text-sm text-gray-600">
-                        {v === 'none' ? 'None' : 'Print Category-wise Tax (CWT) on bill'}
-                      </span>
-                    </label>
-                  ))}
-                </div>
               </div>
 
               <div className="py-3 border-b border-gray-100">
@@ -589,7 +572,6 @@ export function PrintSettingsPanel({
                 description="When a bill is re-printed, it would show Duplicate at the top of the bill."
                 checked={ps.bill.showDuplicate} onChange={v => setBill('showDuplicate', v)}
               />
-              <ToggleRow label="Show Customer paid and return to customer in bill print" checked={ps.bill.showCustomerPayment} onChange={v => setBill('showCustomerPayment', v)} />
               <ToggleRow
                 label="Print KOT no on bill as Token no"
                 description="If this option is selected then it shows KOT no. on those bills whose KOT's are available."
@@ -602,11 +584,6 @@ export function PrintSettingsPanel({
                 checked={ps.bill.mergeDuplicateItems} onChange={v => setBill('mergeDuplicateItems', v)}
               />
               <ToggleRow label="Show order barcode on bill print" checked={ps.bill.showOrderBarcode} onChange={v => setBill('showOrderBarcode', v)} />
-              <ToggleRow
-                label="Display Quantity of ordered items in Bill (ex. Roti 5 + 1 + 2)"
-                description="This setting shows item quantity KOT-wise in bill print."
-                checked={ps.bill.showQuantityBreakdown} onChange={v => setBill('showQuantityBreakdown', v)}
-              />
             </div>
           )}
 

@@ -44,3 +44,14 @@ export function centered(str: string, width = 32): Buffer {
 export function build(...parts: Buffer[]): Buffer {
   return Buffer.concat(parts);
 }
+
+export function barcode128(data: string): Buffer {
+  const content = `{B${data}`;
+  return Buffer.concat([
+    Buffer.from([0x1D, 0x68, 0x50]),             // barcode height = 80 dots
+    Buffer.from([0x1D, 0x77, 0x02]),             // barcode width multiplier = 2
+    Buffer.from([0x1D, 0x48, 0x02]),             // HRI printed below barcode
+    Buffer.from([0x1D, 0x6B, 0x49, content.length]), // GS k CODE128 n
+    Buffer.from(content, 'ascii'),
+  ]);
+}

@@ -72,7 +72,7 @@ function billTextLines(params: {
   order: {
     orderNumber: string; tableNumber: string | null; customerName: string | null;
     orderType: string; totalAmount: string; taxAmount: string;
-    discountAmount: string | null; paymentMethod: string | null; billPrintCount: number; createdAt: Date | string;
+    discountAmount: string | null; paymentMethod: string | null; billPrintCount: number; kotPrintCount?: number; createdAt: Date | string;
   };
   items: Array<{ name: string; quantity: number; price: string; size?: string | null; specialInstructions?: string | null }>;
   restaurant: import('./settingsStore').RestaurantSettings;
@@ -95,7 +95,10 @@ function billTextLines(params: {
   lines.push(div('='), center('RETAIL INVOICE'), div('='));
 
   const created = new Date(order.createdAt);
-  lines.push(two(`Order: ${order.orderNumber}`, created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })));
+  const orderLabel = billSettings.showKotAsToken && (order.kotPrintCount ?? 0) > 0
+    ? `Token: #${order.kotPrintCount}`
+    : `Order: ${order.orderNumber}`;
+  lines.push(two(orderLabel, created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })));
   lines.push(two(order.tableNumber ? `Table: ${order.tableNumber}` : order.orderType, created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })));
   if (order.customerName) lines.push(`Customer: ${order.customerName}`);
   lines.push(div('-'));
@@ -103,6 +106,10 @@ function billTextLines(params: {
   const QW = 4, AW = 7, NW = W - QW - AW - 2;
   lines.push(`${'Item'.padEnd(NW)} ${'Qty'.padStart(QW)} ${'Amt'.padStart(AW)}`);
   lines.push(div('-'));
+
+  const priceMultiplier = billSettings.itemPriceMode === 'inclusive'
+    ? 1 + (restaurant.taxRate / 100)
+    : 1;
 
   let displayItems = items;
   if (billSettings.mergeDuplicateItems) {
@@ -117,7 +124,7 @@ function billTextLines(params: {
   }
   for (const item of displayItems) {
     const label = (item.size ? `${item.name}(${item.size})` : item.name).substring(0, NW).padEnd(NW);
-    lines.push(`${label} ${String(item.quantity).padStart(QW)} ${(`${sym}${(item.quantity * parseFloat(item.price)).toFixed(0)}`).padStart(AW)}`);
+    lines.push(`${label} ${String(item.quantity).padStart(QW)} ${(`${sym}${(item.quantity * parseFloat(item.price) * priceMultiplier).toFixed(0)}`).padStart(AW)}`);
     if (billSettings.showAddons && item.specialInstructions) lines.push(`  [${item.specialInstructions}]`);
   }
   lines.push(div('-'));
@@ -200,7 +207,7 @@ export function registerPrintRoutes(app: Express): void {
         const delta = computeDelta(currentSnapshot, lastSnapshot.items);
 
         const hasNew       = delta.newItems.length > 0;
-        const hasMod       = kotSettings.printModifiedItemsOnly && delta.modifiedItems.length > 0;
+        const hasMod       = kotSettings.printModifiedKOT && kotSettings.printModifiedItemsOnly && delta.modifiedItems.length > 0;
         const hasCancelled = kotSettings.printCancelledKOT && delta.cancelledItems.length > 0;
 
         if (!hasNew && !hasMod && !hasCancelled) {
@@ -289,6 +296,7 @@ export function registerPrintRoutes(app: Express): void {
           discountAmount: order.discountAmount,
           paymentMethod: order.paymentMethod,
           billPrintCount: order.billPrintCount ?? 0,
+          kotPrintCount: order.kotPrintCount ?? 0,
           createdAt: order.createdAt,
         },
         items: rawItems.map(i => ({
@@ -360,7 +368,7 @@ export function registerPrintRoutes(app: Express): void {
           .from(orderItems).innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id)).where(eq(orderItems.orderId, orderId));
 
         const lines = billTextLines({
-          order: { orderNumber: order.orderNumber, tableNumber: order.tableNumber, customerName: order.customerName, orderType: order.orderType, totalAmount: order.totalAmount, taxAmount: order.taxAmount, discountAmount: order.discountAmount, paymentMethod: order.paymentMethod, billPrintCount: order.billPrintCount ?? 0, createdAt: order.createdAt },
+          order: { orderNumber: order.orderNumber, tableNumber: order.tableNumber, customerName: order.customerName, orderType: order.orderType, totalAmount: order.totalAmount, taxAmount: order.taxAmount, discountAmount: order.discountAmount, paymentMethod: order.paymentMethod, billPrintCount: order.billPrintCount ?? 0, kotPrintCount: order.kotPrintCount ?? 0, createdAt: order.createdAt },
           items: rawItems.map(i => ({ name: i.name, quantity: i.quantity, price: String(i.price), size: i.size ?? null, specialInstructions: i.specialInstructions ?? null })),
           restaurant: settings, billSettings, width: W,
         });
