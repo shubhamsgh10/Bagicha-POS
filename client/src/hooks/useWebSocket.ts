@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { queryClient } from '@/lib/queryClient';
 
 interface WebSocketMessage {
   type: string;
@@ -34,7 +35,12 @@ export function useWebSocket(_url: string) {
 
       ws.onmessage = (event) => {
         try {
-          setLastMessage(JSON.parse(event.data));
+          const msg = JSON.parse(event.data);
+          if (msg.type === "CACHE_BUST") {
+            queryClient.invalidateQueries();
+          } else {
+            setLastMessage(msg);
+          }
         } catch {}
       };
 

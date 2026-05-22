@@ -4,6 +4,7 @@ import passport from "passport";
 import MemoryStore from "memorystore";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
+import { initSettings } from "./settingsStore";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
@@ -75,6 +76,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await initSettings();
   const server = await registerRoutes(app);
 
   // Sentry v8+ error handler must be registered after routes

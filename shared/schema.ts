@@ -690,3 +690,10 @@ export const auditLogs = pgTable("audit_logs", {
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export type AuditLog       = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+// ── Restaurant settings (singleton row, id always = 1) ────────────────────────
+export const restaurantSettings = pgTable("restaurant_settings", {
+  id:        integer("id").primaryKey(),
+  settings:  json("settings").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

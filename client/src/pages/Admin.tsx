@@ -66,7 +66,6 @@ const PAGE_ACCESS_LIST = [
   { label: "Menu",        href: "/menu" },
   { label: "Inventory",   href: "/inventory" },
   { label: "Live Tables", href: "/live-tables" },
-  { label: "Kitchen",     href: "/kitchen" },
   { label: "Customers",   href: "/customers" },
 ];
 

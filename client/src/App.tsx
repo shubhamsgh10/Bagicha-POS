@@ -20,7 +20,6 @@ import CustomerDashboard from "@/pages/CustomerDashboard";
 import Billing from "@/pages/Billing";
 import Staff from "@/pages/Staff";
 import KOT from "@/pages/KOT";
-import Kitchen from "@/pages/Kitchen";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import Login from "@/pages/Login";
@@ -187,7 +186,6 @@ function Router() {
                       <Route path="/live-analytics" component={LiveAnalytics} />
                       <Route path="/live-tables"    component={LiveTablesDashboard} />
                       <Route path="/customers"      component={CustomerDashboard} />
-                      <Route path="/kitchen"        component={Kitchen} />
                       <Route path="/kot"            component={KOT} />
                       <Route component={NotFound} />
                     </Switch>
@@ -205,6 +203,11 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => {
+    const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
