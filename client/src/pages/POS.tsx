@@ -417,6 +417,10 @@ export default function POS() {
         if (order) showBillPreview(order);
       } else {
         toast({ title: 'Bill sent to printer!' });
+        const kotSettings = (settings as any)?.printSettings?.kot;
+        if (kotSettings?.printOnBill) {
+          triggerKOTPrint(orderId, order);
+        }
       }
     } catch {
       if (order) showBillPreview(order);

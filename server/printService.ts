@@ -157,6 +157,7 @@ export function generateBillBuffer(params: {
     discountAmount: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
+    kotPrintCount?: number;
     createdAt: Date | string;
   };
   items: Array<{
@@ -186,6 +187,9 @@ export function generateBillBuffer(params: {
   if (restaurant.address) parts.push(E.centered(restaurant.address.substring(0, W), W));
   if (restaurant.phone)   parts.push(E.centered(`Tel: ${restaurant.phone}`, W));
   if (restaurant.gstNumber) parts.push(E.centered(`GST: ${restaurant.gstNumber}`, W));
+  if (billSettings.showOrderBarcode) {
+    parts.push(E.ALIGN_CENTER, E.barcode128(order.orderNumber));
+  }
   parts.push(E.divider('=', W));
   parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line('RETAIL INVOICE'), E.BOLD_OFF);
   parts.push(E.divider('=', W));
@@ -194,7 +198,10 @@ export function generateBillBuffer(params: {
   const created = new Date(order.createdAt);
   const dateStr = created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  parts.push(E.twoColumns(`Order: ${order.orderNumber}`, dateStr, W));
+  const orderLabel = billSettings.showKotAsToken && (order.kotPrintCount ?? 0) > 0
+    ? `Token: #${order.kotPrintCount}`
+    : `Order: ${order.orderNumber}`;
+  parts.push(E.twoColumns(orderLabel, dateStr, W));
   parts.push(E.twoColumns(
     order.tableNumber ? `Table: ${order.tableNumber}` : order.orderType,
     timeStr, W
@@ -228,10 +235,14 @@ export function generateBillBuffer(params: {
     }));
   }
 
+  const priceMultiplier = billSettings.itemPriceMode === 'inclusive'
+    ? 1 + (restaurant.taxRate / 100)
+    : 1;
+
   for (const item of displayItems) {
     const label = (item.size ? `${item.name}(${item.size})` : item.name).substring(0, NW).padEnd(NW);
     const qty   = String(item.quantity).padStart(QW);
-    const amt   = `${sym}${(item.quantity * parseFloat(item.price)).toFixed(0)}`.padStart(AW);
+    const amt   = `${sym}${(item.quantity * parseFloat(item.price) * priceMultiplier).toFixed(0)}`.padStart(AW);
     parts.push(E.line(`${label} ${qty} ${amt}`));
     if (billSettings.showAddons && item.specialInstructions) {
       parts.push(E.line(`  [${item.specialInstructions}]`));
