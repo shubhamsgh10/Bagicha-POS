@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 /**
  * AutomationPanel.tsx
  *
@@ -764,7 +765,7 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
     if (settings.whatsappMode !== "api" && settings.whatsappMode !== "meta") return;
     setServerLogsLoading(true);
     try {
-      const resp = await fetch("/api/automation/logs?limit=100", { credentials: "include" });
+      const resp = await fetch(apiUrl("/api/automation/logs?limit=100"), { credentials: "include" });
       if (resp.ok) {
         const data = await resp.json() as { logs?: ServerLog[] };
         setServerLogs(data.logs ?? []);

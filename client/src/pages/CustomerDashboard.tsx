@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
@@ -1028,7 +1029,7 @@ export default function CustomerDashboard() {
     setExtras(prev => ({ ...prev, [customer.key]: data }));
 
     // 2. Sync to DB in background (non-blocking — failure is silent)
-    fetch(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`, {
+    fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`), {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },
       credentials: "include",

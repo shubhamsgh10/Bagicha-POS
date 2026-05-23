@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,7 +16,6 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { printOrderBill } from "@/lib/printBill";
 
 interface Table {
   id: number;
@@ -103,20 +103,6 @@ function TableTimer({ orderId }: { orderId: number }) {
   return <RunningTimer startedAt={data.createdAt} />;
 }
 
-async function printTableBill(orderId: number) {
-  try {
-    const [orderRes, settingsRes] = await Promise.all([
-      fetch(`/api/orders/${orderId}`, { credentials: "include" }),
-      fetch("/api/settings", { credentials: "include" }),
-    ]);
-    const order    = await orderRes.json();
-    const settings = await settingsRes.json();
-    await printOrderBill(order, order.items || [], settings);
-  } catch {
-    alert("Failed to load bill for printing");
-  }
-}
-
 function groupBySection(tables: Table[]): Record<string, Table[]> {
   return tables.reduce((acc, t) => {
     const k = t.section || "inner";
@@ -133,6 +119,36 @@ function sectionLabel(s: string) {
 export default function Tables() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+
+  const printTableBill = async (orderId: number) => {
+    try {
+      const { printBillDirect } = await import("@/lib/printGateway");
+      const outcome = await printBillDirect(orderId);
+      if (outcome === "hardware") {
+        toast({ title: "Bill sent to printer!" });
+        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      } else if (outcome === "browser") {
+        toast({
+          title: "Cannot direct-print to this printer",
+          description:
+            "Use a thermal receipt printer in Settings, or print from the Billing screen.",
+          variant: "destructive",
+        });
+      } else if (outcome === "noop") {
+        toast({
+          title: "Use desktop app to print",
+          description: "Open Bagicha POS in Electron for direct thermal printing.",
+          variant: "destructive",
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Bill print failed",
+        description: err?.message ?? "Could not print bill",
+        variant: "destructive",
+      });
+    }
+  };
 
   const [showAdd, setShowAdd] = useState(false);
   const [editTable, setEditTable] = useState<Table | null>(null);

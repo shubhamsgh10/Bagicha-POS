@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 /**
  * useCrmProfile.ts
  *
@@ -199,7 +200,7 @@ export function useCrmExtrasSync(
 
     // Debounce — only sync after 3 seconds of stability
     const timer = setTimeout(() => {
-      fetch("/api/crm/sync-extras", {
+      fetch(apiUrl("/api/crm/sync-extras"), {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ extras }),

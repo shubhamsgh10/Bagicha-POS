@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 /**
  * GrowthSettingsPanel.tsx
  *
@@ -66,7 +67,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
 
   // Load
   useEffect(() => {
-    fetch("/api/automation/config", { credentials: "include" })
+    fetch(apiUrl("/api/automation/config"), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d) setConfig(prev => ({ ...prev, ...d }));
@@ -82,7 +83,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
   async function save() {
     setSaving(true);
     try {
-      const res = await fetch("/api/automation/config", {
+      const res = await fetch(apiUrl("/api/automation/config"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -123,7 +124,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
   async function previewDigest() {
     setBusyAction("preview");
     try {
-      const res = await fetch("/api/digest/run", {
+      const res = await fetch(apiUrl("/api/digest/run"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
@@ -16,6 +17,7 @@ interface PrinterConfig {
   port?: number;
   vendorId?: number;
   productId?: number;
+  windowsQueueName?: string;
   width?: number;
 }
 
@@ -98,6 +100,13 @@ interface USBDeviceInfo {
   productId: number;
   productName?: string;
   manufacturerName?: string;
+  displayName?: string;
+  isLikelyPrinter?: boolean;
+  windowsQueueName?: string;
+}
+
+function usbDeviceLabel(d: USBDeviceInfo): string {
+  return d.displayName ?? d.productName ?? d.manufacturerName ?? 'USB Device';
 }
 
 function PrinterSetupTab({ printers, onChange, onTest }: {
@@ -105,42 +114,102 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
   onChange: (printers: PrinterConfig[]) => void;
   onTest: (printerId: string) => void;
 }) {
+  const { toast } = useToast();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 32 });
   const [detectedDevices, setDetectedDevices] = useState<USBDeviceInfo[]>([]);
+  const [usbScanning, setUsbScanning] = useState(false);
 
+  const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
   const webUsbSupported = typeof navigator !== 'undefined' && 'usb' in (navigator as any);
+  const canScanUsb = isElectron || webUsbSupported;
+
+  const mergeDevices = (incoming: USBDeviceInfo[]) => {
+    setDetectedDevices(prev => {
+      const next = [...prev];
+      for (const d of incoming) {
+        if (!next.some(x => x.vendorId === d.vendorId && x.productId === d.productId)) {
+          next.push(d);
+        }
+      }
+      return next;
+    });
+  };
+
+  const selectDevice = (d: USBDeviceInfo) => {
+    const queueName = d.windowsQueueName ?? d.displayName ?? '';
+    setForm(f => ({
+      ...f,
+      vendorId: d.vendorId || undefined,
+      productId: d.productId || undefined,
+      windowsQueueName: queueName,
+      name: f.name?.trim() ? f.name : (usbDeviceLabel(d) || 'USB Printer'),
+    }));
+  };
+
+  const scanUsbElectron = async () => {
+    if (!window.electronAPI?.scanUsbDevices) return;
+    setUsbScanning(true);
+    try {
+      const result = await window.electronAPI.scanUsbDevices();
+      if (!result.ok) {
+        throw new Error(result.error ?? 'USB scan failed');
+      }
+      const devices = result.devices ?? [];
+      mergeDevices(devices);
+      if (devices.length === 0) {
+        toast({
+          title: 'No USB devices found',
+          description: 'Connect the printer via USB, then scan again or enter VID/PID manually.',
+        });
+      } else if (devices.length === 1) {
+        selectDevice(devices[0]);
+      }
+    } catch (err: any) {
+      toast({
+        title: 'USB scan failed',
+        description: err?.message ?? String(err),
+        variant: 'destructive',
+      });
+    } finally {
+      setUsbScanning(false);
+    }
+  };
 
   useEffect(() => {
-    if (form.type !== 'usb' || !webUsbSupported) return;
+    if (form.type !== 'usb') return;
+    if (isElectron) {
+      void scanUsbElectron();
+      return;
+    }
+    if (!webUsbSupported) return;
     (navigator as any).usb.getDevices().then((devices: USBDeviceInfo[]) => setDetectedDevices(devices));
-  }, [form.type, webUsbSupported]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- scan on tab switch only
+  }, [form.type, isElectron, webUsbSupported]);
 
   const scanUsbPrinter = async () => {
+    if (isElectron) {
+      await scanUsbElectron();
+      return;
+    }
     try {
       const device: USBDeviceInfo = await (navigator as any).usb.requestDevice({ filters: [] });
-      setDetectedDevices(prev => {
-        const exists = prev.some(d => d.vendorId === device.vendorId && d.productId === device.productId);
-        return exists ? prev : [...prev, device];
-      });
+      mergeDevices([device]);
       setForm(f => ({
         ...f,
         vendorId: device.vendorId,
         productId: device.productId,
-        name: f.name?.trim() ? f.name : (device.productName || device.manufacturerName || 'USB Printer'),
+        name: f.name?.trim() ? f.name : (usbDeviceLabel(device) || 'USB Printer'),
       }));
     } catch (err: any) {
-      if (err.name !== 'NotFoundError') console.error('WebUSB scan failed:', err);
+      if (err.name !== 'NotFoundError') {
+        toast({
+          title: 'WebUSB scan failed',
+          description: err?.message ?? String(err),
+          variant: 'destructive',
+        });
+      }
     }
-  };
-
-  const selectDevice = (d: USBDeviceInfo) => {
-    setForm(f => ({
-      ...f,
-      vendorId: d.vendorId,
-      productId: d.productId,
-      name: f.name?.trim() ? f.name : (d.productName ?? 'USB Printer'),
-    }));
   };
 
   const inputCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 w-full bg-gray-50 focus:outline-none focus:border-emerald-400 focus:bg-white transition-colors";
@@ -155,6 +224,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
       port: form.port ?? 9100,
       vendorId: form.vendorId,
       productId: form.productId,
+      windowsQueueName: form.windowsQueueName,
       width: form.width ?? 32,
     };
     onChange([...printers, newPrinter]);
@@ -266,7 +336,12 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                       }`}
                     >
                       <Usb className="w-3 h-3 shrink-0 text-purple-400" />
-                      <span className="font-medium truncate">{d.productName ?? d.manufacturerName ?? 'USB Device'}</span>
+                      <span className="font-medium truncate">{usbDeviceLabel(d)}</span>
+                      {d.isLikelyPrinter && (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">
+                          Printer
+                        </span>
+                      )}
                       <span className="ml-auto shrink-0 text-gray-400 font-mono">
                         {`0x${d.vendorId.toString(16).padStart(4,'0')}:0x${d.productId.toString(16).padStart(4,'0')}`}
                       </span>
@@ -275,15 +350,19 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                 </div>
               )}
 
-              {/* Scan button — Chrome/Edge only */}
-              {webUsbSupported && (
+              {canScanUsb && (
                 <button
                   type="button"
                   onClick={scanUsbPrinter}
-                  className="w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-purple-600 border border-purple-200 rounded-lg hover:bg-purple-50 transition-colors"
+                  disabled={usbScanning}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-purple-600 border border-purple-200 rounded-lg hover:bg-purple-50 transition-colors disabled:opacity-60"
                 >
-                  <ScanLine className="w-3.5 h-3.5" />
-                  Scan / Detect USB Printer
+                  {usbScanning ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ScanLine className="w-3.5 h-3.5" />
+                  )}
+                  {usbScanning ? 'Scanning…' : 'Scan / Detect USB Printer'}
                 </button>
               )}
 
@@ -310,9 +389,11 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
               </div>
 
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                {webUsbSupported
-                  ? 'Click "Scan" to auto-detect your USB printer VID/PID.'
-                  : 'USB auto-detect requires Chrome or Edge. Enter the VID and PID from Device Manager manually.'}
+                {isElectron
+                  ? 'Scan lists installed Windows printer queues (USB). Pick your receipt/thermal printer — not LaserJet or camera devices.'
+                  : webUsbSupported
+                    ? 'Click "Scan" to auto-detect your USB printer VID/PID.'
+                    : 'USB auto-detect requires Chrome, Edge, or the Bagicha desktop app. Enter VID/PID manually.'}
               </p>
             </>
           )}
@@ -396,7 +477,7 @@ export function PrintSettingsPanel({
 
   const handleTest = async (printerId: string) => {
     try {
-      const res = await fetch('/api/print/test', {
+      const res = await fetch(apiUrl('/api/print/test'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ printerId }),
@@ -404,6 +485,19 @@ export function PrintSettingsPanel({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
+      if (data.printJob && window.electronAPI?.isElectron) {
+        const result = await window.electronAPI.printTest({
+          printerId,
+          printJob: data.printJob,
+        });
+        if (!result.ok) throw new Error(result.error ?? 'Test print failed');
+      } else {
+        const { handlePrintResponse } = await import('@/lib/printGateway');
+        const outcome = await handlePrintResponse(data);
+        if (outcome === 'noop' && data.printJob) {
+          throw new Error('Thermal test print requires the Electron desktop app.');
+        }
+      }
       toast({ title: 'Test page sent!', description: data.message });
     } catch (err: any) {
       toast({ title: 'Test failed', description: err.message, variant: 'destructive' });

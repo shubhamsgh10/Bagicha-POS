@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -8,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines } from "@/lib/receiptText";
+import { printKOT } from "@/lib/printBill";
 
 
 const statusAccent: Record<string, string> = {
@@ -43,16 +45,30 @@ export default function KOT() {
 
   const reprintKOT = async (ticket: any) => {
     try {
-      const res = await fetch('/api/print/kot', {
+      const res = await fetch(apiUrl('/api/print/kot'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: ticket.orderId, reprint: true }),
         credentials: 'include',
       });
+      const data = await res.json();
       if (!res.ok) {
         showKOTPreview(ticket);
-      } else {
+        return;
+      }
+      const { handlePrintResponse } = await import('@/lib/printGateway');
+      const outcome = await handlePrintResponse(data, {
+        orderId: ticket.orderId,
+        onBrowserKOT: () =>
+          printKOT(
+            { orderNumber: ticket.orderNumber, tableNumber: ticket.tableNumber, createdAt: new Date() },
+            data.items ?? [],
+          ),
+      });
+      if (outcome === 'hardware' || outcome === 'browser') {
         toast({ title: 'KOT sent to printer!' });
+      } else if (outcome === 'noop') {
+        showKOTPreview(ticket);
       }
     } catch {
       showKOTPreview(ticket);

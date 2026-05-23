@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
@@ -155,7 +156,7 @@ export default function Billing() {
     if (!payingOrder) return;
     const key = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
     if (!key) return;
-    fetch(`/api/loyalty/${encodeURIComponent(key)}`, { credentials: "include" })
+    fetch(apiUrl(`/api/loyalty/${encodeURIComponent(key)}`), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setLoyalty(d); })
       .catch(() => {});
@@ -168,14 +169,26 @@ export default function Billing() {
       toast({ title: "Payment processed!", description: "Printing bill..." });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      fetch('/api/print/bill', {
+      fetch(apiUrl('/api/print/bill'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: vars.id }),
         credentials: 'include',
-      }).then(res => res.json()).then(() => {
-        toast({ title: "Bill printed!" });
-      }).catch(() => {});
+      })
+        .then((res) => res.json().then((data) => ({ res, data })))
+        .then(async ({ res, data }) => {
+          if (!res.ok) return;
+          const { handlePrintResponse } = await import('@/lib/printGateway');
+          const outcome = await handlePrintResponse(data, {
+            orderId: vars.id,
+            ackType: 'bill',
+            pendingAck: data.pendingAck,
+          });
+          if (outcome === 'hardware' || outcome === 'browser') {
+            toast({ title: 'Bill printed!' });
+          }
+        })
+        .catch(() => {});
       setPayingOrder(null);
     },
     onError: () => {
@@ -266,7 +279,7 @@ export default function Billing() {
         const orderData: any = await ordRes.json();
         setPayingOrder(orderData);
         // Re-fetch loyalty
-        const loyRes = await fetch(`/api/loyalty/${encodeURIComponent(customerKey)}`, { credentials: "include" });
+        const loyRes = await fetch(apiUrl(`/api/loyalty/${encodeURIComponent(customerKey)}`), { credentials: "include" });
         if (loyRes.ok) setLoyalty(await loyRes.json());
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       } else {
@@ -331,12 +344,23 @@ export default function Billing() {
               queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
               queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
               setPayingOrder(null);
-              fetch('/api/print/bill', {
+              fetch(apiUrl('/api/print/bill'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ orderId: payingOrder.id }),
                 credentials: 'include',
-              }).catch(() => {});
+              })
+                .then((res) => res.json().then((data) => ({ res, data })))
+                .then(async ({ res, data }) => {
+                  if (!res.ok) return;
+                  const { handlePrintResponse } = await import('@/lib/printGateway');
+                  await handlePrintResponse(data, {
+                    orderId: payingOrder.id,
+                    ackType: 'bill',
+                    pendingAck: data.pendingAck,
+                  });
+                })
+                .catch(() => {});
             } else {
               toast({ title: "Verification failed", variant: "destructive" });
             }

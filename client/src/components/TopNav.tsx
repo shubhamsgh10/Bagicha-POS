@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
@@ -47,7 +48,7 @@ export function TopNav() {
   const { data: settings } = useQuery<any>({
     queryKey: ["/api/settings"],
     queryFn: async () => {
-      const r = await fetch("/api/settings", { credentials: "include" });
+      const r = await fetch(apiUrl("/api/settings"), { credentials: "include" });
       if (!r.ok) return null;
       return r.json();
     },

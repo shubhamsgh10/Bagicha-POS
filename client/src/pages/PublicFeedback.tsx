@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 /**
  * PublicFeedback.tsx
  *
@@ -33,7 +34,7 @@ export default function PublicFeedback() {
 
   useEffect(() => {
     if (!token) return;
-    fetch(`/api/feedback/${token}`)
+    fetch(apiUrl(`/api/feedback/${token}`))
       .then(r => r.ok ? r.json() : Promise.reject(r))
       .then((d: FeedbackInfo) => {
         setInfo(d);
@@ -46,7 +47,7 @@ export default function PublicFeedback() {
     if (!rating || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/feedback/${token}/submit`, {
+      const res = await fetch(apiUrl(`/api/feedback/${token}/submit`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rating, comment }),

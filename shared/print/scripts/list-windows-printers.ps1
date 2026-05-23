@@ -1,0 +1,65 @@
+# Lists installed print queues with optional VID/PID (USBPRINT queues often have no VID in InstanceId).
+$ErrorActionPreference = 'Stop'
+$skipPattern = 'pdf|onenote|xps|fax|microsoft print|send to'
+
+$out = @()
+Get-CimInstance Win32_Printer | ForEach-Object {
+  $queue = $_.Name
+  if (-not $queue) { return }
+  if (-not (Get-Printer -Name $queue -ErrorAction SilentlyContinue)) { return }
+  $lower = $queue.ToLower()
+  if ($lower -match 'pdf|onenote|xps|fax|microsoft print|send to') { return }
+
+  $port = $_.PortName
+  $vid = $null
+  $prodId = $null
+
+  # Printer class PnP device (USBPRINT\... — usually no VID in InstanceId)
+  $pnpPrinter = Get-PnpDevice -Class Printer -ErrorAction SilentlyContinue |
+    Where-Object { $_.FriendlyName -eq $queue } |
+    Select-Object -First 1
+
+  if ($pnpPrinter -and $pnpPrinter.InstanceId -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})') {
+    $vid = $matches[1]
+    $prodId = $matches[2]
+  }
+
+  if (-not $vid) {
+    $entity = Get-CimInstance Win32_PnPEntity |
+      Where-Object { $_.Name -eq $queue } |
+      Select-Object -First 1
+    if ($entity -and $entity.PNPDeviceID -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})') {
+      $vid = $matches[1]
+      $prodId = $matches[2]
+    }
+  }
+
+  # Match any USB node with a similar name (e.g. HP LaserJet M1136)
+  if (-not $vid) {
+    $prefix = if ($queue.Length -gt 14) { $queue.Substring(0, 14) } else { $queue }
+    $usb = Get-CimInstance Win32_PnPEntity |
+      Where-Object {
+        $_.PNPDeviceID -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})' -and
+        ($_.Name -eq $queue -or $_.Name -like "$prefix*" -or $queue -like "$($_.Name)*")
+      } |
+      Select-Object -First 1
+    if ($usb -and $usb.PNPDeviceID -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})') {
+      $vid = $matches[1]
+      $prodId = $matches[2]
+    }
+  }
+
+  $row = [PSCustomObject]@{
+    queueName = $queue
+    portName  = $port
+    vid       = $vid
+    pid       = $prodId
+  }
+  $out += $row
+}
+
+if ($out.Count -eq 0) {
+  '[]'
+} else {
+  $out | ConvertTo-Json -Compress
+}

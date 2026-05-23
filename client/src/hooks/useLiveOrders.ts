@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import { apiUrl } from "@/lib/api";
+import { useRealtime } from "@/hooks/useRealtime";
 import { normalizeOrderType } from "@/hooks/useLiveTableOperations";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -31,7 +32,7 @@ export interface LiveOrder {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "include" });
+  const res = await fetch(apiUrl(url), { credentials: "include" });
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
 }
@@ -81,7 +82,7 @@ export function useLiveOrders() {
   const [orders, setOrders]   = useState<LiveOrder[]>(_ordersCache ?? []);
   const [isLoading, setIsLoading] = useState(_ordersCache === null);
 
-  const { lastMessage, connectionStatus } = useWebSocket("/ws");
+  const { lastMessage, connectionStatus } = useRealtime();
   const mountedRef  = useRef(true);
   const loadingRef  = useRef(false);
   const ordersRef   = useRef<LiveOrder[]>([]);

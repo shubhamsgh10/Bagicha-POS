@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { type CustomerProfile } from "@/hooks/useCustomerIntelligence";
 
 // ── Automation Settings (localStorage-backed) ─────────────────────────────────
@@ -386,7 +387,7 @@ export async function syncSettingsToServer(settings: AutomationSettings): Promis
   if (settings.metaPhoneNumberId) body.metaPhoneNumberId = settings.metaPhoneNumberId;
   if (settings.metaAccessToken)   body.metaAccessToken   = settings.metaAccessToken;
 
-  const resp = await fetch("/api/automation/config", {
+  const resp = await fetch(apiUrl("/api/automation/config"), {
     method:      "POST",
     credentials: "include",
     headers:     { "Content-Type": "application/json" },
@@ -397,7 +398,7 @@ export async function syncSettingsToServer(settings: AutomationSettings): Promis
 
 /** Run the server-side automation pipeline (WATI mode). */
 async function runAutomationViaServer(): Promise<RunResult> {
-  const resp = await fetch("/api/automation/run", {
+  const resp = await fetch(apiUrl("/api/automation/run"), {
     method:      "POST",
     credentials: "include",
   });

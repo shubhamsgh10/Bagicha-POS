@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -260,7 +261,7 @@ export default function LiveAnalytics() {
   const { data: salesChart = [], isFetching: chartFetching } = useQuery<any[]>({
     queryKey: ["/api/dashboard/sales-chart", dateRange.start, dateRange.end],
     queryFn: async () => {
-      const r = await fetch(`/api/dashboard/sales-chart${params}`, { credentials: "include" });
+      const r = await fetch(apiUrl(`/api/dashboard/sales-chart${params}`), { credentials: "include" });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
@@ -272,7 +273,7 @@ export default function LiveAnalytics() {
   const { data: categorySales = [], isFetching: catFetching } = useQuery<any[]>({
     queryKey: ["/api/dashboard/category-sales", dateRange.start, dateRange.end],
     queryFn: async () => {
-      const r = await fetch(`/api/dashboard/category-sales${params}`, { credentials: "include" });
+      const r = await fetch(apiUrl(`/api/dashboard/category-sales${params}`), { credentials: "include" });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
@@ -284,7 +285,7 @@ export default function LiveAnalytics() {
   const { data: topItems = [], isFetching: topFetching } = useQuery<any[]>({
     queryKey: ["/api/dashboard/top-items", dateRange.start, dateRange.end],
     queryFn: async () => {
-      const r = await fetch(`/api/dashboard/top-items${params}`, { credentials: "include" });
+      const r = await fetch(apiUrl(`/api/dashboard/top-items${params}`), { credentials: "include" });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },

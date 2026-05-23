@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -120,7 +121,7 @@ function Router() {
             // Warm the tables cache before Tables mounts
             queryClient.prefetchQuery({
               queryKey: ["/api/tables"],
-              queryFn: () => fetch("/api/tables", { credentials: "include" }).then(r => r.json()),
+              queryFn: () => fetch(apiUrl("/api/tables"), { credentials: "include" }).then(r => r.json()),
               staleTime: 0,
             });
             queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });

@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -57,7 +58,7 @@ export default function Menu() {
   const { data: rawItems = [], isLoading } = useQuery<MenuItem[]>({
     queryKey: ["/api/menu?all=true"],
     queryFn: async () => {
-      const res = await fetch("/api/menu?all=true", { credentials: "include" });
+      const res = await fetch(apiUrl("/api/menu?all=true"), { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
