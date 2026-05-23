@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ export function TwoFactorPanel() {
   const { data: status, isLoading } = useQuery<Status>({
     queryKey: ["/api/auth/2fa/status"],
     queryFn: async () => {
-      const r = await fetch("/api/auth/2fa/status", { credentials: "include" });
+      const r = await fetch(apiUrl("/api/auth/2fa/status"), { credentials: "include" });
       return r.json();
     },
   });
@@ -27,7 +28,7 @@ export function TwoFactorPanel() {
   async function startSetup() {
     setBusy(true);
     try {
-      const r = await fetch("/api/auth/2fa/setup", { method: "POST", credentials: "include" });
+      const r = await fetch(apiUrl("/api/auth/2fa/setup"), { method: "POST", credentials: "include" });
       const text = await r.text();
       let data: any;
       try { data = JSON.parse(text); } catch { throw new Error(`Server returned non-JSON (${r.status}): ${text.slice(0, 120)}`); }
@@ -47,7 +48,7 @@ export function TwoFactorPanel() {
     if (token.length !== 6) return;
     setBusy(true);
     try {
-      const r = await fetch("/api/auth/2fa/verify-setup", {
+      const r = await fetch(apiUrl("/api/auth/2fa/verify-setup"), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -74,7 +75,7 @@ export function TwoFactorPanel() {
     if (token.length !== 6) return;
     setBusy(true);
     try {
-      const r = await fetch("/api/auth/2fa/disable", {
+      const r = await fetch(apiUrl("/api/auth/2fa/disable"), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

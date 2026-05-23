@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "vite build && esbuild server-fn.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/app-bundle.js",
+  "buildCommand": "npm run build:web && npm run build:api",
   "outputDirectory": "dist/public",
   "functions": {
     "api/index.ts": {

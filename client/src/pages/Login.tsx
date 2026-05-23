@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -205,7 +206,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   });
 
   useEffect(() => {
-    fetch("/api/staff-members", { credentials: "include" })
+    fetch(apiUrl("/api/staff-members"), { credentials: "include" })
       .then(r => r.json())
       .then((m: StaffMember[]) => setStaff(m))
       .catch(() => {});
@@ -237,7 +238,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   async function onAdminSubmit(data: LoginForm) {
     setAdminLoading(true);
     try {
-      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
+      const r = await fetch(apiUrl("/api/auth/login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
       if (!r.ok) throw new Error("invalid");
       const json = await r.json();
       if (json?.requires2FA) { setShowTotp(true); return; }
@@ -430,7 +431,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   });
 
   useEffect(() => {
-    fetch("/api/auth/context", { credentials: "include" })
+    fetch(apiUrl("/api/auth/context"), { credentials: "include" })
       .then(r => r.json())
       .then(setCtx)
       .catch(() => setCtx({ isLocalNetwork: false, isMobile: false }));
@@ -443,7 +444,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   async function onSubmit(data: LoginForm) {
     setLoading(true);
     try {
-      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
+      const r = await fetch(apiUrl("/api/auth/login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "include" });
       if (!r.ok) throw new Error("401");
       const json = await r.json();
       if (json?.requires2FA) { setShowTotp(true); return; }

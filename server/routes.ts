@@ -49,7 +49,12 @@ import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users, orders, orderItems } from "@shared/schema";
-import { generateKOTBuffer, sendToPrinter } from './printService';
+import { generateKOTBuffer, sendToPrinter } from "./printService";
+import {
+  createRealtimePublisher,
+  publishRealtime,
+  setRealtimePublisher,
+} from "./realtime/publisher";
 import { eq, desc } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import multer from "multer";
@@ -146,12 +151,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // All other upgrade paths (Vite HMR, etc.) fall through untouched.
   });
 
-  const broadcast = (data: any) => {
+  const wsBroadcast = (data: any) => {
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify(data));
       }
     });
+  };
+
+  const realtimePublisher = await createRealtimePublisher(wsBroadcast);
+  setRealtimePublisher(realtimePublisher);
+
+  const broadcast = (data: any) => {
+    void publishRealtime(data);
   };
 
   // Ensure admin user exists on startup
@@ -878,6 +890,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch settings" });
     }
+  });
+
+  app.get("/api/realtime/config", requireAuth, (_req, res) => {
+    const key = process.env.PUSHER_KEY;
+    if (!key) {
+      return res.json({
+        driver: process.env.NODE_ENV !== "production" ? "local-ws" : "polling",
+        enabled: false,
+      });
+    }
+    res.json({
+      driver: "pusher",
+      enabled: true,
+      key,
+      cluster: process.env.PUSHER_CLUSTER || "ap2",
+      channel: process.env.PUSHER_CHANNEL || "bagicha-pos",
+    });
   });
 
   app.put("/api/settings", requireAdmin, async (req, res) => {

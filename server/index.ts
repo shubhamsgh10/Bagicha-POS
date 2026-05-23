@@ -10,10 +10,13 @@ import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
 import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 import { startDailyScheduler } from "./services/dailyScheduler";
+import { applyCors } from "./cors";
 
 const MemoryStoreSession = MemoryStore(session);
 
 const app = express();
+
+applyCors(app);
 
 // Sentry — init before any middleware so it can instrument everything.
 // SENTRY_DSN is optional; if absent, Sentry is a no-op.

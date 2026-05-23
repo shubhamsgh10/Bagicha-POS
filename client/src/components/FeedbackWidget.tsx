@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 /**
  * FeedbackWidget.tsx
  *
@@ -35,7 +36,7 @@ export function FeedbackWidget() {
   async function refresh() {
     setLoading(true);
     try {
-      const s = await fetch("/api/feedback/stats", { credentials: "include" }).then(r => r.ok ? r.json() : null);
+      const s = await fetch(apiUrl("/api/feedback/stats"), { credentials: "include" }).then(r => r.ok ? r.json() : null);
       if (s) setStats(s);
     } catch {}
     finally { setLoading(false); }

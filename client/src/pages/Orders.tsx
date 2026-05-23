@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -73,16 +74,28 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
 
   const reprintBill = async () => {
     try {
-      const res = await fetch('/api/print/bill', {
+      const res = await fetch(apiUrl('/api/print/bill'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id }),
         credentials: 'include',
       });
+      const data = await res.json();
       if (!res.ok) {
         showBillPreview();
-      } else {
+        return;
+      }
+      const { handlePrintResponse } = await import('@/lib/printGateway');
+      const outcome = await handlePrintResponse(data, {
+        orderId: order.id,
+        ackType: 'bill',
+        pendingAck: data.pendingAck,
+        onBrowserBill: () => showBillPreview(),
+      });
+      if (outcome === 'hardware' || outcome === 'browser') {
         toast({ title: 'Bill sent to printer!' });
+      } else if (outcome === 'noop') {
+        showBillPreview();
       }
     } catch {
       showBillPreview();

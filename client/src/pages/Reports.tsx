@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -235,22 +236,22 @@ export default function Reports() {
 
   const { data: salesReport, isLoading } = useQuery<any>({
     queryKey: ["/api/reports/sales", dateRange.start, dateRange.end],
-    queryFn: () => fetch(`/api/reports/sales${params}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch(apiUrl(`/api/reports/sales${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
   const { data: weeklyData = [] } = useQuery<any[]>({
     queryKey: ["/api/reports/weekly", dateRange.start, dateRange.end],
-    queryFn: () => fetch(`/api/reports/weekly${params}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch(apiUrl(`/api/reports/weekly${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
   const { data: topItemsData = [] } = useQuery<any[]>({
     queryKey: ["/api/reports/top-items", dateRange.start, dateRange.end],
-    queryFn: () => fetch(`/api/reports/top-items${params}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch(apiUrl(`/api/reports/top-items${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
   const { data: paymentSummary } = useQuery<any>({
     queryKey: ["/api/reports/payment-summary", dateRange.start, dateRange.end],
-    queryFn: () => fetch(`/api/reports/payment-summary${params}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch(apiUrl(`/api/reports/payment-summary${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
   const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales, orders: d.orders ?? 0 }));

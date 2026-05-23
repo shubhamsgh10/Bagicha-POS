@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import { apiUrl } from "@/lib/api";
+import { useRealtime } from "@/hooks/useRealtime";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ export function normalizeOrderType(raw: string | null | undefined, isTableOrder:
 }
 
 async function apiFetch<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "include" });
+  const res = await fetch(apiUrl(url), { credentials: "include" });
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
 }
@@ -156,7 +157,7 @@ export function useLiveTableOperations() {
   const [isLoading, setIsLoading] = useState(_tablesCache === null);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const { lastMessage, connectionStatus } = useWebSocket("/ws");
+  const { lastMessage, connectionStatus } = useRealtime();
   const mountedRef = useRef(true);
   const loadingRef = useRef(false);
   const soundEnabledRef = useRef(soundEnabled);

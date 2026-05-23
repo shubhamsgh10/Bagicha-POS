@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import { apiUrl } from "@/lib/api";
+import { useRealtime } from "@/hooks/useRealtime";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ export interface EnrichedTable {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "include" });
+  const res = await fetch(apiUrl(url), { credentials: "include" });
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -58,7 +59,7 @@ let _tablesCache: EnrichedTable[] | null = null;
 export function useLiveTables() {
   const [tables, setTables] = useState<EnrichedTable[]>(_tablesCache ?? []);
   const [isLoading, setIsLoading] = useState(_tablesCache === null);
-  const { lastMessage, connectionStatus } = useWebSocket("/ws");
+  const { lastMessage, connectionStatus } = useRealtime();
 
   // Prevents state updates after component unmount
   const mountedRef = useRef(true);

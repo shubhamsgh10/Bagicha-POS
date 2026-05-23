@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -380,8 +381,9 @@ export default function POS() {
   };
 
   const triggerKOTPrint = async (orderId: number, order?: any) => {
+    if (order) showKOTPreview(order);
     try {
-      const res = await fetch('/api/print/kot', {
+      const res = await fetch(apiUrl('/api/print/kot'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
@@ -395,15 +397,42 @@ export default function POS() {
           variant: 'destructive',
         });
         if (order) showKOTPreview(order);
-      } else if (data.browserPrint) {
-        printKOT(
-          { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
-          data.items ?? [],
-        );
-      } else if (data.printed === false) {
+        return;
+      }
+      const { handlePrintResponse } = await import('@/lib/printGateway');
+      const outcome = await handlePrintResponse(data, {
+        orderId,
+        ackType: 'kot',
+        pendingAck: data.pendingAck,
+        onBrowserKOT: () => {
+          if (!order) {
+            printKOT(
+              { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
+              data.items ?? [],
+            );
+          }
+        },
+      });
+      if (outcome === 'skipped') {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
-      } else {
+      } else if (outcome === 'hardware') {
         toast({ title: 'KOT sent to printer!' });
+      } else if (outcome === 'browser') {
+        toast({
+          title: data.reason === 'non_escpos_printer' ? 'Use KOT preview to print' : 'KOT ready',
+          description:
+            data.message ??
+            (data.reason === 'non_escpos_printer'
+              ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
+              : 'Use Print in the preview panel.'),
+        });
+      } else if (outcome === 'noop' && data.printJob) {
+        toast({
+          title: 'Print job ready',
+          description: 'Use the Electron app for thermal printing.',
+          variant: 'destructive',
+        });
+        if (order) showKOTPreview(order);
       }
     } catch {
       if (order) showKOTPreview(order);
@@ -412,7 +441,7 @@ export default function POS() {
 
   const triggerBillPrint = async (orderId: number, order?: any) => {
     try {
-      const res = await fetch('/api/print/bill', {
+      const res = await fetch(apiUrl('/api/print/bill'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
@@ -421,22 +450,38 @@ export default function POS() {
       const data = await res.json();
       if (!res.ok) {
         if (order) showBillPreview(order);
-      } else if (data.browserPrint) {
-        const [freshOrder, freshSettings] = await Promise.all([
-          fetch(`/api/orders/${orderId}`, { credentials: 'include' }).then(r => r.json()),
-          fetch('/api/settings', { credentials: 'include' }).then(r => r.json()),
-        ]);
-        await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
-        const kotSettings = freshSettings?.printSettings?.kot;
-        if (kotSettings?.printOnBill) {
-          triggerKOTPrint(orderId, order);
-        }
-      } else {
+        return;
+      }
+      const { handlePrintResponse } = await import('@/lib/printGateway');
+      const outcome = await handlePrintResponse(data, {
+        orderId,
+        ackType: 'bill',
+        pendingAck: data.pendingAck,
+        onBrowserBill: async () => {
+          const [freshOrder, freshSettings] = await Promise.all([
+            fetch(apiUrl(`/api/orders/${orderId}`), { credentials: 'include' }).then((r) => r.json()),
+            fetch(apiUrl('/api/settings'), { credentials: 'include' }).then((r) => r.json()),
+          ]);
+          await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
+          const kotSettings = freshSettings?.printSettings?.kot;
+          if (kotSettings?.printOnBill) {
+            triggerKOTPrint(orderId, order);
+          }
+        },
+      });
+      if (outcome === 'hardware' || outcome === 'browser') {
         toast({ title: 'Bill sent to printer!' });
         const kotSettings = (settings as any)?.printSettings?.kot;
-        if (kotSettings?.printOnBill) {
+        if (kotSettings?.printOnBill && outcome === 'hardware') {
           triggerKOTPrint(orderId, order);
         }
+      } else if (outcome === 'noop' && data.printJob) {
+        toast({
+          title: 'Print job ready',
+          description: 'Use the Electron app for thermal printing.',
+          variant: 'destructive',
+        });
+        if (order) showBillPreview(order);
       }
     } catch {
       if (order) showBillPreview(order);
@@ -531,15 +576,21 @@ export default function POS() {
 
     autoKotTimerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch('/api/print/kot', {
+        const res = await fetch(apiUrl('/api/print/kot'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ orderId: activeOrderId, auto: true }),
           credentials: 'include',
         });
         const data = await res.json();
-        // Only notify on successful print; no_delta and unconfigured-printer are silently ignored
-        if (res.ok && data.printed) {
+        if (!res.ok) return;
+        const { handlePrintResponse } = await import('@/lib/printGateway');
+        const outcome = await handlePrintResponse(data, {
+          orderId: activeOrderId,
+          ackType: 'kot',
+          pendingAck: data.pendingAck,
+        });
+        if (outcome === 'hardware') {
           toast({ title: 'KOT sent!', description: 'Kitchen notified automatically' });
         }
       } catch {

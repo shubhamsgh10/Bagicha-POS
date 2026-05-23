@@ -1,0 +1,52 @@
+appId: com.bagicha.pos
+productName: Bagicha POS
+executableName: BagichaPOS
+copyright: Copyright © Bagicha
+directories:
+  output: release
+  buildResources: desktop/icons
+files:
+  - dist/public/**/*
+  - desktop/dist/**/*
+  - desktop/icons/icon.png
+  - desktop/icons/icon.ico
+  - shared/print/scripts/**/*
+  - package.json
+asar: true
+extraMetadata:
+  main: desktop/dist/main.mjs
+
+# 512×512+ PNG; electron-builder derives platform icons (Windows uses icon.ico when present)
+icon: desktop/icons/icon.png
+
+win:
+  icon: desktop/icons/icon.ico
+  # Avoid winCodeSign 7z extract (symlinks need Developer Mode or admin on Windows).
+  # Installer/shortcuts still use icon.ico; exe metadata uses Electron defaults.
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Bagicha POS
+
+mac:
+  icon: desktop/icons/icon.png
+  category: public.app-category.business
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+linux:
+  icon: desktop/icons/icon.png
+  category: Office
+  target:
+    - AppImage
+    - deb

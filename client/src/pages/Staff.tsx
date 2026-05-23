@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -568,7 +569,7 @@ export default function Staff() {
   const { data: attendanceSettings } = useQuery<AttendanceSettings>({
     queryKey: ["/api/attendance/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/attendance/settings", { credentials: "include" });
+      const res = await fetch(apiUrl("/api/attendance/settings"), { credentials: "include" });
       if (!res.ok) return { sheetUrl: "", columnMapping: null, autoSyncHour: -1 };
       return res.json();
     },
@@ -586,7 +587,7 @@ export default function Staff() {
   const { data: employees = [] } = useQuery<string[]>({
     queryKey: ["/api/attendance/employees"],
     queryFn: async () => {
-      const res = await fetch("/api/attendance/employees", { credentials: "include" });
+      const res = await fetch(apiUrl("/api/attendance/employees"), { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -597,7 +598,7 @@ export default function Staff() {
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
       if (empFilter !== "all") params.set("employee", empFilter);
-      const res = await fetch(`/api/attendance?${params}`, { credentials: "include" });
+      const res = await fetch(apiUrl(`/api/attendance?${params}`), { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -607,7 +608,7 @@ export default function Staff() {
     queryKey: ["/api/attendance/summary", fromDate, toDate],
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
-      const res = await fetch(`/api/attendance/summary?${params}`, { credentials: "include" });
+      const res = await fetch(apiUrl(`/api/attendance/summary?${params}`), { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -617,7 +618,7 @@ export default function Staff() {
     queryKey: ["/api/staff/performance", fromDate, toDate],
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
-      const res = await fetch(`/api/staff/performance?${params}`, { credentials: "include" });
+      const res = await fetch(apiUrl(`/api/staff/performance?${params}`), { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -626,7 +627,7 @@ export default function Staff() {
   const { data: syncLog = [] } = useQuery<any[]>({
     queryKey: ["/api/attendance/sync-log"],
     queryFn: async () => {
-      const res = await fetch("/api/attendance/sync-log", { credentials: "include" });
+      const res = await fetch(apiUrl("/api/attendance/sync-log"), { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },

@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,7 @@ export function BackupPanel() {
   const { data, isLoading } = useQuery<BackupStatus>({
     queryKey: ["/api/admin/backups"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/backups", { credentials: "include" });
+      const r = await fetch(apiUrl("/api/admin/backups"), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load backup status");
       return r.json();
     },
@@ -40,7 +41,7 @@ export function BackupPanel() {
   async function triggerBackup() {
     setBusy(true);
     try {
-      const r = await fetch("/api/admin/backups", { method: "POST", credentials: "include" });
+      const r = await fetch(apiUrl("/api/admin/backups"), { method: "POST", credentials: "include" });
       const json = await r.json();
       if (!r.ok) throw new Error(json.message ?? "Backup failed");
       toast({

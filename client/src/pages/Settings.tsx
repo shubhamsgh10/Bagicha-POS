@@ -1,3 +1,4 @@
+import { apiUrl } from '@/lib/api';
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -529,7 +530,7 @@ function LogsPanel() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/logs", { credentials: "include" });
+      const res = await fetch(apiUrl("/api/admin/logs"), { credentials: "include" });
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       setLogs(data);
@@ -676,7 +677,7 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
           ? rows.map(r => ({ itemName: r[0], currentStock: r[1], minStock: r[2], unit: r[3] }))
           : rows.map(r => ({ name: r[0], phone: r[1], email: r[2], address: r[3], locality: r[4], dob: r[5], tags: r[6], remark: r[7] }));
 
-      const res = await fetch(`/api/admin/import/${type}`, {
+      const res = await fetch(apiUrl(`/api/admin/import/${type}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
