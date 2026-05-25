@@ -77,7 +77,7 @@ export interface KOTItem {
 export function generateKOTBuffer(params: {
   orderNumber: string;
   tableNumber: string | null;
-  kotNumber?: string;
+  kotNumber?: string | number;
   isReprint: boolean;
   isDelta: boolean;
   newItems: KOTItem[];
@@ -86,57 +86,77 @@ export function generateKOTBuffer(params: {
   kotSettings: KOTPrintSettings;
   width?: number;
 }): Buffer {
-  const W = params.width ?? 32;
+  const W = params.width ?? 48;
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
 
+  // Duplicate watermark
   if (params.isReprint && params.kotSettings.showDuplicateWatermark) {
     parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line('** DUPLICATE **'), E.BOLD_OFF);
     parts.push(E.divider('=', W));
   }
 
-  const header = params.isDelta ? 'MODIFIED KOT' : 'KITCHEN ORDER';
-  parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(header), E.BOLD_OFF);
+  // Large table / takeaway header in double-size bold
+  const tableHeader = params.tableNumber ? `TABLE - ${params.tableNumber}` : 'TAKEAWAY';
+  parts.push(E.ALIGN_CENTER);
+  parts.push(E.DOUBLE_SIZE_ON, E.line(tableHeader), E.DOUBLE_SIZE_OFF);
+
+  // Sub-header: KITCHEN ORDER / MODIFIED KOT
+  const subHeader = params.isDelta ? 'MODIFIED KOT' : 'KITCHEN ORDER';
+  parts.push(E.BOLD_ON, E.line(subHeader), E.BOLD_OFF);
   parts.push(E.divider('=', W));
   parts.push(E.ALIGN_LEFT);
 
-  const table = params.tableNumber ? `Table: ${params.tableNumber}` : 'Takeaway';
-  const kotRef = params.kotNumber ? `KOT#: ${params.kotNumber}` : `Ord: ${params.orderNumber.slice(-6)}`;
-  parts.push(E.twoColumns(table, kotRef, W));
-
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  parts.push(E.twoColumns(dateStr, timeStr, W));
+  // KOT# + date + time meta line
+  if (params.kotSettings.kotNumbering !== false) {
+    const kotNum = String(params.kotNumber ?? 1).padStart(3, '0');
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const yy = String(now.getFullYear()).slice(-2);
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    parts.push(E.line(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
+  }
   parts.push(E.divider('-', W));
 
+  // New items: [ 02 ]  Item Name (bold), >> instructions (normal)
   for (const item of params.newItems) {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
-    parts.push(E.BOLD_ON, E.line(`  ${item.quantity}x ${label}`), E.BOLD_OFF);
+    const qty = `[ ${String(item.quantity).padStart(2, '0')} ]`;
+    parts.push(E.BOLD_ON, E.line(`${qty}  ${label}`), E.BOLD_OFF);
     if (params.kotSettings.printAddons && item.instructions) {
-      parts.push(E.line(`     [${item.instructions}]`));
+      parts.push(E.line(`        >> ${item.instructions}`));
     }
   }
 
+  // Modified items: [ QQ ]  Name  was NN
   if (params.kotSettings.printModifiedItemsOnly && params.modifiedItems.length > 0) {
     for (const item of params.modifiedItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
-      parts.push(E.twoColumns(`  ${item.quantity}x ${label}`, `was ${item.previousQty}`, W));
+      const qty = `[ ${String(item.quantity).padStart(2, '0')} ]`;
+      parts.push(E.BOLD_ON, E.twoColumns(`${qty}  ${label}`, `was ${item.previousQty}`, W), E.BOLD_OFF);
+      if (params.kotSettings.printAddons && item.instructions) {
+        parts.push(E.line(`        >> ${item.instructions}`));
+      }
     }
   }
 
+  // Cancelled items: ** VOID ** [ QQ ]  Name
   if (params.kotSettings.printCancelledKOT && params.cancelledItems.length > 0) {
     parts.push(E.divider('-', W));
     for (const item of params.cancelledItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
-      parts.push(E.BOLD_ON, E.line(`  ** VOID **  ${item.quantity}x ${label}`), E.BOLD_OFF);
+      const qty = `[ ${String(item.quantity).padStart(2, '0')} ]`;
+      parts.push(E.BOLD_ON, E.line(`** VOID **  ${qty}  ${label}`), E.BOLD_OFF);
     }
   }
 
+  // Footer
   const totalItems = params.newItems.reduce((s, i) => s + i.quantity, 0);
   parts.push(E.divider('=', W));
-  parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(`Items: ${totalItems}`), E.BOLD_OFF);
+  parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(`Total Items: ${totalItems}`), E.BOLD_OFF);
   parts.push(E.divider('=', W));
   parts.push(E.feed(3));
   parts.push(E.CUT);
