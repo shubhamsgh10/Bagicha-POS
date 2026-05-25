@@ -30,6 +30,8 @@ import { BackupPanel } from "@/components/BackupPanel";
 
 interface RestaurantSettings {
   restaurantName: string;
+  businessName: string;
+  fssaiNumber: string;
   address: string;
   phone: string;
   email: string;
@@ -320,6 +322,26 @@ function RestaurantConfigPanel({
               value={formData.restaurantName}
               onChange={(e) => set("restaurantName", e.target.value)}
               placeholder="Enter restaurant name"
+              className={inputCls}
+            />
+          </div>
+          {/* Business / Trading Name */}
+          <div>
+            <Label className="text-xs text-gray-500 mb-1">Business / Trading Name</Label>
+            <input
+              value={formData.businessName}
+              onChange={(e) => set("businessName", e.target.value)}
+              placeholder="e.g. Salasar Trading (prints below restaurant name on bill)"
+              className={inputCls}
+            />
+          </div>
+          {/* FSSAI License Number */}
+          <div>
+            <Label className="text-xs text-gray-500 mb-1">FSSAI License Number</Label>
+            <input
+              value={formData.fssaiNumber}
+              onChange={(e) => set("fssaiNumber", e.target.value)}
+              placeholder="14-digit FSSAI license (enable in Print Settings → Bill)"
               className={inputCls}
             />
           </div>
@@ -1208,6 +1230,8 @@ export default function Settings() {
 
   const [formData, setFormData] = useState<RestaurantSettings>({
     restaurantName: "Bagicha Restaurant",
+    businessName: "",
+    fssaiNumber: "",
     address: "",
     phone: "",
     email: "",
