@@ -20,6 +20,8 @@ import type { PrintConfigSettings } from "@shared/print/types";
 
 export interface RestaurantSettings {
   restaurantName: string;
+  businessName: string;
+  fssaiNumber: string;
   address: string;
   phone: string;
   email: string;
@@ -50,6 +52,7 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     kotPrinterId: null,
     autoKOTPrint: false,
     autoKOTDebounceMs: 1500,
+    kotNumbering: true,
   },
   bill: {
     taxDisplay: 'none',
@@ -63,11 +66,17 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     showOrderBarcode: false,
     showQuantityBreakdown: false,
     billPrinterId: null,
+    showLogo: true,
+    showFssai: false,
+    showRoundOff: true,
+    showNameField: true,
   },
 };
 
 const DEFAULT_SETTINGS: RestaurantSettings = {
   restaurantName: "Bagicha Restaurant",
+  businessName: "",
+  fssaiNumber: "",
   address: "",
   phone: "",
   email: "",

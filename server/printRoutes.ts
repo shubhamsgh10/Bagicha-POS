@@ -35,6 +35,7 @@ function kotTextLines(params: {
   cancelledItems: Array<{ name: string; quantity: number; size?: string | null }>;
   kotSettings: import("./settingsStore").KOTPrintSettings;
   width: number;
+  kotNumber?: number;
 }): string[] {
   const W = params.width;
   const div = (c: string) => c.repeat(W);
@@ -46,33 +47,49 @@ function kotTextLines(params: {
   if (params.isReprint && params.kotSettings.showDuplicateWatermark) {
     lines.push(center("** DUPLICATE **"), div("="));
   }
-  lines.push(center(params.isDelta ? "MODIFIED KOT" : "KITCHEN ORDER"), div("="));
-  lines.push(two(params.tableNumber ? `Table: ${params.tableNumber}` : "Takeaway", `Ord: ${params.orderNumber.slice(-6)}`));
-  const now = new Date();
-  lines.push(
-    two(
-      now.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
-      now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-    ),
-  );
+
+  const tableHeader = params.tableNumber ? `TABLE - ${params.tableNumber}` : "TAKEAWAY";
+  lines.push(center(`[ ${tableHeader} ]`));
+  lines.push(center(params.isDelta ? "MODIFIED KOT" : "KITCHEN ORDER"));
+  lines.push(div("="));
+
+  if (params.kotSettings.kotNumbering !== false) {
+    const kotNum = String(params.kotNumber ?? 1).padStart(3, "0");
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, "0");
+    const mo = String(now.getMonth() + 1).padStart(2, "0");
+    const yy = String(now.getFullYear()).slice(-2);
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    lines.push(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`);
+  }
   lines.push(div("-"));
+
   for (const item of params.newItems) {
-    lines.push(`  ${item.quantity}x ${item.size ? `${item.name} (${item.size})` : item.name}`);
-    if (params.kotSettings.printAddons && item.instructions) lines.push(`     [${item.instructions}]`);
+    const label = item.size ? `${item.name} (${item.size})` : item.name;
+    const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
+    lines.push(`${qty}  ${label}`);
+    if (params.kotSettings.printAddons && item.instructions) {
+      lines.push(`        >> ${item.instructions}`);
+    }
   }
   if (params.kotSettings.printModifiedItemsOnly) {
     for (const item of params.modifiedItems) {
-      lines.push(two(`  ${item.quantity}x ${item.size ? `${item.name} (${item.size})` : item.name}`, `was ${item.previousQty}`));
+      const label = item.size ? `${item.name} (${item.size})` : item.name;
+      const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
+      lines.push(two(`${qty}  ${label}`, `was ${item.previousQty}`));
     }
   }
   if (params.kotSettings.printCancelledKOT && params.cancelledItems.length > 0) {
     lines.push(div("-"));
     for (const item of params.cancelledItems) {
-      lines.push(`  ** VOID **  ${item.quantity}x ${item.size ? `${item.name} (${item.size})` : item.name}`);
+      const label = item.size ? `${item.name} (${item.size})` : item.name;
+      const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
+      lines.push(`** VOID **  ${qty}  ${label}`);
     }
   }
   const total = params.newItems.reduce((s, i) => s + i.quantity, 0);
-  lines.push(div("="), center(`Items: ${total}`), div("="));
+  lines.push(div("="), center(`Total Items: ${total}`), div("="));
   return lines;
 }
 
@@ -94,6 +111,7 @@ function billTextLines(params: {
   restaurant: import("./settingsStore").RestaurantSettings;
   billSettings: import("./settingsStore").BillPrintSettings;
   width: number;
+  cashierName?: string;
 }): string[] {
   const W = params.width;
   const { order, items, restaurant, billSettings } = params;
@@ -104,77 +122,82 @@ function billTextLines(params: {
     l.substring(0, Math.max(1, W - r.length - 1)).padEnd(Math.max(1, W - r.length - 1)) + " " + r;
   const lines: string[] = [];
 
-  if (order.billPrintCount > 0 && billSettings.showDuplicate) {
-    lines.push(center("** DUPLICATE **"), div("="));
-  }
+  if (order.billPrintCount > 0 && billSettings.showDuplicate) { lines.push(center("** DUPLICATE **"), div("=")); }
+  if (billSettings.showLogo) lines.push(center("[LOGO]"));
   lines.push(center(restaurant.restaurantName));
-  if (restaurant.address) lines.push(center(restaurant.address.substring(0, W)));
-  if (restaurant.phone) lines.push(center(`Tel: ${restaurant.phone}`));
-  if (restaurant.gstNumber) lines.push(center(`GST: ${restaurant.gstNumber}`));
-  lines.push(div("="), center("RETAIL INVOICE"), div("="));
+  if (restaurant.businessName) lines.push(center(restaurant.businessName));
+  if (restaurant.gstNumber)    lines.push(center(`GST -${restaurant.gstNumber}`));
+  if (restaurant.phone)        lines.push(center(`M - ${restaurant.phone}`));
+  if (restaurant.address) {
+    for (const seg of restaurant.address.split(",").map((s) => s.trim()).filter(Boolean)) {
+      lines.push(center(seg.substring(0, W)));
+    }
+  }
+  if (billSettings.showFssai && restaurant.fssaiNumber) lines.push(center(`FSSAI: ${restaurant.fssaiNumber}`));
+  lines.push(div("="));
+
+  if (billSettings.showNameField) { lines.push(`Name:${"_".repeat(Math.max(10, W - 5))}`); lines.push(""); }
 
   const created = new Date(order.createdAt);
-  const orderLabel =
-    billSettings.showKotAsToken && (order.kotPrintCount ?? 0) > 0
-      ? `Token: #${order.kotPrintCount}`
-      : `Order: ${order.orderNumber}`;
-  lines.push(
-    two(orderLabel, created.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })),
-  );
-  lines.push(
-    two(
-      order.tableNumber ? `Table: ${order.tableNumber}` : order.orderType,
-      created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-    ),
-  );
-  if (order.customerName) lines.push(`Customer: ${order.customerName}`);
+  const dd = String(created.getDate()).padStart(2, "0");
+  const mo = String(created.getMonth() + 1).padStart(2, "0");
+  const yy = String(created.getFullYear()).slice(-2);
+  const hh = String(created.getHours()).padStart(2, "0");
+  const mi = String(created.getMinutes()).padStart(2, "0");
+  const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
+  lines.push(two(`Date: ${dd}/${mo}/${yy}`, orderTypeLabel));
+  lines.push(`${hh}:${mi}`);
+  lines.push(two(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   lines.push(div("-"));
 
-  const QW = 4;
-  const AW = 7;
-  const NW = W - QW - AW - 2;
-  lines.push(`${"Item".padEnd(NW)} ${"Qty".padStart(QW)} ${"Amt".padStart(AW)}`);
+  const IW = W - 4 - 9 - 8 - 3;
+  lines.push(`${"Item".padEnd(IW)} ${"Qty".padStart(4)} ${"Price".padStart(9)} ${"Amt".padStart(8)}`);
   lines.push(div("-"));
 
-  const priceMultiplier = billSettings.itemPriceMode === "inclusive" ? 1 + restaurant.taxRate / 100 : 1;
   let displayItems = items;
   if (billSettings.mergeDuplicateItems) {
-    const map = new Map<string, (typeof items)[0] & { totalQty: number; totalAmt: number }>();
+    const map = new Map<string, typeof items[0] & { totalQty: number; totalAmt: number }>();
     for (const item of items) {
       const key = `${item.name}:${item.size ?? ""}`;
       const ex = map.get(key);
-      if (ex) {
-        ex.totalQty += item.quantity;
-        ex.totalAmt += item.quantity * parseFloat(item.price);
-      } else {
-        map.set(key, { ...item, totalQty: item.quantity, totalAmt: item.quantity * parseFloat(item.price) });
-      }
+      if (ex) { ex.totalQty += item.quantity; ex.totalAmt += item.quantity * parseFloat(item.price); }
+      else map.set(key, { ...item, totalQty: item.quantity, totalAmt: item.quantity * parseFloat(item.price) });
     }
-    displayItems = Array.from(map.values()).map((i) => ({
-      ...i,
-      quantity: i.totalQty,
-      price: String(i.totalAmt / i.totalQty),
-    }));
+    displayItems = Array.from(map.values()).map((i) => ({ ...i, quantity: i.totalQty, price: String(i.totalAmt / i.totalQty) }));
   }
+
+  let totalQty = 0;
   for (const item of displayItems) {
-    const label = (item.size ? `${item.name}(${item.size})` : item.name).substring(0, NW).padEnd(NW);
-    lines.push(
-      `${label} ${String(item.quantity).padStart(QW)} ${(`${sym}${(item.quantity * parseFloat(item.price) * priceMultiplier).toFixed(0)}`).padStart(AW)}`,
-    );
+    const fullName = item.size ? `${item.name} (${item.size})` : item.name;
+    const unitPrice = parseFloat(item.price);
+    let remaining = fullName; let first = true;
+    while (remaining.length > 0) {
+      const chunk = remaining.substring(0, IW); remaining = remaining.substring(IW);
+      if (first) {
+        lines.push(`${chunk.padEnd(IW)} ${String(item.quantity).padStart(4)} ${unitPrice.toFixed(2).padStart(9)} ${(unitPrice * item.quantity).toFixed(2).padStart(8)}`);
+        first = false;
+      } else { lines.push(chunk); }
+    }
     if (billSettings.showAddons && item.specialInstructions) lines.push(`  [${item.specialInstructions}]`);
+    totalQty += item.quantity;
   }
   lines.push(div("-"));
 
-  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount);
-  const discount = parseFloat(order.discountAmount || "0");
   const tax = parseFloat(order.taxAmount);
-  const total = parseFloat(order.totalAmount);
-
-  lines.push(two("Subtotal:", `${sym}${subtotal.toFixed(0)}`));
-  if (discount > 0) lines.push(two("Discount:", `-${sym}${discount.toFixed(0)}`));
-  if (billSettings.showBackwardTax && tax > 0) lines.push(two(`Tax (${restaurant.taxRate}%):`, `${sym}${tax.toFixed(0)}`));
-  lines.push(div("="), two("TOTAL:", `${sym}${total.toFixed(0)}`));
-  if (order.paymentMethod) lines.push(two("Payment:", order.paymentMethod.toUpperCase()));
+  const discount = parseFloat(order.discountAmount || "0");
+  const subtotal = parseFloat(order.totalAmount) - tax;
+  const rawTotal = parseFloat(order.totalAmount);
+  const rounded = Math.round(rawTotal);
+  const roundOff = rounded - rawTotal;
+  const cgstRate = restaurant.taxRate / 2;
+  lines.push(two(`Total Qty: ${totalQty}`, `Sub Total ${subtotal.toFixed(2)}`));
+  lines.push(two("", `CGST ${cgstRate}%  ${(tax / 2).toFixed(2)}`));
+  lines.push(two("", `SGST ${cgstRate}%  ${(tax / 2).toFixed(2)}`));
+  if (discount > 0) lines.push(two("", `Discount  -${discount.toFixed(2)}`));
+  if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) lines.push(two("", `Round off  ${roundOff.toFixed(2)}`));
+  lines.push(div("="));
+  lines.push(two("", `Grand Total  ${sym}${rounded.toFixed(2)}`));
+  if (order.paymentMethod) lines.push(two("", order.paymentMethod.toUpperCase()));
   lines.push(div("="));
   if (restaurant.footerNote) lines.push(center(restaurant.footerNote.substring(0, W)));
   return lines;
@@ -288,13 +311,14 @@ export function registerPrintRoutes(app: Express): void {
       const buffer = generateKOTBuffer({
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
+        kotNumber: (order.kotPrintCount ?? 0) + 1,
         isReprint: reprint,
         isDelta,
         newItems,
         modifiedItems,
         cancelledItems,
         kotSettings,
-        width: printer.width ?? 32,
+        width: printer.width ?? 48,
       });
 
       const commitKotState = async () => {
@@ -412,7 +436,8 @@ export function registerPrintRoutes(app: Express): void {
         })),
         restaurant: settings,
         billSettings,
-        width: printer.width ?? 32,
+        cashierName: (req.user as any)?.username ?? "Admin",
+        width: printer.width ?? 48,
       });
 
       const commitBillState = async () => {
@@ -512,7 +537,7 @@ export function registerPrintRoutes(app: Express): void {
       if (!orderId || !type) return res.status(400).json({ message: "type and orderId are required" });
 
       const settings = getSettings();
-      const W = 32;
+      const W = 48;
 
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Order not found" });
@@ -567,6 +592,7 @@ export function registerPrintRoutes(app: Express): void {
         const lines = kotTextLines({
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
+          kotNumber: (order.kotPrintCount ?? 0) + 1,
           isReprint: reprint,
           isDelta,
           newItems,
@@ -614,6 +640,7 @@ export function registerPrintRoutes(app: Express): void {
         })),
         restaurant: settings,
         billSettings,
+        cashierName: (req.user as any)?.username ?? "Admin",
         width: W,
       });
       return res.json({ lines, width: W });

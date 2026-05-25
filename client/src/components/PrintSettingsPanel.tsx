@@ -35,6 +35,7 @@ interface KOTPrintSettings {
   kotPrinterId: string | null;
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
+  kotNumbering: boolean;
 }
 
 interface BillPrintSettings {
@@ -49,6 +50,10 @@ interface BillPrintSettings {
   showOrderBarcode: boolean;
   showQuantityBreakdown: boolean;
   billPrinterId: string | null;
+  showLogo: boolean;
+  showFssai: boolean;
+  showRoundOff: boolean;
+  showNameField: boolean;
 }
 
 interface PrintConfigSettings {
@@ -63,6 +68,7 @@ const DEFAULT_KOT: KOTPrintSettings = {
   showDuplicateWatermark: true, printDeletedItems: true, printDeletedSeparate: false,
   printOnTableMove: false, kotPrinterId: null,
   autoKOTPrint: false, autoKOTDebounceMs: 1500,
+  kotNumbering: true,
 };
 
 const DEFAULT_BILL: BillPrintSettings = {
@@ -70,6 +76,7 @@ const DEFAULT_BILL: BillPrintSettings = {
   showDuplicate: true, showCustomerPayment: false, showKotAsToken: false,
   showAddons: true, mergeDuplicateItems: true, showOrderBarcode: false,
   showQuantityBreakdown: false, billPrinterId: null,
+  showLogo: true, showFssai: false, showRoundOff: true, showNameField: true,
 };
 
 // ── Toggle row ────────────────────────────────────────────────────────────────
@@ -89,6 +96,122 @@ function ToggleRow({ label, description, checked, onChange }: {
         )}
       </div>
       <Switch checked={checked} onCheckedChange={onChange} className="shrink-0 mt-0.5" />
+    </div>
+  );
+}
+
+// ── KOT Receipt Preview ───────────────────────────────────────────────────────
+
+function KOTReceiptPreview({ kot }: { kot: KOTPrintSettings }) {
+  return (
+    <div style={{
+      fontFamily: "'Courier New', Courier, monospace",
+      fontSize: 11, lineHeight: 1.65, background: '#fff',
+      border: '1px solid #ccc', padding: '12px 10px',
+      width: '100%', maxWidth: 280, color: '#000',
+      boxShadow: '1px 2px 6px rgba(0,0,0,0.1)',
+    }}>
+      <div style={{ textAlign: 'center', fontSize: 20, fontWeight: 900, letterSpacing: 2 }}>TABLE - 4</div>
+      <div style={{ textAlign: 'center', fontWeight: 700 }}>KITCHEN ORDER</div>
+      <div style={{ borderTop: '2px solid #000', margin: '5px 0' }} />
+      {kot.kotNumbering !== false && (
+        <div>KOT#: 001&nbsp;&nbsp;&nbsp;22/03/26&nbsp;&nbsp;&nbsp;19:26</div>
+      )}
+      <div style={{ borderTop: '1px dashed #666', margin: '4px 0' }} />
+      <div><strong>{'[ 02 ]'}&nbsp;&nbsp;Butter Naan</strong></div>
+      {kot.printAddons && <div style={{ paddingLeft: 8, fontSize: 10 }}>{'>> No Onion, Less Spice'}</div>}
+      <div><strong>{'[ 01 ]'}&nbsp;&nbsp;Dal Makhani</strong></div>
+      <div><strong>{'[ 01 ]'}&nbsp;&nbsp;Paneer Tikka</strong></div>
+      {kot.printAddons && <div style={{ paddingLeft: 8, fontSize: 10 }}>{'>> Extra Gravy'}</div>}
+      {kot.printCancelledKOT && (
+        <>
+          <div style={{ borderTop: '1px dashed #666', margin: '4px 0' }} />
+          <div><strong>** VOID **&nbsp;&nbsp;{'[ 01 ]'}&nbsp;&nbsp;Masala Chai</strong></div>
+        </>
+      )}
+      <div style={{ borderTop: '2px solid #000', margin: '5px 0' }} />
+      <div style={{ textAlign: 'center', fontWeight: 700 }}>Total Items: 4</div>
+      <div style={{ borderTop: '2px solid #000', margin: '5px 0' }} />
+    </div>
+  );
+}
+
+// ── Bill Receipt Preview ───────────────────────────────────────────────────────
+
+function BillReceiptPreview({ bill, settings }: { bill: BillPrintSettings; settings: any }) {
+  const taxRate  = settings?.taxRate ?? 5;
+  const cgst     = taxRate / 2;
+  const subtotal = 270.00;
+  const taxAmt   = subtotal * taxRate / 100;
+  const rawTotal = subtotal + taxAmt;
+  const rounded  = Math.round(rawTotal);
+  const roundOff = rounded - rawTotal;
+  const sym      = settings?.currencySymbol || '₹';
+
+  return (
+    <div style={{
+      fontFamily: "'Courier New', Courier, monospace",
+      fontSize: 11, lineHeight: 1.65, background: '#fff',
+      border: '1px solid #ccc', padding: '12px 10px',
+      width: '100%', maxWidth: 280, color: '#000',
+      boxShadow: '1px 2px 6px rgba(0,0,0,0.1)',
+    }}>
+      {bill.showLogo && (
+        <div style={{ textAlign: 'center', fontSize: 9, color: '#888', border: '1px dashed #ccc', padding: 3, marginBottom: 5 }}>
+          [LOGO — from printer NV Flash]
+        </div>
+      )}
+      <div style={{ textAlign: 'center', fontWeight: 700 }}>{settings?.restaurantName || 'Restaurant Name'}</div>
+      {settings?.businessName && <div style={{ textAlign: 'center' }}>{settings.businessName}</div>}
+      {settings?.gstNumber && <div style={{ textAlign: 'center' }}>GST -{settings.gstNumber}</div>}
+      {settings?.phone && <div style={{ textAlign: 'center' }}>M - {settings.phone}</div>}
+      {settings?.address && settings.address.split(',').map((p: string, i: number) => (
+        <div key={i} style={{ textAlign: 'center' }}>{p.trim()}</div>
+      ))}
+      {bill.showFssai && settings?.fssaiNumber && (
+        <div style={{ textAlign: 'center' }}>FSSAI: {settings.fssaiNumber}</div>
+      )}
+      <div style={{ borderTop: '1px solid #000', margin: '5px 0' }} />
+      {bill.showNameField && <><div>Name:{'_'.repeat(22)}</div><br /></>}
+      <div>Date: 22/03/26&nbsp;&nbsp;&nbsp;<strong>Pick Up</strong></div>
+      <div>19:26</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Cashier: Admin</span><span>Bill No.: 1234</span>
+      </div>
+      <div style={{ borderTop: '1px dashed #666', margin: '4px 0' }} />
+      <div style={{ fontWeight: 700, display: 'flex', gap: 4 }}>
+        <span style={{ flex: 1 }}>Item</span>
+        <span style={{ width: 24, textAlign: 'right' }}>Qty</span>
+        <span style={{ width: 54, textAlign: 'right' }}>Price</span>
+        <span style={{ width: 48, textAlign: 'right' }}>Amt</span>
+      </div>
+      <div style={{ borderTop: '1px dashed #666', margin: '3px 0' }} />
+      <div style={{ display: 'flex', gap: 4 }}>
+        <span style={{ flex: 1 }}>Butter Naan</span>
+        <span style={{ width: 24, textAlign: 'right' }}>2</span>
+        <span style={{ width: 54, textAlign: 'right' }}>90.00</span>
+        <span style={{ width: 48, textAlign: 'right' }}>180.00</span>
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <span style={{ flex: 1 }}>Dal Makhani</span>
+        <span style={{ width: 24, textAlign: 'right' }}>1</span>
+        <span style={{ width: 54, textAlign: 'right' }}>90.00</span>
+        <span style={{ width: 48, textAlign: 'right' }}>90.00</span>
+      </div>
+      <div style={{ borderTop: '1px dashed #666', margin: '4px 0' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Total Qty: 3</span>
+        <span>Sub Total {subtotal.toFixed(2)}</span>
+      </div>
+      <div style={{ textAlign: 'right' }}>CGST {cgst}%&nbsp;&nbsp;{(taxAmt / 2).toFixed(2)}</div>
+      <div style={{ textAlign: 'right' }}>SGST {cgst}%&nbsp;&nbsp;{(taxAmt / 2).toFixed(2)}</div>
+      {bill.showRoundOff && Math.abs(roundOff) >= 0.005 && (
+        <div style={{ textAlign: 'right' }}>Round off&nbsp;&nbsp;{roundOff.toFixed(2)}</div>
+      )}
+      <div style={{ borderTop: '1px solid #000', margin: '4px 0' }} />
+      <div style={{ textAlign: 'right', fontWeight: 700 }}>Grand Total {sym}{rounded.toFixed(2)}</div>
+      <div style={{ borderTop: '1px solid #000', margin: '4px 0' }} />
+      <div style={{ textAlign: 'center' }}>{settings?.footerNote || 'Thanks'}</div>
     </div>
   );
 }
@@ -644,6 +767,17 @@ export function PrintSettingsPanel({
                 label="While moving KOT items from one table to another, print KOT"
                 checked={ps.kot.printOnTableMove} onChange={v => setKot('printOnTableMove', v)}
               />
+              <ToggleRow
+                label="Show KOT Number"
+                description="Prints KOT#: 001 with date and time on each KOT slip."
+                checked={ps.kot.kotNumbering !== false}
+                onChange={v => setKot('kotNumbering', v)}
+              />
+
+              <div className="mt-5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Print Preview</p>
+                <KOTReceiptPreview kot={ps.kot} />
+              </div>
             </div>
           )}
 
@@ -695,6 +829,40 @@ export function PrintSettingsPanel({
                 checked={ps.bill.mergeDuplicateItems} onChange={v => setBill('mergeDuplicateItems', v)}
               />
               <ToggleRow label="Show order barcode on bill print" checked={ps.bill.showOrderBarcode} onChange={v => setBill('showOrderBarcode', v)} />
+              <ToggleRow
+                label="Display Quantity of ordered items in Bill (ex. Roti 5 + 1 + 2)"
+                description="This setting shows item quantity KOT-wise in bill print."
+                checked={ps.bill.showQuantityBreakdown} onChange={v => setBill('showQuantityBreakdown', v)}
+              />
+              <ToggleRow
+                label="Print Logo from Printer NV Flash"
+                description="Prints the logo stored in the printer's NV Flash memory slot 1. Set up once via TVS utility tool."
+                checked={ps.bill.showLogo}
+                onChange={v => setBill('showLogo', v)}
+              />
+              <ToggleRow
+                label="Show FSSAI License Number"
+                description="Prints FSSAI number below GST in the bill header. Enter the number in Settings → Restaurant Configuration."
+                checked={ps.bill.showFssai}
+                onChange={v => setBill('showFssai', v)}
+              />
+              <ToggleRow
+                label="Show Round Off Line"
+                description="Prints the round-off adjustment line (e.g. -0.36) above Grand Total."
+                checked={ps.bill.showRoundOff}
+                onChange={v => setBill('showRoundOff', v)}
+              />
+              <ToggleRow
+                label="Show Name Field"
+                description="Prints a blank Name:___ line at the top of the bill for handwriting the customer name."
+                checked={ps.bill.showNameField}
+                onChange={v => setBill('showNameField', v)}
+              />
+
+              <div className="mt-5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Print Preview</p>
+                <BillReceiptPreview bill={ps.bill} settings={currentSettings} />
+              </div>
             </div>
           )}
 

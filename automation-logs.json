@@ -275,13 +275,13 @@
     "campaign": "WIN_BACK"
   },
   {
-    "id": "21a79c51-88a8-452c-84df-b859ef826de5",
+    "id": "ad4f4cd1-7542-4d58-8c85-6e43beac25f1",
     "customerId": "9109550322",
     "customerName": "Shubham",
     "phone": "9109550322",
     "trigger": "WIN_BACK",
-    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 54 days since your last visit (especially your favourite *Shakshuka*). Come back and enjoy *15% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
-    "sentAt": "2026-05-21T08:17:19.378Z",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 58 days since your last visit (especially your favourite *Shakshuka*). Come back and enjoy *15% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-05-25T08:56:19.629Z",
     "status": "failed",
     "error": "Invalid or missing phone number",
     "campaign": "WIN_BACK"
