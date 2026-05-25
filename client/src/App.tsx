@@ -1,5 +1,6 @@
 import { apiUrl } from '@/lib/api';
 import { Switch, Route, useLocation } from "wouter";
+import { AppWouterRouter } from "@/lib/appRouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -60,7 +61,7 @@ const pageTrans = { duration: 0.42, ease: [0.22, 1, 0.36, 1] as const };
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { direction, goBack, canGoBack } = useNavigation();
 
   // Swipe-back gesture — only when authenticated and there's history
@@ -125,7 +126,7 @@ function Router() {
               staleTime: 0,
             });
             queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-            window.history.replaceState(null, "", "/tables");
+            navigate("/tables", { replace: true });
           }}
         />
       </motion.div>
@@ -215,11 +216,13 @@ function App() {
         <Toaster />
         <ActiveRoleProvider>
           {/* NavigationProvider tracks history stack + direction for page transitions */}
-          <NavigationProvider>
-            <AppLayout>
-              <Router />
-            </AppLayout>
-          </NavigationProvider>
+          <AppWouterRouter>
+            <NavigationProvider>
+              <AppLayout>
+                <Router />
+              </AppLayout>
+            </NavigationProvider>
+          </AppWouterRouter>
         </ActiveRoleProvider>
       </TooltipProvider>
     </QueryClientProvider>

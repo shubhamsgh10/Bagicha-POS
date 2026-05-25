@@ -1,12 +1,27 @@
 import { execFile } from "child_process";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LIST_SCRIPT = path.join(__dirname, "scripts", "list-windows-printers.ps1");
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+/** Bundled Electron main lives in desktop/dist/; the PS1 stays at shared/print/scripts/. */
+function resolveListScriptPath(): string {
+  const candidates = [
+    path.join(moduleDir, "scripts", "list-windows-printers.ps1"),
+    path.resolve(moduleDir, "..", "..", "shared", "print", "scripts", "list-windows-printers.ps1"),
+    path.resolve(process.cwd(), "shared", "print", "scripts", "list-windows-printers.ps1"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `list-windows-printers.ps1 not found. Tried:\n${candidates.join("\n")}`,
+  );
+}
 
 export interface WindowsPrinterQueue {
   vendorId?: number;
@@ -34,9 +49,10 @@ export async function getWindowsUsbPrinterQueues(): Promise<WindowsPrinterQueue[
   if (process.platform !== "win32") return [];
 
   try {
+    const listScript = resolveListScriptPath();
     const { stdout } = await execFileAsync(
       "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", LIST_SCRIPT],
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", listScript],
       { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
     );
     const trimmed = stdout.trim();
@@ -98,8 +114,10 @@ function scoreQueue(q: WindowsPrinterQueue): number {
   const port = (q.portName ?? "").toLowerCase();
   let score = 0;
   if (port.startsWith("usb")) score += 40;
-  if (/epson|star|bixolon|citizen|pos|thermal|receipt|tm-|tsp|xp-/.test(n)) score += 50;
-  if (/laserjet|hp /.test(n)) score += 25;
+  if (/epson|star|bixolon|citizen|pos|thermal|receipt|tm-|tsp|xp-|rp3|rp3160|xprinter|gold/.test(n)) {
+    score += 50;
+  }
+  if (/laserjet|laser jet|officejet|deskjet|mfp/.test(n)) score -= 20;
   if (/scanner|fax|camera|composite|bluetooth|hub/.test(n)) score -= 30;
   if (/microsoft|pdf|onenote|xps/.test(n)) score -= 100;
   return score;

@@ -10,7 +10,12 @@ Get-CimInstance Win32_Printer | ForEach-Object {
   $lower = $queue.ToLower()
   if ($lower -match 'pdf|onenote|xps|fax|microsoft print|send to') { return }
 
+  # Skip queues Windows reports as offline / not ready (disconnected USB often stays installed).
+  if ($_.WorkOffline -eq $true) { return }
+  if ($_.PrinterStatus -eq 7) { return }
+
   $port = $_.PortName
+  if (-not $port -or $port -match '^(nul|file:|portprompt:)') { return }
   $vid = $null
   $prodId = $null
 
@@ -34,13 +39,19 @@ Get-CimInstance Win32_Printer | ForEach-Object {
     }
   }
 
-  # Match any USB node with a similar name (e.g. HP LaserJet M1136)
+  # Match any USB node with a similar name (e.g. HP LaserJet M1136, RP3160 GOLD)
   if (-not $vid) {
     $prefix = if ($queue.Length -gt 14) { $queue.Substring(0, 14) } else { $queue }
+    $portKey = if ($port) { ($port -replace '[^A-Za-z0-9]', '').Substring(0, [Math]::Min(8, ($port -replace '[^A-Za-z0-9]', '').Length)) } else { '' }
     $usb = Get-CimInstance Win32_PnPEntity |
       Where-Object {
         $_.PNPDeviceID -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})' -and
-        ($_.Name -eq $queue -or $_.Name -like "$prefix*" -or $queue -like "$($_.Name)*")
+        (
+          $_.Name -eq $queue -or
+          $_.Name -like "$prefix*" -or
+          $queue -like "$($_.Name)*" -or
+          ($portKey -and (($_.Name -replace '[^A-Za-z0-9]', '') -like "*$portKey*"))
+        )
       } |
       Select-Object -First 1
     if ($usb -and $usb.PNPDeviceID -match 'VID_([0-9A-F]{4})&PID_([0-9A-F]{4})') {

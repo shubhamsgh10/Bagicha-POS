@@ -109,6 +109,15 @@ function usbDeviceLabel(d: USBDeviceInfo): string {
   return d.displayName ?? d.productName ?? d.manufacturerName ?? 'USB Device';
 }
 
+/** Windows USBPRINT queues often share VID/PID 0 — use queue name as the stable id. */
+function usbDeviceKey(d: USBDeviceInfo): string {
+  if (d.windowsQueueName?.trim()) return `queue:${d.windowsQueueName.trim()}`;
+  if (d.vendorId > 0 || d.productId > 0) {
+    return `usb:${d.vendorId.toString(16)}:${d.productId.toString(16)}`;
+  }
+  return `name:${usbDeviceLabel(d)}`;
+}
+
 function PrinterSetupTab({ printers, onChange, onTest }: {
   printers: PrinterConfig[];
   onChange: (printers: PrinterConfig[]) => void;
@@ -124,16 +133,13 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
   const webUsbSupported = typeof navigator !== 'undefined' && 'usb' in (navigator as any);
   const canScanUsb = isElectron || webUsbSupported;
 
-  const mergeDevices = (incoming: USBDeviceInfo[]) => {
-    setDetectedDevices(prev => {
-      const next = [...prev];
-      for (const d of incoming) {
-        if (!next.some(x => x.vendorId === d.vendorId && x.productId === d.productId)) {
-          next.push(d);
-        }
-      }
-      return next;
-    });
+  /** Each scan replaces the list — never merge by VID/PID (0:0 collides across queues). */
+  const applyScanResults = (incoming: USBDeviceInfo[]) => {
+    const byKey = new Map<string, USBDeviceInfo>();
+    for (const d of incoming) {
+      byKey.set(usbDeviceKey(d), d);
+    }
+    setDetectedDevices(Array.from(byKey.values()));
   };
 
   const selectDevice = (d: USBDeviceInfo) => {
@@ -156,14 +162,18 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
         throw new Error(result.error ?? 'USB scan failed');
       }
       const devices = result.devices ?? [];
-      mergeDevices(devices);
+      applyScanResults(devices);
       if (devices.length === 0) {
         toast({
-          title: 'No USB devices found',
-          description: 'Connect the printer via USB, then scan again or enter VID/PID manually.',
+          title: 'No printers found',
+          description:
+            'Plug in the thermal printer, confirm it appears in Windows Settings → Printers, then scan again.',
         });
-      } else if (devices.length === 1) {
-        selectDevice(devices[0]);
+      } else {
+        const thermal = devices.filter(d => d.isLikelyPrinter);
+        if (thermal.length === 1) {
+          selectDevice(thermal[0]);
+        }
       }
     } catch (err: any) {
       toast({
@@ -194,7 +204,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
     }
     try {
       const device: USBDeviceInfo = await (navigator as any).usb.requestDevice({ filters: [] });
-      mergeDevices([device]);
+      applyScanResults([device]);
       setForm(f => ({
         ...f,
         vendorId: device.vendorId,
@@ -324,13 +334,15 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
               {detectedDevices.length > 0 && (
                 <div className="space-y-1">
                   <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Detected devices</p>
-                  {detectedDevices.map((d, i) => (
+                  {detectedDevices.map((d) => (
                     <button
-                      key={i}
+                      key={usbDeviceKey(d)}
                       type="button"
                       onClick={() => selectDevice(d)}
                       className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
-                        form.vendorId === d.vendorId && form.productId === d.productId
+                        (d.windowsQueueName && form.windowsQueueName === d.windowsQueueName) ||
+                        (d.vendorId > 0 && d.productId > 0 &&
+                          form.vendorId === d.vendorId && form.productId === d.productId)
                           ? 'bg-purple-50 border-purple-300 text-purple-700'
                           : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
@@ -342,8 +354,10 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                           Printer
                         </span>
                       )}
-                      <span className="ml-auto shrink-0 text-gray-400 font-mono">
-                        {`0x${d.vendorId.toString(16).padStart(4,'0')}:0x${d.productId.toString(16).padStart(4,'0')}`}
+                      <span className="ml-auto shrink-0 text-gray-400 font-mono truncate max-w-[40%]">
+                        {d.vendorId > 0 || d.productId > 0
+                          ? `0x${d.vendorId.toString(16).padStart(4, '0')}:0x${d.productId.toString(16).padStart(4, '0')}`
+                          : (d.windowsQueueName ?? 'USB queue')}
                       </span>
                     </button>
                   ))}
@@ -427,7 +441,10 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
         </div>
       ) : (
         <button
-          onClick={() => setAdding(true)}
+            onClick={() => {
+              setDetectedDevices([]);
+              setAdding(true);
+            }}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium text-emerald-600 border-2 border-dashed border-emerald-200 hover:bg-emerald-50 transition-colors"
         >
           <Plus className="w-4 h-4" /> Add Printer

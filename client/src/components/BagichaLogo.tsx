@@ -1,3 +1,5 @@
+import bagichaLogoImg from "@assets/Bagicha Logo.png";
+
 interface BagichaLogoProps {
   size?: "sm" | "md" | "lg";
   showIcon?: boolean;
@@ -20,7 +22,7 @@ export function BagichaLogo({ size = "md", showIcon = true }: BagichaLogoProps) 
     <div className="flex items-center gap-2">
       {showIcon && (
         <img
-          src="/bagicha-logo.png"
+          src={bagichaLogoImg}
           alt="Bagicha logo"
           width={imgSizes[size]}
           height={imgSizes[size]}
