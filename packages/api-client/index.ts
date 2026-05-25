@@ -1,13 +1,29 @@
 /**
  * Central API URL resolution for browser, Electron renderer, and Vite dev proxy.
  * Set VITE_API_BASE_URL (e.g. https://your-app.vercel.app) when the UI is not served from the API host.
+ *
+ * Inlined at build time via vite.config `define` (import.meta.env is unreliable in aliased packages).
  */
+declare const __BAGICHA_API_BASE_URL__: string | undefined;
 
-declare const import_meta_env: { VITE_API_BASE_URL?: string } | undefined;
+function isLocalDevOrigin(): boolean {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1";
+}
 
 function readBaseFromEnv(): string {
-  if (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env) {
-    return ((import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? "").trim();
+  // UI on localhost:5000 / :5173 must use same-origin — ignore stale Vite define from an old .env.
+  if (isLocalDevOrigin()) {
+    return "";
+  }
+
+  if (typeof __BAGICHA_API_BASE_URL__ === "string" && __BAGICHA_API_BASE_URL__.trim()) {
+    return __BAGICHA_API_BASE_URL__.trim();
+  }
+  const fromVite = import.meta.env.VITE_API_BASE_URL;
+  if (fromVite && String(fromVite).trim()) {
+    return String(fromVite).trim();
   }
   if (typeof process !== "undefined" && process.env?.VITE_API_BASE_URL) {
     return process.env.VITE_API_BASE_URL.trim();
@@ -15,15 +31,19 @@ function readBaseFromEnv(): string {
   return "";
 }
 
-let runtimeOverride = "";
+let runtimeOverride: string | undefined;
 
-/** Override API base at runtime (e.g. Electron settings screen). */
+/** Override API base at runtime (e.g. Electron settings screen). Pass "" for same-origin. */
 export function setApiBaseUrl(url: string): void {
   runtimeOverride = url.replace(/\/$/, "");
 }
 
+export function resetApiBaseUrl(): void {
+  runtimeOverride = undefined;
+}
+
 export function getApiBaseUrl(): string {
-  const base = runtimeOverride || readBaseFromEnv();
+  const base = runtimeOverride !== undefined ? runtimeOverride : readBaseFromEnv();
   return base.replace(/\/$/, "");
 }
 

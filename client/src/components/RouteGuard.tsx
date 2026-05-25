@@ -27,9 +27,7 @@ export function RouteGuard({ children }: RouteGuardProps) {
   useEffect(() => {
     if (!allowed) {
       const safePath = ROLE_SAFE_REDIRECT[activeRole];
-      // Replace so the restricted page is removed from browser history
-      window.history.replaceState(null, "", safePath);
-      navigate(safePath, { replace: true } as any);
+      navigate(safePath, { replace: true });
     }
   }, [location, activeRole, allowed]);
 

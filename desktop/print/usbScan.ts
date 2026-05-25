@@ -27,9 +27,15 @@ function isPrinterClass(classCode: number | undefined): boolean {
   return classCode === 7;
 }
 
+function looksLikeOfficePrinter(name: string): boolean {
+  const n = name.toLowerCase();
+  return /laserjet|laser jet|officejet|deskjet|mfp|multifunction|inkjet|brother hl|canon lbp|xerox|pagewide/.test(n);
+}
+
 function looksLikeThermalPrinter(name: string): boolean {
   const n = name.toLowerCase();
-  return /epson|star|bixolon|citizen|pos|thermal|receipt|tm-|tsp|xp-|laserjet|hp /.test(n);
+  if (looksLikeOfficePrinter(n)) return false;
+  return /epson|star|bixolon|citizen|pos|thermal|receipt|tm-|tsp|xp-|rp3|rp3160|xprinter|gold/.test(n);
 }
 
 function looksLikeNonPrinter(name: string): boolean {
@@ -98,16 +104,18 @@ function buildDisplayName(info: {
 
 async function listUsbDevicesWindows(): Promise<UsbDeviceInfo[]> {
   const queues = await getWindowsUsbPrinterQueues();
-  return queues.map((q) => ({
-    vendorId: q.vendorId ?? 0,
-    productId: q.productId ?? 0,
-    productName: q.displayName,
-    displayName: q.displayName,
-    windowsQueueName: q.queueName,
-    isLikelyPrinter:
-      looksLikeThermalPrinter(q.queueName) ||
-      (q.portName?.toUpperCase().startsWith("USB") ?? false),
-  })).sort((a, b) => {
+  return queues.map((q) => {
+    const portUsb = q.portName?.toUpperCase().startsWith("USB") ?? false;
+    const thermal = looksLikeThermalPrinter(q.queueName);
+    return {
+      vendorId: q.vendorId ?? 0,
+      productId: q.productId ?? 0,
+      productName: q.displayName,
+      displayName: q.displayName,
+      windowsQueueName: q.queueName,
+      isLikelyPrinter: thermal || (portUsb && !looksLikeOfficePrinter(q.queueName)),
+    };
+  }).sort((a, b) => {
     if (a.isLikelyPrinter !== b.isLikelyPrinter) return a.isLikelyPrinter ? -1 : 1;
     if (looksLikeNonPrinter(a.displayName ?? "") !== looksLikeNonPrinter(b.displayName ?? "")) {
       return looksLikeNonPrinter(a.displayName ?? "") ? 1 : -1;

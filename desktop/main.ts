@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session } from "electron";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as E from "../shared/print/escpos.js";
@@ -10,7 +11,22 @@ import { listUsbDevices } from "./print/usbScan.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
 
-const isDev = process.env.NODE_ENV !== "production";
+/** Vite output: repo dist/public; main bundle lives in desktop/dist. */
+function resolveIndexHtml(): string {
+  const candidates = [
+    path.join(__dirname, "../../dist/public/index.html"),
+    path.join(app.getAppPath(), "dist/public/index.html"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    `UI bundle not found. Run npm run build:electron first. Tried:\n${candidates.join("\n")}`,
+  );
+}
+
+/** Packaged apps must not load localhost — NODE_ENV is often unset in installed Electron. */
+const isDev = !app.isPackaged;
 const DEV_URL = (process.env.VITE_DEV_SERVER_URL || "http://localhost:5000").replace(
   "127.0.0.1",
   "localhost",
@@ -21,8 +37,8 @@ let mainWindow: BrowserWindow | null = null;
 
 /** Where to load printer settings (session cookies must match this origin). */
 function resolveApiBase(): string {
-  if (API_BASE_ENV) return API_BASE_ENV.replace(/\/$/, "");
   if (isDev) return new URL(DEV_URL).origin;
+  if (API_BASE_ENV) return API_BASE_ENV.replace(/\/$/, "");
   const loaded = mainWindow?.webContents.getURL();
   if (loaded?.startsWith("http")) return new URL(loaded).origin;
   throw new Error(
@@ -124,7 +140,9 @@ function createWindow() {
         revealWindow();
       });
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/public/index.html"));
+    const indexHtml = resolveIndexHtml();
+    console.log("[electron] Loading UI:", indexHtml);
+    mainWindow.loadFile(indexHtml);
   }
 }
 
