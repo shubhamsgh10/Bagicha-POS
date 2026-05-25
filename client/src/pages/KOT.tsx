@@ -59,6 +59,8 @@ export default function KOT() {
       const { handlePrintResponse } = await import('@/lib/printGateway');
       const outcome = await handlePrintResponse(data, {
         orderId: ticket.orderId,
+        ackType: 'kot',
+        pendingAck: data.pendingAck,
         onBrowserKOT: () =>
           printKOT(
             { orderNumber: ticket.orderNumber, tableNumber: ticket.tableNumber, createdAt: new Date() },

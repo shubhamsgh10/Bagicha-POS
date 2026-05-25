@@ -142,6 +142,16 @@ export default function Billing() {
 
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
 
+  const browserBillFallback = async (order: any) => {
+    try {
+      const res = await apiRequest("GET", `/api/orders/${order.id}`);
+      const data: any = await res.json();
+      printBill(order, data.items || [], settings);
+    } catch {
+      printBill(order, [], settings);
+    }
+  };
+
   const { data: orders, isLoading } = useQuery({
     queryKey: ["/api/orders"],
     select: (data: any[]) =>
@@ -183,6 +193,7 @@ export default function Billing() {
             orderId: vars.id,
             ackType: 'bill',
             pendingAck: data.pendingAck,
+            onBrowserBill: () => browserBillFallback({ id: vars.id }),
           });
           if (outcome === 'hardware' || outcome === 'browser') {
             toast({ title: 'Bill printed!' });
@@ -198,11 +209,31 @@ export default function Billing() {
 
   const fetchAndPrint = async (order: any) => {
     try {
-      const res = await apiRequest("GET", `/api/orders/${order.id}`);
-      const data: any = await res.json();
-      printBill(order, data.items || [], settings);
+      const res = await fetch(apiUrl('/api/print/bill'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.id }),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        await browserBillFallback(order);
+        return;
+      }
+      const { handlePrintResponse } = await import('@/lib/printGateway');
+      const outcome = await handlePrintResponse(data, {
+        orderId: order.id,
+        ackType: 'bill',
+        pendingAck: data.pendingAck,
+        onBrowserBill: () => browserBillFallback(order),
+      });
+      if (outcome === 'hardware' || outcome === 'browser') {
+        toast({ title: 'Bill printed!' });
+      } else if (outcome === 'noop' && data.printJob) {
+        toast({ title: 'Print job ready', description: 'Use the Electron app for thermal printing.', variant: 'destructive' });
+      }
     } catch {
-      printBill(order, [], settings);
+      await browserBillFallback(order);
     }
   };
 
