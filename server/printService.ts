@@ -188,46 +188,102 @@ export function generateBillBuffer(params: {
   }>;
   restaurant: RestaurantSettings;
   billSettings: BillPrintSettings;
+  cashierName?: string;
   width?: number;
 }): Buffer {
-  const W = params.width ?? 32;
+  const W = params.width ?? 48;
   const { order, items, restaurant, billSettings } = params;
   const sym = restaurant.currencySymbol || '₹';
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
 
+  // Duplicate watermark
   if (order.billPrintCount > 0 && billSettings.showDuplicate) {
     parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line('** DUPLICATE **'), E.BOLD_OFF);
     parts.push(E.divider('=', W));
   }
 
-  parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(restaurant.restaurantName), E.BOLD_OFF);
-  if (restaurant.address) parts.push(E.centered(restaurant.address.substring(0, W), W));
-  if (restaurant.phone)   parts.push(E.centered(`Tel: ${restaurant.phone}`, W));
-  if (restaurant.gstNumber) parts.push(E.centered(`GST: ${restaurant.gstNumber}`, W));
-  parts.push(E.divider('=', W));
-  parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line('RETAIL INVOICE'), E.BOLD_OFF);
+  // ── Header ─────────────────────────────────────────────────────────
+  parts.push(E.ALIGN_CENTER);
+
+  // NV Flash logo (silently ignored by printer if slot 1 is empty)
+  if (billSettings.showLogo) {
+    parts.push(E.LOGO_NV_FLASH, E.LF);
+  }
+
+  // Restaurant name (bold)
+  parts.push(E.BOLD_ON, E.line(restaurant.restaurantName), E.BOLD_OFF);
+
+  // Business / trading name
+  if (restaurant.businessName) {
+    parts.push(E.centered(restaurant.businessName, W));
+  }
+
+  // GST
+  if (restaurant.gstNumber) {
+    parts.push(E.centered(`GST -${restaurant.gstNumber}`, W));
+  }
+
+  // Phone
+  if (restaurant.phone) {
+    parts.push(E.centered(`M - ${restaurant.phone}`, W));
+  }
+
+  // Address — split on comma so each segment prints on its own line
+  if (restaurant.address) {
+    for (const seg of restaurant.address.split(',').map(s => s.trim()).filter(Boolean)) {
+      parts.push(E.centered(seg.substring(0, W), W));
+    }
+  }
+
+  // FSSAI (optional)
+  if (billSettings.showFssai && restaurant.fssaiNumber) {
+    parts.push(E.centered(`FSSAI: ${restaurant.fssaiNumber}`, W));
+  }
+
   parts.push(E.divider('=', W));
   parts.push(E.ALIGN_LEFT);
 
+  // ── Customer / Order Info ───────────────────────────────────────────
+  if (billSettings.showNameField) {
+    parts.push(E.line(`Name:${'_'.repeat(Math.max(10, W - 5))}`));
+    parts.push(E.LF);
+  }
+
   const created = new Date(order.createdAt);
-  const dateStr = created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr = created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  parts.push(E.twoColumns(`Order: ${order.orderNumber}`, dateStr, W));
-  parts.push(E.twoColumns(
-    order.tableNumber ? `Table: ${order.tableNumber}` : order.orderType,
-    timeStr, W
-  ));
-  if (order.customerName) parts.push(E.line(`Customer: ${order.customerName}`));
+  const dd = String(created.getDate()).padStart(2, '0');
+  const mo = String(created.getMonth() + 1).padStart(2, '0');
+  const yy = String(created.getFullYear()).slice(-2);
+  const hh = String(created.getHours()).padStart(2, '0');
+  const mi = String(created.getMinutes()).padStart(2, '0');
+  const dateStr = `${dd}/${mo}/${yy}`;
+  const timeStr = `${hh}:${mi}`;
+  const orderTypeLabel = order.orderType || (order.tableNumber ? 'Dine In' : 'Pick Up');
+
+  // "Date: DD/MM/YY     ORDER TYPE" — order type bold on right
+  const datePrefix = `Date: ${dateStr}   `;
+  const padLen = Math.max(0, W - datePrefix.length - orderTypeLabel.length);
+  parts.push(
+    E.text(datePrefix + ' '.repeat(padLen)),
+    E.BOLD_ON, E.line(orderTypeLabel), E.BOLD_OFF,
+  );
+  parts.push(E.line(timeStr));
+  parts.push(E.twoColumns(`Cashier: ${params.cashierName ?? 'Admin'}`, `Bill No.: ${order.orderNumber}`, W));
   parts.push(E.divider('-', W));
 
-  const QW = 4, AW = 7, NW = W - QW - AW - 2;
+  // ── Item Table ──────────────────────────────────────────────────────
+  // Column widths for W=48: Item=24 | Qty=4 | Price=9 | Amt=8 + 3 spaces = 48
+  const IW = W - 4 - 9 - 8 - 3;
+
   parts.push(E.BOLD_ON);
-  parts.push(E.line(`${'Item'.padEnd(NW)} ${'Qty'.padStart(QW)} ${'Amt'.padStart(AW)}`));
+  parts.push(E.line(
+    `${'Item'.padEnd(IW)} ${'Qty'.padStart(4)} ${'Price'.padStart(9)} ${'Amt'.padStart(8)}`
+  ));
   parts.push(E.BOLD_OFF);
   parts.push(E.divider('-', W));
 
+  // Merge duplicate items if enabled
   let displayItems = items;
   if (billSettings.mergeDuplicateItems) {
     const map = new Map<string, typeof items[0] & { totalQty: number; totalAmt: number }>();
@@ -248,36 +304,67 @@ export function generateBillBuffer(params: {
     }));
   }
 
+  let totalQty = 0;
   for (const item of displayItems) {
-    const label = (item.size ? `${item.name}(${item.size})` : item.name).substring(0, NW).padEnd(NW);
-    const qty   = String(item.quantity).padStart(QW);
-    const amt   = `${sym}${(item.quantity * parseFloat(item.price)).toFixed(0)}`.padStart(AW);
-    parts.push(E.line(`${label} ${qty} ${amt}`));
+    const fullName = item.size ? `${item.name} (${item.size})` : item.name;
+    const unitPrice = parseFloat(item.price);
+    const lineAmt = unitPrice * item.quantity;
+    const qtyStr   = String(item.quantity).padStart(4);
+    const priceStr = unitPrice.toFixed(2).padStart(9);
+    const amtStr   = lineAmt.toFixed(2).padStart(8);
+
+    // Word-wrap long item names — first chunk gets qty/price/amt, continuations are plain
+    let remaining = fullName;
+    let first = true;
+    while (remaining.length > 0) {
+      const chunk = remaining.substring(0, IW);
+      remaining = remaining.substring(IW);
+      if (first) {
+        parts.push(E.line(`${chunk.padEnd(IW)} ${qtyStr} ${priceStr} ${amtStr}`));
+        first = false;
+      } else {
+        parts.push(E.line(chunk));
+      }
+    }
+
     if (billSettings.showAddons && item.specialInstructions) {
       parts.push(E.line(`  [${item.specialInstructions}]`));
     }
+    totalQty += item.quantity;
   }
 
   parts.push(E.divider('-', W));
 
-  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount);
-  const discount = parseFloat(order.discountAmount || '0');
-  const tax      = parseFloat(order.taxAmount);
-  const total    = parseFloat(order.totalAmount);
+  // ── Totals ──────────────────────────────────────────────────────────
+  const tax       = parseFloat(order.taxAmount);
+  const discount  = parseFloat(order.discountAmount || '0');
+  const subtotal  = parseFloat(order.totalAmount) - tax;
+  const rawTotal  = parseFloat(order.totalAmount);
+  const rounded   = Math.round(rawTotal);
+  const roundOff  = rounded - rawTotal;
+  const cgstRate  = restaurant.taxRate / 2;
+  const cgst      = tax / 2;
+  const sgst      = tax / 2;
 
-  parts.push(E.twoColumns('Subtotal:', `${sym}${subtotal.toFixed(0)}`, W));
-  if (discount > 0) parts.push(E.twoColumns('Discount:', `-${sym}${discount.toFixed(0)}`, W));
-  if (billSettings.showBackwardTax && tax > 0) {
-    parts.push(E.twoColumns(`Tax (${restaurant.taxRate}%):`, `${sym}${tax.toFixed(0)}`, W));
+  parts.push(E.twoColumns(`Total Qty: ${totalQty}`, `Sub Total ${subtotal.toFixed(2)}`, W));
+  parts.push(E.twoColumns('', `CGST ${cgstRate}%  ${cgst.toFixed(2)}`, W));
+  parts.push(E.twoColumns('', `SGST ${cgstRate}%  ${sgst.toFixed(2)}`, W));
+  if (discount > 0) {
+    parts.push(E.twoColumns('', `Discount  -${discount.toFixed(2)}`, W));
+  }
+  if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) {
+    parts.push(E.twoColumns('', `Round off  ${roundOff.toFixed(2)}`, W));
   }
   parts.push(E.divider('=', W));
-  parts.push(E.BOLD_ON, E.twoColumns('TOTAL:', `${sym}${total.toFixed(0)}`, W), E.BOLD_OFF);
+  parts.push(E.BOLD_ON, E.twoColumns('', `Grand Total  ${sym}${rounded.toFixed(2)}`, W), E.BOLD_OFF);
   if (order.paymentMethod) {
-    parts.push(E.twoColumns('Payment:', order.paymentMethod.toUpperCase(), W));
+    parts.push(E.twoColumns('', order.paymentMethod.toUpperCase(), W));
   }
   parts.push(E.divider('=', W));
+
+  // Footer
   if (restaurant.footerNote) {
-    parts.push(E.centered(restaurant.footerNote.substring(0, W), W));
+    parts.push(E.ALIGN_CENTER, E.centered(restaurant.footerNote.substring(0, W), W));
   }
   parts.push(E.feed(3));
   parts.push(E.CUT);

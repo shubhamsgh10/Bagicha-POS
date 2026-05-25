@@ -300,6 +300,7 @@ export function registerPrintRoutes(app: Express): void {
         })),
         restaurant: settings,
         billSettings,
+        cashierName: (req.user as any)?.username ?? 'Admin',
         width: printer.width ?? 32,
       });
 
