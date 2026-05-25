@@ -25,6 +25,7 @@ export interface KOTPrintSettings {
   kotPrinterId: string | null;
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
+  kotNumbering: boolean;
 }
 
 export interface BillPrintSettings {
@@ -39,6 +40,10 @@ export interface BillPrintSettings {
   showOrderBarcode: boolean;
   showQuantityBreakdown: boolean;
   billPrinterId: string | null;
+  showLogo: boolean;
+  showFssai: boolean;
+  showRoundOff: boolean;
+  showNameField: boolean;
 }
 
 export interface PrintConfigSettings {

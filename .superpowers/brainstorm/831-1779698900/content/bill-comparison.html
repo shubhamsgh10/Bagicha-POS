@@ -1,0 +1,99 @@
+<h2>Bill Format — Current vs Your Petpooja Format</h2>
+<p class="subtitle">Based on the actual receipt photo you shared. Click your preferred format.</p>
+
+<div class="split" style="gap:32px;align-items:flex-start;">
+
+  <!-- Current Bill -->
+  <div class="card" data-choice="current" onclick="toggleSelect(this)" style="flex:1;cursor:pointer;">
+    <div class="card-body" style="padding:0;">
+      <div style="background:#e5e7eb;text-align:center;padding:8px 12px;font-size:12px;font-weight:600;color:#374151;border-radius:8px 8px 0 0;">
+        CURRENT FORMAT
+      </div>
+      <div style="background:#fffef7;border:2px solid #d1d5db;border-top:none;border-radius:0 0 8px 8px;padding:14px 10px;font-family:'Courier New',monospace;font-size:10.5px;line-height:1.65;color:#111;white-space:pre;">         [LOGO]  Bagicha Restaurant
+                123 Main St, Delhi
+                Tel: 9876543210
+                GST: 27AAAA0000A1Z5
+================================================
+               RETAIL INVOICE
+================================================
+Order: #1234             25 May 2026
+Table: 4                    06:30 PM
+------------------------------------------------
+Item                    Qty    Price      Amt
+------------------------------------------------
+Sloppyjoe                 1    249.00   ₹249
+Paneer Tikka Sandwich     1    299.00   ₹299
+Margherita (Medium)       1    399.00   ₹399
+------------------------------------------------
+Subtotal:                              ₹947
+Tax (5%):                               ₹47
+================================================
+TOTAL:                                 ₹994
+Payment: CASH
+================================================
+         Thank you for dining with us!</div>
+    </div>
+  </div>
+
+  <!-- Petpooja-matched Bill -->
+  <div class="card" data-choice="petpooja" onclick="toggleSelect(this)" style="flex:1;cursor:pointer;">
+    <div class="card-body" style="padding:0;">
+      <div style="background:#10b981;text-align:center;padding:8px 12px;font-size:12px;font-weight:600;color:white;border-radius:8px 8px 0 0;">
+        YOUR PETPOOJA FORMAT ✦ RECOMMENDED
+      </div>
+      <div style="background:#fffef7;border:2px solid #10b981;border-top:none;border-radius:0 0 8px 8px;padding:14px 10px;font-family:'Courier New',monospace;font-size:10.5px;line-height:1.65;color:#111;">
+        <div style="text-align:center;font-weight:700;font-size:13px;">Bagicha</div>
+        <div style="text-align:center;font-size:11px;">Salasar Trading</div>
+        <div style="text-align:center;font-size:11px;">GST -22BOQPR9570B1ZN</div>
+        <div style="text-align:center;font-size:11px;">M - 9770022221</div>
+        <div style="text-align:center;font-size:11px;">Dhimrapur Road</div>
+        <div style="text-align:center;font-size:11px;">Raigarh (CG)</div>
+        <div style="text-align:center;font-size:11px;">496001</div>
+        <hr style="border:none;border-top:1px solid #555;margin:8px 0;">
+        <pre style="margin:0;font-family:inherit;font-size:10.5px;line-height:1.65;">Name:_______________________________
+
+Date: 22/03/26      <b>Pick Up</b>
+19:26
+Cashier: Bagicha    Bill No.: 4492
+------------------------------------------------
+Item                        Qty.   Price   Amt
+------------------------------------------------
+Sloppyjoe                     1   249.00  249.00
+Paneer Tikka                  1   299.00  299.00
+Sandwich
+Margherita                    1   399.00  399.00
+(Medium)
+------------------------------------------------
+Total Qty: 3              Sub Total   947.00
+                          CGST 2.5%    23.68
+                          SGST 2.5%    23.68
+                          Round off    -0.36
+================================================
+                    <b>Grand Total  ₹994.00</b>
+================================================
+                        Thanks</pre>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:24px;padding:14px 18px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+  <p style="margin:0;font-size:13px;color:#065f46;"><strong>Changes needed to match your Petpooja receipt exactly:</strong></p>
+  <ul style="margin:8px 0 0 0;padding-left:18px;font-size:12px;color:#047857;line-height:2;">
+    <li>Multi-line centered address (each line separate: city, state, pincode)</li>
+    <li><strong>Name: _____</strong> blank field below header</li>
+    <li>Date as <strong>DD/MM/YY</strong> + time on next line (not combined)</li>
+    <li>Order type (Pick Up / Dine In) shown in <strong>bold</strong></li>
+    <li><strong>Cashier</strong> name + Bill No. on same line</li>
+    <li>4 columns: Item | Qty. | Price | Amount (no SR# column)</li>
+    <li><strong>Total Qty</strong> shown in totals section</li>
+    <li><strong>CGST X% + SGST X%</strong> separate lines (split from taxRate/2 each)</li>
+    <li><strong>Round off</strong> line (rounds Grand Total to nearest rupee)</li>
+    <li><strong>Grand Total</strong> in bold — no logo needed</li>
+  </ul>
+</div>
+
+<div style="margin-top:16px;padding:14px 18px;background:#fefce8;border:1px solid #fde68a;border-radius:10px;">
+  <p style="margin:0;font-size:12px;color:#92400e;"><strong>Note on Cashier field:</strong> This requires passing the currently logged-in user's name to the bill generator. The print route already has <code>req.user</code> available — we'll pass it through.</p>
+</div>
