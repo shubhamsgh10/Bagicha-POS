@@ -1,0 +1,105 @@
+<h2>Logo Placement on Bill Print</h2>
+<p class="subtitle">Thermal ESC/POS printers print line-by-line. Pick the layout that works best for your logo.</p>
+
+<div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;margin-top:8px;">
+
+  <!-- Option A: Logo top-center, text below -->
+  <div class="card" data-choice="logo-top" onclick="toggleSelect(this)" style="width:260px;cursor:pointer;">
+    <div class="card-body" style="padding:0;">
+      <div style="background:#3b82f6;text-align:center;padding:7px 10px;font-size:11px;font-weight:700;color:white;border-radius:8px 8px 0 0;">
+        OPTION A — Logo Centered Top
+      </div>
+      <div style="background:#fff;border:2px solid #3b82f6;border-top:none;border-radius:0 0 8px 8px;padding:12px 10px;font-family:'Courier New',monospace;font-size:10.5px;line-height:1.65;color:#000;">
+        <div style="text-align:center;margin-bottom:6px;">
+          <img src="https://placehold.co/80x40/1a1a1a/white?text=BAGICHA+LOGO" style="width:80px;height:40px;object-fit:contain;" alt="Logo">
+        </div>
+        <div style="text-align:center;font-weight:700;font-size:13px;">Bagicha</div>
+        <div style="text-align:center;font-size:10.5px;">Salasar Trading</div>
+        <div style="text-align:center;font-size:10.5px;">GST -22BOQPR9570B1ZN</div>
+        <div style="text-align:center;font-size:10.5px;">M - 9770022221</div>
+        <div style="text-align:center;font-size:10.5px;">Raigarh (CG) 496001</div>
+        <div style="border-top:1px solid #000;margin:6px 0;"></div>
+        <div style="font-size:9px;color:#666;">...rest of bill continues below...</div>
+      </div>
+    </div>
+    <div class="card-body" style="padding:8px 10px 6px;">
+      <p style="font-size:11px;color:#6b7280;margin:0;">Logo printed above the restaurant name. Clean, standard look. <strong>Easiest to implement.</strong></p>
+    </div>
+  </div>
+
+  <!-- Option B: Logo left, text right (side-by-side) -->
+  <div class="card" data-choice="logo-side" onclick="toggleSelect(this)" style="width:260px;cursor:pointer;">
+    <div class="card-body" style="padding:0;">
+      <div style="background:#10b981;text-align:center;padding:7px 10px;font-size:11px;font-weight:700;color:white;border-radius:8px 8px 0 0;">
+        OPTION B — Logo Left, Text Right ✦ Like your reference
+      </div>
+      <div style="background:#fff;border:2px solid #10b981;border-top:none;border-radius:0 0 8px 8px;padding:12px 10px;font-family:'Courier New',monospace;font-size:10.5px;line-height:1.65;color:#000;">
+        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;">
+          <img src="https://placehold.co/50x50/1a1a1a/white?text=LOGO" style="width:50px;height:50px;object-fit:contain;flex-shrink:0;" alt="Logo">
+          <div>
+            <div style="font-weight:700;font-size:12px;">Bagicha</div>
+            <div style="font-size:10px;">Salasar Trading</div>
+            <div style="font-size:10px;">GST -22BOQPR9570B1ZN</div>
+            <div style="font-size:10px;">M - 9770022221</div>
+            <div style="font-size:10px;">Raigarh (CG) 496001</div>
+          </div>
+        </div>
+        <div style="border-top:1px solid #000;margin:6px 0;"></div>
+        <div style="font-size:9px;color:#666;">...rest of bill continues below...</div>
+      </div>
+    </div>
+    <div class="card-body" style="padding:8px 10px 6px;">
+      <p style="font-size:11px;color:#6b7280;margin:0;">Logo beside the restaurant name — similar to the browser bill. Needs the logo + text to be <strong>combined into one raster image</strong> for ESC/POS printing.</p>
+    </div>
+  </div>
+
+  <!-- Option C: No logo, pure text (current Petpooja style) -->
+  <div class="card" data-choice="logo-none" onclick="toggleSelect(this)" style="width:260px;cursor:pointer;">
+    <div class="card-body" style="padding:0;">
+      <div style="background:#e5e7eb;text-align:center;padding:7px 10px;font-size:11px;font-weight:700;color:#374151;border-radius:8px 8px 0 0;">
+        OPTION C — No Logo, Pure Text
+      </div>
+      <div style="background:#fff;border:2px solid #d1d5db;border-top:none;border-radius:0 0 8px 8px;padding:12px 10px;font-family:'Courier New',monospace;font-size:10.5px;line-height:1.65;color:#000;">
+        <div style="text-align:center;font-weight:700;font-size:13px;">Bagicha</div>
+        <div style="text-align:center;font-size:10.5px;">Salasar Trading</div>
+        <div style="text-align:center;font-size:10.5px;">GST -22BOQPR9570B1ZN</div>
+        <div style="text-align:center;font-size:10.5px;">M - 9770022221</div>
+        <div style="text-align:center;font-size:10.5px;">Dhimrapur Road</div>
+        <div style="text-align:center;font-size:10.5px;">Raigarh (CG)</div>
+        <div style="text-align:center;font-size:10.5px;">496001</div>
+        <div style="border-top:1px solid #000;margin:6px 0;"></div>
+        <div style="font-size:9px;color:#666;">...rest of bill continues below...</div>
+      </div>
+    </div>
+    <div class="card-body" style="padding:8px 10px 6px;">
+      <p style="font-size:11px;color:#6b7280;margin:0;">Matches your current Petpooja receipt exactly. Bold restaurant name at top. No image rendering needed.</p>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:20px;padding:14px 18px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;">
+  <p style="margin:0 0 8px;font-size:13px;color:#92400e;font-weight:600;">How logo printing works on your TVS RP 3160 Gold:</p>
+  <div style="display:flex;gap:20px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:200px;">
+      <p style="margin:0 0 4px;font-size:12px;color:#78350f;font-weight:600;">Option A (Logo Top):</p>
+      <ul style="margin:0;padding-left:16px;font-size:11.5px;color:#92400e;line-height:1.8;">
+        <li>Logo stored in printer's <strong>120KB NV Flash</strong></li>
+        <li>One-time setup: upload via TVS utility tool</li>
+        <li>Printed with a single ESC/POS command</li>
+        <li>Fast, zero CPU overhead per print</li>
+        <li><strong>Best quality — recommended</strong></li>
+      </ul>
+    </div>
+    <div style="flex:1;min-width:200px;">
+      <p style="margin:0 0 4px;font-size:12px;color:#78350f;font-weight:600;">Option B (Logo + Text side-by-side):</p>
+      <ul style="margin:0;padding-left:16px;font-size:11.5px;color:#92400e;line-height:1.8;">
+        <li>Server converts logo PNG → raster bitmap</li>
+        <li>Uses <code>jimp</code> package (no install needed — pure JS)</li>
+        <li>Logo + text combined into one image block</li>
+        <li>Slightly slower per print (image conversion)</li>
+        <li>Works automatically — <strong>no printer setup needed</strong></li>
+      </ul>
+    </div>
+  </div>
+</div>
