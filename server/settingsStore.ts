@@ -30,6 +30,7 @@ export interface KOTPrintSettings {
   kotPrinterId: string | null;
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
+  kotNumbering: boolean;       // show KOT# in meta line
 }
 
 export interface BillPrintSettings {
@@ -44,6 +45,10 @@ export interface BillPrintSettings {
   showOrderBarcode: boolean;
   showQuantityBreakdown: boolean;
   billPrinterId: string | null;
+  showLogo: boolean;           // print NV Flash logo command before header
+  showFssai: boolean;          // show FSSAI line in header
+  showRoundOff: boolean;       // show round-off line in totals
+  showNameField: boolean;      // show Name: ___ blank field
 }
 
 export interface PrintConfigSettings {
@@ -60,6 +65,8 @@ export interface RestaurantSettings {
   phone: string;
   email: string;
   gstNumber: string;
+  businessName: string;
+  fssaiNumber: string;
   taxRate: number;
   currency: string;
   currencySymbol: string;
@@ -85,6 +92,7 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     kotPrinterId: null,
     autoKOTPrint: false,
     autoKOTDebounceMs: 1500,
+    kotNumbering: true,
   },
   bill: {
     taxDisplay: 'none',
@@ -98,6 +106,10 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     showOrderBarcode: false,
     showQuantityBreakdown: false,
     billPrinterId: null,
+    showLogo: true,
+    showFssai: false,
+    showRoundOff: true,
+    showNameField: true,
   },
 };
 
@@ -107,6 +119,8 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   phone: "",
   email: "",
   gstNumber: "",
+  businessName: "",
+  fssaiNumber: "",
   taxRate: 18,
   currency: "INR",
   currencySymbol: "₹",
