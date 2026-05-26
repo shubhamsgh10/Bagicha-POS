@@ -38,10 +38,13 @@ function kotTextLines(params: {
   kotNumber?: number;
 }): string[] {
   const W = params.width;
+  const M = 1;
   const div = (c: string) => c.repeat(W);
   const center = (s: string) => " ".repeat(Math.max(0, Math.floor((W - s.length) / 2))) + s;
+  const iW = W - 2 * M;
   const two = (l: string, r: string) =>
-    l.substring(0, Math.max(1, W - r.length - 1)).padEnd(Math.max(1, W - r.length - 1)) + " " + r;
+    " ".repeat(M) + l.substring(0, Math.max(1, iW - r.length - 1)).padEnd(Math.max(1, iW - r.length - 1)) + " " + r;
+  const body = (s: string) => " ".repeat(M) + s;
   const lines: string[] = [];
 
   if (params.isReprint && params.kotSettings.showDuplicateWatermark) {
@@ -61,16 +64,16 @@ function kotTextLines(params: {
     const yy = String(now.getFullYear()).slice(-2);
     const hh = String(now.getHours()).padStart(2, "0");
     const mi = String(now.getMinutes()).padStart(2, "0");
-    lines.push(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`);
+    lines.push(body(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
   }
   lines.push(div("-"));
 
   for (const item of params.newItems) {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
     const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-    lines.push(`${qty}  ${label}`);
+    lines.push(body(`${qty}  ${label}`));
     if (params.kotSettings.printAddons && item.instructions) {
-      lines.push(`        >> ${item.instructions}`);
+      lines.push(body(`       >> ${item.instructions}`));
     }
   }
   if (params.kotSettings.printModifiedItemsOnly) {
@@ -85,7 +88,7 @@ function kotTextLines(params: {
     for (const item of params.cancelledItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-      lines.push(`** VOID **  ${qty}  ${label}`);
+      lines.push(body(`** VOID **  ${qty}  ${label}`));
     }
   }
   const total = params.newItems.reduce((s, i) => s + i.quantity, 0);
@@ -114,12 +117,15 @@ function billTextLines(params: {
   cashierName?: string;
 }): string[] {
   const W = params.width;
+  const M = 1;
   const { order, items, restaurant, billSettings } = params;
-  const sym = restaurant.currencySymbol || "₹";
+  const sym = (restaurant.currencySymbol || "Rs.").replace("₹", "Rs.");
   const div = (c: string) => c.repeat(W);
   const center = (s: string) => " ".repeat(Math.max(0, Math.floor((W - s.length) / 2))) + s;
+  const iW = W - 2 * M;
   const two = (l: string, r: string) =>
-    l.substring(0, Math.max(1, W - r.length - 1)).padEnd(Math.max(1, W - r.length - 1)) + " " + r;
+    " ".repeat(M) + l.substring(0, Math.max(1, iW - r.length - 1)).padEnd(Math.max(1, iW - r.length - 1)) + " " + r;
+  const body = (s: string) => " ".repeat(M) + s;
   const lines: string[] = [];
 
   if (order.billPrintCount > 0 && billSettings.showDuplicate) { lines.push(center("** DUPLICATE **"), div("=")); }
@@ -136,7 +142,7 @@ function billTextLines(params: {
   if (billSettings.showFssai && restaurant.fssaiNumber) lines.push(center(`FSSAI: ${restaurant.fssaiNumber}`));
   lines.push(div("="));
 
-  if (billSettings.showNameField) { lines.push(`Name:${"_".repeat(Math.max(10, W - 5))}`); lines.push(""); }
+  if (billSettings.showNameField) { lines.push(body(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`)); lines.push(""); }
 
   const created = new Date(order.createdAt);
   const dd = String(created.getDate()).padStart(2, "0");
@@ -146,12 +152,12 @@ function billTextLines(params: {
   const mi = String(created.getMinutes()).padStart(2, "0");
   const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
   lines.push(two(`Date: ${dd}/${mo}/${yy}`, orderTypeLabel));
-  lines.push(`${hh}:${mi}`);
+  lines.push(body(`${hh}:${mi}`));
   lines.push(two(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   lines.push(div("-"));
 
-  const IW = W - 4 - 9 - 8 - 3;
-  lines.push(`${"Item".padEnd(IW)} ${"Qty".padStart(4)} ${"Price".padStart(9)} ${"Amt".padStart(8)}`);
+  const IW = W - 2 * M - 4 - 9 - 8 - 3;
+  lines.push(body(`${"Item".padEnd(IW)} ${"Qty".padStart(4)} ${"Price".padStart(9)} ${"Amt".padStart(8)}`));
   lines.push(div("-"));
 
   let displayItems = items;
@@ -174,11 +180,11 @@ function billTextLines(params: {
     while (remaining.length > 0) {
       const chunk = remaining.substring(0, IW); remaining = remaining.substring(IW);
       if (first) {
-        lines.push(`${chunk.padEnd(IW)} ${String(item.quantity).padStart(4)} ${unitPrice.toFixed(2).padStart(9)} ${(unitPrice * item.quantity).toFixed(2).padStart(8)}`);
+        lines.push(body(`${chunk.padEnd(IW)} ${String(item.quantity).padStart(4)} ${unitPrice.toFixed(2).padStart(9)} ${(unitPrice * item.quantity).toFixed(2).padStart(8)}`));
         first = false;
-      } else { lines.push(chunk); }
+      } else { lines.push(body(chunk)); }
     }
-    if (billSettings.showAddons && item.specialInstructions) lines.push(`  [${item.specialInstructions}]`);
+    if (billSettings.showAddons && item.specialInstructions) lines.push(body(`  [${item.specialInstructions}]`));
     totalQty += item.quantity;
   }
   lines.push(div("-"));

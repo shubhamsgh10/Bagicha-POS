@@ -248,7 +248,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
 }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 32 });
+  const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 48 });
   const [detectedDevices, setDetectedDevices] = useState<USBDeviceInfo[]>([]);
   const [usbScanning, setUsbScanning] = useState(false);
 
@@ -362,7 +362,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
     };
     onChange([...printers, newPrinter]);
     setAdding(false);
-    setForm({ type: 'network', port: 9100, width: 32 });
+    setForm({ type: 'network', port: 9100, width: 48 });
   };
 
   const remove = (id: string) => onChange(printers.filter(p => p.id !== id));
@@ -377,34 +377,49 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
       )}
 
       {printers.map(p => (
-        <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
-          <div className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center shrink-0">
-            {p.type === 'network'
-              ? <Wifi className="w-4 h-4 text-blue-500" />
-              : <Usb className="w-4 h-4 text-purple-500" />}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-800">{p.name}</p>
-            <p className="text-xs text-gray-400 truncate">
+        <div key={p.id} className="rounded-xl bg-gray-50 border border-gray-200 p-3 space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center shrink-0">
               {p.type === 'network'
-                ? `${p.ip ?? '—'}:${p.port ?? 9100}`
-                : `VID:0x${(p.vendorId ?? 0).toString(16).padStart(4,'0')} PID:0x${(p.productId ?? 0).toString(16).padStart(4,'0')}`}
-              {' · '}{p.width ?? 32} chars
-            </p>
+                ? <Wifi className="w-4 h-4 text-blue-500" />
+                : <Usb className="w-4 h-4 text-purple-500" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-800">{p.name}</p>
+              <p className="text-xs text-gray-400 truncate">
+                {p.type === 'network'
+                  ? `${p.ip ?? '—'}:${p.port ?? 9100}`
+                  : `VID:0x${(p.vendorId ?? 0).toString(16).padStart(4,'0')} PID:0x${(p.productId ?? 0).toString(16).padStart(4,'0')}`}
+              </p>
+            </div>
+            <button
+              onClick={() => onTest(p.id)}
+              title="Send test page"
+              className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-400 transition-colors"
+            >
+              <TestTube2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => remove(p.id)}
+              className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={() => onTest(p.id)}
-            title="Send test page"
-            className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-400 transition-colors"
-          >
-            <TestTube2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => remove(p.id)}
-            className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500 shrink-0">Paper width:</label>
+            <select
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-emerald-400"
+              value={p.width ?? 48}
+              onChange={e => onChange(printers.map(pr => pr.id === p.id ? { ...pr, width: parseInt(e.target.value) } : pr))}
+            >
+              <option value={32}>32 chars — 58mm paper</option>
+              <option value={48}>48 chars — 80mm paper</option>
+            </select>
+            <span className="text-xs text-amber-600 font-medium">
+              {(p.width ?? 48) === 32 ? '⚠ Change to 80mm if your printer is 80mm wide' : ''}
+            </span>
+          </div>
         </div>
       ))}
 
@@ -539,7 +554,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
             <label className="text-xs text-gray-500 shrink-0">Paper width:</label>
             <select
               className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 focus:outline-none"
-              value={form.width ?? 32}
+              value={form.width ?? 48}
               onChange={e => setForm(f => ({ ...f, width: parseInt(e.target.value) }))}
             >
               <option value={32}>32 chars (58mm paper)</option>
@@ -549,7 +564,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
 
           <div className="flex gap-2 pt-1">
             <button
-              onClick={() => { setAdding(false); setForm({ type: 'network', port: 9100, width: 32 }); }}
+              onClick={() => { setAdding(false); setForm({ type: 'network', port: 9100, width: 48 }); }}
               className="flex-1 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -603,10 +618,11 @@ export function PrintSettingsPanel({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest('PUT', '/api/settings', { ...currentSettings, printSettings: ps });
+      const res = await apiRequest('PUT', '/api/settings', { ...currentSettings, printSettings: ps });
+      return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+    onSuccess: (data) => {
+      queryClient.setQueryData(['/api/settings'], data);
       toast({ title: 'Print settings saved' });
       onClose();
     },
