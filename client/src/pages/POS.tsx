@@ -552,6 +552,12 @@ export default function POS() {
     // Pre-fill customer details — always sync with DB value
     form.setValue("customerName", existingOrder.customerName || "");
     form.setValue("customerPhone", existingOrder.customerPhone || "");
+    if (!posMode && existingOrder.orderType) {
+      const ft = existingOrder.orderType === "delivery" ? "delivery"
+        : existingOrder.orderType === "takeaway" ? "takeaway"
+        : "dine-in";
+      form.setValue("orderType", ft as any);
+    }
     setCartLoaded(true);
   }, [existingOrder, menuItems, activeOrderId, cartLoaded]);
 
@@ -1166,7 +1172,9 @@ export default function POS() {
                 key={o.id}
                 onClick={() => {
                   setShowRecallDialog(false);
-                  navigate(`/pos?orderId=${o.id}`);
+                  const modeParam = o.orderType === "delivery" ? "delivery"
+                    : o.orderType === "takeaway" ? "pickup" : null;
+                  navigate(`/pos?orderId=${o.id}${modeParam ? `&mode=${modeParam}` : ""}`);
                 }}
                 className="w-full flex items-center justify-between px-4 py-3 rounded-xl border hover:border-primary hover:bg-primary/5 transition-colors text-sm"
               >

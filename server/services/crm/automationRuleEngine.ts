@@ -28,7 +28,8 @@ import {
 } from "../../../shared/schema";
 import { resolveCustomerId } from "./customerIdService";
 import { sendMessage, type MessagingConfig } from "./messagingService";
-import { getAutomationConfig } from "../automationStore";
+import { getAutomationConfig, type TriggerType as AITrigger } from "../automationStore";
+import { generateMessage, type CustomerSnapshot as AISnapshot } from "../aiMessageService";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,56 @@ function buildMessage(customer: CustomerSnapshot, trigger: ServerTriggerType): s
   };
 
   return templates[trigger] ?? `Hi ${first}! Thanks for visiting *${RESTAURANT}*. 🌿`;
+}
+
+// ── AI message generation helpers ────────────────────────────────────────────
+
+function segmentToAITag(segment: string): AISnapshot["tag"] {
+  if (segment === "VIP")     return "VIP";
+  if (segment === "Regular") return "Regular";
+  if (segment === "Lapsed" || segment === "At Risk") return "At Risk";
+  return "New";
+}
+
+function serverTriggerToAI(trigger: ServerTriggerType): AITrigger {
+  const map: Record<ServerTriggerType, AITrigger> = {
+    WIN_BACK:         "WIN_BACK",
+    AT_RISK:          "AT_RISK",
+    VIP_REWARD:       "VIP_REWARD",
+    WELCOME:          "WELCOME",
+    HIGH_SPEND:       "VIP_REWARD",
+    INACTIVITY_7:     "AT_RISK",
+    INACTIVITY_14:    "WIN_BACK",
+    INACTIVITY_30:    "WIN_BACK",
+    BIRTHDAY:         "WIN_BACK",
+    VISIT_MILESTONE:  "VIP_REWARD",
+  };
+  return map[trigger] ?? "WIN_BACK";
+}
+
+async function getMessageText(
+  customer: CustomerSnapshot,
+  trigger: ServerTriggerType,
+  restaurantName: string,
+  anthropicApiKey?: string
+): Promise<string> {
+  if (anthropicApiKey) {
+    const aiSnapshot: AISnapshot = {
+      key:                customer.key,
+      name:               customer.name,
+      phone:              customer.phone ?? "",
+      totalVisits:        customer.totalVisits,
+      totalSpend:         customer.totalSpend,
+      avgOrderValue:      customer.avgOrderValue,
+      daysSinceLastVisit: customer.daysSinceLastVisit,
+      tag:                segmentToAITag(customer.segment),
+      peakHour:           null,
+      favoriteItem:       null,
+    };
+    const msg = await generateMessage(aiSnapshot, serverTriggerToAI(trigger), restaurantName, anthropicApiKey);
+    if (msg) return msg;
+  }
+  return buildMessage(customer, trigger);
 }
 
 // ── Trigger evaluation ────────────────────────────────────────────────────────
@@ -243,8 +294,10 @@ export async function runAutomationServerSide(
     }
 
     const msgConfig: MessagingConfig = {
-      watiApiKey:   config.watiApiKey,
-      watiEndpoint: config.watiEndpoint,
+      watiApiKey:    config.watiApiKey,
+      watiEndpoint:  config.watiEndpoint,
+      msg91AuthKey:  config.msg91AuthKey,
+      msg91SenderId: config.msg91SenderId,
     };
 
     // Load active rules (DB) + fall back to default built-in rules
@@ -287,7 +340,10 @@ export async function runAutomationServerSide(
         if (evaluateRule(rule, customer)) {
           trigger = rule.triggerType;
           const actions = (rule.actions ?? {}) as Record<string, unknown>;
-          message = String(actions["message"] ?? buildMessage(customer, trigger as ServerTriggerType));
+          const ruleMsg = actions["message"] as string | undefined;
+          message = ruleMsg
+            ? ruleMsg
+            : await getMessageText(customer, trigger as ServerTriggerType, config.restaurantName || RESTAURANT, config.anthropicApiKey);
           break;
         }
       }
@@ -296,7 +352,7 @@ export async function runAutomationServerSide(
         const defaultTrigger = evaluateDefaultTriggers(customer);
         if (!defaultTrigger) { stats.skipped++; continue; }
         trigger = defaultTrigger;
-        message = buildMessage(customer, defaultTrigger);
+        message = await getMessageText(customer, defaultTrigger, config.restaurantName || RESTAURANT, config.anthropicApiKey);
       }
 
       // Resolve customer UUID and create a pending job
