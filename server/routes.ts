@@ -9,7 +9,7 @@ import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, ins
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
-import { getSettings, saveSettings } from "./settingsStore";
+import { getSettings, saveSettings, incrementBillCounter } from "./settingsStore";
 import { getLogBuffer } from "./logBuffer";
 import {
   getAutomationConfig,
@@ -48,7 +48,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users, orders, orderItems } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users, orders, orderItems, kotTickets } from "@shared/schema";
 import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
@@ -708,6 +708,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ ok: true, clients: clientCount });
   });
 
+  app.post("/api/admin/reset-bill-number", requireAdmin, async (_req, res) => {
+    try {
+      await saveSettings({ billCounter: 0 } as any);
+      res.json({ success: true, message: "Bill number reset. Next order will be ORD0001." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Reset failed" });
+    }
+  });
+
+  app.delete("/api/admin/clear-orders", requireAdmin, async (_req, res) => {
+    try {
+      await db.delete(orderItems);
+      await db.delete(kotTickets);
+      await db.delete(orders);
+      res.json({ success: true, message: "All orders and KOT records removed." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Clear failed" });
+    }
+  });
+
   app.get("/api/admin/audit-logs", requireAdmin, async (req, res) => {
     try {
       const limit  = Math.min(parseInt(String(req.query.limit  ?? 50)), 200);
@@ -1364,7 +1384,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
       const { items, ...orderInfo } = req.body;
-      const orderNumber = `ORD${Date.now()}`;
+      const orderNumber = `ORD${String(incrementBillCounter()).padStart(4, "0")}`;
       const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: (req.user as any)?.id ?? null });
 
       // Create order items
@@ -1773,7 +1793,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const total = subtotal + tax;
       // Create new split order (takeaway, no table)
       const newOrder = await storage.createOrder({
-        orderNumber: `ORD${Date.now()}`,
+        orderNumber: `ORD${String(incrementBillCounter()).padStart(4, "0")}`,
         orderType: "dine-in",
         status: "pending",
         totalAmount: total.toFixed(2),

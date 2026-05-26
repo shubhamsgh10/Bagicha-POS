@@ -34,6 +34,7 @@ export interface RestaurantSettings {
   printSettings: PrintConfigSettings;
   managerAllowedPages: string[] | null; // null = all pages allowed
   staffAllowedPages: string[] | null;   // null = all pages allowed
+  billCounter: number;
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -89,6 +90,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   printSettings: DEFAULT_PRINT_SETTINGS,
   managerAllowedPages: null,
   staffAllowedPages: null,
+  billCounter: 0,
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
@@ -138,6 +140,21 @@ export async function initSettings(): Promise<void> {
 // Synchronous — reads from in-memory cache; falls back to file if cache not yet warm
 export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
+}
+
+// Sync — increments in-memory counter immediately, persists to DB async (fire-and-forget)
+export function incrementBillCounter(): number {
+  const current = getSettings();
+  const next = (current.billCounter ?? 0) + 1;
+  settingsCache = { ...current, billCounter: next };
+  db.insert(restaurantSettings)
+    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: restaurantSettings.id,
+      set: { settings: settingsCache as any, updatedAt: new Date() },
+    })
+    .catch((err: unknown) => console.error("[settings] Bill counter save failed:", err));
+  return next;
 }
 
 // Async — updates cache immediately, then awaits DB write before resolving

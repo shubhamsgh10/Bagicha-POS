@@ -33,6 +33,13 @@ export function generateKOTBuffer(params: {
   width?: number;
 }): Buffer {
   const W = params.width ?? 48;
+  const M = 1;
+  const bodyLine = (s: string) => E.line(" ".repeat(M) + s);
+  const tw = (l: string, r: string) => {
+    const iW = W - 2 * M;
+    const maxL = Math.max(1, iW - r.length - 1);
+    return E.line(" ".repeat(M) + l.substring(0, maxL).padEnd(maxL) + " " + r);
+  };
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
@@ -59,16 +66,16 @@ export function generateKOTBuffer(params: {
     const yy = String(now.getFullYear()).slice(-2);
     const hh = String(now.getHours()).padStart(2, "0");
     const mi = String(now.getMinutes()).padStart(2, "0");
-    parts.push(E.line(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
+    parts.push(bodyLine(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
   }
   parts.push(E.divider("-", W));
 
   for (const item of params.newItems) {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
     const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-    parts.push(E.BOLD_ON, E.line(`${qty}  ${label}`), E.BOLD_OFF);
+    parts.push(E.BOLD_ON, bodyLine(`${qty}  ${label}`), E.BOLD_OFF);
     if (params.kotSettings.printAddons && item.instructions) {
-      parts.push(E.line(`        >> ${item.instructions}`));
+      parts.push(bodyLine(`       >> ${item.instructions}`));
     }
   }
 
@@ -76,9 +83,9 @@ export function generateKOTBuffer(params: {
     for (const item of params.modifiedItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-      parts.push(E.BOLD_ON, E.twoColumns(`${qty}  ${label}`, `was ${item.previousQty}`, W), E.BOLD_OFF);
+      parts.push(E.BOLD_ON, tw(`${qty}  ${label}`, `was ${item.previousQty}`), E.BOLD_OFF);
       if (params.kotSettings.printAddons && item.instructions) {
-        parts.push(E.line(`        >> ${item.instructions}`));
+        parts.push(bodyLine(`       >> ${item.instructions}`));
       }
     }
   }
@@ -88,7 +95,7 @@ export function generateKOTBuffer(params: {
     for (const item of params.cancelledItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-      parts.push(E.BOLD_ON, E.line(`** VOID **  ${qty}  ${label}`), E.BOLD_OFF);
+      parts.push(E.BOLD_ON, bodyLine(`** VOID **  ${qty}  ${label}`), E.BOLD_OFF);
     }
   }
 
@@ -129,8 +136,15 @@ export function generateBillBuffer(params: {
   width?: number;
 }): Buffer {
   const W = params.width ?? 48;
+  const M = 1;
+  const bodyLine = (s: string) => E.line(" ".repeat(M) + s);
+  const tw = (l: string, r: string) => {
+    const iW = W - 2 * M;
+    const maxL = Math.max(1, iW - r.length - 1);
+    return E.line(" ".repeat(M) + l.substring(0, maxL).padEnd(maxL) + " " + r);
+  };
   const { order, items, restaurant, billSettings } = params;
-  const sym = restaurant.currencySymbol || "₹";
+  const sym = (restaurant.currencySymbol || "Rs.").replace("₹", "Rs.");
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
@@ -170,7 +184,7 @@ export function generateBillBuffer(params: {
   parts.push(E.ALIGN_LEFT);
 
   if (billSettings.showNameField) {
-    parts.push(E.line(`Name:${"_".repeat(Math.max(10, W - 5))}`));
+    parts.push(bodyLine(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`));
     parts.push(E.LF);
   }
 
@@ -185,20 +199,20 @@ export function generateBillBuffer(params: {
   const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
 
   const datePrefix = `Date: ${dateStr}   `;
-  const padLen = Math.max(0, W - datePrefix.length - orderTypeLabel.length);
+  const padLen = Math.max(0, (W - 2 * M) - datePrefix.length - orderTypeLabel.length);
   parts.push(
-    E.text(datePrefix + " ".repeat(padLen)),
+    E.text(" ".repeat(M) + datePrefix + " ".repeat(padLen)),
     E.BOLD_ON, E.line(orderTypeLabel), E.BOLD_OFF,
   );
-  parts.push(E.line(timeStr));
-  parts.push(E.twoColumns(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`, W));
+  parts.push(bodyLine(timeStr));
+  parts.push(tw(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   parts.push(E.divider("-", W));
 
-  const IW = W - 4 - 9 - 8 - 3;
+  const IW = W - 2 * M - 4 - 9 - 8 - 3;
 
   parts.push(E.BOLD_ON);
   parts.push(E.line(
-    `${"Item".padEnd(IW)} ${"Qty".padStart(4)} ${"Price".padStart(9)} ${"Amt".padStart(8)}`
+    " ".repeat(M) + `${"Item".padEnd(IW)} ${"Qty".padStart(4)} ${"Price".padStart(9)} ${"Amt".padStart(8)}`
   ));
   parts.push(E.BOLD_OFF);
   parts.push(E.divider("-", W));
@@ -238,15 +252,15 @@ export function generateBillBuffer(params: {
       const chunk = remaining.substring(0, IW);
       remaining = remaining.substring(IW);
       if (first) {
-        parts.push(E.line(`${chunk.padEnd(IW)} ${qtyStr} ${priceStr} ${amtStr}`));
+        parts.push(E.line(" ".repeat(M) + `${chunk.padEnd(IW)} ${qtyStr} ${priceStr} ${amtStr}`));
         first = false;
       } else {
-        parts.push(E.line(chunk));
+        parts.push(bodyLine(chunk));
       }
     }
 
     if (billSettings.showAddons && item.specialInstructions) {
-      parts.push(E.line(`  [${item.specialInstructions}]`));
+      parts.push(bodyLine(`  [${item.specialInstructions}]`));
     }
     totalQty += item.quantity;
   }
@@ -263,19 +277,19 @@ export function generateBillBuffer(params: {
   const cgst     = tax / 2;
   const sgst     = tax / 2;
 
-  parts.push(E.twoColumns(`Total Qty: ${totalQty}`, `Sub Total ${subtotal.toFixed(2)}`, W));
-  parts.push(E.twoColumns("", `CGST ${cgstRate}%  ${cgst.toFixed(2)}`, W));
-  parts.push(E.twoColumns("", `SGST ${cgstRate}%  ${sgst.toFixed(2)}`, W));
+  parts.push(tw(`Total Qty: ${totalQty}`, `Sub Total ${subtotal.toFixed(2)}`));
+  parts.push(tw("", `CGST ${cgstRate}%  ${cgst.toFixed(2)}`));
+  parts.push(tw("", `SGST ${cgstRate}%  ${sgst.toFixed(2)}`));
   if (discount > 0) {
-    parts.push(E.twoColumns("", `Discount  -${discount.toFixed(2)}`, W));
+    parts.push(tw("", `Discount  -${discount.toFixed(2)}`));
   }
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) {
-    parts.push(E.twoColumns("", `Round off  ${roundOff.toFixed(2)}`, W));
+    parts.push(tw("", `Round off  ${roundOff.toFixed(2)}`));
   }
   parts.push(E.divider("=", W));
-  parts.push(E.BOLD_ON, E.twoColumns("", `Grand Total  ${sym}${rounded.toFixed(2)}`, W), E.BOLD_OFF);
+  parts.push(E.BOLD_ON, tw("", `Grand Total  ${sym}${rounded.toFixed(2)}`), E.BOLD_OFF);
   if (order.paymentMethod) {
-    parts.push(E.twoColumns("", order.paymentMethod.toUpperCase(), W));
+    parts.push(tw("", order.paymentMethod.toUpperCase()));
   }
   parts.push(E.divider("=", W));
 
