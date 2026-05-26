@@ -79,6 +79,16 @@ export function useCustomerIntelligence() {
     staleTime: 60_000,
   });
 
+  // Server-computed RFM segments — preferred over in-memory computation
+  const { data: serverSegments = [] } = useQuery<Array<{ key: string; segment: string; rfmScore: number | null }>>({
+    queryKey: ["/api/crm/segments/all"],
+    staleTime: 120_000,
+  });
+  const segmentMap = useMemo(
+    () => new Map(serverSegments.map(s => [s.key, s.segment])),
+    [serverSegments]
+  );
+
   const customers = useMemo<CustomerProfile[]>(() => {
     if (!rawOrders.length) return [];
 
@@ -122,7 +132,13 @@ export function useCustomerIntelligence() {
         ? +Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0][0]
         : null;
 
-      const tag          = tagFor(orders.length, avgOrderValue, daysSinceLastVisit);
+      // Prefer server-computed segment; fall back to local computation
+      const serverSeg    = segmentMap.get(key);
+      const localTag     = tagFor(orders.length, avgOrderValue, daysSinceLastVisit);
+      const tag: CustomerTag = (serverSeg === "VIP" || serverSeg === "Regular" || serverSeg === "New" || serverSeg === "At Risk")
+        ? serverSeg
+        : serverSeg === "Lapsed" ? "At Risk"
+        : localTag;
       const spendCategory = spendCategoryFor(avgOrderValue);
       const suggestion   = suggestionFor(tag, spendCategory);
 
@@ -162,7 +178,7 @@ export function useCustomerIntelligence() {
     );
 
     return profiles;
-  }, [rawOrders]);
+  }, [rawOrders, segmentMap]);
 
   // Derived stats
   const stats = useMemo(() => {

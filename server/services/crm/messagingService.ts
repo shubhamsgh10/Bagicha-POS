@@ -105,15 +105,43 @@ async function sendEmail(
   }
 }
 
-// ── SMS (placeholder — wire in Twilio / MSG91 when ready) ────────────────────
+// ── SMS via MSG91 ─────────────────────────────────────────────────────────────
 
 async function sendSMS(
   to: string,
-  message: string
+  message: string,
+  authKey?: string,
+  senderId?: string
 ): Promise<SendResult> {
-  // Dry-run until a real SMS provider is wired in
-  console.log(`[CRM][SMS][DRY-RUN] To: ${to} | ${message.slice(0, 60)}`);
-  return { success: true, mode: "dry_run" };
+  if (!authKey || !senderId) {
+    console.log(`[CRM][SMS][DRY-RUN] To: ${to} | ${message.slice(0, 60)}`);
+    return { success: true, mode: "dry_run" };
+  }
+
+  const normalised = to.replace(/\D/g, "");
+  const mobile     = normalised.startsWith("91") ? normalised : `91${normalised}`;
+
+  try {
+    const url = new URL("https://api.msg91.com/api/sendhttp.php");
+    url.searchParams.set("authkey",  authKey);
+    url.searchParams.set("mobiles",  mobile);
+    url.searchParams.set("message",  message);
+    url.searchParams.set("sender",   senderId);
+    url.searchParams.set("route",    "4");   // transactional route
+    url.searchParams.set("country",  "91");
+    url.searchParams.set("unicode",  "1");   // UTF-8 support for ₹ etc.
+
+    const res = await fetch(url.toString(), { method: "GET" });
+    const text = await res.text().catch(() => "");
+
+    // MSG91 returns "success" prefix on success
+    if (!res.ok || text.toLowerCase().startsWith("error")) {
+      return { success: false, mode: "api", error: `MSG91: ${text}` };
+    }
+    return { success: true, mode: "api" };
+  } catch (err: any) {
+    return { success: false, mode: "api", error: err?.message ?? "Network error" };
+  }
 }
 
 // ── Unified send interface ────────────────────────────────────────────────────
@@ -121,6 +149,8 @@ async function sendSMS(
 export interface MessagingConfig {
   watiApiKey?:    string;
   watiEndpoint?:  string;
+  msg91AuthKey?:  string;
+  msg91SenderId?: string;
   smtp?: {
     host:  string;
     port:  number;
@@ -163,7 +193,7 @@ export async function sendMessage(
       config.smtp
     );
   } else if (payload.channel === "sms") {
-    result = await sendSMS(payload.to, payload.message);
+    result = await sendSMS(payload.to, payload.message, config.msg91AuthKey, config.msg91SenderId);
   }
 
   // ── Log to DB (fire-and-forget) ───────────────────────────────────────────

@@ -195,7 +195,7 @@ export function useLiveOrders() {
           if (!updated) return;
           updated.hasNewItems = true;
           updated.lastUpdated = Date.now();
-          setOrders(prev => [updated, ...prev.filter(o => o.id !== full.id)]);
+          setOrders(prev => prev.map(o => o.id === full.id ? updated : o));
         } catch { /* silent */ }
       })();
     }

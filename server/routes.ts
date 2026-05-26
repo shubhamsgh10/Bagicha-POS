@@ -48,7 +48,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, users, orders, orderItems, kotTickets } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets } from "@shared/schema";
 import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
@@ -2259,6 +2259,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Segmentation ───────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/crm/segments/all
+   * Returns server-computed RFM segments for all customers (key → segment).
+   */
+  app.get("/api/crm/segments/all", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db
+        .select({
+          key:      customersMaster.key,
+          segment:  customerSegments.segment,
+          rfmScore: customerSegments.rfmScore,
+          updatedAt: customerSegments.updatedAt,
+        })
+        .from(customerSegments)
+        .innerJoin(customersMaster, eq(customerSegments.customerId, customersMaster.id));
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
 
   /**
    * POST /api/crm/segment/:key

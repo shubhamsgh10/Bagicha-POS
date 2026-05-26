@@ -16,6 +16,8 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { useLiveOrders } from "@/hooks/useLiveOrders";
+import { LiveOrdersPanel, LiveOrdersStrip } from "@/components/live-tables/LiveOrdersPanel";
 
 interface Table {
   id: number;
@@ -119,6 +121,7 @@ function sectionLabel(s: string) {
 export default function Tables() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { deliveryOrders, pickupOrders } = useLiveOrders();
 
   const printTableBill = async (orderId: number) => {
     try {
@@ -374,6 +377,7 @@ export default function Tables() {
 
       {/* ── Table Grid ─────────────────────────────────────────────────────────── */}
       <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 sm:space-y-8">
+        <LiveOrdersStrip deliveryOrders={deliveryOrders} pickupOrders={pickupOrders} />
         {isLoading ? (
           <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 gap-3">
             {[...Array(16)].map((_, i) => (
@@ -595,6 +599,8 @@ export default function Tables() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <LiveOrdersPanel deliveryOrders={deliveryOrders} pickupOrders={pickupOrders} />
     </div>
   );
 }

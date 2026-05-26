@@ -19,13 +19,15 @@ import { processPendingFeedback } from "./feedbackService";
 import { runBirthdayAutomation } from "./birthdayService";
 import { generateAndSendDailyDigest } from "./dailyDigestService";
 import { runBackup, isConfigured as backupConfigured } from "./backupService";
+import { runAutomationServerSide } from "./crm/automationRuleEngine";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let tickerTimer: ReturnType<typeof setInterval> | null = null;
-let lastBirthdayDate: string | null = null;   // YYYY-MM-DD
-let lastDigestDate:   string | null = null;
-let lastBackupDate:   string | null = null;
+let lastBirthdayDate:    string | null = null;   // YYYY-MM-DD
+let lastDigestDate:      string | null = null;
+let lastBackupDate:      string | null = null;
+let lastRuleEngineDate:  string | null = null;
 
 const TICK_INTERVAL_MS = 60 * 1000; // every minute
 
@@ -82,7 +84,17 @@ async function tick(): Promise<void> {
     }
   }
 
-  // 4. Daily backup — once per day at 2am
+  // 4. Server automation rules engine — once per day at configured hour (default 10am)
+  if (config.enabled && hour >= (config.serverAutomationHour ?? 10) && lastRuleEngineDate !== today) {
+    try {
+      lastRuleEngineDate = today;
+      await runAutomationServerSide();
+    } catch (err: any) {
+      console.warn("[DailyScheduler] automation rules error:", err?.message ?? err);
+    }
+  }
+
+  // 5. Daily backup — once per day at 2am
   if (backupConfigured() && hour >= 2 && lastBackupDate !== today) {
     try {
       lastBackupDate = today;

@@ -61,6 +61,15 @@ export interface AutomationConfig {
   /** Hour of day (0–23) to fire birthday/anniversary scan. Default 9. */
   birthdayHour: number;
 
+  /** Hour of day (0–23) to run the server-side automation rule engine. Default 10. */
+  serverAutomationHour: number;
+
+  // ── SMS via MSG91 ─────────────────────────────────────────────────────────
+  /** MSG91 auth key for SMS sending. */
+  msg91AuthKey: string;
+  /** MSG91 sender ID (6-char registered sender, e.g. "BAGICHA"). */
+  msg91SenderId: string;
+
   // ── Staff / Attendance ────────────────────────────────────────────────────
   /** Google Sheet URL for biometric attendance export. */
   attendanceSheetUrl: string;
@@ -121,6 +130,9 @@ const DEFAULT_CONFIG: AutomationConfig = {
   feedbackBaseUrl: "",
   birthdayEnabled: false,
   birthdayHour: 9,
+  serverAutomationHour: 10,
+  msg91AuthKey: "",
+  msg91SenderId: "",
   attendanceSheetUrl: "",
   attendanceColumnMapping: null,
   attendanceAutoSyncHour: -1,

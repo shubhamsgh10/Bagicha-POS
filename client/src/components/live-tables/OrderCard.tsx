@@ -135,7 +135,7 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
     if (order.tableId && order.orderId) {
       navigate(`/pos?tableId=${order.tableId}&orderId=${order.orderId}&tableName=${encodeURIComponent(order.tableName ?? "")}`);
     } else if (order.orderId) {
-      navigate(`/pos?orderId=${order.orderId}`);
+      navigate(`/pos?orderId=${order.orderId}&mode=${order.type}`);
     }
   }, [order, navigate]);
 
