@@ -2,6 +2,15 @@ appId: com.bagicha.pos
 productName: Bagicha POS
 executableName: BagichaPOS
 copyright: Copyright © Bagicha
+
+# ── GitHub Releases auto-update ───────────────────────────────────────────────
+# Set GH_TOKEN env var when running electron-builder to publish.
+# Replace owner/repo below with your GitHub username and repository name.
+publish:
+  - provider: github
+    owner: shubhamsgh10
+    repo: Bagicha-POS
+    releaseType: release
 directories:
   output: release
   buildResources: desktop/icons

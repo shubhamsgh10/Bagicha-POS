@@ -879,6 +879,13 @@ export default function POS() {
   const isPending = createOrderMutation.isPending || updateOrderMutation.isPending || settleMutation.isPending;
   const isEditMode = !!activeOrderId;
 
+  // Tell the Electron main process whether a transaction is active so the
+  // auto-updater won't restart the app mid-order.
+  useEffect(() => {
+    const active = isPending || settlePhase !== "idle";
+    window.electronAPI?.setPosActive(active);
+  }, [isPending, settlePhase]);
+
   // ── Submit action handlers ───────────────────────────────────────────────────
 
   const triggerSubmit = () => {
