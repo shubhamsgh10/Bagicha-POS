@@ -3,14 +3,30 @@ import type {
   PrintJob,
   PrintTestPayload,
   UsbScanResult,
+  UpdateStatusPayload,
+  UpdateProgressPayload,
+  UpdateDownloadedPayload,
+  UpdateInstallResult,
 } from "@shared/electron/ipc";
 
 export interface ElectronAPI {
   readonly isElectron: true;
+
+  // ── Printing ──────────────────────────────────────────────────────────────
   print: (job: PrintJob) => Promise<PrintExecuteResult>;
   printTest: (payload: PrintTestPayload) => Promise<PrintExecuteResult>;
   scanUsbDevices: () => Promise<UsbScanResult>;
   getVersion: () => Promise<string>;
+
+  // ── Auto-update actions ───────────────────────────────────────────────────
+  setPosActive: (active: boolean) => Promise<void>;
+  checkForUpdates: () => Promise<{ ok: boolean; error?: string }>;
+  installUpdate: () => Promise<UpdateInstallResult>;
+
+  // ── Auto-update notifications ─────────────────────────────────────────────
+  onUpdateStatus:    (cb: (p: UpdateStatusPayload)    => void) => () => void;
+  onUpdateProgress:  (cb: (p: UpdateProgressPayload)  => void) => () => void;
+  onUpdateDownloaded:(cb: (p: UpdateDownloadedPayload)=> void) => () => void;
 }
 
 declare global {

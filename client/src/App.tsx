@@ -24,6 +24,7 @@ import Staff from "@/pages/Staff";
 import KOT from "@/pages/KOT";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
+import { UpdateNotification } from "@/components/UpdateNotification";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { RouteGuard } from "@/components/RouteGuard";
@@ -214,6 +215,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <UpdateNotification />
         <ActiveRoleProvider>
           {/* NavigationProvider tracks history stack + direction for page transitions */}
           <AppWouterRouter>

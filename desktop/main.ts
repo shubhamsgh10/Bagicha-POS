@@ -7,6 +7,7 @@ import { IPC, type PrintJob, type PrintTestPayload } from "../shared/electron/ip
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
+import { initUpdater } from "./updater.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
@@ -161,6 +162,7 @@ if (!gotLock) {
     }
     console.log("[electron] App ready");
     createWindow();
+    initUpdater();
   });
 
   app.on("activate", () => {

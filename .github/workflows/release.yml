@@ -1,0 +1,46 @@
+# Bagicha POS — Electron release workflow
+#
+# Trigger: push a git tag matching v* (e.g. v1.0.2)
+# Result:  Windows installer uploaded to GitHub Releases + latest.yml published
+#          (electron-updater on POS machines will pick up the new version automatically)
+#
+# Required secret: GH_TOKEN (GitHub personal access token with repo + write:packages scope)
+# Set it at: repo → Settings → Secrets and variables → Actions → New repository secret
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release-windows:
+    name: Build & publish Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron app
+        run: npm run build:electron
+        env:
+          ELECTRON_BUILD: '1'
+          # Bake your production API URL into the desktop build
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+
+      - name: Publish to GitHub Releases
+        run: npx electron-builder --win --publish always --config electron-builder.yml
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'  # skip code-signing (no cert)

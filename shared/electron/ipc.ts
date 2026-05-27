@@ -6,7 +6,41 @@ export const IPC = {
   PRINT_TEST: "print:test",
   USB_SCAN: "usb:scan",
   APP_VERSION: "app:version",
+
+  // ── Auto-update (main → renderer: notifications) ──────────────────────────
+  UPDATE_STATUS:    "app:update-status",
+  UPDATE_PROGRESS:  "app:update-progress",
+  UPDATE_DOWNLOADED: "app:update-downloaded",
+  // ── Auto-update (renderer → main: actions) ────────────────────────────────
+  UPDATE_CHECK:    "app:update-check",
+  UPDATE_INSTALL:  "app:update-install",
+  SET_POS_ACTIVE:  "app:set-pos-active",
 } as const;
+
+// ── Update payload types ──────────────────────────────────────────────────────
+
+export type UpdateStatus = "checking" | "available" | "current" | "error";
+
+export interface UpdateStatusPayload {
+  status: UpdateStatus;
+  version?: string;
+  error?: string;
+}
+
+export interface UpdateProgressPayload {
+  percent: number;
+  bytesPerSecond?: number;
+}
+
+export interface UpdateDownloadedPayload {
+  version: string;
+}
+
+export interface UpdateInstallResult {
+  ok: boolean;
+  /** Why the install was blocked (only set when ok=false) */
+  reason?: "not-downloaded" | "pos-active" | "dev-mode";
+}
 
 export interface UsbDeviceInfo {
   vendorId: number;
