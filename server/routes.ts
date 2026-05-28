@@ -1409,6 +1409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: item.name,
           quantity: item.quantity,
           instructions: [item.specialInstructions, addonLines].filter(Boolean).join(" | ") || undefined,
+          serviceMode: item.serviceMode || undefined,
         };
       });
 
@@ -1471,17 +1472,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           price: String(item.price),
           specialInstructions: item.specialInstructions || "",
           size: item.size || null,
+          serviceMode: item.serviceMode || null,
         });
       }
 
-      // Recalculate totals
+      // Recalculate totals (include container charge for pickup/delivery items)
       const settings = getSettings();
       const taxRate = ((settings as any)?.taxRate ?? 18) / 100;
       const subtotal = items.reduce((s: number, i: any) => s + parseFloat(i.price) * Number(i.quantity), 0);
       const discount = parseFloat(discountAmount || "0");
       const taxable = subtotal - discount;
       const tax = taxable * taxRate;
-      const total = taxable + tax;
+      const containerCharge = items.reduce((s: number, i: any) => {
+        const sm = i.serviceMode ?? null;
+        return (sm === 'pickup' || sm === 'delivery') ? s + Number(i.quantity) * 15 : s;
+      }, 0);
+      const total = taxable + tax + containerCharge;
 
       const order = await storage.updateOrder(id, {
         totalAmount: total.toFixed(2),
@@ -1499,6 +1505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: item.name,
           quantity: Number(item.quantity),
           instructions: item.specialInstructions || undefined,
+          serviceMode: item.serviceMode || undefined,
         }));
         await storage.createKotTicket({ orderId: id, kotNumber, items: kotItems });
         broadcast({ type: "KOT_UPDATE", action: "created" });

@@ -263,9 +263,9 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
           {/* LEFT: outlet name + KOT/BILL + staff/customer */}
           <div className="flex-1 min-w-0 space-y-1 pr-1">
             <p className="text-xs font-bold text-gray-800 leading-tight">{restaurantName}</p>
-            {order.id && (
+            {order.orderId && (
               <p className="text-[10px] text-gray-500 font-medium leading-tight">
-                Order {serialNum(order.id)}
+                Order {serialNum(order.orderId)}
               </p>
             )}
             {/* Staff / customer row */}

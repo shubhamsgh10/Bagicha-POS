@@ -37,6 +37,7 @@ export default function KOT() {
         quantity: i.quantity,
         size: i.size ?? null,
         notes: i.instructions ?? i.notes ?? null,
+        serviceMode: i.serviceMode ?? null,
       })),
       isReprint: true,
     });
@@ -141,9 +142,20 @@ export default function KOT() {
       <div className="px-4 pb-2 space-y-1.5">
         {ticket.items?.map((item: any, index: number) => (
           <div key={index}>
-            <div className="flex justify-between items-center text-sm">
-              <span className="font-medium text-gray-700">{item.name}</span>
-              <span className="font-bold text-emerald-600">×{item.quantity}</span>
+            <div className="flex justify-between items-center text-sm gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                <span className="font-medium text-gray-700">{item.name}</span>
+                {item.serviceMode && item.serviceMode !== "dinein" && (
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                    item.serviceMode === "pickup"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}>
+                    {item.serviceMode === "pickup" ? "📦" : "🛵"}
+                  </span>
+                )}
+              </div>
+              <span className="font-bold text-emerald-600 shrink-0">×{item.quantity}</span>
             </div>
             {item.instructions && (
               <p className="text-xs text-gray-400 ml-2 italic">{item.instructions}</p>

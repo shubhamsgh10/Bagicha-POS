@@ -1,0 +1,93 @@
+<h2>Table POS — Item Mode Selector</h2>
+<p class="subtitle">Inside a table session, the Dine-In / Pickup / Delivery selector must only affect <em>newly added items</em> — not convert the whole order. How should it look and feel?</p>
+
+<div class="cards">
+
+  <!-- Option A: Same tabs, new label row -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f1f5f9;padding:0;font-family:sans-serif;border-radius:8px;overflow:hidden;">
+      <!-- Top bar mockup -->
+      <div style="background:rgba(255,255,255,0.95);border-bottom:1px solid #e2e8f0;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div style="background:#16a34a;color:white;font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;">🍽️ Table 2 · #042</div>
+        <div style="flex:1;min-width:80px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px;font-size:9px;color:#94a3b8;">Search item...</div>
+        <!-- Mode selector row -->
+        <div style="display:flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:6px;padding:2px 4px;">
+          <span style="font-size:8px;color:#64748b;font-weight:600;text-transform:uppercase;margin-right:2px;">Adding as:</span>
+          <button style="background:#16a34a;color:white;border:none;border-radius:4px;padding:3px 8px;font-size:9px;font-weight:700;cursor:pointer;">🍽 Dine-In</button>
+          <button style="background:transparent;color:#64748b;border:none;border-radius:4px;padding:3px 8px;font-size:9px;font-weight:600;cursor:pointer;">📦 Pickup</button>
+          <button style="background:transparent;color:#64748b;border:none;border-radius:4px;padding:3px 8px;font-size:9px;font-weight:600;cursor:pointer;">🛵 Delivery</button>
+        </div>
+      </div>
+      <!-- Hint label -->
+      <div style="background:#dcfce7;padding:4px 12px;font-size:9px;color:#166534;font-weight:500;">
+        ✔ Items added now will be marked as <strong>Dine-In</strong>. Switch mode before adding next item.
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — "Adding as:" pill strip in top bar</h3>
+      <p>A labelled mini pill strip replaces the existing tab row in table sessions. Green hint bar confirms current mode. Clear and explicit.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Same existing tabs, pill state indicator -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f1f5f9;padding:0;font-family:sans-serif;border-radius:8px;overflow:hidden;">
+      <div style="background:rgba(255,255,255,0.95);border-bottom:1px solid #e2e8f0;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div style="background:#16a34a;color:white;font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;">🍽️ Table 2 · #042</div>
+        <div style="flex:1;min-width:80px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px;font-size:9px;color:#94a3b8;">Search item...</div>
+        <!-- Same existing tabs but in a TABLE session -->
+        <div style="display:flex;gap:2px;">
+          <button style="background:#16a34a;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:700;">Dine In</button>
+          <button style="background:transparent;color:#94a3b8;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:600;">Delivery</button>
+          <button style="background:transparent;color:#94a3b8;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:600;">Pick Up</button>
+        </div>
+      </div>
+      <!-- Item mode active badge -->
+      <div style="background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:3px 12px;display:flex;align-items:center;gap:6px;">
+        <span style="font-size:8px;color:#64748b;font-weight:500;">Table order — next items added as:</span>
+        <span style="background:#dcfce7;color:#166534;font-size:8px;font-weight:700;padding:1px 6px;border-radius:4px;">🍽 DINE-IN</span>
+        <span style="font-size:8px;color:#94a3b8;margin-left:auto;">tap a tab to switch</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Existing tabs + thin context bar</h3>
+      <p>Tabs look the same. A thin bar below them shows the current item mode. Minimal UI change, familiar to cashiers who already know the tab positions.</p>
+    </div>
+  </div>
+
+  <!-- Option C: No top bar change — mode selector at cart header -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f1f5f9;padding:0;font-family:sans-serif;border-radius:8px;overflow:hidden;">
+      <div style="background:rgba(255,255,255,0.95);border-bottom:1px solid #e2e8f0;padding:8px 12px;display:flex;align-items:center;gap:8px;">
+        <div style="background:#16a34a;color:white;font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;">🍽️ Table 2 · #042</div>
+        <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px;font-size:9px;color:#94a3b8;">Search item...</div>
+        <div style="display:flex;gap:2px;">
+          <button style="background:#16a34a;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:700;">Dine In</button>
+          <button style="background:transparent;color:#94a3b8;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:600;">Delivery</button>
+          <button style="background:transparent;color:#94a3b8;border:none;border-radius:4px;padding:4px 10px;font-size:9px;font-weight:600;">Pick Up</button>
+        </div>
+      </div>
+      <!-- Cart panel header shows mode selector -->
+      <div style="display:flex;">
+        <div style="flex:1;background:#f8fafc;height:70px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:9px;">Menu Grid</div>
+        <div style="width:120px;background:white;border-left:1px solid #e2e8f0;">
+          <div style="padding:6px 8px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:4px;">
+            <span style="font-size:9px;font-weight:700;color:#374151;">🛒 Order</span>
+          </div>
+          <!-- Mode selector in cart panel header -->
+          <div style="padding:4px 6px;background:#f8fafc;border-bottom:1px solid #f1f5f9;display:flex;gap:2px;">
+            <button style="flex:1;background:#dcfce7;color:#166534;border:none;border-radius:3px;padding:2px 0;font-size:7px;font-weight:700;">🍽</button>
+            <button style="flex:1;background:transparent;color:#94a3b8;border:1px solid #e2e8f0;border-radius:3px;padding:2px 0;font-size:7px;">📦</button>
+            <button style="flex:1;background:transparent;color:#94a3b8;border:1px solid #e2e8f0;border-radius:3px;padding:2px 0;font-size:7px;">🛵</button>
+          </div>
+          <div style="padding:6px 8px;font-size:8px;color:#94a3b8;">items here...</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Mode selector lives in the cart panel header</h3>
+      <p>Top bar tabs unchanged. The item mode switcher sits at the top of the right-side cart/billing panel, right above the cart items. Close to the action.</p>
+    </div>
+  </div>
+
+</div>

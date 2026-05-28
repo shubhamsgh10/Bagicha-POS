@@ -285,5 +285,17 @@
     "status": "failed",
     "error": "Invalid or missing phone number",
     "campaign": "WIN_BACK"
+  },
+  {
+    "id": "27896caa-42e1-4e07-9746-e96f058b8811",
+    "customerId": "9109550322",
+    "customerName": "Shubham",
+    "phone": "9109550322",
+    "trigger": "WIN_BACK",
+    "message": "Hi Shubham! 🌿 We've been missing you at *Bagicha*! It's been 61 days since your last visit (especially your favourite *Shakshuka*). Come back and enjoy *15% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-05-28T08:55:40.146Z",
+    "status": "failed",
+    "error": "Invalid or missing phone number",
+    "campaign": "WIN_BACK"
   }
 ]

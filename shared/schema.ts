@@ -86,6 +86,7 @@ export const orderItems = pgTable("order_items", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   specialInstructions: text("special_instructions"),
   size: text("size"),
+  serviceMode: text("service_mode"), // "dinein" | "pickup" | "delivery" — null treated as "dinein"
 });
 
 export const kotTickets = pgTable("kot_tickets", {
@@ -99,6 +100,7 @@ export const kotTickets = pgTable("kot_tickets", {
     name: string;
     quantity: number;
     instructions?: string;
+    serviceMode?: string | null;
   }>>(),
 });
 

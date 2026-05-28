@@ -6,6 +6,7 @@ export interface KOTItem {
   quantity: number;
   size?: string | null;
   instructions?: string | null;
+  serviceMode?: string | null;
 }
 
 export interface BillRestaurantInfo {
@@ -70,13 +71,27 @@ export function generateKOTBuffer(params: {
   }
   parts.push(E.divider("-", W));
 
-  for (const item of params.newItems) {
+  const renderKotItem = (item: KOTItem) => {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
     const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
     parts.push(E.BOLD_ON, bodyLine(`${qty}  ${label}`), E.BOLD_OFF);
     if (params.kotSettings.printAddons && item.instructions) {
       parts.push(bodyLine(`       >> ${item.instructions}`));
     }
+  };
+
+  const modeHeaders: Record<string, string> = { dinein: '[ DINE-IN ]', pickup: '[ PICKUP ]', delivery: '[ DELIVERY ]' };
+  const hasMixed = params.newItems.some(i => i.serviceMode && i.serviceMode !== 'dinein');
+  if (hasMixed) {
+    for (const mode of ['dinein', 'pickup', 'delivery']) {
+      const group = params.newItems.filter(i => (i.serviceMode ?? 'dinein') === mode);
+      if (group.length === 0) continue;
+      const hdr = modeHeaders[mode] ?? `[ ${mode.toUpperCase()} ]`;
+      parts.push(E.ALIGN_CENTER, E.line(hdr), E.ALIGN_LEFT);
+      group.forEach(renderKotItem);
+    }
+  } else {
+    params.newItems.forEach(renderKotItem);
   }
 
   if (params.kotSettings.printModifiedItemsOnly && params.modifiedItems.length > 0) {
