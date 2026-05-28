@@ -1,5 +1,5 @@
 import { apiUrl } from '@/lib/api';
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, useSearch } from "wouter";
 import { AppWouterRouter } from "@/lib/appRouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -63,6 +63,7 @@ const pageTrans = { duration: 0.42, ease: [0.22, 1, 0.36, 1] as const };
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
   const [location, navigate] = useLocation();
+  const search = useSearch(); // tracks window.location.search reactively
   const { direction, goBack, canGoBack } = useNavigation();
 
   // Swipe-back gesture — only when authenticated and there's history
@@ -104,7 +105,7 @@ function Router() {
   if (location.startsWith("/feedback/")) return <PublicFeedback />;
 
   // Full-screen routes — skip push wrapper and page transitions
-  if (isAuthenticated && location.startsWith("/pos"))        return <POS />;
+  if (isAuthenticated && location.startsWith("/pos"))        return <POS key={location + search} />;
 
   const pushTransition = { duration: PUSH_DURATION / 1000, ease: [0.4, 0, 0.2, 1] as const };
 

@@ -11,6 +11,7 @@ import {
   Banknote, CreditCard, Smartphone, Clock, AlertCircle, Wifi,
   ChevronDown, Check, X,
 } from "lucide-react";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -487,7 +488,7 @@ export default function Reports() {
                   className="flex items-center justify-between p-3 rounded-xl bg-white/50 border border-white/40"
                 >
                   <div>
-                    <p className="font-medium text-sm text-gray-800">{order.orderNumber}</p>
+                    <p className="font-medium text-sm text-gray-800">{serialNum(order.id)}</p>
                     <p className="text-xs text-gray-500">{order.customerName || "Walk-in"} · {order.orderType}</p>
                     <p className="text-xs text-gray-400">{new Date(order.createdAt).toLocaleString("en-IN")}</p>
                   </div>
@@ -576,7 +577,7 @@ export default function Reports() {
                         </div>
                         <div>
                           <p className="font-medium text-sm text-gray-800">
-                            {order.tableNumber ? `Table ${order.tableNumber}` : order.orderNumber}
+                            {order.tableNumber ? `Table ${order.tableNumber}` : serialNum(order.id)}
                           </p>
                           <p className="text-xs text-gray-500">{order.customerName || "Walk-in"} · {order.orderType}</p>
                           <p className="text-xs text-gray-400">{new Date(order.createdAt).toLocaleString("en-IN")}</p>

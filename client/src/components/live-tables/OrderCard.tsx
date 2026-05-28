@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, forwardRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User, Phone, ChevronDown, ChevronUp } from "lucide-react";
 import { useLocation } from "wouter";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -262,11 +263,9 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
           {/* LEFT: outlet name + KOT/BILL + staff/customer */}
           <div className="flex-1 min-w-0 space-y-1 pr-1">
             <p className="text-xs font-bold text-gray-800 leading-tight">{restaurantName}</p>
-            {order.orderNumber && (
+            {order.id && (
               <p className="text-[10px] text-gray-500 font-medium leading-tight">
-                KOT: {order.orderNumber}{" "}
-                <span className="text-gray-300 mx-0.5">|</span>{" "}
-                BILL: <span className="font-bold text-gray-700">{order.orderNumber}</span>
+                Order {serialNum(order.id)}
               </p>
             )}
             {/* Staff / customer row */}

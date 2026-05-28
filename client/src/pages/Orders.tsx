@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { billLines } from "@/lib/receiptText";
+import { serialNum, avatarNum } from "@/lib/orderDisplay";
 
 
 const fmt = (n: number) =>
@@ -124,13 +125,13 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       >
         <div className="flex items-center gap-3 min-w-0">
           {/* avatar */}
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-sm">
-            {order.orderNumber?.slice(-2)}
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center text-white text-[11px] font-bold shrink-0 shadow-sm">
+            {avatarNum(order.id)}
           </div>
 
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-sm text-gray-800">{order.orderNumber}</span>
+              <span className="font-semibold text-sm text-gray-800">{serialNum(order.id)}</span>
               {order.tableNumber && (
                 <span className="text-[11px] bg-emerald-100/80 text-emerald-700 px-2 py-0.5 rounded-lg font-semibold">
                   Table {order.tableNumber}
@@ -331,6 +332,8 @@ const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter((o: any) =>
       o.orderNumber?.toLowerCase().includes(q) ||
+      serialNum(o.id).toLowerCase().includes(q) ||
+      String(o.id).includes(q.replace(/^#/, "")) ||
       o.customerName?.toLowerCase().includes(q) ||
       o.customerPhone?.toLowerCase().includes(q) ||
       o.tableNumber?.toLowerCase().includes(q)

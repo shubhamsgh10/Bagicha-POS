@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { useLocation } from "wouter";
 import type { LiveOrder } from "@/hooks/useLiveOrders";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Status badge map ──────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ function OrderRailCard({ order, index }: { order: LiveOrder; index: number }) {
     >
       {/* Order number + status badge */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-bold text-gray-900 truncate">{order.orderNumber}</span>
+        <span className="text-xs font-bold text-gray-900 truncate">{serialNum(order.id)}</span>
         <span className={`shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${status.bg} ${status.text}`}>
           {status.label}
         </span>
@@ -291,7 +292,7 @@ function MobileStrip({ deliveryOrders, pickupOrders }: { deliveryOrders: LiveOrd
                   {status.label}
                 </span>
               </div>
-              <div className="text-xs font-bold text-gray-800 truncate mb-0.5">{order.orderNumber}</div>
+              <div className="text-xs font-bold text-gray-800 truncate mb-0.5">{serialNum(order.id)}</div>
               <div className="text-[10px] text-gray-500 truncate mb-2.5">
                 {order.customerName || "Guest"} · {itemCount} item{itemCount !== 1 ? "s" : ""} · ₹{order.totalAmount.toFixed(0)}
               </div>

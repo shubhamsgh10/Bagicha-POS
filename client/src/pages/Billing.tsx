@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { serialNum } from "@/lib/orderDisplay";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(amount);
@@ -464,7 +465,7 @@ export default function Billing() {
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <div>
-                      <CardTitle className="text-base">{order.orderNumber}</CardTitle>
+                      <CardTitle className="text-base">{serialNum(order.id)}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         {order.customerName || "Walk-in Customer"}
                       </p>
@@ -563,7 +564,7 @@ export default function Billing() {
           <DialogHeader>
             <DialogTitle>Collect Payment</DialogTitle>
             <DialogDescription>
-              {payingOrder?.orderNumber} — {formatCurrency(parseFloat(payingOrder?.totalAmount || "0"))}
+              {payingOrder ? serialNum(payingOrder.id) : ""} — {formatCurrency(parseFloat(payingOrder?.totalAmount || "0"))}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2 max-h-[70vh] overflow-y-auto">

@@ -10,6 +10,7 @@ import {
   IndianRupee, ShoppingBag, Clock, TrendingUp, AlertTriangle,
   Star, LayoutGrid, Calendar, ChevronDown, Check,
 } from "lucide-react";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -484,7 +485,7 @@ export default function LiveAnalytics() {
                   {todayOrders.map((o: any) => (
                     <div key={o.id} className="flex items-center justify-between bg-white/50 rounded-xl px-3 py-2 border border-white/40">
                       <div>
-                        <p className="text-xs font-semibold">{o.orderNumber}</p>
+                        <p className="text-xs font-semibold">{serialNum(o.id)}</p>
                         <p className="text-[11px] text-muted-foreground capitalize">{o.orderType?.replace("-", " ")} {o.tableNumber ? `· Table ${o.tableNumber}` : ""}</p>
                       </div>
                       <div className="text-right">
@@ -509,7 +510,7 @@ export default function LiveAnalytics() {
                   {activeOrdersList.map((o: any) => (
                     <div key={o.id} className="flex items-center justify-between bg-amber-50/60 rounded-xl px-3 py-2 border border-amber-200/50">
                       <div>
-                        <p className="text-xs font-semibold">{o.orderNumber}</p>
+                        <p className="text-xs font-semibold">{serialNum(o.id)}</p>
                         <p className="text-[11px] text-muted-foreground">{o.tableNumber ? `Table ${o.tableNumber}` : o.orderType}</p>
                       </div>
                       <div className="text-right">

@@ -15,6 +15,7 @@ import {
   type CustomerProfile,
   type CustomerTag,
 } from "@/hooks/useCustomerIntelligence";
+import { serialNum } from "@/lib/orderDisplay";
 import { LoyaltyCard } from "@/components/loyalty/LoyaltyCard";
 import { RecommendationBox } from "@/components/recommendations/RecommendationBox";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
@@ -789,7 +790,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
             {customer.orders.slice(0, 5).map(order => (
               <div key={order.id} className="bg-gray-50 rounded-xl px-3 py-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-800">#{order.orderNumber}</span>
+                  <span className="text-xs font-semibold text-gray-800">{serialNum(order.id)}</span>
                   <span className="text-xs font-bold text-emerald-600">{formatCurrency(order.totalAmount)}</span>
                 </div>
                 <div className="flex items-center justify-between mt-1">
