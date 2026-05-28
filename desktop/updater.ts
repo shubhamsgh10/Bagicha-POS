@@ -13,7 +13,9 @@
  */
 
 import { app, ipcMain, BrowserWindow } from "electron";
-import { autoUpdater, type UpdateInfo, type ProgressInfo } from "electron-updater";
+import electronUpdaterPkg from "electron-updater";
+import type { UpdateInfo, ProgressInfo } from "electron-updater";
+const { autoUpdater } = electronUpdaterPkg;
 import log from "electron-log";
 import {
   IPC,

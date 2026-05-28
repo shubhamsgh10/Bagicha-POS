@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { serialNum } from "@/lib/orderDisplay";
 import {
   X,
   User,
@@ -106,7 +107,7 @@ export function TableDrawer({ table, onClose }: TableDrawerProps) {
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-1.5 text-gray-600">
                       <Hash className="w-3.5 h-3.5" />
-                      <span className="text-sm font-semibold">{order.orderNumber}</span>
+                      <span className="text-sm font-semibold">{serialNum(order.id)}</span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span

@@ -15,9 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock, User, Phone, Clock, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { serialNum } from "@/lib/orderDisplay";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
@@ -1165,33 +1166,72 @@ export default function POS() {
 
       {/* ── Recall Held Orders Dialog ────────────────────────────────────────── */}
       <Dialog open={showRecallDialog} onOpenChange={setShowRecallDialog}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Recall Held Order</DialogTitle>
             <DialogDescription>Select a held order to resume.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 max-h-64 overflow-y-auto py-1">
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto py-1 pr-1">
             {heldOrders.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-6">No held orders</p>
             )}
-            {heldOrders.map((o: any) => (
-              <button
-                key={o.id}
-                onClick={() => {
-                  setShowRecallDialog(false);
-                  const modeParam = o.orderType === "delivery" ? "delivery"
-                    : o.orderType === "takeaway" ? "pickup" : null;
-                  navigate(`/pos?orderId=${o.id}${modeParam ? `&mode=${modeParam}` : ""}`);
-                }}
-                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border hover:border-primary hover:bg-primary/5 transition-colors text-sm"
-              >
-                <div className="text-left">
-                  <p className="font-medium">{o.orderNumber}</p>
-                  <p className="text-xs text-muted-foreground">{o.items?.length || 0} items · {o.customerName || "No name"}</p>
-                </div>
-                <span className="font-semibold text-primary">₹{parseFloat(o.totalAmount).toFixed(0)}</span>
-              </button>
-            ))}
+            {heldOrders.map((o: any) => {
+              const mins = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60000);
+              const heldFor = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
+              const typeColor = o.orderType === "delivery"
+                ? "bg-blue-100 text-blue-700"
+                : o.orderType === "takeaway"
+                ? "bg-orange-100 text-orange-700"
+                : "bg-green-100 text-green-700";
+              const typeLabel = o.orderType === "delivery" ? "Delivery"
+                : o.orderType === "takeaway" ? "Takeaway" : "Dine-in";
+              return (
+                <button
+                  key={o.id}
+                  onClick={async () => {
+                    setShowRecallDialog(false);
+                    await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
+                    queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
+                    const modeParam = o.orderType === "delivery" ? "delivery"
+                      : o.orderType === "takeaway" ? "pickup" : null;
+                    navigate(`/pos?orderId=${o.id}${modeParam ? `&mode=${modeParam}` : ""}`);
+                  }}
+                  className="w-full text-left px-4 py-3 rounded-xl border hover:border-primary hover:bg-primary/5 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-base">{serialNum(o.id)}</span>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${typeColor}`}>{typeLabel}</span>
+                        {o.tableNumber && (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />Table {o.tableNumber}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {(o.customerName || o.customerPhone) && (
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {[o.customerName, o.customerPhone].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />{heldFor}
+                        </span>
+                      </div>
+                      {o.notes && (
+                        <p className="text-xs text-muted-foreground italic truncate">Note: {o.notes}</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-semibold text-primary text-base">₹{parseFloat(o.totalAmount || 0).toFixed(0)}</p>
+                      <p className="text-xs text-muted-foreground">{o.items?.length || 0} items</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </DialogContent>
       </Dialog>
@@ -1259,8 +1299,8 @@ export default function POS() {
                     <POSTimer startedAt={existingOrder.createdAt} />
                   )}
                   <span className="truncate">{tableLabel ?? "Dine In"}</span>
-                  {isEditMode && existingOrder?.orderNumber && (
-                    <span className="opacity-75 hidden md:inline">#{existingOrder.orderNumber}</span>
+                  {isEditMode && existingOrder?.id && (
+                    <span className="opacity-75 hidden md:inline">{serialNum(existingOrder.id)}</span>
                   )}
                 </div>
               );

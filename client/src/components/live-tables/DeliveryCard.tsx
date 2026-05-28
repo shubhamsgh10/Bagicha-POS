@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Phone, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import type { LiveOrder } from "@/hooks/useLiveOrders";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Status types + config ─────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ export const DeliveryCard = memo(function DeliveryCard({
       <div className="flex items-center justify-between gap-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full truncate max-w-[120px]">
-            #{order.orderNumber}
+            {serialNum(order.id)}
           </span>
           {order.hasNewItems && (
             <span className="relative flex h-2 w-2 shrink-0">

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, ChevronUp, Clock, Users, CheckCircle2 } from "lucide-react";
 import type { LiveItem, LiveTableState, OrderType } from "@/hooks/useLiveTableOperations";
 import { ItemRow } from "./ItemRow";
+import { serialNum } from "@/lib/orderDisplay";
 
 // ── Elapsed helpers ───────────────────────────────────────────────────────────
 
@@ -227,8 +228,8 @@ export const TableCard = memo(function TableCard({
             {!compact && (
               <div className="flex items-center gap-2 mt-0.5">
                 <p className="text-[9px] text-gray-400 capitalize">{table.section}</p>
-                {table.orderNumber && (
-                  <p className="text-[9px] text-gray-400 font-medium">#{table.orderNumber}</p>
+                {table.currentOrderId && (
+                  <p className="text-[9px] text-gray-400 font-medium">{serialNum(table.currentOrderId)}</p>
                 )}
               </div>
             )}

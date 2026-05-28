@@ -1649,6 +1649,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Table Action: Recall Held Order ─────────────────────────────────────────
+  app.put("/api/orders/:id/recall", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      if ((order as any).status !== "hold") return res.json({ success: true }); // already active
+      await storage.updateOrder(id, { status: "pending" } as any);
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to recall order" });
+    }
+  });
+
   // ── Table Action: Cancel Order ────────────────────────────────────────────────
   app.put("/api/orders/:id/cancel", requireAuth, async (req, res) => {
     try {
