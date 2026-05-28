@@ -124,7 +124,6 @@ export async function printOrderBill(order: any, items: any[], settings: any): P
   const upiId          = settings?.upiId          || "";
   const footerNote     = settings?.footerNote     || "Thank you for dining with us!";
 
-  const subtotal   = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
   const discount   = parseFloat(order.discountAmount || "0");
   const tax        = parseFloat(order.taxAmount || "0");
   const grandTotal = parseFloat(order.totalAmount);
@@ -147,15 +146,37 @@ export async function printOrderBill(order: any, items: any[], settings: any): P
     logoHtml = `<img src="${base64}" class="logo-img" alt="Logo" />`;
   } catch { /* keep placeholder */ }
 
-  const itemRows = items.length > 0
-    ? items.map((item: any, i: number) => `
-        <tr>
-          <td class="item-name">${i + 1}. ${item.name || "Item"}</td>
-          <td class="r">${item.quantity}</td>
-          <td class="r">₹${parseFloat(item.price).toFixed(0)}</td>
-          <td class="r">₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</td>
-        </tr>`).join("")
-    : `<tr><td colspan="4" style="color:#bbb;padding:8px 0;text-align:center;">No items</td></tr>`;
+  // Derive container charge from pickup/delivery items (₹15 per item qty)
+  const containerItemQty = items.filter((i: any) => i.serviceMode === 'pickup' || i.serviceMode === 'delivery')
+    .reduce((s: number, i: any) => s + Number(i.quantity), 0);
+  const containerCharge = containerItemQty * 15;
+  const subtotal = grandTotal - tax - containerCharge;
+
+  const hasMixedModes = items.some((i: any) => i.serviceMode && i.serviceMode !== 'dinein');
+  const modeLabel: Record<string, string> = { dinein: '🍽 Dine-In', pickup: '📦 Pickup', delivery: '🛵 Delivery' };
+
+  const renderItemRow = (item: any, idx: number) => `
+    <tr>
+      <td class="item-name">${idx + 1}. ${item.name || "Item"}</td>
+      <td class="r">${item.quantity}</td>
+      <td class="r">₹${parseFloat(item.price).toFixed(0)}</td>
+      <td class="r">₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</td>
+    </tr>`;
+
+  let itemRows = '';
+  if (items.length === 0) {
+    itemRows = `<tr><td colspan="4" style="color:#bbb;padding:8px 0;text-align:center;">No items</td></tr>`;
+  } else if (hasMixedModes) {
+    let globalIdx = 0;
+    for (const mode of ['dinein', 'pickup', 'delivery']) {
+      const group = items.filter((i: any) => (i.serviceMode ?? 'dinein') === mode);
+      if (group.length === 0) continue;
+      itemRows += `<tr><td colspan="4" style="font-size:8px;font-weight:700;text-transform:uppercase;color:#555;padding:4px 0 2px;border-bottom:1px dashed #bbb;">${modeLabel[mode] ?? mode}</td></tr>`;
+      itemRows += group.map((item: any) => renderItemRow(item, globalIdx++)).join('');
+    }
+  } else {
+    itemRows = items.map((item: any, i: number) => renderItemRow(item, i)).join('');
+  }
 
   const upiQrHtml = upiId ? `
     <div class="upi-box">
@@ -259,8 +280,9 @@ ${(order.orderType || order.tableNumber || order.customerName) ? `
 
 <div class="totals">
   <div class="trow"><span>Sub-total:</span><span>₹${subtotal.toFixed(2)}</span></div>
-  ${discount > 0 ? `<div class="trow discount"><span>Discount:</span><span>-₹${discount.toFixed(2)}</span></div>` : ""}
-  ${tax > 0      ? `<div class="trow tax"><span>Tax (GST):</span><span>₹${tax.toFixed(2)}</span></div>`         : ""}
+  ${discount > 0        ? `<div class="trow discount"><span>Discount:</span><span>-₹${discount.toFixed(2)}</span></div>` : ""}
+  ${tax > 0             ? `<div class="trow tax"><span>Tax (GST):</span><span>₹${tax.toFixed(2)}</span></div>` : ""}
+  ${containerCharge > 0 ? `<div class="trow tax"><span>Container Charge:</span><span>₹${containerCharge.toFixed(2)}</span></div>` : ""}
   <div class="grand"><span>Grand Total:</span><span>₹${grandTotal.toFixed(2)}</span></div>
   ${order.paymentMethod ? `<div class="pay-row"><span>Payment</span><span>${order.paymentMethod}</span></div>` : ""}
 </div>

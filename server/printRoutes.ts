@@ -30,7 +30,7 @@ function kotTextLines(params: {
   tableNumber: string | null;
   isReprint: boolean;
   isDelta: boolean;
-  newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null }>;
+  newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null; serviceMode?: string | null }>;
   modifiedItems: Array<{ name: string; quantity: number; size?: string | null; previousQty: number }>;
   cancelledItems: Array<{ name: string; quantity: number; size?: string | null }>;
   kotSettings: import("./settingsStore").KOTPrintSettings;
@@ -68,13 +68,26 @@ function kotTextLines(params: {
   }
   lines.push(div("-"));
 
-  for (const item of params.newItems) {
+  const renderKotItem = (item: (typeof params.newItems)[0]) => {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
     const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
     lines.push(body(`${qty}  ${label}`));
     if (params.kotSettings.printAddons && item.instructions) {
       lines.push(body(`       >> ${item.instructions}`));
     }
+  };
+
+  const modeLabels: Record<string, string> = { dinein: '[DINE-IN]', pickup: '[PICKUP]', delivery: '[DELIVERY]' };
+  const hasMixed = params.newItems.some(i => i.serviceMode && i.serviceMode !== 'dinein');
+  if (hasMixed) {
+    for (const mode of ['dinein', 'pickup', 'delivery']) {
+      const group = params.newItems.filter(i => (i.serviceMode ?? 'dinein') === mode);
+      if (group.length === 0) continue;
+      lines.push(center(modeLabels[mode] ?? `[${mode.toUpperCase()}]`));
+      group.forEach(renderKotItem);
+    }
+  } else {
+    params.newItems.forEach(renderKotItem);
   }
   if (params.kotSettings.printModifiedItemsOnly) {
     for (const item of params.modifiedItems) {
@@ -236,6 +249,7 @@ export function registerPrintRoutes(app: Express): void {
           quantity: orderItems.quantity,
           size: orderItems.size,
           specialInstructions: orderItems.specialInstructions,
+          serviceMode: orderItems.serviceMode,
         })
         .from(orderItems)
         .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
@@ -246,18 +260,19 @@ export function registerPrintRoutes(app: Express): void {
         name: i.name,
         quantity: i.quantity,
         size: i.size ?? null,
+        serviceMode: i.serviceMode ?? null,
       }));
 
       const kotItemMap = new Map(
         rawItems.map((i) => [
-          `${i.menuItemId}:${i.size ?? ""}`,
-          { name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null },
+          `${i.menuItemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`,
+          { name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null, serviceMode: i.serviceMode ?? null },
         ]),
       );
 
       let newItems: Array<SnapshotItem & { instructions?: string | null }> = currentSnapshot.map((i) => ({
         ...i,
-        instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}`)?.instructions ?? null,
+        instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`)?.instructions ?? null,
       }));
       let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
       let cancelledItems: SnapshotItem[] = [];
@@ -280,11 +295,11 @@ export function registerPrintRoutes(app: Express): void {
 
         newItems = delta.newItems.map((ni) => ({
           ...ni,
-          instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}`)?.instructions ?? null,
+          instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}:${ni.serviceMode ?? ""}`)?.instructions ?? null,
         }));
         modifiedItems = delta.modifiedItems.map((mi) => ({
           ...mi,
-          instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}`)?.instructions ?? null,
+          instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}:${mi.serviceMode ?? ""}`)?.instructions ?? null,
         }));
         cancelledItems = delta.cancelledItems;
         isDelta = true;
@@ -310,7 +325,7 @@ export function registerPrintRoutes(app: Express): void {
           isDelta,
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
-          items: newItems.map((i) => ({ name: i.name, quantity: i.quantity, size: i.size })),
+          items: newItems.map((i) => ({ name: i.name, quantity: i.quantity, size: i.size, serviceMode: i.serviceMode })),
         });
       }
 
@@ -343,6 +358,7 @@ export function registerPrintRoutes(app: Express): void {
         name: i.name,
         quantity: i.quantity,
         size: i.size,
+        serviceMode: (i as any).serviceMode ?? null,
       }));
       const escPosOk = supportsRawEscPos(printer);
 
@@ -506,6 +522,7 @@ export function registerPrintRoutes(app: Express): void {
           name: menuItems.name,
           quantity: orderItems.quantity,
           size: orderItems.size,
+          serviceMode: orderItems.serviceMode,
         })
         .from(orderItems)
         .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
@@ -516,6 +533,7 @@ export function registerPrintRoutes(app: Express): void {
         name: i.name,
         quantity: i.quantity,
         size: i.size ?? null,
+        serviceMode: i.serviceMode ?? null,
       }));
 
       await db
@@ -557,6 +575,7 @@ export function registerPrintRoutes(app: Express): void {
             quantity: orderItems.quantity,
             size: orderItems.size,
             specialInstructions: orderItems.specialInstructions,
+            serviceMode: orderItems.serviceMode,
           })
           .from(orderItems)
           .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
@@ -567,14 +586,15 @@ export function registerPrintRoutes(app: Express): void {
           name: i.name,
           quantity: i.quantity,
           size: i.size ?? null,
+          serviceMode: i.serviceMode ?? null,
         }));
         const kotItemMap = new Map(
-          rawItems.map((i) => [`${i.menuItemId}:${i.size ?? ""}`, { instructions: i.specialInstructions ?? null }]),
+          rawItems.map((i) => [`${i.menuItemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`, { instructions: i.specialInstructions ?? null, serviceMode: i.serviceMode ?? null }]),
         );
 
         let newItems = currentSnapshot.map((i) => ({
           ...i,
-          instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}`)?.instructions ?? null,
+          instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`)?.instructions ?? null,
         }));
         let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
         let cancelledItems: SnapshotItem[] = [];
@@ -585,11 +605,11 @@ export function registerPrintRoutes(app: Express): void {
           const delta = computeDelta(currentSnapshot, lastSnapshot.items);
           newItems = delta.newItems.map((ni) => ({
             ...ni,
-            instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}`)?.instructions ?? null,
+            instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}:${ni.serviceMode ?? ""}`)?.instructions ?? null,
           }));
           modifiedItems = delta.modifiedItems.map((mi) => ({
             ...mi,
-            instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}`)?.instructions ?? null,
+            instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}:${mi.serviceMode ?? ""}`)?.instructions ?? null,
           }));
           cancelledItems = delta.cancelledItems;
           isDelta = true;

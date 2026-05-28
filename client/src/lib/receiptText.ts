@@ -8,11 +8,20 @@ const _two = (l: string, r: string, w: number) => {
   return l.substring(0, ml).padEnd(ml) + ' ' + r;
 };
 
+type KotItem = { name: string; quantity: number; size?: string | null; notes?: string | null; serviceMode?: string | null };
+
+function _renderKotItems(items: KotItem[], lines: string[]) {
+  for (const item of items) {
+    lines.push(`  ${item.quantity}x ${item.size ? `${item.name} (${item.size})` : item.name}`);
+    if (item.notes) lines.push(`     [${item.notes}]`);
+  }
+}
+
 export function kotLines(params: {
   kotNumber?: string;
   orderRef?: string;
   tableNumber?: string | null;
-  items: Array<{ name: string; quantity: number; size?: string | null; notes?: string | null }>;
+  items: KotItem[];
   isReprint?: boolean;
   width?: number;
 }): string[] {
@@ -33,15 +42,27 @@ export function kotLines(params: {
   ));
   lines.push(_div('-', W));
 
-  for (const item of params.items) {
-    lines.push(`  ${item.quantity}x ${item.size ? `${item.name} (${item.size})` : item.name}`);
-    if (item.notes) lines.push(`     [${item.notes}]`);
+  // Group by serviceMode if mixed modes present
+  const hasMixed = params.items.some(i => i.serviceMode && i.serviceMode !== 'dinein');
+  if (hasMixed) {
+    const modeLabels: Record<string, string> = { dinein: '[DINE-IN]', pickup: '[PICKUP]', delivery: '[DELIVERY]' };
+    const order: string[] = ['dinein', 'pickup', 'delivery'];
+    for (const mode of order) {
+      const group = params.items.filter(i => (i.serviceMode ?? 'dinein') === mode);
+      if (group.length === 0) continue;
+      lines.push(_center(modeLabels[mode] ?? `[${mode.toUpperCase()}]`, W));
+      _renderKotItems(group, lines);
+    }
+  } else {
+    _renderKotItems(params.items, lines);
   }
 
   const total = params.items.reduce((s, i) => s + i.quantity, 0);
   lines.push(_div('=', W), _center(`Items: ${total}`, W), _div('=', W));
   return lines;
 }
+
+type BillItem = { name: string; quantity: number; price: number; size?: string | null; notes?: string | null; serviceMode?: string | null };
 
 export function billLines(params: {
   orderNumber: string;
@@ -51,10 +72,11 @@ export function billLines(params: {
   totalAmount: number;
   taxAmount?: number;
   discountAmount?: number;
+  containerCharge?: number;
   paymentMethod?: string | null;
   billPrintCount?: number;
   createdAt?: Date | string;
-  items: Array<{ name: string; quantity: number; price: number; size?: string | null; notes?: string | null }>;
+  items: BillItem[];
   restaurantName?: string;
   address?: string;
   phone?: string;
@@ -89,18 +111,35 @@ export function billLines(params: {
   lines.push(`${'Item'.padEnd(NW)} ${'Qty'.padStart(QW)} ${'Amt'.padStart(AW)}`);
   lines.push(_div('-', W));
 
-  for (const item of params.items) {
+  const renderBillItem = (item: BillItem) => {
     const label = (item.size ? `${item.name}(${item.size})` : item.name).substring(0, NW).padEnd(NW);
     lines.push(`${label} ${String(item.quantity).padStart(QW)} ${(`${sym}${(item.quantity * item.price).toFixed(0)}`).padStart(AW)}`);
     if (item.notes) lines.push(`  [${item.notes}]`);
+  };
+
+  const hasMixed = params.items.some(i => i.serviceMode && i.serviceMode !== 'dinein');
+  if (hasMixed) {
+    const modeLabels: Record<string, string> = { dinein: '-- Dine-In --', pickup: '-- Pickup --', delivery: '-- Delivery --' };
+    for (const mode of ['dinein', 'pickup', 'delivery']) {
+      const group = params.items.filter(i => (i.serviceMode ?? 'dinein') === mode);
+      if (group.length === 0) continue;
+      lines.push(_center(modeLabels[mode], W));
+      group.forEach(renderBillItem);
+    }
+  } else {
+    params.items.forEach(renderBillItem);
   }
+
   lines.push(_div('-', W));
 
-  const subtotal = params.totalAmount - (params.taxAmount ?? 0);
+  const subtotal = params.totalAmount - (params.taxAmount ?? 0) - (params.containerCharge ?? 0);
   lines.push(_two('Subtotal:', `${sym}${subtotal.toFixed(0)}`, W));
   if ((params.discountAmount ?? 0) > 0) lines.push(_two('Discount:', `-${sym}${(params.discountAmount ?? 0).toFixed(0)}`, W));
   if (params.showTax !== false && (params.taxAmount ?? 0) > 0) {
     lines.push(_two(`Tax (${params.taxRate ?? 0}%):`, `${sym}${(params.taxAmount ?? 0).toFixed(0)}`, W));
+  }
+  if ((params.containerCharge ?? 0) > 0) {
+    lines.push(_two('Container Charge:', `${sym}${(params.containerCharge ?? 0).toFixed(0)}`, W));
   }
   lines.push(_div('=', W), _two('TOTAL:', `${sym}${params.totalAmount.toFixed(0)}`, W));
   if (params.paymentMethod) lines.push(_two('Payment:', params.paymentMethod.toUpperCase(), W));

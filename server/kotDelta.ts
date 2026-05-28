@@ -3,6 +3,7 @@ export interface SnapshotItem {
   name: string;
   quantity: number;
   size: string | null;
+  serviceMode?: string | null;
 }
 
 export interface KotSnapshot {
@@ -16,14 +17,16 @@ export interface KotDelta {
   cancelledItems: SnapshotItem[];
 }
 
+const snapKey = (i: SnapshotItem) => `${i.itemId}:${i.size ?? ''}:${i.serviceMode ?? ''}`;
+
 export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): KotDelta {
   const lastMap = new Map<string, SnapshotItem>();
   for (const item of last) {
-    lastMap.set(`${item.itemId}:${item.size ?? ''}`, item);
+    lastMap.set(snapKey(item), item);
   }
   const currentMap = new Map<string, SnapshotItem>();
   for (const item of current) {
-    currentMap.set(`${item.itemId}:${item.size ?? ''}`, item);
+    currentMap.set(snapKey(item), item);
   }
 
   const newItems: SnapshotItem[] = [];
@@ -46,6 +49,7 @@ export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): Kot
       cancelledItems.push(item);
     }
   }
+
 
   return { newItems, modifiedItems, cancelledItems };
 }

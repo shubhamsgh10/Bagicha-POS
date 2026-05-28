@@ -68,6 +68,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
         price: parseFloat(i.price ?? '0'),
         size: i.size ?? null,
         notes: i.specialInstructions ?? null,
+        serviceMode: i.serviceMode ?? null,
       })),
     });
     setPrintPreview({ title: 'Bill Preview', lines });
@@ -245,7 +246,18 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                         {items.map((item: any, i: number) => (
                           <tr key={i} className="border-b border-white/20 last:border-b-0 hover:bg-white/30 transition-colors">
                             <td className="px-3 py-2">
-                              <span className="font-medium text-gray-700">{item.name || "Item"}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium text-gray-700">{item.name || "Item"}</span>
+                                {item.serviceMode && item.serviceMode !== "dinein" && (
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                                    item.serviceMode === "pickup"
+                                      ? "bg-blue-100 text-blue-700"
+                                      : "bg-amber-100 text-amber-700"
+                                  }`}>
+                                    {item.serviceMode === "pickup" ? "📦 Pickup" : "🛵 Delivery"}
+                                  </span>
+                                )}
+                              </div>
                               {item.specialInstructions && (
                                 <span className="block text-gray-400 italic text-[11px]">{item.specialInstructions}</span>
                               )}

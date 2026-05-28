@@ -60,6 +60,8 @@ interface SizeOption { size: string; price: number; }
 interface AddonOption { name: string; price: number; }
 interface VariantOption { name: string; price?: number; }
 interface VariantGroup { group: string; options: VariantOption[]; required?: boolean; }
+type ItemServiceMode = "dinein" | "pickup" | "delivery";
+
 interface CartItem {
   cartKey: string;
   id: number;
@@ -71,6 +73,7 @@ interface CartItem {
   totalPrice: number;
   quantity: number;
   size?: string;
+  serviceMode: ItemServiceMode;
 }
 interface ModalState {
   item: any;
@@ -169,6 +172,8 @@ export default function POS() {
   const autoKotReadyRef = useRef(false);
   // Short code input
   const [shortCode, setShortCode] = useState("");
+  // Active item mode — only relevant in table sessions; controls serviceMode of newly added items
+  const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
   // Mobile customer autocomplete dropdown
@@ -343,12 +348,12 @@ export default function POS() {
       .map(i => {
         const prevQty = prevMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
         const dQty = i.quantity - prevQty;
-        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
+        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode } : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
     const items = deltaItems.length > 0
       ? deltaItems
-      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null }));
+      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode }));
     const lines = kotLines({
       orderRef: order.orderNumber ?? String(order.id),
       tableNumber: order.tableNumber ?? null,
@@ -367,9 +372,10 @@ export default function POS() {
       totalAmount: parseFloat(order.totalAmount ?? '0'),
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       discountAmount: parseFloat(order.discountAmount ?? '0'),
+      containerCharge: appliedContainerCharge,
       paymentMethod: order.paymentMethod ?? null,
       createdAt: order.createdAt ?? new Date(),
-      items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null })),
+      items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode })),
       restaurantName: s?.restaurantName,
       address: s?.address,
       phone: s?.phone,
@@ -382,7 +388,6 @@ export default function POS() {
   };
 
   const triggerKOTPrint = async (orderId: number, order?: any) => {
-    if (order) showKOTPreview(order);
     try {
       const res = await fetch(apiUrl('/api/print/kot'), {
         method: 'POST',
@@ -440,7 +445,7 @@ export default function POS() {
     }
   };
 
-  const triggerBillPrint = async (orderId: number, order?: any) => {
+  const triggerBillPrint = async (orderId: number, order?: any, skipKOT = false) => {
     try {
       const res = await fetch(apiUrl('/api/print/bill'), {
         method: 'POST',
@@ -464,17 +469,21 @@ export default function POS() {
             fetch(apiUrl('/api/settings'), { credentials: 'include' }).then((r) => r.json()),
           ]);
           await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
-          const kotSettings = freshSettings?.printSettings?.kot;
-          if (kotSettings?.printOnBill) {
-            triggerKOTPrint(orderId, order);
+          if (!skipKOT) {
+            const kotSettings = freshSettings?.printSettings?.kot;
+            if (kotSettings?.printOnBill) {
+              triggerKOTPrint(orderId, order);
+            }
           }
         },
       });
       if (outcome === 'hardware' || outcome === 'browser') {
         toast({ title: 'Bill sent to printer!' });
-        const kotSettings = (settings as any)?.printSettings?.kot;
-        if (kotSettings?.printOnBill && outcome === 'hardware') {
-          triggerKOTPrint(orderId, order);
+        if (!skipKOT) {
+          const kotSettings = (settings as any)?.printSettings?.kot;
+          if (kotSettings?.printOnBill && outcome === 'hardware') {
+            triggerKOTPrint(orderId, order);
+          }
         }
       } else if (outcome === 'noop' && data.printJob) {
         toast({
@@ -535,8 +544,9 @@ export default function POS() {
       const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
       const name = menuItem?.name || "Unknown Item";
       const price = parseFloat(item.price);
+      const sm = (item.serviceMode as ItemServiceMode) || "dinein";
       return {
-        cartKey: `db-${item.id}-${item.menuItemId}`,
+        cartKey: `db-${item.id}-${item.menuItemId}-${sm}`,
         id: item.menuItemId,
         name,
         basePrice: price,
@@ -546,6 +556,7 @@ export default function POS() {
         totalPrice: price,
         size: item.size || undefined,
         quantity: item.quantity,
+        serviceMode: sm,
       };
     });
     setCartItems(loadedItems);
@@ -714,7 +725,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
       setSettlePhase("printing");
       const billOrder = vars.order || settled;
-      if (vars.orderId) triggerBillPrint(vars.orderId, billOrder);
+      if (vars.orderId) triggerBillPrint(vars.orderId, billOrder, true);
       toast({ title: "Payment complete!", description: "Bill sent to printer" });
       navigate("/tables");
     },
@@ -774,10 +785,12 @@ export default function POS() {
     const sizePart = size?.size || "";
     const addonPart = [...addons].map(a => a.name).sort().join(",");
     const variantPart = Object.values(variants).join("-");
-    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}`;
+    // Include activeItemMode in mergeKey so same item in different modes stays separate
+    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}-${activeItemMode}`;
     const uniqueKey = notes ? `${mergeKey}-${Date.now()}` : mergeKey;
 
     if (isEdit) {
+      // Preserve existing serviceMode when editing — don't change it
       setCartItems(prev => prev.map(c => c.cartKey === cartKey
         ? { ...c, basePrice, addons, variants, notes, totalPrice, size: sizePart || undefined, quantity: qty }
         : c
@@ -786,7 +799,7 @@ export default function POS() {
       setCartItems(prev => {
         const existing = !notes ? prev.find(c => c.cartKey === mergeKey) : null;
         if (existing) return prev.map(c => c.cartKey === mergeKey ? { ...c, quantity: c.quantity + qty } : c);
-        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined }];
+        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined, serviceMode: activeItemMode }];
       });
     }
     setModal(null);
@@ -796,11 +809,11 @@ export default function POS() {
 
   const directAddItem = (item: any) => {
     const basePrice = parseFloat(item.price || "0");
-    const cartKey = `${item.id}`;
+    const cartKey = `${item.id}-${activeItemMode}`;
     setCartItems(prev => {
       const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1 }];
+      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1, serviceMode: activeItemMode }];
     });
   };
 
@@ -828,7 +841,12 @@ export default function POS() {
   const currentOrderType = form.watch("orderType");
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
   const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
-  const appliedContainerCharge = isDeliveryOrPickup ? totalItemQty * 15 : 0;
+  // In table sessions, container charge applies only to pickup/delivery items (not dine-in items)
+  const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId);
+  const containerQty = isTableSession
+    ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
+    : (isDeliveryOrPickup ? totalItemQty : 0);
+  const appliedContainerCharge = containerQty * 15;
   const grandTotal = total + appliedContainerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
@@ -855,6 +873,7 @@ export default function POS() {
       name: c.size ? `${c.name} (${c.size})` : c.name,
       size: c.size || null,
       addons: c.addons,
+      serviceMode: c.serviceMode ?? "dinein",
     }));
 
     if (activeOrderId) {
@@ -922,12 +941,12 @@ export default function POS() {
       .map(i => {
         const prevQty = prevMap.get(`${i.id}:${i.size ?? ''}`) ?? 0;
         const dQty = i.quantity - prevQty;
-        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null } : null;
+        return dQty > 0 ? { name: i.name, quantity: dQty, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode } : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
     const items = deltaItems.length > 0
       ? deltaItems
-      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null }));
+      : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode }));
     const fv = form.getValues();
     const lines = kotLines({
       orderRef: existingOrder?.orderNumber ?? (activeOrderId ? String(activeOrderId) : 'NEW'),
@@ -1364,31 +1383,66 @@ export default function POS() {
           {/* ── RIGHT FIXED: order types, customer, phone, actions — hidden on mobile ── */}
           <div className="hidden md:flex items-center gap-2 shrink-0">
 
-            {/* Order type tabs — locked to single mode when posMode is set */}
-            <div className="flex items-center gap-1">
-              {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const)
-                .filter(([val]) =>
-                  posMode === "delivery" ? val === "delivery" :
-                  posMode === "pickup"   ? val === "takeaway" :
-                  true
-                )
-                .map(([val, label]) => {
-                const active = form.watch("orderType") === val;
+            {/* Order type tabs OR item-mode selector strip */}
+            {(() => {
+              const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
+              if (isTableSession) {
+                // "Adding as:" strip — tab clicks change item mode, not order type
+                const modes: [ItemServiceMode, string, string][] = [
+                  ["dinein",   "🍽",  "Dine-In" ],
+                  ["pickup",   "📦",  "Pickup"  ],
+                  ["delivery", "🛵",  "Delivery"],
+                ];
                 return (
-                  <button
-                    key={val}
-                    onClick={() => { if (!posMode) form.setValue("orderType", val); }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
-                      active
-                        ? "bg-green-600 text-white shadow-sm"
-                        : posMode ? "text-gray-400 cursor-default" : "text-gray-500 hover:text-gray-800"
-                    }`}
-                  >
-                    {label}
-                  </button>
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-lg px-1.5 py-1">
+                    <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide mr-1 whitespace-nowrap">Adding as</span>
+                    {modes.map(([mode, icon, label]) => (
+                      <button
+                        key={mode}
+                        onClick={() => setActiveItemMode(mode)}
+                        className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
+                          activeItemMode === mode
+                            ? mode === "dinein"   ? "bg-green-600 text-white shadow-sm"
+                            : mode === "pickup"   ? "bg-blue-600 text-white shadow-sm"
+                            :                       "bg-amber-500 text-white shadow-sm"
+                            : "text-gray-500 hover:text-gray-800 hover:bg-gray-200"
+                        }`}
+                      >
+                        <span>{icon}</span>
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
                 );
-              })}
-            </div>
+              }
+              // Normal order type tabs (standalone pickup/delivery or new dine-in without table)
+              return (
+                <div className="flex items-center gap-1">
+                  {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const)
+                    .filter(([val]) =>
+                      posMode === "delivery" ? val === "delivery" :
+                      posMode === "pickup"   ? val === "takeaway" :
+                      true
+                    )
+                    .map(([val, label]) => {
+                    const active = form.watch("orderType") === val;
+                    return (
+                      <button
+                        key={val}
+                        onClick={() => { if (!posMode) form.setValue("orderType", val); }}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
+                          active
+                            ? "bg-green-600 text-white shadow-sm"
+                            : posMode ? "text-gray-400 cursor-default" : "text-gray-500 hover:text-gray-800"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Customer name — autocomplete, outside overflow so dropdown renders */}
             {(() => {
@@ -1722,6 +1776,30 @@ export default function POS() {
         />
       </div>
 
+      {/* ── Mobile: "Adding as:" strip — table sessions only ──────────────────── */}
+      {(!posMode && (!!preselectedTableId || isEditMode)) && (
+        <div className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-100/60"
+          style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(12px)" }}>
+          <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Adding as</span>
+          {([["dinein", "🍽", "Dine-In"], ["pickup", "📦", "Pickup"], ["delivery", "🛵", "Delivery"]] as [ItemServiceMode, string, string][]).map(([mode, icon, label]) => (
+            <button
+              key={mode}
+              onClick={() => setActiveItemMode(mode)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
+                activeItemMode === mode
+                  ? mode === "dinein"   ? "bg-green-600 text-white shadow-sm"
+                  : mode === "pickup"   ? "bg-blue-600 text-white shadow-sm"
+                  :                       "bg-amber-500 text-white shadow-sm"
+                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+              }`}
+            >
+              <span>{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ═══════════════════════════════════════════════════════════════════════
            MAIN: Category | Items | Billing
       ════════════════════════════════════════════════════════════════════════ */}
@@ -1880,14 +1958,9 @@ export default function POS() {
             </div>
           )}
           <ScrollArea className="flex-1">
-            <div className="p-3 space-y-2">
-              {cartItems.length === 0 && (
-                <div className="text-center text-muted-foreground py-12">
-                  <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                  <p className="text-sm">Tap items to add to cart</p>
-                </div>
-              )}
-              {cartItems.map((item) => (
+            {(() => {
+              const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
+              const renderCartRow = (item: CartItem) => (
                 <div key={item.cartKey} className="border rounded-lg p-2.5 bg-background">
                   <div className="flex justify-between items-start gap-1">
                     <div className="flex-1 min-w-0">
@@ -1904,51 +1977,72 @@ export default function POS() {
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
                     </div>
-                    {/* Qty controls — free for all roles */}
                     <div className="flex items-center gap-0.5 w-14 justify-center">
-                      <button
-                        onClick={() => updateQty(item.cartKey, item.quantity - 1)}
-                        className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
-                      >
+                      <button onClick={() => updateQty(item.cartKey, item.quantity - 1)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
                         <Minus className="w-2.5 h-2.5" />
                       </button>
                       <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
-                      <button
-                        onClick={() => updateQty(item.cartKey, item.quantity + 1)}
-                        className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors"
-                      >
+                      <button onClick={() => updateQty(item.cartKey, item.quantity + 1)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
                         <Plus className="w-2.5 h-2.5" />
                       </button>
                     </div>
-                    {/* Unit price */}
                     <div className="w-10 text-right text-[10px] text-gray-500">{fmt(item.totalPrice)}</div>
-                    {/* Line total + remove */}
                     <div className="w-12 flex items-center justify-end gap-0.5">
                       <span className="text-xs font-bold text-gray-800">{fmt(item.totalPrice * item.quantity)}</span>
                     </div>
-                    <button
-                      onClick={() => removeFromCart(item.cartKey)}
-                      className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5"
-                    >
+                    <button onClick={() => removeFromCart(item.cartKey)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  {/* Edit / remove — PIN required for manager (admin PIN) and staff (manager PIN) */}
                   <div className="flex items-center gap-2 mt-0.5">
                     <button onClick={() => requirePin("Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5">
-                      <Edit2 className="w-2.5 h-2.5" />
-                      Edit
+                      <Edit2 className="w-2.5 h-2.5" />Edit
                       {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
                     <button onClick={() => requirePin("Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5">
-                      <Trash2 className="w-2.5 h-2.5" />
-                      Remove
+                      <Trash2 className="w-2.5 h-2.5" />Remove
                       {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+
+              if (cartItems.length === 0) return (
+                <div className="p-3">
+                  <div className="text-center text-muted-foreground py-12">
+                    <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                    <p className="text-sm">Tap items to add to cart</p>
+                  </div>
+                </div>
+              );
+
+              if (isTableSession) {
+                const modeConfig: Record<ItemServiceMode, { label: string; headerCls: string }> = {
+                  dinein:   { label: "🍽 Dine-In",  headerCls: "text-green-700 border-green-200 bg-green-50"  },
+                  pickup:   { label: "📦 Pickup",   headerCls: "text-blue-700  border-blue-200  bg-blue-50"   },
+                  delivery: { label: "🛵 Delivery", headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
+                };
+                return (
+                  <div className="p-3 space-y-3">
+                    {(["dinein", "pickup", "delivery"] as const).map(mode => {
+                      const modeItems = cartItems.filter(i => (i.serviceMode ?? "dinein") === mode);
+                      if (modeItems.length === 0) return null;
+                      const cfg = modeConfig[mode];
+                      return (
+                        <div key={mode}>
+                          <div className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm mb-1.5 border ${cfg.headerCls}`}>
+                            {cfg.label}
+                          </div>
+                          <div className="space-y-2">{modeItems.map(renderCartRow)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              return <div className="p-3 space-y-2">{cartItems.map(renderCartRow)}</div>;
+            })()}
           </ScrollArea>
 
           {/* Totals */}
@@ -1991,10 +2085,10 @@ export default function POS() {
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
 
-            {/* Container Charge — delivery & pickup only */}
-            {isDeliveryOrPickup && (
+            {/* Container Charge — delivery & pickup items only */}
+            {appliedContainerCharge > 0 && (
               <div className="flex justify-between text-xs text-gray-500">
-                <span>Container Charge <span className="text-gray-400">(₹15 × {totalItemQty})</span></span>
+                <span>Container Charge <span className="text-gray-400">(₹15 × {containerQty})</span></span>
                 <span className="font-medium text-gray-700">{fmt(appliedContainerCharge)}</span>
               </div>
             )}
@@ -2050,24 +2144,24 @@ export default function POS() {
           </div>
 
           {/* Action buttons */}
-          <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-2">
-            {/* Split + Complimentary — admin only */}
+          <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-1.5">
+            {/* Split + Complimentary */}
             <div className="grid grid-cols-2 gap-1">
               <button
                 disabled={!activeOrderId || isPending || !can("splitBill")}
                 onClick={() => requirePin("Split Bill", () => { setSplitSelectedIds([]); setShowSplitDialog(true); })}
-                className="py-1.5 rounded text-[11px] font-semibold border border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 Split
-                {!can("splitBill") && <Lock className="w-2.5 h-2.5 opacity-60" />}
+                {!can("splitBill") && <Lock className="w-2 h-2 opacity-50" />}
               </button>
               <button
                 disabled={!hasItems || isPending || !can("complimentary")}
                 onClick={handleComplimentary}
-                className="py-1.5 rounded text-[11px] font-semibold border border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 Complimentary
-                {!can("complimentary") && <Lock className="w-2.5 h-2.5 opacity-60" />}
+                {!can("complimentary") && <Lock className="w-2 h-2 opacity-50" />}
               </button>
             </div>
 
@@ -2076,35 +2170,42 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending}
                 onClick={handleKOT}
-                className="py-2 rounded text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 KOT
               </button>
               <button
                 disabled={!hasItems || isPending}
                 onClick={handleKOTAndPrint}
-                className="py-2 rounded text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 <Printer className="w-3 h-3" />
                 Print
               </button>
             </div>
 
-            {/* Hold + Settle row */}
-            <div className="grid grid-cols-2 gap-1">
+            {/* Save + Hold + Settle row */}
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                disabled={!hasItems || isPending}
+                onClick={handleSave}
+                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {(createOrderMutation.isPending || updateOrderMutation.isPending) && submitModeRef.current === "save" ? "Saving..." : "Save"}
+              </button>
               <button
                 disabled={!activeOrderId || isPending}
                 onClick={() => setShowHoldConfirm(true)}
-                className="py-2 rounded text-[11px] font-bold border-2 border-amber-500 text-amber-600 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="py-1.5 rounded text-[10px] font-semibold border border-amber-300 text-amber-600 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Hold
               </button>
               <button
                 disabled={!hasItems || isPending}
                 onClick={handleSettle}
-                className="py-2 rounded text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="py-1.5 rounded text-[10px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {settlePhase === "printing" ? "Printing bill..." : (settleMutation.isPending || settlePhase === "processing") ? "Processing..." : "Settle"}
+                {settlePhase === "printing" ? "Printing…" : (settleMutation.isPending || settlePhase === "processing") ? "…" : "Settle"}
               </button>
             </div>
           </div>
