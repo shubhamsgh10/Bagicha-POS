@@ -11,6 +11,7 @@ import { initUpdater } from "./updater.js";
 import { warmPrinterSession, closePrinterSession } from "../shared/print/persistentPs.js";
 import { windowsPrinterQueueExists } from "../shared/print/windowsPrinters.js";
 import { PrintQueue } from "./print/printQueue.js";
+import { PrintLog } from "./print/printLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
@@ -75,6 +76,7 @@ async function fetchPrinters(): Promise<PrinterConfig[]> {
 
 let printerCache: PrinterConfig[] | null = null;
 let printQueue: PrintQueue | null = null;
+let printLog: PrintLog | null = null;
 
 async function getPrinters(): Promise<PrinterConfig[]> {
   if (printerCache !== null) return printerCache;
@@ -199,7 +201,8 @@ if (!gotLock) {
     // Pre-warm printer cache and PowerShell session (non-blocking)
     getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
     warmPrinterSession().catch((e) => console.warn("[electron] printer session warm:", e));
-    // Initialize print queue (loads persisted jobs from disk)
+    // Initialize print log and queue (loads persisted jobs from disk)
+    printLog = new PrintLog(app.getPath("userData"));
     printQueue = new PrintQueue(
       app.getPath("userData"),
       getPrinters,
@@ -209,6 +212,7 @@ if (!gotLock) {
         return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
       },
       resolveApiBase,
+      printLog,
     );
     // Startup health check — runs after window is ready to receive IPC events
     mainWindow?.webContents.once("did-finish-load", () => {
@@ -283,6 +287,8 @@ ipcMain.handle(IPC.PRINT_TEST, async (_event, payload: PrintTestPayload) => {
 });
 
 ipcMain.handle(IPC.QUEUE_STATUS, () => printQueue?.getStatus() ?? []);
+
+ipcMain.handle(IPC.PRINT_LOGS, (_e, n?: number) => printLog?.getRecent(n) ?? []);
 
 ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
   printerCache = null;

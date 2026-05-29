@@ -36,6 +36,16 @@ const electronAPI = {
     lastError?: string;
   }>> => ipcRenderer.invoke(IPC.QUEUE_STATUS),
 
+  getPrintLogs: (n?: number): Promise<Array<{
+    timestamp: number;
+    type: string;
+    printerId: string;
+    printerName?: string;
+    status: string;
+    orderId?: number;
+    error?: string;
+  }>> => ipcRenderer.invoke(IPC.PRINT_LOGS, n),
+
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
 
   // ── Auto-update actions ──────────────────────────────────────────────────────

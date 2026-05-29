@@ -3,6 +3,7 @@ import path from "path";
 import { randomBytes } from "crypto";
 import { executePrintJob } from "./executor.js";
 import type { PrintJob, PrinterConfig } from "../types.js";
+import type { PrintLog } from "./printLog.js";
 
 export interface QueuedJob {
   id: string;
@@ -30,17 +31,20 @@ export class PrintQueue {
   private getPrinters: GetPrinters;
   private getCookieHeader: GetCookieHeader;
   private getApiBase: GetApiBase;
+  private printLog: PrintLog | null = null;
 
   constructor(
     userDataPath: string,
     getPrinters: GetPrinters,
     getCookieHeader: GetCookieHeader,
     getApiBase: GetApiBase,
+    printLog?: PrintLog,
   ) {
     this.queueFile = path.join(userDataPath, "print-queue.json");
     this.getPrinters = getPrinters;
     this.getCookieHeader = getCookieHeader;
     this.getApiBase = getApiBase;
+    this.printLog = printLog ?? null;
     this.load();
   }
 
@@ -100,6 +104,12 @@ export class PrintQueue {
     this.processing = true;
     job.status = "processing";
     this.persist();
+    this.printLog?.append({
+      type: job.type,
+      printerId: job.printJob.printerId,
+      status: "sent",
+      orderId: job.orderId,
+    });
 
     try {
       const printers = await this.getPrinters();
@@ -111,6 +121,12 @@ export class PrintQueue {
         );
       }
       console.log(`[printQueue] Job ${job.id} (${job.type}) succeeded`);
+      this.printLog?.append({
+        type: job.type,
+        printerId: job.printJob.printerId,
+        status: "success",
+        orderId: job.orderId,
+      });
       this.queue = this.queue.filter((j) => j !== job);
     } catch (err: any) {
       job.lastError = err?.message ?? String(err);
@@ -119,6 +135,13 @@ export class PrintQueue {
         job.status = "retrying";
         const delay = RETRY_DELAYS[job.retries] ?? 10_000;
         console.warn(`[printQueue] Job ${job.id} failed, retry ${job.retries}/${MAX_RETRIES} in ${delay}ms:`, err?.message);
+        this.printLog?.append({
+          type: job.type,
+          printerId: job.printJob.printerId,
+          status: "retry",
+          orderId: job.orderId,
+          error: job.lastError,
+        });
         this.persist();
         this.processing = false;
         setTimeout(() => {
@@ -130,6 +153,13 @@ export class PrintQueue {
       } else {
         job.status = "failed";
         console.error(`[printQueue] Job ${job.id} permanently failed after ${MAX_RETRIES} retries:`, err?.message);
+        this.printLog?.append({
+          type: job.type,
+          printerId: job.printJob.printerId,
+          status: "failed",
+          orderId: job.orderId,
+          error: job.lastError,
+        });
       }
     }
 
