@@ -947,7 +947,7 @@ export default function POS() {
     }));
   };
 
-  const handleKOT     = () => { capturePreKOTItems(); submitModeRef.current = "kot"; triggerSubmit(); };
+  const handleKOT     = () => { capturePreKOTItems(); submitModeRef.current = "kot-print"; triggerSubmit(); };
   const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
   const handleBillPrint = async () => {
     if (!activeOrderId) return;

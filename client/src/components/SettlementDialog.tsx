@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiUrl } from "@/lib/api";
 
 export interface SettlementPayment {
   method: "cash" | "upi" | "card";
@@ -37,6 +38,8 @@ const METHODS: { key: "cash" | "upi" | "card"; label: string; icon: string }[] =
   { key: "card",  label: "Card", icon: "💳" },
 ];
 
+interface CustomerSuggestion { name: string; phone: string | null; }
+
 export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onPrintBill, isLoading }: Props) {
   const [cash,  setCash]  = useState(0);
   const [upi,   setUpi]   = useState(0);
@@ -44,6 +47,14 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
   const [isDue, setIsDue] = useState(false);
   const [customerName,  setCustomerName]  = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+
+  // Customer autocomplete (phone-first)
+  const [suggestions, setSuggestions]     = useState<CustomerSuggestion[]>([]);
+  const [showSuggest, setShowSuggest]     = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortCtrlRef  = useRef<AbortController | null>(null);
+  const phoneRef      = useRef<HTMLDivElement>(null);
 
   const totalEntered = cash + upi + card;
   const remaining    = grandTotal - totalEntered;
@@ -53,17 +64,31 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
 
   useEffect(() => {
     if (!open) {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+      if (abortCtrlRef.current) abortCtrlRef.current.abort();
       setCash(0); setUpi(0); setCard(0);
       setIsDue(false); setCustomerName(""); setCustomerPhone("");
+      setSuggestions([]); setShowSuggest(false);
     }
   }, [open]);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (phoneRef.current && !phoneRef.current.contains(e.target as Node)) {
+        setShowSuggest(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const amounts: Record<"cash" | "upi" | "card", number> = { cash, upi, card };
   const setters: Record<"cash" | "upi" | "card", (v: number) => void> = {
     cash: setCash, upi: setUpi, card: setCard,
   };
 
-  // Running balance per row — counts down as each method is filled
+  // Running balance per row
   const rowRemaining: number[] = [];
   let balance = grandTotal;
   for (const m of METHODS) {
@@ -73,11 +98,62 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
 
   const parse = (v: string) => Math.max(0, parseFloat(v) || 0);
 
+  // On blur: auto-fill remaining into the next empty method
+  const handleBlur = (idx: number) => {
+    const rem = grandTotal - (cash + upi + card);
+    if (rem <= 0) return;
+    for (let i = idx + 1; i < METHODS.length; i++) {
+      const next = METHODS[i].key;
+      if (amounts[next] === 0) {
+        setters[next](parseFloat(rem.toFixed(2)));
+        break;
+      }
+    }
+  };
+
+  // Phone-first customer search with debounce + AbortController
+  const searchCustomers = (q: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (abortCtrlRef.current) abortCtrlRef.current.abort();
+    if (q.trim().length < 2) { setSuggestions([]); setShowSuggest(false); return; }
+    searchTimer.current = setTimeout(async () => {
+      const ctrl = new AbortController();
+      abortCtrlRef.current = ctrl;
+      setSearchLoading(true);
+      try {
+        const res = await fetch(apiUrl(`/api/customers/search?q=${encodeURIComponent(q.trim())}`), {
+          signal: ctrl.signal,
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSuggestions(data);
+          setShowSuggest(data.length > 0);
+        }
+      } catch (e: any) {
+        if (e?.name !== "AbortError") console.warn("Customer search error", e);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  };
+
+  const handlePhoneChange = (value: string) => {
+    setCustomerPhone(value);
+    searchCustomers(value);
+  };
+
+  const selectSuggestion = (s: CustomerSuggestion) => {
+    setCustomerPhone(s.phone ?? "");
+    setCustomerName(s.name ?? "");
+    setShowSuggest(false);
+    setSuggestions([]);
+  };
+
   const handleSettle = () => {
     const payments: SettlementPayment[] = METHODS
       .filter(m => amounts[m.key] > 0)
       .map(m => ({ method: m.key, amount: amounts[m.key] }));
-    // Guard: isDue with zero payments is valid (pay later), but require at least customer name
     if (!isDue && payments.length === 0) return;
     onSettle({
       payments,
@@ -89,11 +165,11 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
     });
   };
 
-  // Reset state when dialog closes
   const handleOpenChange = (v: boolean) => {
     if (!v) {
       setCash(0); setUpi(0); setCard(0);
       setIsDue(false); setCustomerName(""); setCustomerPhone("");
+      setSuggestions([]); setShowSuggest(false);
     }
     onOpenChange(v);
   };
@@ -125,6 +201,7 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
                       min={0}
                       value={amounts[m.key] || ""}
                       onChange={e => setters[m.key](parse(e.target.value))}
+                      onBlur={() => handleBlur(i)}
                       placeholder="0"
                       className="w-28 text-right h-8 text-sm ml-auto"
                     />
@@ -170,22 +247,50 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
             </span>
           </label>
 
-          {/* Customer details — only shown when Mark Due is checked */}
+          {/* Customer details — phone-first with autocomplete */}
           {isDue && (
             <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
               <p className="text-xs text-amber-700 font-medium">
                 Customer details for due tracking:
               </p>
+
+              {/* Phone with autocomplete dropdown */}
+              <div className="relative" ref={phoneRef}>
+                <Input
+                  placeholder="Phone number (type 2+ digits to search)"
+                  value={customerPhone}
+                  onChange={e => handlePhoneChange(e.target.value)}
+                  onFocus={() => suggestions.length > 0 && setShowSuggest(true)}
+                  className="h-8 text-sm pr-6"
+                  autoComplete="off"
+                  inputMode="tel"
+                />
+                {searchLoading && (
+                  <span className="absolute right-2 top-1.5 text-xs text-gray-400">…</span>
+                )}
+                {showSuggest && suggestions.length > 0 && (
+                  <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-44 overflow-y-auto">
+                    {suggestions.map((s, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={() => selectSuggestion(s)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 flex justify-between items-center border-b last:border-0"
+                      >
+                        <span className="font-mono font-semibold text-gray-800">{s.phone}</span>
+                        {s.name && (
+                          <span className="text-xs text-gray-500 ml-2 truncate">{s.name}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <Input
                 placeholder="Customer name"
                 value={customerName}
                 onChange={e => setCustomerName(e.target.value)}
-                className="h-8 text-sm"
-              />
-              <Input
-                placeholder="Phone number"
-                value={customerPhone}
-                onChange={e => setCustomerPhone(e.target.value)}
                 className="h-8 text-sm"
               />
             </div>

@@ -1,0 +1,120 @@
+<h2>Settlement Dialog — Which style fits your workflow?</h2>
+<p class="subtitle">All 3 support Cash + UPI + Card split payments. Pick the layout that feels fastest for staff.</p>
+
+<div class="cards">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:system-ui;font-size:13px;">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:#1a1a1a;">Settle Payment · ₹1,025</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:44px;font-weight:600;color:#374151;">Cash</span>
+          <div style="flex:1;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;display:flex;align-items:center;gap:4px;">
+            <span style="color:#6b7280;">₹</span>
+            <span style="color:#6b7280;font-style:italic;">1025</span>
+          </div>
+          <button style="background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:4px;padding:4px 8px;font-size:11px;font-weight:600;">Full</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:44px;font-weight:600;color:#374151;">UPI</span>
+          <div style="flex:1;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;color:#9ca3af;font-style:italic;">₹ 0</div>
+          <button style="background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:4px;padding:4px 8px;font-size:11px;font-weight:600;">Rem</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:44px;font-weight:600;color:#374151;">Card</span>
+          <div style="flex:1;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;color:#9ca3af;font-style:italic;">₹ 0</div>
+          <button style="background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:4px;padding:4px 8px;font-size:11px;font-weight:600;">Rem</button>
+        </div>
+      </div>
+      <div style="background:#f0fdf4;border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;font-size:12px;">
+        <span style="color:#374151;">Entered <strong>₹1,025</strong></span>
+        <span style="color:#16a34a;font-weight:700;">✓ Exact</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button style="flex:1;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:7px;font-size:12px;color:#374151;">Print Bill</button>
+        <button style="flex:2;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:700;">Settle Now →</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Input rows with "Rem" shortcut</h3>
+      <p>Three rows (Cash / UPI / Card), each with an amount input and a smart button. "Full" fills the total, "Rem" fills whatever is left. Summary bar shows balance or change in real time.</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:system-ui;font-size:13px;">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:#1a1a1a;">Settle · ₹1,025</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="border:2px solid #16a34a;border-radius:8px;padding:10px;text-align:center;background:#f0fdf4;">
+          <div style="font-size:11px;font-weight:700;color:#15803d;margin-bottom:4px;">💵 CASH</div>
+          <div style="font-size:18px;font-weight:700;color:#111;">₹600</div>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px;text-align:center;background:#fff;">
+          <div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:4px;">📱 UPI</div>
+          <div style="font-size:18px;font-weight:700;color:#111;">₹425</div>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px;text-align:center;background:#fff;">
+          <div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:4px;">💳 CARD</div>
+          <div style="font-size:18px;font-weight:700;color:#9ca3af;">₹0</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        {['1','2','3','4','5','6','7','8','9','0','00','⌫'].map(k =>
+          `<button style="width:30px;height:28px;background:#fff;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;">${k}</button>`
+        ).join('')}
+      </div>
+      <div style="background:#fff3cd;border-radius:6px;padding:7px 10px;font-size:12px;color:#92400e;margin-bottom:8px;">Balance remaining: <strong>₹0</strong> · Change: <strong>₹0</strong></div>
+      <button style="width:100%;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:8px;font-size:13px;font-weight:700;">Settle Now →</button>
+    </div>
+    <div class="card-body">
+      <h3>B — Tap-to-select + number pad</h3>
+      <p>Tap a method tile to activate it, then type using the on-screen numpad. Good for touch screens and tablets. Each tile shows its current amount. Designed for speed on a POS terminal.</p>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8fafc;padding:16px;border-radius:8px;font-family:system-ui;font-size:13px;">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:#1a1a1a;">Collect Payment — ₹1,025</div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Split across methods</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <tr style="color:#6b7280;font-size:11px;">
+            <th style="text-align:left;padding:3px 0;">Method</th>
+            <th style="text-align:right;padding:3px 0;">Amount</th>
+            <th style="width:60px;text-align:right;padding:3px 0;">Balance</th>
+          </tr>
+          <tr style="border-top:1px solid #f3f4f6;">
+            <td style="padding:5px 0;font-weight:600;">💵 Cash</td>
+            <td style="text-align:right;"><div style="background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:3px 8px;display:inline-block;">₹500</div></td>
+            <td style="text-align:right;color:#dc2626;">₹525</td>
+          </tr>
+          <tr style="border-top:1px solid #f3f4f6;">
+            <td style="padding:5px 0;font-weight:600;">📱 UPI</td>
+            <td style="text-align:right;"><div style="background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:3px 8px;display:inline-block;">₹525</div></td>
+            <td style="text-align:right;color:#16a34a;">₹0</td>
+          </tr>
+          <tr style="border-top:1px solid #f3f4f6;">
+            <td style="padding:5px 0;color:#9ca3af;">💳 Card</td>
+            <td style="text-align:right;"><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;padding:3px 8px;display:inline-block;color:#9ca3af;">₹0</div></td>
+            <td style="text-align:right;color:#16a34a;">₹0</td>
+          </tr>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button style="flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:12px;">🖨 Print Bill</button>
+        <button style="flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:12px;">Mark Due</button>
+        <button style="flex:2;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:700;">✓ Settle</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Table with running balance column</h3>
+      <p>Spreadsheet-style layout with a "Balance remaining" column that counts down as each method is filled. Clean for accountant-minded staff. Shows exactly how much each method covers.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px;">All options: real-time balance calc · change due · "Mark Due" for deferred payment · auto-print bill on settle</p>
