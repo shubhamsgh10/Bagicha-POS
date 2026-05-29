@@ -385,7 +385,7 @@ export function registerPrintRoutes(app: Express): void {
 
       return res.json({
         printed: false,
-        printJob: escPosOk ? toPrintJob(printer.id, buffer) : undefined,
+        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "kot" }) : undefined,
         browserPrint: !escPosOk,
         message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
         pendingAck: escPosOk && !reprint,
@@ -488,7 +488,7 @@ export function registerPrintRoutes(app: Express): void {
 
       return res.json({
         printed: false,
-        printJob: escPosOk ? toPrintJob(printer.id, buffer) : undefined,
+        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "bill" }) : undefined,
         browserPrint: !escPosOk,
         message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
         pendingAck: escPosOk,

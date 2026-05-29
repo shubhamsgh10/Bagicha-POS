@@ -218,14 +218,14 @@ ipcMain.handle(IPC.PRINT_EXECUTE, async (_event, job: unknown) => {
   if (!isValidPrintJob(job)) {
     return { ok: false, error: "Invalid print job payload" };
   }
-  try {
-    const printers = await getPrinters();
-    await executePrintJob(job, printers);
-    return { ok: true };
-  } catch (err: any) {
-    console.error("[electron/print]", err);
-    return { ok: false, error: err?.message ?? String(err) };
-  }
+  const j = job as PrintJob;
+  const jobId = printQueue!.enqueue({
+    printJob: j,
+    type: (j.ackType as "kot" | "bill") ?? "kot",
+    orderId: j.orderId,
+    ackType: j.ackType,
+  });
+  return { ok: true, jobId };
 });
 
 ipcMain.handle(IPC.PRINT_TEST, async (_event, payload: PrintTestPayload) => {

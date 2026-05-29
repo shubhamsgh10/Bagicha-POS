@@ -57,6 +57,9 @@ export interface PrintJob {
   printerId: string;
   encoding: "escpos-base64";
   data: string;
+  /** Present when the Electron queue should ack after successful print. */
+  orderId?: number;
+  ackType?: "kot" | "bill";
 }
 
 export interface PrintApiResponse {
