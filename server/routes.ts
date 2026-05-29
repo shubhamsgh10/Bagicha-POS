@@ -1535,32 +1535,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders/:id/payment", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { paymentMethod, notes } = req.body;
-      const isDue = paymentMethod === "due";
+      const {
+        paymentMethod,
+        payments,
+        totalPaid,
+        changeAmount: changeAmt,
+        notes,
+        isDue: explicitDue,
+        customerName,
+        customerPhone,
+      } = req.body;
+
+      const isDue = explicitDue || paymentMethod === "due";
+
+      let breakdown: Record<string, number> = {};
+      let primaryMethod = "cash";
+      let paidAmt = 0;
+      let changeDue = 0;
+
+      if (payments && Array.isArray(payments)) {
+        // Rich split-payment path
+        for (const p of payments) {
+          if (Number(p.amount) > 0) {
+            breakdown[p.method] = (breakdown[p.method] || 0) + Number(p.amount);
+          }
+        }
+        paidAmt = totalPaid != null ? Number(totalPaid) : Object.values(breakdown).reduce((a, b) => a + b, 0);
+        changeDue = changeAmt != null ? Number(changeAmt) : 0;
+        const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+        primaryMethod = sorted[0]?.[0] ?? "cash";
+      } else {
+        // Legacy single-method path (backward-compatible)
+        primaryMethod = paymentMethod || "cash";
+        const existingOrder = await storage.getOrderById(id);
+        paidAmt = parseFloat(String((existingOrder as any)?.totalAmount ?? 0));
+        breakdown = { [primaryMethod]: paidAmt };
+      }
 
       const updateData: any = {
-        paymentMethod: paymentMethod || "cash",
+        paymentMethod: primaryMethod,
         paymentStatus: isDue ? "pending" : "paid",
         status: "served",
+        paidAmount: String(paidAmt),
+        changeAmount: String(changeDue),
+        paymentBreakdown: Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, String(v)])),
       };
       if (notes) updateData.notes = notes;
+      if (customerName) updateData.customerName = customerName;
+      if (customerPhone) updateData.customerPhone = customerPhone;
 
       const order = await storage.updateOrder(id, updateData);
 
-      // Free the table regardless (customer has left); due orders remain tracked via paymentStatus
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
-        broadcast({ type: 'TABLE_UPDATE' });
+        broadcast({ type: "TABLE_UPDATE" });
       }
-      broadcast({ type: 'ORDER_UPDATE', order });
+      broadcast({ type: "ORDER_UPDATE", order });
 
       logAudit(req, "order.payment", "order", id, {
-        paymentMethod: paymentMethod || "cash",
+        paymentMethod: primaryMethod,
         paymentStatus: isDue ? "pending" : "paid",
-        amount: (order as any).totalAmount,
+        paidAmount: paidAmt,
+        changeAmount: changeDue,
+        paymentBreakdown: breakdown,
       });
 
-      // ── Post-payment hooks (loyalty earn + feedback queue) ──────────────────
       if (!isDue) {
         const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
         if (key) {
@@ -1569,9 +1608,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             (order as any).customerName ?? key,
             id,
             parseFloat(String((order as any).totalAmount ?? 0)),
-          ).catch(e => console.warn("[Loyalty] earn failed:", e));
+          ).catch((e: any) => console.warn("[Loyalty] earn failed:", e));
         }
-        scheduleFeedbackForOrder(id).catch(e => console.warn("[Feedback] schedule failed:", e));
+        scheduleFeedbackForOrder(id).catch((e: any) => console.warn("[Feedback] schedule failed:", e));
       }
 
       res.json(order);
