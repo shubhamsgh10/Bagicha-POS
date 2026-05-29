@@ -19,6 +19,7 @@ import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutG
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
+import { SettlementDialog, type SettlementData } from "@/components/SettlementDialog";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
@@ -165,6 +166,8 @@ export default function POS() {
   const otherReasonRef = useRef("");
   // It's Paid checkbox
   const [isPaid, setIsPaid] = useState(false);
+  const [showSettleDialog, setShowSettleDialog] = useState(false);
+  const settlementDataRef = useRef<SettlementData | null>(null);
   // Settle two-phase loading state
   const [settlePhase, setSettlePhase] = useState<"idle" | "processing" | "printing">("idle");
   // Auto-KOT debounce refs
@@ -660,7 +663,11 @@ export default function POS() {
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
-        settleMutation.mutate({ orderId: order.id, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
+        const sd = settlementDataRef.current;
+        settleMutation.mutate(sd
+          ? { orderId: order.id, order, ...sd }
+          : { orderId: order.id, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined }
+        );
       }
     },
     onError: (error: any) => {
@@ -703,7 +710,11 @@ export default function POS() {
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
       } else if (mode === "settle") {
-        settleMutation.mutate({ orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined });
+        const sd = settlementDataRef.current;
+        settleMutation.mutate(sd
+          ? { orderId: vars.orderId, order, ...sd }
+          : { orderId: vars.orderId, order, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined }
+        );
       }
     },
     onError: (error: any) => {
@@ -714,8 +725,22 @@ export default function POS() {
   // ── Settle / payment mutation ─────────────────────────────────────────────
 
   const settleMutation = useMutation({
-    mutationFn: async ({ orderId, paymentMethod, notes }: { orderId: number; paymentMethod: string; order?: any; notes?: string }) => {
-      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, { paymentMethod, notes });
+    mutationFn: async ({ orderId, paymentMethod, notes, payments, totalPaid, changeAmount, isDue, customerName, customerPhone }: {
+      orderId: number;
+      order?: any;
+      paymentMethod?: string;
+      notes?: string;
+      payments?: { method: string; amount: number }[];
+      totalPaid?: number;
+      changeAmount?: number;
+      isDue?: boolean;
+      customerName?: string;
+      customerPhone?: string;
+    }) => {
+      const body = payments
+        ? { payments, totalPaid, changeAmount, isDue, customerName, customerPhone }
+        : { paymentMethod: paymentMethod || "cash", notes };
+      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, body);
       return res.json();
     },
     onSuccess: (settled: any, vars: any) => {
@@ -921,9 +946,18 @@ export default function POS() {
     }));
   };
 
-  const handleKOT        = () => { capturePreKOTItems(); submitModeRef.current = "kot";        triggerSubmit(); };
-  const handleKOTAndPrint= () => { capturePreKOTItems(); submitModeRef.current = "kot-print";  triggerSubmit(); };
-  const handleSettle     = () => { setSettlePhase("processing"); submitModeRef.current = "settle"; triggerSubmit(); };
+  const handleKOT     = () => { capturePreKOTItems(); submitModeRef.current = "kot"; triggerSubmit(); };
+  const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
+  const handleBillPrint = async () => {
+    if (!activeOrderId) return;
+    triggerBillPrint(activeOrderId, existingOrder);
+    try {
+      await apiRequest("POST", `/api/orders/${activeOrderId}/bill-requested`, {});
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+    } catch {
+      // non-critical — bill is printed even if status update fails
+    }
+  };
 
   // Direct KOT preview — no server call, shows delta of new items not yet in the order
   const handleKOTPreview = () => {
@@ -2098,50 +2132,20 @@ export default function POS() {
             </div>
           </div>
 
-          {/* Payment method */}
-          <div className="px-2 py-2 border-t shrink-0">
-            <div className="grid grid-cols-5 gap-1">
-              {[
-                { id: "cash",  label: "Cash"   },
-                { id: "card",  label: "Card"   },
-                { id: "upi",   label: "Online" },
-                { id: "due",   label: "Due"    },
-                { id: "other", label: "Other"  },
-              ].map((pm) => (
-                <button
-                  key={pm.id}
-                  onClick={() => setPayment(pm.id)}
-                  className={`py-1.5 rounded text-[10px] font-bold border transition-colors ${
-                    selectedPaymentMethod === pm.id
-                      ? "bg-green-600 text-white border-green-600"
-                      : "border-gray-200 text-gray-600 hover:border-green-400 hover:text-green-600"
-                  }`}
-                >
-                  {pm.label}
-                </button>
-              ))}
-            </div>
-            {/* Other reason input */}
-            {selectedPaymentMethod === "other" && (
-              <input
-                type="text"
-                value={otherReason}
-                onChange={(e) => { setOtherReason(e.target.value); otherReasonRef.current = e.target.value; }}
-                placeholder="Enter reason…"
-                className="w-full mt-2 px-2.5 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-green-400 placeholder:text-gray-400"
-              />
-            )}
-            {/* It's Paid */}
-            <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={isPaid}
-                onChange={(e) => setIsPaid(e.target.checked)}
-                className="accent-green-600 w-3.5 h-3.5"
-              />
-              <span className="text-xs font-semibold text-gray-600">It's Paid</span>
-            </label>
-          </div>
+          <SettlementDialog
+            open={showSettleDialog}
+            onOpenChange={setShowSettleDialog}
+            grandTotal={grandTotal}
+            isLoading={settleMutation.isPending}
+            onPrintBill={() => activeOrderId && triggerBillPrint(activeOrderId, existingOrder)}
+            onSettle={(data) => {
+              settlementDataRef.current = data;
+              setShowSettleDialog(false);
+              setSettlePhase("processing");
+              submitModeRef.current = "settle";
+              triggerSubmit();
+            }}
+          />
 
           {/* Action buttons */}
           <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-1.5">
@@ -2165,7 +2169,7 @@ export default function POS() {
               </button>
             </div>
 
-            {/* KOT row */}
+            {/* KOT / Bill row */}
             <div className="grid grid-cols-2 gap-1">
               <button
                 disabled={!hasItems || isPending}
@@ -2175,12 +2179,12 @@ export default function POS() {
                 KOT
               </button>
               <button
-                disabled={!hasItems || isPending}
-                onClick={handleKOTAndPrint}
-                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                disabled={!activeOrderId || isPending}
+                onClick={handleBillPrint}
+                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 <Printer className="w-3 h-3" />
-                Print
+                Bill
               </button>
             </div>
 
