@@ -38,6 +38,11 @@ export interface ElectronAPI {
   onUpdateStatus:    (cb: (p: UpdateStatusPayload)    => void) => () => void;
   onUpdateProgress:  (cb: (p: UpdateProgressPayload)  => void) => () => void;
   onUpdateDownloaded:(cb: (p: UpdateDownloadedPayload)=> void) => () => void;
+
+  // ── Printer health notifications ──────────────────────────────────────────
+  onPrinterHealthWarning: (
+    cb: (p: { printerId: string; printerName: string; online: boolean; message: string }) => void
+  ) => () => void;
 }
 
 declare global {

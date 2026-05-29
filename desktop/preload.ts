@@ -72,6 +72,14 @@ const electronAPI = {
     ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
     return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
   },
+
+  onPrinterHealthWarning: (
+    cb: (p: { printerId: string; printerName: string; online: boolean; message: string }) => void,
+  ): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { printerId: string; printerName: string; online: boolean; message: string }) => cb(p);
+    ipcRenderer.on(IPC.PRINTER_HEALTH, handler);
+    return () => ipcRenderer.removeListener(IPC.PRINTER_HEALTH, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

@@ -25,6 +25,7 @@ import KOT from "@/pages/KOT";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import { UpdateNotification } from "@/components/UpdateNotification";
+import { useToast } from "@/hooks/use-toast";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { RouteGuard } from "@/components/RouteGuard";
@@ -207,10 +208,22 @@ function Router() {
 }
 
 function App() {
+  const { toast } = useToast();
+
   useEffect(() => {
     const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    return window.electronAPI?.onPrinterHealthWarning?.((p) => {
+      toast({
+        title: "Printer Offline",
+        description: p.message,
+        variant: "destructive",
+      });
+    });
+  }, [toast]);
 
   return (
     <QueryClientProvider client={queryClient}>

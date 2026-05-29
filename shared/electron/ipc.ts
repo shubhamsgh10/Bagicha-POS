@@ -17,6 +17,7 @@ export const IPC = {
   SET_POS_ACTIVE:  "app:set-pos-active",
   REFRESH_PRINTERS: "printers:refresh",
   QUEUE_STATUS: "queue:status",
+  PRINTER_HEALTH: "printer:health",
 } as const;
 
 // ── Update payload types ──────────────────────────────────────────────────────
