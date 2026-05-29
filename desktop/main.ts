@@ -9,6 +9,7 @@ import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
 import { initUpdater } from "./updater.js";
 import { warmPrinterSession, closePrinterSession } from "../shared/print/persistentPs.js";
+import { windowsPrinterQueueExists } from "../shared/print/windowsPrinters.js";
 import { PrintQueue } from "./print/printQueue.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -158,6 +159,27 @@ function createWindow() {
   }
 }
 
+async function runStartupHealthCheck(): Promise<void> {
+  try {
+    const printers = await getPrinters();
+    for (const p of printers) {
+      if (p.type !== "usb" || !p.windowsQueueName) continue;
+      const exists = await windowsPrinterQueueExists(p.windowsQueueName).catch(() => false);
+      if (!exists) {
+        console.warn(`[electron] Printer "${p.name}" queue not found: ${p.windowsQueueName}`);
+        mainWindow?.webContents.send(IPC.PRINTER_HEALTH, {
+          printerId: p.id,
+          printerName: p.name,
+          online: false,
+          message: `Printer "${p.name}" not detected. Check USB connection and ensure printer is powered on.`,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("[electron] startup health check failed:", e);
+  }
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -188,6 +210,10 @@ if (!gotLock) {
       },
       resolveApiBase,
     );
+    // Startup health check — runs after window is ready to receive IPC events
+    mainWindow?.webContents.once("did-finish-load", () => {
+      runStartupHealthCheck();
+    });
   });
 
   app.on("activate", () => {
