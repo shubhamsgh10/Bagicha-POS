@@ -624,6 +624,7 @@ export function PrintSettingsPanel({
     onSuccess: (data) => {
       queryClient.setQueryData(['/api/settings'], data);
       toast({ title: 'Print settings saved' });
+      if (window.electronAPI?.isElectron) window.electronAPI.refreshPrinters?.();
       onClose();
     },
     onError: (err: any) => {

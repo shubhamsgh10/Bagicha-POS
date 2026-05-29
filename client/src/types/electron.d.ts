@@ -18,6 +18,8 @@ export interface ElectronAPI {
   scanUsbDevices: () => Promise<UsbScanResult>;
   getVersion: () => Promise<string>;
 
+  refreshPrinters: () => Promise<{ ok: boolean; error?: string }>;
+
   // ── Auto-update actions ───────────────────────────────────────────────────
   setPosActive: (active: boolean) => Promise<void>;
   checkForUpdates: () => Promise<{ ok: boolean; error?: string }>;
