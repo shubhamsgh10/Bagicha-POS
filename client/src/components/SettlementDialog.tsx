@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +51,13 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
   const balanceDue   = remaining > 0 ? remaining : 0;
   const canSettle    = isDue || totalEntered >= grandTotal;
 
+  useEffect(() => {
+    if (!open) {
+      setCash(0); setUpi(0); setCard(0);
+      setIsDue(false); setCustomerName(""); setCustomerPhone("");
+    }
+  }, [open]);
+
   const amounts: Record<"cash" | "upi" | "card", number> = { cash, upi, card };
   const setters: Record<"cash" | "upi" | "card", (v: number) => void> = {
     cash: setCash, upi: setUpi, card: setCard,
@@ -70,6 +77,8 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
     const payments: SettlementPayment[] = METHODS
       .filter(m => amounts[m.key] > 0)
       .map(m => ({ method: m.key, amount: amounts[m.key] }));
+    // Guard: isDue with zero payments is valid (pay later), but require at least customer name
+    if (!isDue && payments.length === 0) return;
     onSettle({
       payments,
       totalPaid: totalEntered,
