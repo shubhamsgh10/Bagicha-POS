@@ -1636,6 +1636,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Bill requested — set table to "billed" when staff prints customer bill ───
+  app.post("/api/orders/:id/bill-requested", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      if ((order as any).tableId) {
+        // Set table status to "billed" — keeps currentOrderId unchanged
+        await storage.updateTableStatus(Number((order as any).tableId), "billed");
+        broadcast({ type: "TABLE_UPDATE" });
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update table status" });
+    }
+  });
+
   // ── Table Action: Hold Order ──────────────────────────────────────────────────
   app.put("/api/orders/:id/hold", requireAuth, async (req, res) => {
     try {
