@@ -1,7 +1,7 @@
 import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X, ScanLine } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -251,6 +251,38 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
   const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 48 });
   const [detectedDevices, setDetectedDevices] = useState<USBDeviceInfo[]>([]);
   const [usbScanning, setUsbScanning] = useState(false);
+  const [offlinePrinters, setOfflinePrinters] = useState<Set<string>>(new Set());
+  const [showLog, setShowLog] = useState(false);
+  const [logEntries, setLogEntries] = useState<Array<{
+    timestamp: number; type: string; printerId: string;
+    status: string; orderId?: number; error?: string;
+  }>>([]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onPrinterHealthWarning) return;
+    return window.electronAPI.onPrinterHealthWarning((p: { printerId: string; online: boolean }) => {
+      if (!p.online) setOfflinePrinters(prev => {
+        const next = new Set(prev);
+        next.add(p.printerId);
+        return next;
+      });
+    });
+  }, []);
+
+  const { data: queueJobs } = useQuery({
+    queryKey: ["print-queue"],
+    queryFn: () => window.electronAPI?.getQueueStatus?.() ?? Promise.resolve([]),
+    refetchInterval: 3_000,
+    enabled: !!(window.electronAPI?.isElectron),
+  });
+  const pendingCount = (queueJobs ?? []).filter(
+    (j: { status: string }) => j.status === "pending" || j.status === "retrying"
+  ).length;
+
+  const fetchLogs = async () => {
+    const entries = await window.electronAPI?.getPrintLogs?.(10) ?? [];
+    setLogEntries(entries);
+  };
 
   const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.isElectron;
   const webUsbSupported = typeof navigator !== 'undefined' && 'usb' in (navigator as any);
@@ -386,6 +418,15 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-800">{p.name}</p>
+              {window.electronAPI?.isElectron && (
+                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                  offlinePrinters.has(p.id)
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                  {offlinePrinters.has(p.id) ? '● Offline' : '● Online'}
+                </span>
+              )}
               <p className="text-xs text-gray-400 truncate">
                 {p.type === 'network'
                   ? `${p.ip ?? '—'}:${p.port ?? 9100}`
@@ -502,6 +543,13 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                 </div>
               )}
 
+              {window.electronAPI?.isElectron && pendingCount > 0 && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 font-medium">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  {pendingCount} job{pendingCount !== 1 ? 's' : ''} queued
+                </div>
+              )}
+
               {canScanUsb && (
                 <button
                   type="button"
@@ -514,7 +562,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                   ) : (
                     <ScanLine className="w-3.5 h-3.5" />
                   )}
-                  {usbScanning ? 'Scanning…' : 'Scan / Detect USB Printer'}
+                  {usbScanning ? 'Scanning…' : 'Detect Installed Printers'}
                 </button>
               )}
 
@@ -587,6 +635,57 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
         >
           <Plus className="w-4 h-4" /> Add Printer
         </button>
+      )}
+
+      {window.electronAPI?.isElectron && (
+        <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => { setShowLog(v => !v); if (!showLog) fetchLogs(); }}
+            className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-600 font-medium bg-gray-50 hover:bg-gray-100 transition-colors"
+          >
+            <span>Recent Print Log</span>
+            <span>{showLog ? '▲' : '▼'}</span>
+          </button>
+          {showLog && (
+            <div className="divide-y divide-gray-100">
+              {logEntries.length === 0 ? (
+                <p className="px-3 py-3 text-xs text-gray-400 text-center">No log entries yet</p>
+              ) : (
+                logEntries.slice().reverse().map((e, idx) => (
+                  <div key={idx} className="px-3 py-2 flex items-center gap-2 text-xs">
+                    <span className="text-gray-400 shrink-0 tabular-nums">
+                      {new Date(e.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${
+                      e.type === 'kot' ? 'bg-blue-100 text-blue-700'
+                      : e.type === 'bill' ? 'bg-purple-100 text-purple-700'
+                      : 'bg-gray-100 text-gray-600'
+                    }`}>{e.type.toUpperCase()}</span>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${
+                      e.status === 'success' ? 'bg-green-100 text-green-700'
+                      : e.status === 'failed' ? 'bg-red-100 text-red-700'
+                      : e.status === 'retry' ? 'bg-amber-100 text-amber-700'
+                      : 'bg-gray-100 text-gray-500'
+                    }`}>{e.status}</span>
+                    {e.error && (
+                      <span className="text-red-500 truncate" title={e.error}>{e.error}</span>
+                    )}
+                  </div>
+                ))
+              )}
+              <div className="px-3 py-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={fetchLogs}
+                  className="text-xs text-blue-500 hover:text-blue-700 font-medium"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
