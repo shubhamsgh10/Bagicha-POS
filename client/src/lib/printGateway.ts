@@ -58,17 +58,24 @@ export async function handlePrintResponse(
   if (data.printJob && window.electronAPI?.isElectron) {
     const result = await window.electronAPI.print(data.printJob);
     if (!result.ok) {
-      throw new Error(result.error ?? "Electron print failed");
-    }
-    const orderId = options.orderId ?? data.orderId;
-    const shouldAck = (options.pendingAck ?? data.pendingAck) && orderId && options.ackType;
-    if (shouldAck) {
-      try {
-        await ackPrint(orderId, options.ackType!);
-      } catch {
-        /* ack is best-effort */
+      // Electron queue enqueue failed — fall back to browser print
+      console.warn("[print] Electron print failed, falling back to browser:", result.error);
+      if (options.onBrowserBill) {
+        await options.onBrowserBill();
+        return "browser";
+      } else if (options.onBrowserKOT) {
+        options.onBrowserKOT(data);
+        return "browser";
+      } else if (data.orderNumber && data.items) {
+        printKOT(
+          { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
+          data.items,
+        );
+        return "browser";
       }
+      return "failed";
     }
+    // Ack is handled by the Electron print queue internally — do not double-ack here
     return "hardware";
   }
 
