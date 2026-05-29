@@ -18,6 +18,7 @@ export const IPC = {
   REFRESH_PRINTERS: "printers:refresh",
   QUEUE_STATUS: "queue:status",
   PRINTER_HEALTH: "printer:health",
+  PRINT_LOGS: "print:logs",
 } as const;
 
 // ── Update payload types ──────────────────────────────────────────────────────

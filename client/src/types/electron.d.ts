@@ -29,6 +29,16 @@ export interface ElectronAPI {
     lastError?: string;
   }>>;
 
+  getPrintLogs: (n?: number) => Promise<Array<{
+    timestamp: number;
+    type: string;
+    printerId: string;
+    printerName?: string;
+    status: string;
+    orderId?: number;
+    error?: string;
+  }>>;
+
   // ── Auto-update actions ───────────────────────────────────────────────────
   setPosActive: (active: boolean) => Promise<void>;
   checkForUpdates: () => Promise<{ ok: boolean; error?: string }>;
