@@ -14,4 +14,6 @@ export interface PrintJob {
   printerId: string;
   encoding: "escpos-base64";
   data: string;
+  orderId?: number;
+  ackType?: "kot" | "bill";
 }
