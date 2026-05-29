@@ -8,6 +8,7 @@ import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
 import { initUpdater } from "./updater.js";
+import { warmPrinterSession, closePrinterSession } from "../shared/print/persistentPs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
@@ -68,6 +69,14 @@ async function fetchPrinters(): Promise<PrinterConfig[]> {
   if (!res.ok) throw new Error(`Failed to load printer settings: ${res.status}`);
   const settings = (await res.json()) as { printSettings?: { printers?: PrinterConfig[] } };
   return settings.printSettings?.printers ?? [];
+}
+
+let printerCache: PrinterConfig[] | null = null;
+
+async function getPrinters(): Promise<PrinterConfig[]> {
+  if (printerCache !== null) return printerCache;
+  printerCache = await fetchPrinters();
+  return printerCache;
 }
 
 function buildTestBuffer(printer: PrinterConfig): Buffer {
@@ -163,6 +172,9 @@ if (!gotLock) {
     console.log("[electron] App ready");
     createWindow();
     initUpdater();
+    // Pre-warm printer cache and PowerShell session (non-blocking)
+    getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
+    warmPrinterSession().catch((e) => console.warn("[electron] printer session warm:", e));
   });
 
   app.on("activate", () => {
@@ -170,6 +182,8 @@ if (!gotLock) {
     else revealWindow();
   });
 }
+
+app.on("will-quit", () => closePrinterSession());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -192,7 +206,7 @@ ipcMain.handle(IPC.PRINT_EXECUTE, async (_event, job: unknown) => {
     return { ok: false, error: "Invalid print job payload" };
   }
   try {
-    const printers = await fetchPrinters();
+    const printers = await getPrinters();
     await executePrintJob(job, printers);
     return { ok: true };
   } catch (err: any) {
@@ -203,7 +217,7 @@ ipcMain.handle(IPC.PRINT_EXECUTE, async (_event, job: unknown) => {
 
 ipcMain.handle(IPC.PRINT_TEST, async (_event, payload: PrintTestPayload) => {
   try {
-    const printers = await fetchPrinters();
+    const printers = await getPrinters();
     const printer = printers.find((p) => p.id === payload.printerId);
     if (!printer) {
       return { ok: false, error: `Printer "${payload.printerId}" not found in settings` };
@@ -226,5 +240,15 @@ ipcMain.handle(IPC.PRINT_TEST, async (_event, payload: PrintTestPayload) => {
   } catch (err: any) {
     console.error("[electron/print:test]", err);
     return { ok: false, error: err?.message ?? String(err) };
+  }
+});
+
+ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
+  printerCache = null;
+  try {
+    printerCache = await fetchPrinters();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
   }
 });

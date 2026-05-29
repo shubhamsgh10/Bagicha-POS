@@ -15,6 +15,7 @@ export const IPC = {
   UPDATE_CHECK:    "app:update-check",
   UPDATE_INSTALL:  "app:update-install",
   SET_POS_ACTIVE:  "app:set-pos-active",
+  REFRESH_PRINTERS: "printers:refresh",
 } as const;
 
 // ── Update payload types ──────────────────────────────────────────────────────

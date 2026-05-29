@@ -24,6 +24,9 @@ const electronAPI = {
 
   scanUsbDevices: (): Promise<UsbScanResult> => ipcRenderer.invoke(IPC.USB_SCAN),
 
+  refreshPrinters: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.REFRESH_PRINTERS),
+
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
 
   // ── Auto-update actions ──────────────────────────────────────────────────────
