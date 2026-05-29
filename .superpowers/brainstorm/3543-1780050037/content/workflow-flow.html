@@ -1,0 +1,136 @@
+<h2>Complete Settlement Workflow Design</h2>
+<p class="subtitle">Review the full flow before we write the spec. Click to confirm each section looks right.</p>
+
+<div class="section">
+  <div class="label">Order Lifecycle — Table Status</div>
+  <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;margin-top:10px;font-family:system-ui;font-size:13px;">
+    <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:8px;padding:10px 16px;text-align:center;min-width:90px;">
+      <div style="font-size:10px;color:#16a34a;font-weight:700;text-transform:uppercase;">Table</div>
+      <div style="font-weight:700;color:#15803d;margin-top:2px;">FREE</div>
+      <div style="font-size:10px;color:#6b7280;margin-top:2px;">🟢 Idle</div>
+    </div>
+    <div style="padding:0 8px;color:#9ca3af;font-size:18px;">→</div>
+    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:10px 16px;text-align:center;min-width:90px;">
+      <div style="font-size:10px;color:#d97706;font-weight:700;text-transform:uppercase;">Order taken</div>
+      <div style="font-weight:700;color:#92400e;margin-top:2px;">RUNNING</div>
+      <div style="font-size:10px;color:#6b7280;margin-top:2px;">🟡 Occupied</div>
+    </div>
+    <div style="padding:0 8px;color:#9ca3af;font-size:18px;">→</div>
+    <div style="background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:10px 16px;text-align:center;min-width:90px;">
+      <div style="font-size:10px;color:#dc2626;font-weight:700;text-transform:uppercase;">Bill printed</div>
+      <div style="font-weight:700;color:#991b1b;margin-top:2px;">BILLED</div>
+      <div style="font-size:10px;color:#6b7280;margin-top:2px;">🔴 Awaiting pay</div>
+    </div>
+    <div style="padding:0 8px;color:#9ca3af;font-size:18px;">→</div>
+    <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:8px;padding:10px 16px;text-align:center;min-width:90px;">
+      <div style="font-size:10px;color:#16a34a;font-weight:700;text-transform:uppercase;">Paid / Due</div>
+      <div style="font-weight:700;color:#15803d;margin-top:2px;">FREE</div>
+      <div style="font-size:10px;color:#6b7280;margin-top:2px;">🟢 Vacant</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Cart Action Buttons — New Behavior</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;font-family:system-ui;font-size:12px;">
+    <div style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#92400e;margin-bottom:4px;">🖨 KOT</div>
+      <div style="color:#374151;">Save order → Print KOT → Send to kitchen. Table stays Running. No change to billing.</div>
+    </div>
+    <div style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#1d4ed8;margin-bottom:4px;">🧾 Bill</div>
+      <div style="color:#374151;">Print customer bill copy → Set table to <strong>Billed</strong> on live view. Does NOT settle.</div>
+    </div>
+    <div style="border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#374151;margin-bottom:4px;">💾 Save</div>
+      <div style="color:#374151;">Save order draft. Table stays Running. No print, no settle.</div>
+    </div>
+    <div style="border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#374151;margin-bottom:4px;">⏸ Hold</div>
+      <div style="color:#374151;">Park order. Table freed. Recall later from hold queue.</div>
+    </div>
+    <div style="border:2px solid #16a34a;background:#f0fdf4;border-radius:8px;padding:12px;grid-column:1/-1;">
+      <div style="font-weight:700;color:#15803d;margin-bottom:4px;">✅ Settle → Opens Payment Dialog</div>
+      <div style="color:#374151;">Opens the split-payment dialog (Option C style). Accepts Cash / UPI / Card amounts with running balance. Settle only when total ≥ bill or "Mark Due" is chosen. Frees table after.</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Settlement Dialog — Option C (your choice)</div>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;font-family:system-ui;font-size:13px;max-width:380px;">
+    <div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#111;">Collect Payment · ₹1,025</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;">
+      <tr style="color:#6b7280;font-size:11px;font-weight:600;">
+        <th style="text-align:left;padding-bottom:6px;">Method</th>
+        <th style="text-align:right;padding-bottom:6px;">Amount (₹)</th>
+        <th style="text-align:right;padding-bottom:6px;">Remaining</th>
+      </tr>
+      <tr style="border-top:1px solid #f3f4f6;">
+        <td style="padding:7px 0;font-weight:600;">💵 Cash</td>
+        <td style="text-align:right;"><input style="width:80px;border:1px solid #d1d5db;border-radius:4px;padding:4px 8px;text-align:right;" value="500" readonly /></td>
+        <td style="text-align:right;color:#dc2626;font-weight:600;">₹525</td>
+      </tr>
+      <tr style="border-top:1px solid #f3f4f6;">
+        <td style="padding:7px 0;font-weight:600;">📱 UPI</td>
+        <td style="text-align:right;"><input style="width:80px;border:1px solid #16a34a;border-radius:4px;padding:4px 8px;text-align:right;" value="525" readonly /></td>
+        <td style="text-align:right;color:#16a34a;font-weight:600;">₹0</td>
+      </tr>
+      <tr style="border-top:1px solid #f3f4f6;">
+        <td style="padding:7px 0;color:#9ca3af;">💳 Card</td>
+        <td style="text-align:right;"><input style="width:80px;border:1px solid #e5e7eb;border-radius:4px;padding:4px 8px;text-align:right;color:#9ca3af;" value="0" readonly /></td>
+        <td style="text-align:right;color:#16a34a;font-weight:600;">₹0</td>
+      </tr>
+    </table>
+    <div style="background:#f0fdf4;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;margin-bottom:10px;font-size:12px;">
+      <span style="color:#374151;">Total entered <strong>₹1,025</strong></span>
+      <span style="color:#16a34a;font-weight:700;">✓ Fully settled</span>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button style="flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:8px;font-size:12px;">🖨 Print Bill</button>
+      <button style="flex:1;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:12px;color:#92400e;">Mark Due</button>
+      <button style="flex:2;background:#16a34a;color:#fff;border:none;border-radius:6px;padding:8px;font-size:13px;font-weight:700;">✓ Settle Now</button>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Mark Due — Customer Credit Tracking</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;font-family:system-ui;font-size:12px;">
+    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#374151;margin-bottom:6px;">When "Mark Due" clicked:</div>
+      <ul style="color:#374151;margin:0;padding-left:16px;line-height:1.7;">
+        <li>Prompts for <strong>customer name + phone</strong></li>
+        <li>Records full order: items, amounts, timestamp</li>
+        <li>Table goes <strong>Free</strong> immediately</li>
+        <li>Order saved as <strong>due</strong> in system</li>
+      </ul>
+    </div>
+    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+      <div style="font-weight:700;color:#374151;margin-bottom:6px;">Due Orders list (Billing page):</div>
+      <ul style="color:#374151;margin:0;padding-left:16px;line-height:1.7;">
+        <li>Customer name + phone</li>
+        <li>Items ordered</li>
+        <li>Amount owed + date/time</li>
+        <li>"Collect Payment" button to settle later</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:20px;">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>This design looks right — proceed</h3>
+      <p>Move forward with writing the spec based on this flow</p>
+    </div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>I want to change something</h3>
+      <p>I'll describe the change in the terminal</p>
+    </div>
+  </div>
+</div>

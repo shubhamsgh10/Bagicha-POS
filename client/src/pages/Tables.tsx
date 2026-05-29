@@ -241,7 +241,7 @@ export default function Tables() {
       }
       return;
     }
-    if (table.status === "running" && table.currentOrderId) {
+    if ((table.status === "running" || table.status === "billed") && table.currentOrderId) {
       navigate(
         `/pos?tableId=${table.id}&orderId=${table.currentOrderId}&tableName=${encodeURIComponent(table.name)}`
       );

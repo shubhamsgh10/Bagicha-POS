@@ -55,7 +55,7 @@ import {
   publishRealtime,
   setRealtimePublisher,
 } from "./realtime/publisher";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, or, ilike, isNotNull, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
@@ -2169,6 +2169,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ── Customer master lookup ─────────────────────────────────────────────────
+
+  /**
+   * GET /api/customers/search?q=
+   * Search customersMaster by name or phone (partial, case-insensitive). Max 10 results.
+   */
+  app.get("/api/customers/search", requireAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (!q) return res.json([]);
+      // Search distinct phone+name combos from past orders (phone is primary)
+      const results = await db
+        .selectDistinctOn([orders.customerPhone], {
+          name:  orders.customerName,
+          phone: orders.customerPhone,
+        })
+        .from(orders)
+        .where(
+          or(
+            ilike(orders.customerPhone, `${q}%`),
+            ilike(orders.customerName,  `%${q}%`),
+          )
+        )
+        .orderBy(orders.customerPhone, desc(orders.createdAt))
+        .limit(10);
+      res.json(results.filter(r => r.phone));
+    } catch (error) {
+      res.status(500).json({ error: "Search failed" });
+    }
+  });
 
   /**
    * GET /api/crm/customers/:key
