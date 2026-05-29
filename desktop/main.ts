@@ -9,6 +9,7 @@ import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
 import { initUpdater } from "./updater.js";
 import { warmPrinterSession, closePrinterSession } from "../shared/print/persistentPs.js";
+import { PrintQueue } from "./print/printQueue.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
@@ -72,6 +73,7 @@ async function fetchPrinters(): Promise<PrinterConfig[]> {
 }
 
 let printerCache: PrinterConfig[] | null = null;
+let printQueue: PrintQueue | null = null;
 
 async function getPrinters(): Promise<PrinterConfig[]> {
   if (printerCache !== null) return printerCache;
@@ -175,6 +177,17 @@ if (!gotLock) {
     // Pre-warm printer cache and PowerShell session (non-blocking)
     getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
     warmPrinterSession().catch((e) => console.warn("[electron] printer session warm:", e));
+    // Initialize print queue (loads persisted jobs from disk)
+    printQueue = new PrintQueue(
+      app.getPath("userData"),
+      getPrinters,
+      async () => {
+        const base = resolveApiBase();
+        const cookies = await session.defaultSession.cookies.get({ url: base });
+        return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+      },
+      resolveApiBase,
+    );
   });
 
   app.on("activate", () => {
@@ -242,6 +255,8 @@ ipcMain.handle(IPC.PRINT_TEST, async (_event, payload: PrintTestPayload) => {
     return { ok: false, error: err?.message ?? String(err) };
   }
 });
+
+ipcMain.handle(IPC.QUEUE_STATUS, () => printQueue?.getStatus() ?? []);
 
 ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
   printerCache = null;
