@@ -752,6 +752,7 @@ export default function POS() {
       const billOrder = vars.order || settled;
       if (vars.orderId) triggerBillPrint(vars.orderId, billOrder, true);
       toast({ title: "Payment complete!", description: "Bill sent to printer" });
+      setSettlePhase("idle");
       navigate("/tables");
     },
     onError: (error: any) => {
