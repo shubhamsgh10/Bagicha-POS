@@ -20,6 +20,15 @@ export interface ElectronAPI {
 
   refreshPrinters: () => Promise<{ ok: boolean; error?: string }>;
 
+  getQueueStatus: () => Promise<Array<{
+    id: string;
+    type: string;
+    status: string;
+    retries: number;
+    createdAt: number;
+    lastError?: string;
+  }>>;
+
   // ── Auto-update actions ───────────────────────────────────────────────────
   setPosActive: (active: boolean) => Promise<void>;
   checkForUpdates: () => Promise<{ ok: boolean; error?: string }>;

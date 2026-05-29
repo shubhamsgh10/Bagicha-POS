@@ -27,6 +27,15 @@ const electronAPI = {
   refreshPrinters: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.REFRESH_PRINTERS),
 
+  getQueueStatus: (): Promise<Array<{
+    id: string;
+    type: string;
+    status: string;
+    retries: number;
+    createdAt: number;
+    lastError?: string;
+  }>> => ipcRenderer.invoke(IPC.QUEUE_STATUS),
+
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
 
   // ── Auto-update actions ──────────────────────────────────────────────────────
