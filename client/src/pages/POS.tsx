@@ -748,11 +748,8 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
-      setSettlePhase("printing");
-      const billOrder = vars.order || settled;
-      if (vars.orderId) triggerBillPrint(vars.orderId, billOrder, true);
-      toast({ title: "Payment complete!", description: "Bill sent to printer" });
       setSettlePhase("idle");
+      toast({ title: "Payment complete!" });
       navigate("/tables");
     },
     onError: (error: any) => {

@@ -74,12 +74,12 @@ function startSession(): Promise<void> {
 
   initPromise = new Promise<void>((resolve, reject) => {
     const deadline = setTimeout(() => {
-      reject(new Error("PowerShell session init timed out (15s)"));
+      reject(new Error("PowerShell session init timed out (60s)"));
       ps?.kill();
       ps = null;
       ready = false;
       initPromise = null;
-    }, 15_000);
+    }, 60_000);
 
     ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "-"], {
       stdio: ["pipe", "pipe", "pipe"],
