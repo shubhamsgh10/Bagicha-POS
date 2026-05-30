@@ -701,12 +701,12 @@ export function registerPrintRoutes(app: Express): void {
 
       const escPosOk = supportsRawEscPos(printer);
 
-      if (canExecutePrintOnServer() && escPosOk) {
+      if (canExecutePrintOnServer() && printer.type !== "usb" && escPosOk) {
         await sendToPrinter(printer, buffer);
         return res.json({ success: true, message: `Test page sent to "${printer.name}"` });
       }
 
-      if (canExecutePrintOnServer() && !escPosOk) {
+      if (canExecutePrintOnServer() && printer.type !== "usb" && !escPosOk) {
         return res.status(400).json({
           success: false,
           message: nonEscPosPrinterMessage(printer),
