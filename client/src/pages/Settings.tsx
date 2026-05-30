@@ -924,6 +924,11 @@ export default function Settings() {
     try {
       await apiRequest(method, endpoint, {});
       toast({ title: successMsg });
+      if (endpoint === "/api/admin/clear-orders") {
+        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+      }
       closeModal();
     } catch (err: any) {
       // If endpoint doesn't exist yet, show a friendly message

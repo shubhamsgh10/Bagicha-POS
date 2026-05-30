@@ -9,7 +9,7 @@ import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, ins
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
-import { getSettings, saveSettings, incrementBillCounter } from "./settingsStore";
+import { getSettings, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
 import { getLogBuffer } from "./logBuffer";
 import {
   getAutomationConfig,
@@ -48,7 +48,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
 import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
@@ -717,12 +717,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/clear-orders", requireAdmin, async (_req, res) => {
+  app.delete("/api/admin/clear-orders", requireAdmin, async (req, res) => {
     try {
+      // 1. Delete all order-related data
+      await db.delete(paymentTransactions);
+      await db.delete(feedback);
+      await db.delete(couponRedemptions);
       await db.delete(orderItems);
       await db.delete(kotTickets);
       await db.delete(orders);
-      res.json({ success: true, message: "All orders and KOT records removed." });
+
+      // 2. Reset table status and order associations
+      await db.update(tables).set({
+        status: "free",
+        currentOrderId: null,
+      });
+
+      // Reset KOT counter back to 0
+      await saveSettings({ kotCounter: 0 } as any);
+
+      // 3. Log audit event
+      logAudit(req, "orders.clear_all", "system", null, {
+        message: "All orders, KOT records, payment transactions, feedback, and table occupancy states cleared.",
+      });
+
+      // 4. Broadcast websocket updates so client views refresh immediately
+      broadcast({ type: "TABLE_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE" });
+      broadcast({ type: "KOT_UPDATE", action: "cleared" });
+
+      res.json({ success: true, message: "All orders, KOT records, and table occupancy states removed." });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Clear failed" });
     }
@@ -1400,7 +1424,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create KOT ticket
-      const kotNumber = `KOT${Date.now()}`;
+      const next = incrementKotCounter();
+      const kotNumber = String(next).padStart(3, "0");
       const kotItems = (items || []).map((item: any) => {
         const addonLines = Array.isArray(item.addons) && item.addons.length > 0
           ? item.addons.map((a: any) => `+ ${a.name}`).join(", ")
@@ -1500,7 +1525,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Delta KOT — only print items newly added to this order
       const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
       if (newItems.length > 0) {
-        const kotNumber = `KOT${Date.now()}`;
+        const next = incrementKotCounter();
+        const kotNumber = String(next).padStart(3, "0");
         const kotItems = newItems.map((item: any) => ({
           name: item.name,
           quantity: Number(item.quantity),
