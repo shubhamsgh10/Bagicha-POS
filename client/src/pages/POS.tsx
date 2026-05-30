@@ -948,7 +948,7 @@ export default function POS() {
   const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
   const handleBillPrint = async () => {
     if (!activeOrderId) return;
-    triggerBillPrint(activeOrderId, existingOrder);
+    triggerBillPrint(activeOrderId, existingOrder, true);
     try {
       await apiRequest("POST", `/api/orders/${activeOrderId}/bill-requested`, {});
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
