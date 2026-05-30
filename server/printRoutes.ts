@@ -362,13 +362,13 @@ export function registerPrintRoutes(app: Express): void {
       }));
       const escPosOk = supportsRawEscPos(printer);
 
-      if (canExecutePrintOnServer() && escPosOk) {
+      if (canExecutePrintOnServer() && escPosOk && printer.type !== "usb") {
         await sendToPrinter(printer, buffer);
         await commitKotState();
         return res.json({ printed: true, isDelta, reprint });
       }
 
-      if (canExecutePrintOnServer() && !escPosOk) {
+      if (canExecutePrintOnServer() && !escPosOk && printer.type !== "usb") {
         return res.json({
           printed: false,
           browserPrint: true,
@@ -471,13 +471,13 @@ export function registerPrintRoutes(app: Express): void {
 
       const escPosOk = supportsRawEscPos(printer);
 
-      if (canExecutePrintOnServer() && escPosOk) {
+      if (canExecutePrintOnServer() && escPosOk && printer.type !== "usb") {
         await sendToPrinter(printer, buffer);
         await commitBillState();
         return res.json({ printed: true });
       }
 
-      if (canExecutePrintOnServer() && !escPosOk) {
+      if (canExecutePrintOnServer() && !escPosOk && printer.type !== "usb") {
         return res.json({
           printed: false,
           browserPrint: true,
