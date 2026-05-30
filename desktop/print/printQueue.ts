@@ -53,9 +53,11 @@ export class PrintQueue {
       const raw = fs.readFileSync(this.queueFile, "utf8");
       const saved: QueuedJob[] = JSON.parse(raw);
       // Re-enqueue only jobs that were not yet completed
-      this.queue = saved.filter(
-        (j) => j.status === "pending" || j.status === "retrying" || j.status === "processing",
-      );
+      const STALE_MS = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
+      this.queue = saved
+        .filter((j) => j.status === "pending" || j.status === "retrying" || j.status === "processing")
+        .filter((j) => now - j.createdAt < STALE_MS);
       // Reset processing jobs back to pending (they were interrupted mid-job)
       for (const j of this.queue) {
         if (j.status === "processing") j.status = "pending";
@@ -79,6 +81,22 @@ export class PrintQueue {
   }
 
   enqueue(spec: Omit<QueuedJob, "id" | "createdAt" | "status" | "retries">): string {
+    // Dedup: skip if same orderId+ackType already in-flight
+    if (spec.orderId && spec.ackType) {
+      const duplicate = this.queue.find(
+        (j) =>
+          j.orderId === spec.orderId &&
+          j.ackType === spec.ackType &&
+          (j.status === "pending" || j.status === "processing" || j.status === "retrying"),
+      );
+      if (duplicate) {
+        console.log(
+          `[printQueue] Dedup: job for order ${spec.orderId}/${spec.ackType} already queued (${duplicate.id})`,
+        );
+        return duplicate.id;
+      }
+    }
+
     const job: QueuedJob = {
       ...spec,
       id: randomBytes(8).toString("hex"),
