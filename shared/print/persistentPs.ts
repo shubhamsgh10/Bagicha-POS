@@ -137,7 +137,12 @@ export async function sendRawFast(queueName: string, data: Buffer): Promise<void
   if (process.platform !== "win32") {
     throw new Error("sendRawFast is Windows-only");
   }
-  await startSession();
+  // Fail fast if session isn't warm yet — caller falls back to sendRawLegacy immediately.
+  // Warm-up continues in background; subsequent prints use the fast path (~15ms).
+  if (!ready || !ps) {
+    if (!initPromise) startSession().catch(() => {});
+    throw new Error("PowerShell session not ready yet");
+  }
   return new Promise<void>((resolve, reject) => {
     const b64 = data.toString("base64");
     const esc = queueName.replace(/'/g, "''");
