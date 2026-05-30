@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { db } from "./db";
-import { orders, orderItems, menuItems } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { orders, orderItems, menuItems, kotTickets } from "@shared/schema";
+import { eq, asc } from "drizzle-orm";
 import { getSettings } from "./settingsStore";
 import { computeDelta, type SnapshotItem, type KotSnapshot } from "./kotDelta";
 import {
@@ -35,7 +35,7 @@ function kotTextLines(params: {
   cancelledItems: Array<{ name: string; quantity: number; size?: string | null }>;
   kotSettings: import("./settingsStore").KOTPrintSettings;
   width: number;
-  kotNumber?: number;
+  kotNumber?: string | number;
 }): string[] {
   const W = params.width;
   const M = 1;
@@ -329,10 +329,21 @@ export function registerPrintRoutes(app: Express): void {
         });
       }
 
+      // Fetch KOT tickets for this order to retrieve the sequential KOT number
+      const orderKotTickets = await db
+        .select()
+        .from(kotTickets)
+        .where(eq(kotTickets.orderId, orderId))
+        .orderBy(asc(kotTickets.id));
+
+      const kotNumStr = orderKotTickets.length > 0
+        ? (reprint ? orderKotTickets[0].kotNumber : orderKotTickets[orderKotTickets.length - 1].kotNumber)
+        : String((order.kotPrintCount ?? 0) + 1);
+
       const buffer = generateKOTBuffer({
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
-        kotNumber: (order.kotPrintCount ?? 0) + 1,
+        kotNumber: kotNumStr,
         isReprint: reprint,
         isDelta,
         newItems,
@@ -615,10 +626,21 @@ export function registerPrintRoutes(app: Express): void {
           isDelta = true;
         }
 
+        // Fetch KOT tickets for this order to retrieve the sequential KOT number
+        const orderKotTickets = await db
+          .select()
+          .from(kotTickets)
+          .where(eq(kotTickets.orderId, orderId))
+          .orderBy(asc(kotTickets.id));
+
+        const kotNumStr = orderKotTickets.length > 0
+          ? (reprint ? orderKotTickets[0].kotNumber : orderKotTickets[orderKotTickets.length - 1].kotNumber)
+          : String((order.kotPrintCount ?? 0) + 1);
+
         const lines = kotTextLines({
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
-          kotNumber: (order.kotPrintCount ?? 0) + 1,
+          kotNumber: kotNumStr,
           isReprint: reprint,
           isDelta,
           newItems,

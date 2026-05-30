@@ -35,6 +35,7 @@ export interface RestaurantSettings {
   managerAllowedPages: string[] | null; // null = all pages allowed
   staffAllowedPages: string[] | null;   // null = all pages allowed
   billCounter: number;
+  kotCounter: number;
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -91,6 +92,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   managerAllowedPages: null,
   staffAllowedPages: null,
   billCounter: 0,
+  kotCounter: 0,
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
@@ -154,6 +156,21 @@ export function incrementBillCounter(): number {
       set: { settings: settingsCache as any, updatedAt: new Date() },
     })
     .catch((err: unknown) => console.error("[settings] Bill counter save failed:", err));
+  return next;
+}
+
+// Sync — increments in-memory KOT counter immediately, persists to DB async (fire-and-forget)
+export function incrementKotCounter(): number {
+  const current = getSettings();
+  const next = (current.kotCounter ?? 0) + 1;
+  settingsCache = { ...current, kotCounter: next };
+  db.insert(restaurantSettings)
+    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: restaurantSettings.id,
+      set: { settings: settingsCache as any, updatedAt: new Date() },
+    })
+    .catch((err: unknown) => console.error("[settings] KOT counter save failed:", err));
   return next;
 }
 
