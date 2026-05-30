@@ -1,21 +1,6 @@
 import net from "net";
 import type { PrintJob, PrinterConfig } from "../types.js";
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  const delays = [0, 2_000, 5_000];
-  let last: unknown;
-  for (let i = 0; i < delays.length; i++) {
-    if (delays[i]) {
-      console.warn(`[print] retry ${i}/${delays.length - 1} for ${label}`);
-      await sleep(delays[i]);
-    }
-    try { return await fn(); } catch (e) { last = e; }
-  }
-  throw last;
-}
-
 export async function sendToNetworkPrinter(ip: string, port: number, data: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: ip, port }, () => {
@@ -48,6 +33,10 @@ export async function sendToPrinter(printer: PrinterConfig, data: Buffer): Promi
   }
 }
 
+/**
+ * Execute one print job. Single attempt — PrintQueue handles retries at the job level.
+ * (Previously had withRetry which caused 3 Windows queue entries per failure.)
+ */
 export async function executePrintJob(
   job: PrintJob,
   printers: PrinterConfig[],
@@ -60,5 +49,5 @@ export async function executePrintJob(
     throw new Error(`Printer "${job.printerId}" not found in settings`);
   }
   const buffer = Buffer.from(job.data, "base64");
-  await withRetry(`printer:${printer.id}`, () => sendToPrinter(printer, buffer));
+  await sendToPrinter(printer, buffer);
 }
