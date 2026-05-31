@@ -988,15 +988,8 @@ export default function POS() {
     setPrintPreview({ title: 'KOT Preview', lines });
   };
 
-  // Save actions — gated by manager PIN for staff
-  const handleSave = () => {
-    const go = () => { submitModeRef.current = "save"; triggerSubmit(); };
-    isStaff ? requirePin("Save Order", go) : go();
-  };
-  const handleSaveAndPrint = () => {
-    const go = () => { submitModeRef.current = "save-print"; triggerSubmit(); };
-    isStaff ? requirePin("Save & Print Bill", go) : go();
-  };
+  const handleSave = () => { submitModeRef.current = "save"; triggerSubmit(); };
+  const handleSaveAndPrint = () => { submitModeRef.current = "save-print"; triggerSubmit(); };
   const handleSaveEBill = () => {
     const go = () => {
       // Build and open WhatsApp URL right here — synchronous with user click, browser never blocks it
@@ -1033,7 +1026,7 @@ export default function POS() {
       submitModeRef.current = "save-ebill";
       triggerSubmit();
     };
-    isStaff ? requirePin("Save & E-Bill", go) : go();
+    go();
   };
 
 
