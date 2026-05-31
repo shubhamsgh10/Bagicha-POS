@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { eq } from "drizzle-orm";
+import { eq, max } from "drizzle-orm";
 import { db } from "./db";
-import { restaurantSettings } from "@shared/schema";
+import { restaurantSettings, orders } from "@shared/schema";
 
 const SETTINGS_FILE = path.join(process.cwd(), "restaurant-settings.json");
 
@@ -132,6 +132,26 @@ export async function initSettings(): Promise<void> {
       const fileSettings = loadFromFile();
       settingsCache = fileSettings;
       await db.insert(restaurantSettings).values({ id: 1, settings: fileSettings as any });
+    }
+    // Ensure billCounter is never behind the actual max order number in the DB
+    // (guards against counter reset, data import, or any out-of-sync scenario)
+    const [{ maxOrdNum }] = await db
+      .select({ maxOrdNum: max(orders.orderNumber) })
+      .from(orders);
+    if (maxOrdNum) {
+      const dbMax = parseInt(maxOrdNum.replace(/\D/g, ""), 10) || 0;
+      const cached = settingsCache!.billCounter ?? 0;
+      if (dbMax > cached) {
+        settingsCache = { ...settingsCache!, billCounter: dbMax };
+        db.insert(restaurantSettings)
+          .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
+          .onConflictDoUpdate({
+            target: restaurantSettings.id,
+            set: { settings: settingsCache as any, updatedAt: new Date() },
+          })
+          .catch((err: unknown) => console.error("[settings] Counter sync save failed:", err));
+        console.log(`[settings] billCounter synced from DB max: ${dbMax}`);
+      }
     }
   } catch (e) {
     console.error("[settings] DB init failed, using file fallback:", e);
