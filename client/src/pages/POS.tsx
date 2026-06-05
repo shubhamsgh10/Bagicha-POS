@@ -85,6 +85,7 @@ interface ModalState {
   variants: Record<string, string>;
   notes: string;
   qty: number;
+  qtyRaw: string;
 }
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
@@ -186,7 +187,8 @@ export default function POS() {
 
   // ── Role switcher + permission system ────────────────────────────────────────
   const { activeRole, loginRole, secondsLeft, isElevated, elevateRole, revertRole } = useActiveRoleContext();
-  const { can, requirePin, pinRequest, resolvePinSuccess, resolvePinCancel, isLocked, actionPinRole } = usePermission(activeRole);
+  const { data: cartPermSettings } = useQuery<any>({ queryKey: ["/api/settings"] });
+  const { can, isOff, go, requirePin, pinRequest, resolvePinSuccess, resolvePinCancel, isLocked, actionPinRole } = usePermission(activeRole, cartPermSettings?.cartPermissions);
   const isAdmin = activeRole === "admin";
   const isStaff = activeRole === "staff";
 
@@ -761,7 +763,7 @@ export default function POS() {
   // ── Unified modifier modal helpers ──────────────────────────────────────────
 
   const openPicker = (item: any) => {
-    setModal({ item, cartKey: null, isEdit: false, size: null, addons: [], variants: {}, notes: "", qty: 1 });
+    setModal({ item, cartKey: null, isEdit: false, size: null, addons: [], variants: {}, notes: "", qty: 1, qtyRaw: "1" });
   };
 
   const openEditPicker = (cartItem: CartItem) => {
@@ -781,6 +783,7 @@ export default function POS() {
       variants: { ...cartItem.variants },
       notes: cartItem.notes || "",
       qty: cartItem.quantity,
+      qtyRaw: String(cartItem.quantity),
     });
   };
 
@@ -1030,7 +1033,7 @@ export default function POS() {
   };
 
 
-  const handleComplimentary = () => requirePin("Complimentary (100% Discount)", () => setDiscountPercent(100));
+  const handleComplimentary = () => go("complimentary", "Complimentary (100% Discount)", () => setDiscountPercent(100));
 
   const handleShortCode = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || !shortCode.trim()) return;
@@ -1366,12 +1369,12 @@ export default function POS() {
 
             {/* New Order — hidden on mobile */}
             <button
-              disabled={!can("newOrder")}
-              onClick={() => requirePin("New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
+              disabled={isOff("clearCart")}
+              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
               + New Order
-              {!can("newOrder") && <Lock className="w-3 h-3 opacity-60" />}
+              {isOff("clearCart") && <Lock className="w-3 h-3 opacity-60" />}
             </button>
           </div>
 
@@ -1519,11 +1522,12 @@ export default function POS() {
               );
             })()}
 
-            {/* Customer phone */}
+            {/* Customer phone — controlled (not form.register) to avoid duplicate-name conflict with mobile input */}
             <input
               placeholder="Phone number"
-              {...form.register("customerPhone")}
               autoFocus={!!posMode}
+              value={form.watch("customerPhone") || ""}
+              onChange={(e) => form.setValue("customerPhone", e.target.value)}
               className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
             />
 
@@ -1540,13 +1544,13 @@ export default function POS() {
               {showActionsMenu && (
                 <div className="absolute right-0 top-full mt-1 z-50 w-44 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
                   {[
-                    { label: "Move Table",   action: () => openAction(() => requirePin("Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
-                    { label: "Merge Table",  action: () => openAction(() => requirePin("Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
-                    { label: "Split Bill",   action: () => openAction(() => requirePin("Split Bill",    () => { setSplitSelectedIds([]); setShowSplitDialog(true); })), icon: "⊘", permKey: "splitBill"   as const },
-                    { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                            icon: "↩", permKey: null },
-                    { label: "Cancel Order", action: () => openAction(() => requirePin("Cancel Order",  () => setShowCancelConfirm(true))),                            icon: "✕", permKey: "cancelOrder" as const, danger: true },
+                    { label: "Move Table",   action: () => openAction(() => go("moveTable",   "Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
+                    { label: "Merge Table",  action: () => openAction(() => go("mergeTable",  "Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
+                    { label: "Split Bill",   action: () => openAction(() => go("splitBill",   "Split Bill",    () => { setSplitSelectedIds([]); setShowSplitDialog(true); })), icon: "⊘", permKey: "splitBill"   as const },
+                    { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                                   icon: "↩", permKey: null },
+                    { label: "Cancel Order", action: () => openAction(() => go("cancelOrder", "Cancel Order",  () => setShowCancelConfirm(true))),                            icon: "✕", permKey: "cancelOrder" as const, danger: true },
                   ].map((item) => {
-                    const allowed = item.permKey === null ? true : can(item.permKey);
+                    const allowed = item.permKey === null ? true : !isOff(item.permKey);
                     return (
                       <button
                         key={item.label}
@@ -1709,14 +1713,35 @@ export default function POS() {
                 {/* Qty control */}
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setModal(m => m ? { ...m, qty: Math.max(1, m.qty - 1) } : m)}
+                    onClick={() => {
+                      const next = Math.max(0.5, modal.qty - 1);
+                      setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
+                    }}
                     className="w-9 h-9 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition-colors"
                   >
                     <Minus className="w-4 h-4 text-gray-700" />
                   </button>
-                  <span className="text-xl font-bold text-gray-800 w-7 text-center">{modal.qty}</span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.5"
+                    value={modal.qtyRaw}
+                    onChange={e => setModal(m => m ? { ...m, qtyRaw: e.target.value } : m)}
+                    onBlur={e => {
+                      const v = parseFloat(e.target.value);
+                      const safe = !isNaN(v) && v >= 0.5 ? Math.round(v * 100) / 100 : modal.qty;
+                      setModal(m => m ? { ...m, qty: safe, qtyRaw: String(safe) } : m);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                    className="text-xl font-bold text-gray-800 w-14 text-center border border-gray-200 rounded-lg outline-none focus:border-green-400 bg-white py-0.5"
+                  />
                   <button
-                    onClick={() => setModal(m => m ? { ...m, qty: m.qty + 1 } : m)}
+                    onClick={() => {
+                      const next = modal.qty + 1;
+                      setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
+                    }}
                     className="w-9 h-9 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center transition-colors"
                   >
                     <Plus className="w-4 h-4" />
@@ -1726,8 +1751,8 @@ export default function POS() {
                 <div className="text-right">
                   <div className="text-[10px] text-gray-400 uppercase font-semibold">Total</div>
                   <div className="text-2xl font-bold text-green-700">{fmt(modalUnitTotal * modal.qty)}</div>
-                  {modal.qty > 1 && (
-                    <div className="text-[10px] text-gray-400">{fmt(modalUnitTotal)} × {modal.qty}</div>
+                  {modal.qty !== 1 && (
+                    <div className="text-[10px] text-gray-400">{fmt(modalUnitTotal)} × {modal.qty % 1 === 0 ? modal.qty : modal.qty.toFixed(1)}</div>
                   )}
                 </div>
               </div>
@@ -1743,7 +1768,7 @@ export default function POS() {
                     ? "Select required options"
                     : modal.isEdit
                       ? "Update Item"
-                      : `Add ${modal.qty > 1 ? `${modal.qty} × ` : ""}to Order · ${fmt(modalUnitTotal * modal.qty)}`}
+                      : `Add ${modal.qty !== 1 ? `${modal.qty % 1 === 0 ? modal.qty : modal.qty.toFixed(1)} × ` : ""}to Order · ${fmt(modalUnitTotal * modal.qty)}`}
               </button>
             </div>
 
@@ -1796,7 +1821,8 @@ export default function POS() {
         <input
           placeholder="Phone number"
           type="tel"
-          {...form.register("customerPhone")}
+          value={form.watch("customerPhone") || ""}
+          onChange={(e) => form.setValue("customerPhone", e.target.value)}
           className="w-32 px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
         />
       </div>
@@ -1962,8 +1988,8 @@ export default function POS() {
             </div>
             {hasItems && (
               <button
-                disabled={activeRole === "staff"}
-                onClick={() => requirePin("Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
+                disabled={isOff("clearCart")}
+                onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
                 className="text-[10px] text-gray-400 hover:text-green-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
               >
                 Clear all
@@ -2002,12 +2028,12 @@ export default function POS() {
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
                     </div>
-                    <div className="flex items-center gap-0.5 w-14 justify-center">
-                      <button onClick={() => updateQty(item.cartKey, item.quantity - 1)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
+                    <div className="flex items-center gap-0.5 w-16 justify-center">
+                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity - 0.5) * 10) / 10)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
                         <Minus className="w-2.5 h-2.5" />
                       </button>
-                      <span className="text-xs font-bold w-5 text-center">{item.quantity}</span>
-                      <button onClick={() => updateQty(item.cartKey, item.quantity + 1)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
+                      <span className="text-xs font-bold w-7 text-center">{item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}</span>
+                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity + 0.5) * 10) / 10)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
                         <Plus className="w-2.5 h-2.5" />
                       </button>
                     </div>
@@ -2020,13 +2046,13 @@ export default function POS() {
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <button onClick={() => requirePin("Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5">
+                    <button disabled={isOff("editItem")} onClick={() => go("editItem", "Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Edit2 className="w-2.5 h-2.5" />Edit
-                      {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                      {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
-                    <button onClick={() => requirePin("Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5">
+                    <button disabled={isOff("removeItem")} onClick={() => go("removeItem", "Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Trash2 className="w-2.5 h-2.5" />Remove
-                      {!isAdmin && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                      {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
                   </div>
                 </div>
@@ -2079,7 +2105,7 @@ export default function POS() {
             <div className="flex items-center gap-1 text-xs">
               <span className="text-gray-500 flex-1 flex items-center gap-1">
                 Discount
-                {!can("discount") && <Lock className="w-2.5 h-2.5 opacity-40" />}
+                {isOff("discount") && <Lock className="w-2.5 h-2.5 opacity-40" />}
                 {discountAmt > 0 && (
                   <span className="text-green-600 ml-1">(-{fmt(discountAmt)})</span>
                 )}
@@ -2090,12 +2116,12 @@ export default function POS() {
                   type="number"
                   min="0"
                   max="100"
-                  disabled={!can("discount")}
+                  disabled={isOff("discount")}
                   value={discountPercent || ""}
                   onFocus={() => {
-                    if (isLocked()) {
+                    if (!isOff("discount") && isLocked()) {
                       discountInputRef.current?.blur();
-                      requirePin("Edit Discount", () => setTimeout(() => discountInputRef.current?.focus(), 50));
+                      go("discount", "Edit Discount", () => setTimeout(() => discountInputRef.current?.focus(), 50));
                     }
                   }}
                   onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
@@ -2143,64 +2169,69 @@ export default function POS() {
             {/* Split + Complimentary */}
             <div className="grid grid-cols-2 gap-1">
               <button
-                disabled={!activeOrderId || isPending || !can("splitBill")}
-                onClick={() => requirePin("Split Bill", () => { setSplitSelectedIds([]); setShowSplitDialog(true); })}
+                disabled={!activeOrderId || isPending || isOff("splitBill")}
+                onClick={() => go("splitBill", "Split Bill", () => { setSplitSelectedIds([]); setShowSplitDialog(true); })}
                 className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 Split
-                {!can("splitBill") && <Lock className="w-2 h-2 opacity-50" />}
+                {isOff("splitBill") && <Lock className="w-2 h-2 opacity-50" />}
               </button>
               <button
-                disabled={!hasItems || isPending || !can("complimentary")}
+                disabled={!hasItems || isPending || isOff("complimentary")}
                 onClick={handleComplimentary}
                 className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 Complimentary
-                {!can("complimentary") && <Lock className="w-2 h-2 opacity-50" />}
+                {isOff("complimentary") && <Lock className="w-2 h-2 opacity-50" />}
               </button>
             </div>
 
             {/* KOT / Bill row */}
             <div className="grid grid-cols-2 gap-1">
               <button
-                disabled={!hasItems || isPending}
-                onClick={handleKOT}
-                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!hasItems || isPending || isOff("printKot")}
+                onClick={() => go("printKot", "Print KOT", handleKOT)}
+                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 KOT
+                {isOff("printKot") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
               <button
-                disabled={!activeOrderId || isPending}
-                onClick={handleBillPrint}
+                disabled={!activeOrderId || isPending || isOff("printBill")}
+                onClick={() => go("printBill", "Print Bill", handleBillPrint)}
                 className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 <Printer className="w-3 h-3" />
                 Bill
+                {isOff("printBill") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>
 
             {/* Save + Hold + Settle row */}
             <div className="grid grid-cols-3 gap-1">
               <button
-                disabled={!hasItems || isPending}
-                onClick={handleSave}
-                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!hasItems || isPending || isOff("saveOrder")}
+                onClick={() => go("saveOrder", "Save Order", handleSave)}
+                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 {(createOrderMutation.isPending || updateOrderMutation.isPending) && submitModeRef.current === "save" ? "Saving..." : "Save"}
+                {isOff("saveOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
               <button
-                disabled={!activeOrderId || isPending}
-                onClick={() => setShowHoldConfirm(true)}
-                className="py-1.5 rounded text-[10px] font-semibold border border-amber-300 text-amber-600 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!activeOrderId || isPending || isOff("holdOrder")}
+                onClick={() => go("holdOrder", "Hold Order", () => setShowHoldConfirm(true))}
+                className="py-1.5 rounded text-[10px] font-semibold border border-amber-300 text-amber-600 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 Hold
+                {isOff("holdOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
               <button
-                disabled={!hasItems || isPending}
-                onClick={handleSettle}
-                className="py-1.5 rounded text-[10px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={!hasItems || isPending || isOff("settleOrder")}
+                onClick={() => go("settleOrder", "Settle Order", handleSettle)}
+                className="py-1.5 rounded text-[10px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >
                 {settlePhase === "printing" ? "Printing…" : (settleMutation.isPending || settlePhase === "processing") ? "…" : "Settle"}
+                {isOff("settleOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>
           </div>

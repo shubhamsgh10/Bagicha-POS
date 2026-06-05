@@ -33,6 +33,7 @@ import {
   upsertCustomerProfile,
   syncLocalStorageExtras,
   dbProfileToExtra,
+  backfillOrderPhone,
 } from "./services/crm/customerIdService";
 import {
   getCustomerEvents,
@@ -45,7 +46,7 @@ import {
 } from "./services/crm/segmentationService";
 import { getRecommendations } from "./services/crm/recommendationService";
 import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
-import { runAutomationServerSide } from "./services/crm/automationRuleEngine";
+import { runAutomationServerSide, triggerWelcomeIfEligible } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -1409,7 +1410,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { items, ...orderInfo } = req.body;
       const orderNumber = `ORD${String(incrementBillCounter()).padStart(4, "0")}`;
-      const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: (req.user as any)?.id ?? null });
+      const actor = req.user as any;
+      const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: actor?.id ?? null, createdByName: actor?.username ?? null });
 
       // Create order items
       if (items && items.length > 0) {
@@ -1469,6 +1471,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         runSegmentationForCustomer(crmKey, crmName, order.customerPhone)
           .catch(e => console.warn("[CRM] segmentation failed:", e));
+
+        // Immediate welcome for brand-new customers (fires if automation is enabled + phone present)
+        triggerWelcomeIfEligible(crmKey, crmName, order.customerPhone)
+          .catch(e => console.warn("[CRM] welcome trigger failed:", e));
       }
 
       res.json(order);
@@ -1514,12 +1520,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, 0);
       const total = taxable + tax + containerCharge;
 
+      const actor = req.user as any;
       const order = await storage.updateOrder(id, {
         totalAmount: total.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: discount.toFixed(2),
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
+        ...(actor?.username ? { createdByName: actor.username } : {}),
       } as any);
 
       // Delta KOT — only print items newly added to this order
@@ -2069,6 +2077,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/reports/staff-tables", requireAuth, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = (() => { const d = new Date((startDate as string) || new Date().toISOString().slice(0, 10)); d.setUTCHours(0, 0, 0, 0); return d; })();
+      const end   = (() => { const d = new Date((endDate   as string) || new Date().toISOString().slice(0, 10)); d.setUTCHours(23, 59, 59, 999); return d; })();
+      const report = await storage.getStaffTableReport(start, end);
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get staff-table report" });
+    }
+  });
+
   app.get("/api/reports/top-items", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
@@ -2298,7 +2318,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customerId = await resolveCustomerId(key, name, phone);
       const profile    = await upsertCustomerProfile(customerId, extra as any);
 
-      res.json({ ok: true, id: customerId, profile: dbProfileToExtra(profile) });
+      // Backfill phone into any past orders that had no phone for this customer
+      let backfilled = 0;
+      if (phone && (key || name)) {
+        backfilled = await backfillOrderPhone(key, name, phone);
+      }
+
+      res.json({ ok: true, id: customerId, profile: dbProfileToExtra(profile), backfilled });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }

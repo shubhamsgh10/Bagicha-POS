@@ -297,8 +297,62 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
           Reads <code>customer_profiles.dob</code> & <code>anniversary</code> matching today's MM-DD.
           Auto-issues a coupon (15% off birthday / 20% off anniversary) and sends WhatsApp wish.
         </p>
+
+        {/* WhatsApp not configured warning */}
+        {!config.metaPhoneNumberId && !config.metaAccessToken && !config.razorpayKeyId && (
+          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-700">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>
+              <strong>WhatsApp not configured.</strong> Messages will run in dry-run mode
+              (logged only, not sent). Add Meta API or WATI credentials in the Automation panel
+              (Customers tab → Settings) to send real messages.
+            </span>
+          </div>
+        )}
+
         <button
-          onClick={() => action("Run birthday scan", "/api/automation/birthday/run")}
+          onClick={async () => {
+            setBusyAction("Run birthday scan");
+            try {
+              const res = await fetch("/api/automation/birthday/run", {
+                method: "POST", credentials: "include",
+              });
+              const data = await res.json() as {
+                ok?: boolean; scanned?: number; birthdaysSent?: number;
+                anniversariesSent?: number; dryRun?: number; failed?: number;
+                skipped?: number; whatsappConfigured?: boolean; error?: string;
+              };
+              if (!res.ok) throw new Error(data?.error ?? "Scan failed");
+
+              const sent  = (data.birthdaysSent ?? 0) + (data.anniversariesSent ?? 0);
+              const dry   = data.dryRun ?? 0;
+              const total = sent + dry;
+
+              if (total === 0 && (data.scanned ?? 0) === 0) {
+                toast({ title: "Scan complete", description: "No customers with DOB/anniversary in DB yet. Save a customer's date in the Edit Customer dialog first." });
+              } else if (dry > 0 && sent === 0) {
+                toast({
+                  title: "Dry-run only — WhatsApp not configured",
+                  description: `Found ${total} customer(s) with today's birthday/anniversary but no WhatsApp API is configured. Messages were logged only. Configure Meta or WATI credentials to send real messages.`,
+                  variant: "destructive",
+                });
+              } else if (sent > 0) {
+                toast({
+                  title: `Sent ${sent} message${sent !== 1 ? "s" : ""} 🎂`,
+                  description: `${data.birthdaysSent ?? 0} birthday · ${data.anniversariesSent ?? 0} anniversary · ${data.skipped ?? 0} skipped · ${data.failed ?? 0} failed`,
+                });
+              } else {
+                toast({
+                  title: "Scan complete",
+                  description: `Scanned ${data.scanned ?? 0} · ${data.skipped ?? 0} skipped · ${data.failed ?? 0} failed`,
+                });
+              }
+            } catch (e: any) {
+              toast({ title: "Scan failed", description: e?.message, variant: "destructive" });
+            } finally {
+              setBusyAction(null);
+            }
+          }}
           disabled={busyAction === "Run birthday scan"}
           className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-pink-700 border border-pink-200 bg-pink-50 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50"
         >

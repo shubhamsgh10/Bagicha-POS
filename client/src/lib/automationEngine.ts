@@ -14,6 +14,7 @@ export interface AutomationSettings {
   cooldownHours: number;          // min hours between messages to same customer
   vipEnabled: boolean;            // enable VIP_REWARD trigger
   welcomeEnabled: boolean;        // enable WELCOME trigger
+  birthdayEnabled: boolean;       // enable BIRTHDAY trigger
   maxPerRun: number;              // max messages per single run
   // WATI credentials
   watiApiKey: string;
@@ -21,6 +22,8 @@ export interface AutomationSettings {
   // Meta WhatsApp Cloud API credentials
   metaPhoneNumberId: string;      // WhatsApp Phone Number ID from Meta Developer Console
   metaAccessToken: string;        // System User permanent access token
+  // Custom message templates (per trigger). Empty string = use default.
+  messageTemplates: Partial<Record<TriggerType, string>>;
 }
 
 const SETTINGS_KEY = "bagicha_automation_settings";
@@ -36,11 +39,13 @@ export const DEFAULT_SETTINGS: AutomationSettings = {
   cooldownHours: 24,
   vipEnabled: true,
   welcomeEnabled: true,
+  birthdayEnabled: true,
   maxPerRun: 20,
   watiApiKey: "",
   watiEndpoint: "",
   metaPhoneNumberId: "",
   metaAccessToken: "",
+  messageTemplates: {},
 };
 
 export function loadAutomationSettings(): AutomationSettings {
@@ -73,7 +78,8 @@ export type TriggerType =
   | "VIP_REWARD"
   | "WIN_BACK"
   | "WELCOME"
-  | "FAVORITE_ITEM";
+  | "FAVORITE_ITEM"
+  | "BIRTHDAY";
 
 export type MessageChannel = "web" | "wati" | "meta";
 
@@ -173,6 +179,15 @@ export function clearAutomationLog(): void {
 interface CustomerExtra {
   doNotSendUpdate: boolean;
   notificationEnabled: boolean;
+  dateOfBirth?: string;  // "YYYY-MM-DD" from CRM extras
+}
+
+function isBirthdayToday(dob: string): boolean {
+  const parts = dob.split("-");
+  if (parts.length < 3) return false;
+  const today = new Date();
+  return parseInt(parts[1], 10) === today.getMonth() + 1 &&
+         parseInt(parts[2], 10) === today.getDate();
 }
 
 /**
@@ -184,13 +199,18 @@ export function evaluateCustomerTrigger(
   extra: CustomerExtra,
   settings?: Pick<
     AutomationSettings,
-    "inactivityDays" | "vipEnabled" | "welcomeEnabled"
+    "inactivityDays" | "vipEnabled" | "welcomeEnabled" | "birthdayEnabled"
   >
 ): TriggerType | null {
   // Safety gates
   if (extra.doNotSendUpdate) return null;
   if (!extra.notificationEnabled) return null;
   if (!customer.phone) return null;
+
+  // Birthday — highest priority, fires only on the actual day
+  if (settings?.birthdayEnabled ?? true) {
+    if (extra.dateOfBirth && isBirthdayToday(extra.dateOfBirth)) return "BIRTHDAY";
+  }
 
   const { tag, daysSinceLastVisit, totalVisits } = customer;
   const inactivityDays = settings?.inactivityDays ?? 7;
@@ -208,45 +228,62 @@ export function evaluateCustomerTrigger(
 
 const RESTAURANT = "Bagicha";
 
+/**
+ * Default message templates using substitution tokens:
+ *   {name}       — customer first name
+ *   {restaurant} — restaurant name
+ *   {visits}     — total visit count
+ *   {days}       — days since last visit
+ *   {favItem}    — favourite menu item (falls back to "our food")
+ */
+export const DEFAULT_MESSAGE_TEMPLATES: Record<TriggerType, string> = {
+  BIRTHDAY:
+    `🎂 Happy Birthday, {name}! 🎉 Wishing you a wonderful day from all of us at *{restaurant}*! ` +
+    `As a special birthday treat, enjoy *15% off* your meal today — just show this message. ` +
+    `Hope to celebrate with you soon! 🥳`,
+  WIN_BACK:
+    `Hi {name}! 🌿 We've been missing you at *{restaurant}*! ` +
+    `It's been {days} days since your last visit. ` +
+    `Come back and enjoy *10% off* your next order — just show this message. Valid for 7 days. See you soon! 🍽️`,
+  AT_RISK:
+    `Hi {name}! 🙏 We noticed it's been a while since you visited *{restaurant}*. ` +
+    `We'd love to have you back! Here's a little treat: *complimentary dessert* on your next visit. ` +
+    `Simply show this message. Hope to see you soon! 😊`,
+  VIP_REWARD:
+    `Hi {name}! ⭐ As one of our most valued guests at *{restaurant}* with {visits} visits, ` +
+    `we truly appreciate your loyalty. Enjoy a *complimentary starter* on your next visit — ` +
+    `just show this message at the counter. Thank you for being special! 🙏`,
+  WELCOME:
+    `Hi {name}! 🎉 Welcome to the *{restaurant}* family! We're so glad you dined with us. ` +
+    `As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. ` +
+    `Looking forward to serving you again! 🌿`,
+  FAVORITE_ITEM:
+    `Hi {name}! 😋 We know you love *{favItem}* at *{restaurant}*! ` +
+    `Come back soon and enjoy your favourite again. Show this message for a *special discount*. See you soon! 🍽️`,
+};
+
+function applyTemplate(
+  template: string,
+  customer: CustomerProfile,
+  favoriteItem?: string | null,
+  restaurant = RESTAURANT
+): string {
+  return template
+    .replace(/\{name\}/g,       customer.name.split(" ")[0])
+    .replace(/\{restaurant\}/g, restaurant)
+    .replace(/\{visits\}/g,     String(customer.totalVisits))
+    .replace(/\{days\}/g,       String(customer.daysSinceLastVisit))
+    .replace(/\{favItem\}/g,    favoriteItem ?? "our food");
+}
+
 export function generatePersonalizedMessage(
   customer: CustomerProfile,
   trigger: TriggerType,
-  favoriteItem?: string | null
+  favoriteItem?: string | null,
+  messageTemplates?: Partial<Record<TriggerType, string>>
 ): string {
-  const name    = customer.name.split(" ")[0];
-  const favPart = favoriteItem ? ` (especially your favourite *${favoriteItem}*)` : "";
-
-  switch (trigger) {
-    case "WIN_BACK":
-      return (
-        `Hi ${name}! 🌿 We've been missing you at *${RESTAURANT}*! ` +
-        `It's been ${customer.daysSinceLastVisit} days since your last visit${favPart}. ` +
-        `Come back and enjoy *10% off* your next order — just show this message. Valid for 7 days. See you soon! 🍽️`
-      );
-    case "AT_RISK":
-      return (
-        `Hi ${name}! 🙏 We noticed it's been a while since you visited *${RESTAURANT}*. ` +
-        `We'd love to have you back! Here's a little treat: *complimentary dessert* on your next visit. ` +
-        `Simply show this message. Hope to see you soon! 😊`
-      );
-    case "VIP_REWARD":
-      return (
-        `Hi ${name}! ⭐ As one of our most valued guests at *${RESTAURANT}* with ${customer.totalVisits} visits, ` +
-        `we truly appreciate your loyalty. Enjoy a *complimentary starter* on your next visit — ` +
-        `just show this message at the counter. Thank you for being special! 🙏`
-      );
-    case "WELCOME":
-      return (
-        `Hi ${name}! 🎉 Welcome to the *${RESTAURANT}* family! We're so glad you dined with us. ` +
-        `As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. ` +
-        `Looking forward to serving you again! 🌿`
-      );
-    case "FAVORITE_ITEM":
-      return (
-        `Hi ${name}! 😋 We know you love *${favoriteItem ?? "our food"}* at *${RESTAURANT}*! ` +
-        `Come back soon and enjoy your favourite again. Show this message for a *special discount*. See you soon! 🍽️`
-      );
-  }
+  const tpl = messageTemplates?.[trigger] || DEFAULT_MESSAGE_TEMPLATES[trigger];
+  return applyTemplate(tpl, customer, favoriteItem);
 }
 
 // Alias used in requirement docs
@@ -255,23 +292,77 @@ export const generateFollowUpMessage = generatePersonalizedMessage;
 // ── Priority scoring ──────────────────────────────────────────────────────────
 
 const TRIGGER_PRIORITY: Record<TriggerType, number> = {
-  WIN_BACK:     0,
-  AT_RISK:      1,
-  VIP_REWARD:   2,
-  WELCOME:      3,
-  FAVORITE_ITEM: 4,
+  BIRTHDAY:     0,
+  WIN_BACK:     1,
+  AT_RISK:      2,
+  VIP_REWARD:   3,
+  WELCOME:      4,
+  FAVORITE_ITEM: 5,
 };
 
 export const TRIGGER_LABELS: Record<
   TriggerType,
   { label: string; color: string; emoji: string }
 > = {
-  WIN_BACK:     { label: "Win-Back",   color: "text-red-600 bg-red-50 border-red-200",            emoji: "🎁" },
-  AT_RISK:      { label: "At Risk",    color: "text-orange-600 bg-orange-50 border-orange-200",   emoji: "⚠️" },
-  VIP_REWARD:   { label: "VIP Reward", color: "text-amber-600 bg-amber-50 border-amber-200",      emoji: "⭐" },
+  BIRTHDAY:     { label: "Birthday",   color: "text-pink-600 bg-pink-50 border-pink-200",          emoji: "🎂" },
+  WIN_BACK:     { label: "Win-Back",   color: "text-red-600 bg-red-50 border-red-200",             emoji: "🎁" },
+  AT_RISK:      { label: "At Risk",    color: "text-orange-600 bg-orange-50 border-orange-200",    emoji: "⚠️" },
+  VIP_REWARD:   { label: "VIP Reward", color: "text-amber-600 bg-amber-50 border-amber-200",       emoji: "⭐" },
   WELCOME:      { label: "Welcome",    color: "text-emerald-600 bg-emerald-50 border-emerald-200", emoji: "🎉" },
   FAVORITE_ITEM:{ label: "Fav Item",   color: "text-purple-600 bg-purple-50 border-purple-200",   emoji: "😋" },
 };
+
+// ── Blocked customer identification ──────────────────────────────────────────
+
+export interface BlockedCustomer {
+  customer: CustomerProfile;
+  trigger: TriggerType;
+  reason: "no_phone" | "opted_out";
+}
+
+/**
+ * Returns customers who would match a follow-up trigger but can't be messaged
+ * because of a missing phone number or opt-out. Used to surface actionable
+ * gaps in the Queue tab so the admin knows what's preventing sends.
+ */
+export function getBlockedCustomers(
+  customers: CustomerProfile[],
+  extras: Record<string, { doNotSendUpdate: boolean; notificationEnabled: boolean }>,
+  settings?: AutomationSettings
+): BlockedCustomer[] {
+  const blocked: BlockedCustomer[] = [];
+  const cooldownHours = settings?.cooldownHours ?? 24;
+
+  for (const customer of customers) {
+    if (hasBeenMessagedWithinCooldown(customer.key, cooldownHours)) continue;
+    const extra = extras[customer.key] ?? { doNotSendUpdate: false, notificationEnabled: true };
+
+    // Determine reason for being blocked
+    let reason: BlockedCustomer["reason"] | null = null;
+    if (extra.doNotSendUpdate || !extra.notificationEnabled) {
+      reason = "opted_out";
+    } else if (!customer.phone) {
+      reason = "no_phone";
+    }
+    if (!reason) continue;
+
+    // Would they trigger if the block were resolved? Evaluate with a permissive check.
+    const { tag, daysSinceLastVisit, totalVisits } = customer;
+    const inactivityDays = settings?.inactivityDays ?? 7;
+    const winBackDays    = Math.max(inactivityDays * 3, 30);
+
+    let trigger: TriggerType | null = null;
+    const dob = (extra as any).dateOfBirth as string | undefined;
+    if ((settings?.birthdayEnabled ?? true) && dob && isBirthdayToday(dob)) trigger = "BIRTHDAY";
+    else if (daysSinceLastVisit >= winBackDays) trigger = "WIN_BACK";
+    else if (tag === "At Risk" && daysSinceLastVisit >= inactivityDays) trigger = "AT_RISK";
+    else if (tag === "VIP" && (settings?.vipEnabled ?? true)) trigger = "VIP_REWARD";
+    else if (tag === "New" && totalVisits === 1 && (settings?.welcomeEnabled ?? true)) trigger = "WELCOME";
+
+    if (trigger) blocked.push({ customer, trigger, reason });
+  }
+  return blocked;
+}
 
 // ── Eligible customer extraction ──────────────────────────────────────────────
 
@@ -317,7 +408,7 @@ export function buildFollowUpQueue(
     if (!trigger) continue;
 
     const favItem = favoriteItems?.[customer.key] ?? null;
-    const message = generatePersonalizedMessage(customer, trigger, favItem);
+    const message = generatePersonalizedMessage(customer, trigger, favItem, settings?.messageTemplates);
 
     queue.push({
       customer,

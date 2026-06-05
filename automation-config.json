@@ -19,8 +19,11 @@
   "feedbackEnabled": false,
   "feedbackDelayMinutes": 120,
   "feedbackBaseUrl": "",
-  "birthdayEnabled": false,
+  "birthdayEnabled": true,
   "birthdayHour": 9,
+  "serverAutomationHour": 10,
+  "msg91AuthKey": "",
+  "msg91SenderId": "",
   "attendanceSheetUrl": "",
   "attendanceColumnMapping": null,
   "attendanceAutoSyncHour": -1

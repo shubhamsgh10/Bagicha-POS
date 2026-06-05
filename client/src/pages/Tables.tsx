@@ -11,7 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer,
+  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer, UserRound,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +28,7 @@ interface Table {
   section: string;
   runningTotal?: number;
   orderCreatedAt?: string;
+  servedByName?: string | null;
 }
 
 const SECTION_OPTIONS = [
@@ -378,6 +379,58 @@ export default function Tables() {
       {/* ── Table Grid ─────────────────────────────────────────────────────────── */}
       <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 sm:space-y-8">
         <LiveOrdersStrip deliveryOrders={deliveryOrders} pickupOrders={pickupOrders} />
+
+        {/* ── Staff on Floor panel ─────────────────────────────────────── */}
+        {runningTables.length > 0 && (() => {
+          const byStaff = runningTables.reduce((acc, t) => {
+            const key = t.servedByName || "—";
+            (acc[key] ??= []).push(t.name);
+            return acc;
+          }, {} as Record<string, string[]>);
+          return (
+            <div
+              className="rounded-2xl px-4 py-3"
+              style={{
+                background: "rgba(255,255,255,0.55)",
+                backdropFilter: "blur(14px) saturate(1.6)",
+                WebkitBackdropFilter: "blur(14px) saturate(1.6)",
+                border: "1px solid rgba(147,197,253,0.35)",
+                boxShadow: "0 2px 12px rgba(59,130,246,0.07)",
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2.5">
+                <UserRound className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                  Staff on floor
+                </span>
+                <span className="text-xs text-blue-400 font-medium">
+                  · {runningTables.length} table{runningTables.length !== 1 ? "s" : ""} active
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(byStaff).map(([name, tableNames]) => (
+                  <div
+                    key={name}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
+                    style={{
+                      background: name === "—" ? "rgba(0,0,0,0.04)" : "rgba(59,130,246,0.08)",
+                      border: name === "—" ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(147,197,253,0.45)",
+                    }}
+                  >
+                    <span className={`text-xs font-semibold ${name === "—" ? "text-zinc-400" : "text-blue-700"}`}>
+                      {name}
+                    </span>
+                    <span className="text-[10px] text-zinc-400">→</span>
+                    <span className="text-xs text-zinc-600 font-medium">
+                      {tableNames.join(", ")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {isLoading ? (
           <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 gap-3">
             {[...Array(16)].map((_, i) => (
@@ -459,6 +512,12 @@ export default function Tables() {
                             {table.status === "running" && table.runningTotal != null && (
                               <p className={`text-xs font-semibold mt-0.5 ${cfg.subText}`}>
                                 {fmt(table.runningTotal)}
+                              </p>
+                            )}
+                            {table.status === "running" && table.servedByName && (
+                              <p className="flex items-center gap-0.5 text-[10px] font-medium mt-0.5 text-blue-500 truncate">
+                                <UserRound className="w-2.5 h-2.5 shrink-0" />
+                                {table.servedByName}
                               </p>
                             )}
                             {table.status === "free" && (

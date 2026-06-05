@@ -315,6 +315,52 @@ export class DatabaseStorage implements IStorage {
     ).orderBy(desc(orders.createdAt));
   }
 
+  async getStaffTableReport(startDate: Date, endDate: Date): Promise<Array<{
+    date: string;
+    staff: string;
+    tables: string[];
+    orderCount: number;
+    revenue: number;
+  }>> {
+    const rows = await db
+      .select({
+        date: sql<string>`DATE(${orders.createdAt})`,
+        staff: orders.createdByName,
+        tableNumber: orders.tableNumber,
+        orderCount: sql<number>`COUNT(*)`,
+        revenue: sql<number>`SUM(CAST(${orders.totalAmount} AS numeric))`,
+      })
+      .from(orders)
+      .where(and(
+        gte(orders.createdAt, startDate),
+        lte(orders.createdAt, endDate),
+        sql`${orders.tableNumber} IS NOT NULL`,
+        sql`${orders.createdByName} IS NOT NULL`,
+      ))
+      .groupBy(sql`DATE(${orders.createdAt})`, orders.createdByName, orders.tableNumber)
+      .orderBy(sql`DATE(${orders.createdAt}) DESC`, orders.createdByName);
+
+    // Merge rows with the same date+staff, collecting distinct tables
+    const map = new Map<string, { date: string; staff: string; tables: Set<string>; orderCount: number; revenue: number }>();
+    for (const r of rows) {
+      const key = `${r.date}__${r.staff}`;
+      if (!map.has(key)) {
+        map.set(key, { date: r.date, staff: r.staff!, tables: new Set(), orderCount: 0, revenue: 0 });
+      }
+      const entry = map.get(key)!;
+      if (r.tableNumber) entry.tables.add(r.tableNumber);
+      entry.orderCount += Number(r.orderCount);
+      entry.revenue += Number(r.revenue);
+    }
+    return Array.from(map.values() as any).map((e: any) => ({
+      date: e.date as string,
+      staff: e.staff as string,
+      tables: Array.from(e.tables as Set<string>).sort() as string[],
+      orderCount: e.orderCount as number,
+      revenue: e.revenue as number,
+    }));
+  }
+
   async createOrder(order: InsertOrder): Promise<Order> {
     const [newOrder] = await db.insert(orders).values({
       ...(order as any),
@@ -405,7 +451,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Tables
-  async getTables(): Promise<(Table & { runningTotal?: number; orderCreatedAt?: string })[]> {
+  async getTables(): Promise<(Table & { runningTotal?: number; orderCreatedAt?: string; servedByName?: string | null })[]> {
     const rows = await db
       .select({
         id: tables.id,
@@ -416,6 +462,7 @@ export class DatabaseStorage implements IStorage {
         section: tables.section,
         runningTotal: orders.totalAmount,
         orderCreatedAt: orders.createdAt,
+        servedByName: orders.createdByName,
       })
       .from(tables)
       .leftJoin(orders, eq(tables.currentOrderId, orders.id))
@@ -424,6 +471,7 @@ export class DatabaseStorage implements IStorage {
       ...r,
       runningTotal: r.runningTotal != null ? Number(r.runningTotal) : undefined,
       orderCreatedAt: r.orderCreatedAt ? new Date(r.orderCreatedAt).toISOString() : undefined,
+      servedByName: r.servedByName ?? null,
     }));
   }
 
