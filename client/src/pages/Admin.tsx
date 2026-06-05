@@ -27,8 +27,14 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, User as UserIcon, KeyRound, Users, ShieldCheck,
+  Loader2, User as UserIcon, KeyRound, Users, ShieldCheck, ShoppingCart,
 } from "lucide-react";
+import {
+  DEFAULT_CART_PERMISSIONS,
+  type CartAction,
+  type CartActionPermission,
+  type CartPermissions,
+} from "@/hooks/usePermission";
 import type { User } from "@shared/schema";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -452,6 +458,117 @@ function RolePermissionsTab({
   );
 }
 
+// ── Cart Permissions Tab ──────────────────────────────────────────────────────
+
+const CART_ACTION_LIST: { key: CartAction; label: string }[] = [
+  { key: "discount",      label: "Apply Discount" },
+  { key: "complimentary", label: "Complimentary" },
+  { key: "clearCart",     label: "Clear Cart / New Order" },
+  { key: "cancelOrder",   label: "Cancel Order" },
+  { key: "editItem",      label: "Edit Item" },
+  { key: "removeItem",    label: "Remove Item" },
+  { key: "splitBill",     label: "Split Bill" },
+  { key: "moveTable",     label: "Move Table" },
+  { key: "mergeTable",    label: "Merge Tables" },
+  { key: "holdOrder",     label: "Hold Order" },
+  { key: "printKot",      label: "Print KOT" },
+  { key: "printBill",     label: "Print Bill" },
+  { key: "saveOrder",     label: "Save Order" },
+  { key: "settleOrder",   label: "Settle / Checkout" },
+];
+
+const PERM_OPTIONS: { value: CartActionPermission; label: string; cls: string }[] = [
+  { value: "off",     label: "Off",   cls: "bg-red-100 text-red-700 border-red-300" },
+  { value: "pin",     label: "PIN",   cls: "bg-amber-100 text-amber-700 border-amber-300" },
+  { value: "allowed", label: "Allow", cls: "bg-green-100 text-green-700 border-green-300" },
+];
+
+function PermPicker({ value, onChange }: { value: CartActionPermission; onChange: (v: CartActionPermission) => void }) {
+  return (
+    <div className="flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
+      {PERM_OPTIONS.map(opt => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          className={`px-2 py-0.5 text-[10px] font-semibold transition-colors border-r last:border-r-0 border-gray-200 ${
+            value === opt.value ? opt.cls : "text-gray-400 hover:bg-gray-50"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CartPermissionsTab({
+  cartPerms, setCartPerms, saveCartPerms, saving,
+}: {
+  cartPerms: CartPermissions;
+  setCartPerms: (v: CartPermissions) => void;
+  saveCartPerms: () => void;
+  saving?: boolean;
+}) {
+  const setRole = (role: "manager" | "staff", action: CartAction, val: CartActionPermission) =>
+    setCartPerms({ ...cartPerms, [role]: { ...cartPerms[role], [action]: val } });
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Admin — always full access */}
+      <div className="rounded-xl border border-gray-200 p-5 opacity-50">
+        <h3 className="font-semibold text-sm text-gray-700 mb-3">Admin <span className="text-gray-400 font-normal text-xs">— always full access</span></h3>
+        <div className="space-y-2.5">
+          {CART_ACTION_LIST.map(a => (
+            <div key={a.key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-600 truncate">{a.label}</span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-green-100 text-green-700 shrink-0">Allow</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Manager */}
+      <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-5">
+        <h3 className="font-semibold text-sm text-blue-700 mb-4">Manager</h3>
+        <div className="space-y-2.5">
+          {CART_ACTION_LIST.map(a => (
+            <div key={a.key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-700 truncate">{a.label}</span>
+              <PermPicker
+                value={cartPerms.manager[a.key]}
+                onChange={v => setRole("manager", a.key, v)}
+              />
+            </div>
+          ))}
+        </div>
+        <Button className="w-full mt-5" size="sm" onClick={() => saveCartPerms()} disabled={saving}>
+          {saving ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Saving…</> : "Save Manager Access"}
+        </Button>
+      </div>
+
+      {/* Staff */}
+      <div className="rounded-xl border border-green-200 bg-green-50/30 p-5">
+        <h3 className="font-semibold text-sm text-green-700 mb-4">Staff</h3>
+        <div className="space-y-2.5">
+          {CART_ACTION_LIST.map(a => (
+            <div key={a.key} className="flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-700 truncate">{a.label}</span>
+              <PermPicker
+                value={cartPerms.staff[a.key]}
+                onChange={v => setRole("staff", a.key, v)}
+              />
+            </div>
+          ))}
+        </div>
+        <Button className="w-full mt-5" size="sm" onClick={() => saveCartPerms()} disabled={saving}>
+          {saving ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Saving…</> : "Save Staff Access"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Admin Page ───────────────────────────────────────────────────────────
 
 export default function Admin() {
@@ -518,6 +635,35 @@ export default function Admin() {
     },
   });
 
+  // Cart permissions
+  const { data: settingsData, refetch: refetchSettings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    enabled: isAdmin,
+  });
+  const [cartPerms, setCartPerms] = useState<CartPermissions>(DEFAULT_CART_PERMISSIONS);
+
+  useEffect(() => {
+    if (settingsData?.cartPermissions) {
+      setCartPerms({
+        manager: { ...DEFAULT_CART_PERMISSIONS.manager, ...settingsData.cartPermissions.manager },
+        staff:   { ...DEFAULT_CART_PERMISSIONS.staff,   ...settingsData.cartPermissions.staff },
+      });
+    }
+  }, [settingsData]);
+
+  const saveCartPermsMutation = useMutation({
+    mutationFn: async (perms: CartPermissions) =>
+      apiRequest("PUT", "/api/settings", { cartPermissions: perms }),
+    onSuccess: () => {
+      refetchSettings();
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Cart action permissions saved" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to save", description: parseError(err), variant: "destructive" });
+    },
+  });
+
   const usernameForm = useForm<UsernameForm>({
     resolver: zodResolver(usernameSchema),
     defaultValues: { username: user?.username ?? "" },
@@ -577,6 +723,7 @@ export default function Admin() {
           }}>
           {isAdmin && <TabsTrigger value="accounts"><Users className="w-4 h-4 mr-1.5" />Accounts</TabsTrigger>}
           {isAdmin && <TabsTrigger value="role-permissions"><ShieldCheck className="w-4 h-4 mr-1.5" />Role Permissions</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="cart-permissions"><ShoppingCart className="w-4 h-4 mr-1.5" />Cart Actions</TabsTrigger>}
           <TabsTrigger value="profile"><UserIcon className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
         </TabsList>
@@ -599,6 +746,17 @@ export default function Admin() {
               saveStaffPages={() => saveStaffPagesMutation.mutate(staffPages)}
               savingManager={saveManagerPagesMutation.isPending}
               savingStaff={saveStaffPagesMutation.isPending}
+            />
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="cart-permissions" className="mt-6">
+            <CartPermissionsTab
+              cartPerms={cartPerms}
+              setCartPerms={setCartPerms}
+              saveCartPerms={() => saveCartPermsMutation.mutate(cartPerms)}
+              saving={saveCartPermsMutation.isPending}
             />
           </TabsContent>
         )}

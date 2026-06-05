@@ -1,28 +1,19 @@
 import { apiUrl } from '@/lib/api';
-/**
- * AutomationPanel.tsx
- *
- * Client-side AI Customer Follow-Up Automation.
- * ALL core functionality runs in the browser — no server dependency for web mode.
- *
- * Settings  → localStorage ("bagicha_automation_settings") + server sync for API mode
- * Run log   → localStorage ("bagicha_automation_logs")
- * Send log  → localStorage ("bagicha_automation_log")
- * WhatsApp  → wa.me links (web mode) or WATI API via server (api mode)
- */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, CheckCircle, Zap, MessageSquare, ChevronDown, ChevronUp,
-  RotateCcw, Phone, History, Settings, BarChart2,
-  Play, Wifi, WifiOff, Bot, AlertTriangle, Loader2,
-  Moon, Clock, Shield, Bell, Sliders, Key, Globe,
-  Star, UserPlus, RefreshCw, Info,
+  RotateCcw, Phone, History, Settings, AlertTriangle, Loader2,
+  Moon, Shield, Bell, Key, Globe, Star, UserPlus, RefreshCw,
+  Cake, Play, Wifi, WifiOff, Clock, BarChart2, Eye, Bot,
+  CheckCircle2, Info,
 } from "lucide-react";
 import { type CustomerProfile } from "@/hooks/useCustomerIntelligence";
 import {
   buildFollowUpQueue,
+  getBlockedCustomers,
+  type BlockedCustomer,
   logMessageSent,
   loadAutomationLog,
   clearAutomationLog,
@@ -30,10 +21,10 @@ import {
   type FollowUpItem,
   type TriggerType,
   loadAutomationSettings,
-  getAutomationSettings,
   saveAutomationSettings,
   type AutomationSettings,
   DEFAULT_SETTINGS,
+  DEFAULT_MESSAGE_TEMPLATES,
   loadRunLog,
   clearRunLog,
   type RunLogEntry,
@@ -44,12 +35,42 @@ import {
   syncSettingsToServer,
 } from "@/lib/automationEngine";
 
-// ── Props ──────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface CustomerExtra {
   doNotSendUpdate: boolean;
   notificationEnabled: boolean;
 }
+
+interface GrowthConfig {
+  birthdayEnabled:      boolean;
+  birthdayHour:         number;
+  feedbackEnabled:      boolean;
+  feedbackDelayMinutes: number;
+  dailyDigestEnabled:   boolean;
+  dailyDigestHour:      number;
+  ownerWhatsappPhone:   string;
+  watiApiKey:           string;
+  watiEndpoint:         string;
+  metaPhoneNumberId:    string;
+  metaAccessToken:      string;
+  restaurantName:       string;
+}
+
+const DEFAULT_GC: GrowthConfig = {
+  birthdayEnabled:      false,
+  birthdayHour:         9,
+  feedbackEnabled:      false,
+  feedbackDelayMinutes: 120,
+  dailyDigestEnabled:   false,
+  dailyDigestHour:      23,
+  ownerWhatsappPhone:   "",
+  watiApiKey:           "",
+  watiEndpoint:         "",
+  metaPhoneNumberId:    "",
+  metaAccessToken:      "",
+  restaurantName:       "Bagicha",
+};
 
 interface Props {
   customers: CustomerProfile[];
@@ -57,24 +78,12 @@ interface Props {
   isLoading: boolean;
 }
 
-// ── Panel tabs ────────────────────────────────────────────────────────────────
+type PanelTab = "send" | "rules" | "messages" | "history" | "setup";
 
-type PanelTab = "overview" | "queue" | "log" | "settings";
-
-// ── Trigger display metadata ──────────────────────────────────────────────────
-
-const TRIGGER_META: Record<string, { label: string; emoji: string; color: string }> = {
-  WIN_BACK:     { label: "Win-Back",    emoji: "🎁", color: "text-red-600 bg-red-50 border-red-200" },
-  AT_RISK:      { label: "At Risk",     emoji: "⚠️",  color: "text-orange-600 bg-orange-50 border-orange-200" },
-  VIP_REWARD:   { label: "VIP Reward",  emoji: "⭐",  color: "text-amber-600 bg-amber-50 border-amber-200" },
-  WELCOME:      { label: "Welcome",     emoji: "🎉",  color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
-  FAVORITE_ITEM:{ label: "Fav Item",    emoji: "😋",  color: "text-purple-600 bg-purple-50 border-purple-200" },
-};
-
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Tiny reusables ────────────────────────────────────────────────────────────
 
 function TriggerBadge({ trigger }: { trigger: string }) {
-  const meta = TRIGGER_META[trigger] ?? { label: trigger, emoji: "📨", color: "text-gray-600 bg-gray-50 border-gray-200" };
+  const meta = TRIGGER_LABELS[trigger as TriggerType] ?? { label: trigger, emoji: "📨", color: "text-gray-600 bg-gray-50 border-gray-200" };
   return (
     <span className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${meta.color}`}>
       {meta.emoji} {meta.label}
@@ -82,64 +91,70 @@ function TriggerBadge({ trigger }: { trigger: string }) {
   );
 }
 
-function StatCard({
-  label, value, sub, color,
-}: {
-  label: string; value: number | string; sub?: string; color: string;
-}) {
-  return (
-    <div className={`rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 ${color}`}>
-      <span className="text-[9px] font-semibold uppercase tracking-wide opacity-70">{label}</span>
-      <span className="text-xl font-bold leading-none">{value}</span>
-      {sub && <span className="text-[9px] opacity-60">{sub}</span>}
-    </div>
-  );
-}
-
-function Toggle({
-  value, onChange, disabled,
-}: {
-  value: boolean; onChange: (v: boolean) => void; disabled?: boolean;
-}) {
+function Toggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={() => !disabled && onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-        disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
-      } ${value ? "bg-green-500" : "bg-gray-300"}`}
+      className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"} ${value ? "bg-green-500" : "bg-gray-300"}`}
     >
-      <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-          value ? "translate-x-5" : "translate-x-0"
-        }`}
-      />
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? "translate-x-5" : "translate-x-0"}`} />
     </button>
   );
 }
 
+function RuleCard({
+  emoji, title, description, badge, checked, onChange, alwaysOn, children,
+}: {
+  emoji: string; title: string; description: string; badge?: string;
+  checked: boolean; onChange: (v: boolean) => void; alwaysOn?: boolean; children?: React.ReactNode;
+}) {
+  return (
+    <div className={`border rounded-xl p-3.5 transition-colors ${checked ? "border-green-200 bg-green-50/40" : "border-gray-200 bg-white"}`}>
+      <div className="flex items-start gap-3">
+        <span className="text-lg mt-0.5 shrink-0">{emoji}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-semibold text-gray-800">{title}</p>
+              {badge && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">{badge}</span>}
+            </div>
+            {alwaysOn
+              ? <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 shrink-0">Always On</span>
+              : <Toggle value={checked} onChange={onChange} />}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">{description}</p>
+          {checked && children && <div className="mt-2.5 pt-2.5 border-t border-gray-100">{children}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <span className="text-[11px] text-gray-500 w-28 shrink-0">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+const inputCls = "text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-green-400 bg-white";
+
 // ── Queue card ────────────────────────────────────────────────────────────────
 
-function QueueCard({
-  item, onSent,
-}: {
-  item: FollowUpItem; onSent: (item: FollowUpItem) => void;
-}) {
-  const [expanded, setExpanded]   = useState(false);
+function QueueCard({ item, onSent }: { item: FollowUpItem; onSent: (item: FollowUpItem) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const [editedMsg, setEditedMsg] = useState(item.message);
-  const [sent, setSent]           = useState(false);
+  const [sent, setSent] = useState(false);
 
   const handleSend = useCallback(() => {
     if (!item.customer.phone) return;
     const digits = item.customer.phone.replace(/\D/g, "");
     const phone  = digits.startsWith("91") ? digits : `91${digits}`;
     if (phone.length < 12) return;
-
-    window.open(
-      `https://wa.me/${phone}?text=${encodeURIComponent(editedMsg)}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(editedMsg)}`, "_blank", "noopener,noreferrer");
     logMessageSent(item.customer.key, item.customer.name, item.trigger as TriggerType, editedMsg, "web");
     setSent(true);
     setTimeout(() => onSent(item), 700);
@@ -147,12 +162,7 @@ function QueueCard({
 
   if (sent) {
     return (
-      <motion.div
-        initial={{ opacity: 1, height: "auto" }}
-        animate={{ opacity: 0, height: 0, marginBottom: 0 }}
-        transition={{ duration: 0.35 }}
-        className="overflow-hidden"
-      >
+      <motion.div initial={{ opacity: 1, height: "auto" }} animate={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.35 }} className="overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-medium">
           <CheckCircle className="w-4 h-4" /> WhatsApp opened for {item.customer.name}
         </div>
@@ -170,55 +180,28 @@ function QueueCard({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-gray-900 truncate">{item.customer.name}</span>
             <TriggerBadge trigger={item.trigger} />
-            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">
-              {item.channel === "meta" ? "🔵 Meta" : item.channel === "wati" ? "🤖 WATI" : "🌐 Web"}
-            </span>
           </div>
           <div className="flex items-center gap-2 mt-0.5 text-[10px] text-gray-400">
             <Phone className="w-2.5 h-2.5" />
-            {item.customer.phone || "No phone"} · {item.customer.daysSinceLastVisit}d ago · {item.customer.totalVisits} visits
+            {item.customer.phone || "No phone"} · {item.customer.daysSinceLastVisit}d ago · {item.customer.totalVisits} visit{item.customer.totalVisits !== 1 ? "s" : ""}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => setExpanded(e => !e)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-          >
+          <button type="button" onClick={() => setExpanded(e => !e)} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!item.customer.phone}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-semibold rounded-lg transition-colors"
-          >
+          <button type="button" onClick={handleSend} disabled={!item.customer.phone} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-semibold rounded-lg transition-colors">
             <Send className="w-3 h-3" /> Send
           </button>
         </div>
       </div>
       <AnimatePresence>
         {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-gray-100"
-          >
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden border-t border-gray-100">
             <div className="px-4 py-3 bg-gray-50">
-              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
-                Edit message before sending
-              </p>
-              <textarea
-                value={editedMsg}
-                onChange={e => setEditedMsg(e.target.value)}
-                rows={4}
-                className="w-full text-xs text-gray-800 bg-white border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-green-400"
-              />
-              <p className="text-[9px] text-gray-400 mt-1">
-                Opens WhatsApp with this message pre-filled. You confirm before it sends.
-              </p>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Edit message before sending</p>
+              <textarea value={editedMsg} onChange={e => setEditedMsg(e.target.value)} rows={4} className="w-full text-xs text-gray-800 bg-white border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-green-400" />
+              <p className="text-[9px] text-gray-400 mt-1">Opens WhatsApp with this message pre-filled. You confirm before it sends.</p>
             </div>
           </motion.div>
         )}
@@ -227,499 +210,136 @@ function QueueCard({
   );
 }
 
-// ── Run log row ────────────────────────────────────────────────────────────────
+// ── Template order ────────────────────────────────────────────────────────────
 
-function RunLogRow({ entry }: { entry: RunLogEntry }) {
-  const [show, setShow] = useState(false);
-  const meta = entry.trigger ? (TRIGGER_META[entry.trigger] ?? { emoji: "📨", label: entry.trigger }) : null;
-  const time = new Date(entry.timestamp).toLocaleString("en-IN", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-  });
+const TEMPLATE_ORDER: TriggerType[] = ["BIRTHDAY", "WELCOME", "WIN_BACK", "AT_RISK", "VIP_REWARD", "FAVORITE_ITEM"];
 
-  return (
-    <div className="border border-gray-100 rounded-lg overflow-hidden">
-      <div
-        className="flex items-start gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
-        onClick={() => setShow(s => !s)}
-      >
-        <span
-          className={`mt-0.5 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
-            entry.type === "success"
-              ? "bg-emerald-100 text-emerald-700"
-              : "bg-red-100 text-red-600"
-          }`}
-        >
-          {entry.type === "success" ? "✓" : "✗"}
-        </span>
-        <div className="flex-1 min-w-0">
-          {entry.type === "success" ? (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-gray-800">{entry.customerName}</span>
-              {meta && <TriggerBadge trigger={entry.trigger!} />}
-              {entry.provider && (
-                <span className="text-[9px] text-gray-400">
-                  {entry.provider === "wati" ? "🤖 WATI" : "🌐 Web"}
-                </span>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-red-600 break-words">{entry.errorMessage}</p>
-          )}
-          <p className="text-[9px] text-gray-400 mt-0.5">{time}</p>
-        </div>
-        {show ? <ChevronUp className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" /> : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" />}
-      </div>
-      {show && entry.message && (
-        <div className="px-3 pb-2 bg-gray-50 border-t border-gray-100 text-[10px] text-gray-600">
-          {entry.message}
-        </div>
-      )}
-    </div>
-  );
-}
+const TOKEN_CHIPS = [
+  { token: "{name}",       hint: "Customer first name" },
+  { token: "{restaurant}", hint: "Restaurant name" },
+  { token: "{visits}",     hint: "Total visit count" },
+  { token: "{days}",       hint: "Days since last visit" },
+  { token: "{favItem}",    hint: "Favourite menu item" },
+];
 
-// ── Server log row (from /api/automation/logs) ────────────────────────────────
-
-interface ServerLog {
-  id: string;
-  customerId: string;
-  customerName: string;
-  phone: string;
-  trigger: string;
-  message: string;
-  sentAt: string;
-  status: "sent" | "failed" | "skipped";
-  error?: string;
-}
-
-function ServerLogRow({ entry }: { entry: ServerLog }) {
-  const [show, setShow] = useState(false);
-  const meta = TRIGGER_META[entry.trigger] ?? { emoji: "📨", label: entry.trigger };
-  const time = new Date(entry.sentAt).toLocaleString("en-IN", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-  });
-
-  return (
-    <div className="border border-gray-100 rounded-lg overflow-hidden">
-      <div
-        className="flex items-start gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50"
-        onClick={() => setShow(s => !s)}
-      >
-        <span
-          className={`mt-0.5 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
-            entry.status === "sent"
-              ? "bg-emerald-100 text-emerald-700"
-              : entry.status === "failed"
-              ? "bg-red-100 text-red-600"
-              : "bg-gray-100 text-gray-500"
-          }`}
-        >
-          {entry.status === "sent" ? "✓" : entry.status === "failed" ? "✗" : "—"}
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-gray-800">{entry.customerName}</span>
-            <TriggerBadge trigger={entry.trigger} />
-            <span className="text-[9px] text-gray-400">🤖 WATI</span>
-          </div>
-          <p className="text-[9px] text-gray-400 mt-0.5">{time}</p>
-        </div>
-        {show ? <ChevronUp className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" /> : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" />}
-      </div>
-      {show && (
-        <div className="px-3 pb-2 bg-gray-50 border-t border-gray-100 space-y-1">
-          {entry.message && (
-            <p className="text-[10px] text-gray-600">{entry.message}</p>
-          )}
-          {entry.error && (
-            <p className="text-[10px] text-red-600">Error: {entry.error}</p>
-          )}
-          <p className="text-[9px] text-gray-400">📞 {entry.phone}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Settings panel ─────────────────────────────────────────────────────────────
-
-function SettingsPanel({
-  settings,
-  onChange,
+function MessageTemplatesEditor({
+  templates, onChange,
 }: {
-  settings: AutomationSettings;
-  onChange: (s: AutomationSettings) => void;
+  templates: Partial<Record<TriggerType, string>>;
+  onChange: (t: Partial<Record<TriggerType, string>>) => void;
 }) {
-  const set = <K extends keyof AutomationSettings>(key: K, val: AutomationSettings[K]) =>
-    onChange({ ...settings, [key]: val });
+  const [open, setOpen] = useState<TriggerType | null>(null);
 
-  const [watiSyncStatus, setWatiSyncStatus] = useState<"idle" | "syncing" | "ok" | "error">("idle");
-
-  const handleWatiSync = async () => {
-    // Guard: ensure the active mode's credentials are present
-    if (settings.whatsappMode === "meta") {
-      if (!settings.metaPhoneNumberId || !settings.metaAccessToken) return;
-    } else {
-      if (!settings.watiApiKey || !settings.watiEndpoint) return;
-    }
-    setWatiSyncStatus("syncing");
-    try {
-      await syncSettingsToServer(settings);
-      setWatiSyncStatus("ok");
-      setTimeout(() => setWatiSyncStatus("idle"), 3000);
-    } catch (e: any) {
-      setWatiSyncStatus("error");
-      setTimeout(() => setWatiSyncStatus("idle"), 4000);
-    }
-  };
+  function setTpl(trigger: TriggerType, value: string) { onChange({ ...templates, [trigger]: value }); }
+  function resetTpl(trigger: TriggerType) { const n = { ...templates }; delete n[trigger]; onChange(n); }
 
   return (
-    <div className="space-y-5">
-
-      {/* ── Master toggle ─────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl">
-        <div>
-          <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <Zap className="w-4 h-4 text-green-500" /> Automation Engine
-          </p>
-          <p className="text-[10px] text-gray-500 mt-0.5">
-            Master switch — when OFF, Run button is blocked
-          </p>
-        </div>
-        <Toggle value={settings.enabled} onChange={v => set("enabled", v)} />
-      </div>
-
-      {/* ── Auto-off toggle ────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl">
-        <div>
-          <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <Moon className="w-4 h-4 text-slate-500" /> Auto-Off During Quiet Hours
-          </p>
-          <p className="text-[10px] text-gray-500 mt-0.5">
-            Automatically disable automation during quiet hours and re-enable after
-          </p>
-        </div>
-        <Toggle value={settings.autoOff} onChange={v => set("autoOff", v)} />
-      </div>
-
-      {/* ── WhatsApp mode ──────────────────────────────────────────────── */}
-      <div className="space-y-2">
-        <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-          <MessageSquare className="w-3.5 h-3.5 text-green-500" /> WhatsApp Mode
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {(["web", "meta", "api"] as const).map(mode => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => set("whatsappMode", mode)}
-              className={`px-4 py-3 rounded-xl border text-sm font-semibold transition-all text-left ${
-                settings.whatsappMode === mode
-                  ? "bg-green-50 border-green-400 text-green-700"
-                  : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
-              }`}
-            >
-              {mode === "web"  ? "🌐 WhatsApp Web" :
-               mode === "meta" ? "🔵 Meta API"      : "🤖 WATI API"}
-              <p className="text-[9px] font-normal mt-0.5 opacity-70">
-                {mode === "web"  ? "Opens wa.me — free, no key needed" :
-                 mode === "meta" ? "Direct Meta Cloud API — your App ID" :
-                                   "Sends via WATI — third party"}
-              </p>
+    <div className="space-y-2">
+      {TEMPLATE_ORDER.map(trigger => {
+        const meta     = TRIGGER_LABELS[trigger];
+        const isCustom = !!templates[trigger];
+        const current  = templates[trigger] || DEFAULT_MESSAGE_TEMPLATES[trigger];
+        const isOpen   = open === trigger;
+        return (
+          <div key={trigger} className="border border-gray-200 rounded-xl overflow-hidden">
+            <button type="button" onClick={() => setOpen(isOpen ? null : trigger)} className="w-full flex items-center gap-2 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
+              <span className="text-sm">{meta.emoji}</span>
+              <span className="flex-1 text-xs font-semibold text-gray-700">{meta.label}</span>
+              {isCustom && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 border border-indigo-200">Custom</span>}
+              {isOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Meta WhatsApp Cloud API configuration ───────────────────────── */}
-      {settings.whatsappMode === "meta" && (
-        <div className="border border-blue-200 bg-blue-50 rounded-xl p-4 space-y-3">
-          <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
-            🔵 Meta WhatsApp Cloud API
-          </p>
-          <div className="text-[10px] text-blue-700 bg-blue-100 rounded-lg px-3 py-2 leading-relaxed space-y-1">
-            <p><strong>Where to find these values:</strong></p>
-            <p>1. Go to <strong>developers.facebook.com → Your App → WhatsApp → Getting Started</strong></p>
-            <p>2. <strong>Phone Number ID</strong> — shown under "From" phone number</p>
-            <p>3. <strong>Access Token</strong> — temporary token shown on that page, or generate a permanent System User token from Meta Business Suite</p>
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold text-gray-600 mb-1 flex items-center gap-1">
-              <Phone className="w-3 h-3" /> Phone Number ID
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. 123456789012345"
-              value={settings.metaPhoneNumberId}
-              onChange={e => set("metaPhoneNumberId", e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white font-mono"
-            />
-            <p className="text-[9px] text-gray-400 mt-0.5">
-              Found in Meta Developer Console → WhatsApp → Getting Started
-            </p>
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold text-gray-600 mb-1 flex items-center gap-1">
-              <Key className="w-3 h-3" /> Access Token
-            </label>
-            <input
-              type="password"
-              placeholder="EAAxxxxxxxxxxxxxxxxxxxxx…"
-              value={settings.metaAccessToken}
-              onChange={e => set("metaAccessToken", e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-            />
-            <p className="text-[9px] text-gray-400 mt-0.5">
-              Temporary token (expires in ~24h) or permanent System User token
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleWatiSync}
-              disabled={!settings.metaPhoneNumberId || !settings.metaAccessToken || watiSyncStatus === "syncing"}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-            >
-              {watiSyncStatus === "syncing"
-                ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
-                : <><RefreshCw className="w-3 h-3" /> Save to Server</>}
-            </button>
-            {watiSyncStatus === "ok" && (
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                <CheckCircle className="w-3 h-3" /> Saved
-              </span>
-            )}
-            {watiSyncStatus === "error" && (
-              <span className="text-[10px] text-red-600 font-semibold flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> Save failed — check server
-              </span>
-            )}
-          </div>
-          <div className="text-[10px] text-blue-700 flex items-start gap-1.5 bg-blue-100 rounded-lg px-3 py-2">
-            <Info className="w-3 h-3 shrink-0 mt-0.5" />
-            <span>
-              <strong>Important:</strong> Meta only allows free-form text messages within 24 hours of
-              the customer last messaging you. For cold outreach you need a{" "}
-              <strong>Meta-approved template message</strong>. Enable Template Mode above to use templates.
-            </span>
-          </div>
-          {(!settings.metaPhoneNumberId || !settings.metaAccessToken) && (
-            <p className="text-[10px] text-blue-700 flex items-start gap-1.5">
-              <Info className="w-3 h-3 shrink-0 mt-0.5" />
-              Both Phone Number ID and Access Token are required.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ── WATI API configuration (shown when api mode is active) ──────── */}
-      {settings.whatsappMode === "api" && (
-        <div className="border border-orange-200 bg-orange-50 rounded-xl p-4 space-y-3">
-          <p className="text-xs font-bold text-orange-800 flex items-center gap-1.5">
-            <Key className="w-3.5 h-3.5" /> WATI API Configuration
-          </p>
-          <div>
-            <label className="block text-[10px] font-semibold text-gray-600 mb-1 flex items-center gap-1">
-              <Globe className="w-3 h-3" /> API Endpoint
-            </label>
-            <input
-              type="text"
-              placeholder="https://live-mt-server.wati.io/YOUR_ACCOUNT_ID"
-              value={settings.watiEndpoint}
-              onChange={e => set("watiEndpoint", e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold text-gray-600 mb-1 flex items-center gap-1">
-              <Key className="w-3 h-3" /> API Key (Bearer Token)
-            </label>
-            <input
-              type="password"
-              placeholder="Your WATI API key"
-              value={settings.watiApiKey}
-              onChange={e => set("watiApiKey", e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleWatiSync}
-              disabled={!settings.watiApiKey || !settings.watiEndpoint || watiSyncStatus === "syncing"}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-500 text-white hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-            >
-              {watiSyncStatus === "syncing"
-                ? <><Loader2 className="w-3 h-3 animate-spin" /> Syncing…</>
-                : <><RefreshCw className="w-3 h-3" /> Sync to Server</>}
-            </button>
-            {watiSyncStatus === "ok" && (
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                <CheckCircle className="w-3 h-3" /> Synced
-              </span>
-            )}
-            {watiSyncStatus === "error" && (
-              <span className="text-[10px] text-red-600 font-semibold flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> Sync failed — check server
-              </span>
-            )}
-          </div>
-          {(!settings.watiApiKey || !settings.watiEndpoint) && (
-            <p className="text-[10px] text-orange-700 flex items-start gap-1.5">
-              <Info className="w-3 h-3 shrink-0 mt-0.5" />
-              Both fields are required for API mode to send messages.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ── Template / AI mode ────────────────────────────────────────── */}
-      <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl">
-        <div>
-          <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <Bot className="w-4 h-4 text-purple-500" /> Template Mode
-          </p>
-          <p className="text-[10px] text-gray-500 mt-0.5">
-            {settings.templateMode
-              ? "Using smart templates (always works, no API needed)"
-              : "Using Claude AI — requires Anthropic key on server"}
-          </p>
-        </div>
-        <Toggle value={settings.templateMode} onChange={v => set("templateMode", v)} />
-      </div>
-
-      {/* ── Trigger toggles ────────────────────────────────────────────── */}
-      <div className="space-y-2">
-        <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-          <Zap className="w-3.5 h-3.5 text-indigo-500" /> Trigger Controls
-        </p>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">
-            <div className="flex items-center gap-2">
-              <Star className="w-3.5 h-3.5 text-amber-500" />
-              <div>
-                <p className="text-xs font-semibold text-gray-700">VIP Reward Trigger</p>
-                <p className="text-[9px] text-gray-400">Send loyalty rewards to VIP customers</p>
+            {isOpen && (
+              <div className="px-3 py-3 space-y-2 bg-white border-t border-gray-100">
+                <textarea value={current} onChange={e => setTpl(trigger, e.target.value)} rows={4} className="w-full text-xs text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:bg-white transition-colors" />
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex flex-wrap gap-1">
+                    {TOKEN_CHIPS.map(({ token, hint }) => (
+                      <button key={token} type="button" title={hint} onClick={() => setTpl(trigger, current + token)} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors">
+                        {token}
+                      </button>
+                    ))}
+                  </div>
+                  {isCustom && (
+                    <button type="button" onClick={() => resetTpl(trigger)} className="shrink-0 text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1">
+                      <RotateCcw className="w-3 h-3" /> Reset default
+                    </button>
+                  )}
+                </div>
+                <p className="text-[9px] text-gray-400">Tokens like <code className="bg-gray-100 px-1 rounded">{"{name}"}</code> are replaced with live customer data when sending.</p>
               </div>
-            </div>
-            <Toggle value={settings.vipEnabled} onChange={v => set("vipEnabled", v)} />
+            )}
           </div>
-          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-3.5 h-3.5 text-emerald-500" />
-              <div>
-                <p className="text-xs font-semibold text-gray-700">Welcome Message</p>
-                <p className="text-[9px] text-gray-400">Send welcome offer to new customers after 1st visit</p>
-              </div>
-            </div>
-            <Toggle value={settings.welcomeEnabled} onChange={v => set("welcomeEnabled", v)} />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Numeric settings grid ──────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide flex items-center gap-1">
-            <Shield className="w-3 h-3" /> Max Per Run
-          </label>
-          <input
-            type="number" min={1} max={200} value={settings.maxPerRun}
-            onChange={e => set("maxPerRun", +e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          <p className="text-[9px] text-gray-400 mt-1">Messages per single run</p>
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide flex items-center gap-1">
-            <Clock className="w-3 h-3" /> Inactivity Days
-          </label>
-          <input
-            type="number" min={1} max={90} value={settings.inactivityDays}
-            onChange={e => set("inactivityDays", +e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          <p className="text-[9px] text-gray-400 mt-1">Days before "At Risk" triggers</p>
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" /> Cooldown (hours)
-          </label>
-          <input
-            type="number" min={1} max={720} value={settings.cooldownHours}
-            onChange={e => set("cooldownHours", +e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          <p className="text-[9px] text-gray-400 mt-1">Min hours between msgs per customer</p>
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide flex items-center gap-1">
-            <Shield className="w-3 h-3" /> Daily Limit
-          </label>
-          <input
-            type="number" min={1} max={200} value={settings.dailyLimit}
-            onChange={e => set("dailyLimit", +e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-          />
-          <p className="text-[9px] text-gray-400 mt-1">Max total messages per day</p>
-        </div>
-      </div>
-
-      {/* ── Quiet hours ────────────────────────────────────────────────── */}
-      <div>
-        <label className="block text-[10px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide flex items-center gap-1">
-          <Moon className="w-3 h-3" /> Quiet Hours (no messages sent in this window)
-        </label>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <p className="text-[10px] text-gray-500 mb-1">Start (hour, 0–23)</p>
-            <input
-              type="number" min={0} max={23} value={settings.quietHours.start}
-              onChange={e => set("quietHours", { ...settings.quietHours, start: +e.target.value })}
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
-          </div>
-          <div>
-            <p className="text-[10px] text-gray-500 mb-1">End (hour, 0–23)</p>
-            <input
-              type="number" min={0} max={23} value={settings.quietHours.end}
-              onChange={e => set("quietHours", { ...settings.quietHours, end: +e.target.value })}
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
-          </div>
-        </div>
-        <p className="text-[9px] text-gray-400 mt-1">
-          Currently: no messages between {settings.quietHours.start}:00 – {settings.quietHours.end}:00
-          {isInQuietHours(settings.quietHours) && (
-            <span className="ml-1 text-orange-500 font-semibold">⚠ ACTIVE NOW</span>
-          )}
-        </p>
-      </div>
-
-      {/* ── Opt-out reminder ───────────────────────────────────────────── */}
-      <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-        <Bell className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-blue-700 leading-relaxed">
-          <span className="font-semibold">Opt-out rules are always enforced</span> — customers
-          with "Do Not Send Updates" or notifications disabled in Customer Listing are
-          automatically skipped, regardless of these settings.
-        </p>
-      </div>
+        );
+      })}
     </div>
   );
 }
 
-// ── Main panel ────────────────────────────────────────────────────────────────
+// ── Log row ────────────────────────────────────────────────────────────────────
+
+function LogRow({ entry }: { entry: RunLogEntry }) {
+  const meta = entry.trigger ? TRIGGER_LABELS[entry.trigger] : null;
+  const time = new Date(entry.timestamp).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border text-xs ${entry.type === "success" ? "border-emerald-100 bg-emerald-50" : "border-red-100 bg-red-50"}`}>
+      <span className={`shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[9px] font-bold ${entry.type === "success" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"}`}>
+        {entry.type === "success" ? "✓" : "✗"}
+      </span>
+      {entry.type === "success" ? (
+        <div className="flex-1 flex items-center gap-1.5 flex-wrap">
+          <span className="font-medium text-gray-800">{entry.customerName}</span>
+          {meta && <TriggerBadge trigger={entry.trigger!} />}
+        </div>
+      ) : (
+        <p className="flex-1 text-red-600 text-[10px]">{entry.errorMessage}</p>
+      )}
+      <span className="text-[9px] text-gray-400 shrink-0">{time}</span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export function AutomationPanel({ customers, extras, isLoading }: Props) {
-  const [panelTab, setPanelTab]     = useState<PanelTab>("overview");
+  const [tab, setTab]               = useState<PanelTab>("send");
   const [sentKeys, setSentKeys]     = useState<Set<string>>(new Set());
   const [logVersion, setLogVersion] = useState(0);
 
-  // Client-side settings — load from localStorage on mount
-  const [settings, setSettingsState] = useState<AutomationSettings>(
-    () => loadAutomationSettings()
-  );
+  // Client-side settings (localStorage)
+  const [settings, setSettingsState] = useState<AutomationSettings>(() => loadAutomationSettings());
+  const updateSettings = useCallback((s: AutomationSettings) => {
+    setSettingsState(s);
+    saveAutomationSettings(s);
+  }, []);
+
+  // Server-side growth config
+  const [gc, setGc]           = useState<GrowthConfig>(DEFAULT_GC);
+  const [gcLoading, setGcLoading] = useState(true);
+  const [gcSaving, setGcSaving]   = useState(false);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/automation/config"), { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setGc(prev => ({ ...prev, ...d })); })
+      .catch(() => {})
+      .finally(() => setGcLoading(false));
+  }, []);
+
+  const saveGc = useCallback(async (patch: Partial<GrowthConfig>) => {
+    const updated = { ...gc, ...patch };
+    setGc(updated);
+    setGcSaving(true);
+    try {
+      await fetch(apiUrl("/api/automation/config"), {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+    } catch { /* silent */ }
+    setGcSaving(false);
+  }, [gc]);
 
   // Run state
   const [running, setRunning]     = useState(false);
@@ -727,28 +347,20 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   const [runError, setRunError]   = useState<string | null>(null);
   const runningRef                = useRef(false);
 
-  // Settings save feedback
-  const [saveFeedback, setSaveFeedback] = useState<"ok" | null>(null);
+  // Enrich customers with manual phone from extras
+  const enrichedCustomers = useMemo(
+    () => customers.map(c => ({ ...c, phone: c.phone || (extras[c.key] as any)?.phone || "" })),
+    [customers, extras]
+  );
 
-  // Server logs (API mode only)
-  const [serverLogs, setServerLogs]         = useState<ServerLog[]>([]);
-  const [serverLogsLoading, setServerLogsLoading] = useState(false);
-
-  // Update settings: save to localStorage immediately
-  const updateSettings = useCallback((newSettings: AutomationSettings) => {
-    setSettingsState(newSettings);
-    saveAutomationSettings(newSettings);
-    setSaveFeedback("ok");
-    setTimeout(() => setSaveFeedback(null), 2500);
-  }, []);
-
-  // Queue (client-side, always works)
   const queue = useMemo(
-    () =>
-      buildFollowUpQueue(customers, extras, undefined, settings).filter(
-        i => !sentKeys.has(i.customer.key)
-      ),
-    [customers, extras, sentKeys, settings]
+    () => buildFollowUpQueue(enrichedCustomers, extras, undefined, settings).filter(i => !sentKeys.has(i.customer.key)),
+    [enrichedCustomers, extras, sentKeys, settings]
+  );
+
+  const blocked = useMemo(
+    () => getBlockedCustomers(enrichedCustomers, extras, settings).filter(b => !sentKeys.has(b.customer.key)),
+    [enrichedCustomers, extras, settings, sentKeys]
   );
 
   const handleSent = useCallback((item: FollowUpItem) => {
@@ -756,75 +368,40 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
     setLogVersion(v => v + 1);
   }, []);
 
-  // Local logs (always shown)
   const runLog  = useMemo(() => loadRunLog(),                          [logVersion]);
   const sendLog = useMemo(() => loadAutomationLog().slice().reverse(), [logVersion]);
 
-  // Load server logs when in API mode and Log tab is open
-  const fetchServerLogs = useCallback(async () => {
-    if (settings.whatsappMode !== "api" && settings.whatsappMode !== "meta") return;
-    setServerLogsLoading(true);
-    try {
-      const resp = await fetch(apiUrl("/api/automation/logs?limit=100"), { credentials: "include" });
-      if (resp.ok) {
-        const data = await resp.json() as { logs?: ServerLog[] };
-        setServerLogs(data.logs ?? []);
-      }
-    } catch {
-      // silent — server logs are supplemental
-    } finally {
-      setServerLogsLoading(false);
-    }
-  }, [settings.whatsappMode]);
-
-  useEffect(() => {
-    if (panelTab === "log" && (settings.whatsappMode === "api" || settings.whatsappMode === "meta")) {
-      fetchServerLogs();
-    }
-  }, [panelTab, settings.whatsappMode, fetchServerLogs, logVersion]);
-
-  // Stats
-  const today     = new Date().toDateString();
-  const sentToday = sendLog.filter(e => new Date(e.sentAt).toDateString() === today).length;
-  const atRisk    = customers.filter(c => c.tag === "At Risk").length;
-  const vip       = customers.filter(c => c.tag === "VIP").length;
-
-  // Provider status
-  const provider         = getAutomationProvider(settings);
-  const quietHoursActive = isInQuietHours(settings.quietHours);
-
-  // ── Run handler ──────────────────────────────────────────────────────────────
-
-  const handleRunAutomation = useCallback(async () => {
+  const handleRunNow = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
-    setRunning(true);
-    setRunResult(null);
-    setRunError(null);
-
+    setRunning(true); setRunResult(null); setRunError(null);
     try {
       const result = await runCustomerAutomation(customers, extras, settings);
       setRunResult(result);
       setLogVersion(v => v + 1);
-      // Refresh server logs if in API mode
-      if (settings.whatsappMode === "api") {
-        fetchServerLogs();
-      }
     } catch (err: any) {
-      const msg = err?.message ?? "Automation failed — check Settings";
-      setRunError(msg);
+      setRunError(err?.message ?? "Automation failed");
       setLogVersion(v => v + 1);
     } finally {
       runningRef.current = false;
       setRunning(false);
     }
-  }, [customers, extras, settings, fetchServerLogs]);
+  }, [customers, extras, settings]);
 
-  const TABS: { key: PanelTab; label: string; icon: any }[] = [
-    { key: "overview",  label: "Overview",               icon: BarChart2 },
-    { key: "queue",     label: `Queue (${queue.length})`, icon: MessageSquare },
-    { key: "log",       label: `Log (${runLog.length})`,  icon: History },
-    { key: "settings",  label: "Settings",               icon: Settings },
+  const today     = new Date().toDateString();
+  const sentToday = sendLog.filter(e => new Date(e.sentAt).toDateString() === today).length;
+
+  const provider         = getAutomationProvider(settings);
+  const quietHoursActive = isInQuietHours(settings.quietHours);
+  const isWebMode        = settings.whatsappMode === "web";
+  const whatsappLabel    = provider === "unconfigured" ? "⚠️ Not configured" : settings.whatsappMode === "meta" ? "🔵 Meta API" : settings.whatsappMode === "api" ? "🤖 WATI API" : "🌐 WhatsApp Web";
+
+  const TABS: { key: PanelTab; label: string; icon: React.ElementType }[] = [
+    { key: "send",     label: "Send",     icon: Send },
+    { key: "rules",    label: "Rules",    icon: Zap },
+    { key: "messages", label: "Messages", icon: MessageSquare },
+    { key: "history",  label: "History",  icon: History },
+    { key: "setup",    label: "Setup",    icon: Settings },
   ];
 
   if (isLoading) {
@@ -838,17 +415,12 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
 
-      {/* Sub-tabs */}
-      <div className="shrink-0 flex gap-0 border-b border-gray-100 bg-gray-50">
+      {/* ── Tab nav ─────────────────────────────────────────────────────────── */}
+      <div className="shrink-0 flex border-b border-gray-100 bg-gray-50">
         {TABS.map(t => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setPanelTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-[11px] font-semibold border-b-2 transition-colors touch-manipulation ${
-              panelTab === t.key
-                ? "border-green-700 text-green-700 bg-white"
-                : "border-transparent text-gray-500 hover:text-gray-700"
+          <button key={t.key} type="button" onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-1 px-2 py-2.5 text-[11px] font-semibold border-b-2 transition-colors touch-manipulation ${
+              tab === t.key ? "border-green-700 text-green-700 bg-white" : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
             <t.icon className="w-3 h-3" /> {t.label}
@@ -858,389 +430,577 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
 
-        {/* ── Overview ─────────────────────────────────────────────────── */}
-        {panelTab === "overview" && (
+        {/* ══════════════════════════════════════════════════════════════════
+            SEND TAB — queue + run now, all in one place
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === "send" && (
           <>
-            {/* Status badges */}
-            <div className="flex flex-wrap gap-2 items-center">
-              <button
-                type="button"
-                onClick={() => setPanelTab("settings")}
-                title="Click to change in Settings"
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border transition-opacity hover:opacity-80 ${
-                  settings.enabled
-                    ? "bg-green-50 text-green-700 border-green-200"
-                    : "bg-gray-100 text-gray-500 border-gray-200"
-                }`}
+            {/* Status strip */}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setTab("setup")}
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border hover:opacity-80 ${settings.enabled ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}
               >
-                {settings.enabled
-                  ? <><Wifi className="w-3 h-3" /> Auto ON</>
-                  : <><WifiOff className="w-3 h-3" /> Auto OFF</>}
+                {settings.enabled ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                {settings.enabled ? "Auto ON" : "Auto OFF"}
               </button>
-              <button
-                type="button"
-                onClick={() => setPanelTab("settings")}
-                title="Click to change in Settings"
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border hover:opacity-80 ${
-                  provider === "unconfigured"
-                    ? "bg-red-50 text-red-600 border-red-200"
-                    : settings.whatsappMode === "meta"
-                    ? "bg-blue-50 text-blue-600 border-blue-200"
-                    : "bg-orange-50 text-orange-600 border-orange-200"
-                }`}
+              <button type="button" onClick={() => setTab("setup")}
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border hover:opacity-80 ${provider === "unconfigured" && !isWebMode ? "bg-red-50 text-red-600 border-red-200" : "bg-gray-100 text-gray-600 border-gray-200"}`}
               >
-                {settings.whatsappMode === "web"
-                  ? "🌐 WhatsApp Web Mode"
-                  : settings.whatsappMode === "meta"
-                  ? provider === "unconfigured" ? "⚠️ Meta Not Configured" : "🔵 Meta Cloud API"
-                  : provider === "unconfigured" ? "⚠️ WATI Not Configured" : "🤖 WATI API Mode"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPanelTab("settings")}
-                title="Click to change in Settings"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border bg-gray-100 text-gray-500 border-gray-200 hover:opacity-80"
-              >
-                <Bot className="w-3 h-3" />
-                {settings.templateMode ? "Template Mode" : "Claude AI Mode"}
+                {whatsappLabel}
               </button>
               {quietHoursActive && (
                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border bg-orange-50 text-orange-600 border-orange-200">
-                  <Moon className="w-3 h-3" /> Quiet Hours Active
+                  <Moon className="w-3 h-3" /> Quiet hours
                 </span>
               )}
-              <span className="text-[9px] text-gray-400 italic">↑ click any badge to change</span>
+              <span className="text-[9px] text-gray-400 italic self-center">↑ tap to change</span>
             </div>
 
-            {/* Provider warning when unconfigured */}
-            {provider === "unconfigured" && (
-              <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                <div className="text-[11px] text-red-700 leading-relaxed">
-                  {settings.whatsappMode === "meta" ? (
-                    <>
-                      <span className="font-semibold">Meta API credentials missing.</span> Go to{" "}
-                      <button type="button" className="underline font-semibold" onClick={() => setPanelTab("settings")}>
-                        Settings → Meta WhatsApp Cloud API
-                      </button>{" "}
-                      to add your Phone Number ID and Access Token.
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-semibold">WATI API credentials missing.</span> Go to{" "}
-                      <button type="button" className="underline font-semibold" onClick={() => setPanelTab("settings")}>
-                        Settings → WATI API Configuration
-                      </button>{" "}
-                      to add them, or switch to WhatsApp Web mode.
-                    </>
+            {/* Warning: API mode not configured */}
+            {!isWebMode && provider === "unconfigured" && (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-700 leading-relaxed">
+                  <strong>WhatsApp API not configured.</strong> Go to{" "}
+                  <button type="button" className="underline font-semibold" onClick={() => setTab("setup")}>Setup</button>{" "}
+                  to add credentials, or switch to <strong>WhatsApp Web</strong> (free, no account needed).
+                </p>
+              </div>
+            )}
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5">
+                <p className="text-[9px] font-semibold text-indigo-500 uppercase tracking-wide">Need Follow-Up</p>
+                <p className="text-2xl font-bold text-indigo-700">{queue.length}</p>
+                <p className="text-[9px] text-indigo-400">customers today</p>
+              </div>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5">
+                <p className="text-[9px] font-semibold text-emerald-500 uppercase tracking-wide">Sent Today</p>
+                <p className="text-2xl font-bold text-emerald-700">{sentToday}</p>
+                <p className="text-[9px] text-emerald-400">messages sent</p>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-wide">Total</p>
+                <p className="text-2xl font-bold text-gray-700">{customers.length}</p>
+                <p className="text-[9px] text-gray-400">customers</p>
+              </div>
+            </div>
+
+            {/* Run Now card (API mode) */}
+            {!isWebMode && (
+              <div className="rounded-2xl bg-green-800 text-white overflow-hidden">
+                <div className="p-4">
+                  <p className="text-sm font-bold mb-1 flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-green-300" /> Send All Messages Now
+                  </p>
+                  <p className="text-[10px] text-green-200 mb-3 leading-relaxed">
+                    {!settings.enabled ? "Automation is OFF — enable it in Setup." : quietHoursActive ? `Quiet hours active (${settings.quietHours.start}:00 – ${settings.quietHours.end}:00). No sends.` : `Sends to all ${queue.length} eligible customers automatically via ${settings.whatsappMode === "meta" ? "Meta API" : "WATI API"}.`}
+                  </p>
+                  <button type="button" onClick={handleRunNow} disabled={running || !settings.enabled || provider === "unconfigured"}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border text-white text-sm font-semibold transition-colors min-h-[44px] touch-manipulation bg-green-600/50 hover:bg-green-600/70 border-green-400/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {running ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><Play className="w-4 h-4" /> Send Now</>}
+                  </button>
+                  {runError && (
+                    <div className="mt-3 flex items-start gap-2 bg-red-900/40 rounded-lg px-3 py-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-300 shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-red-200">{runError}</p>
+                    </div>
+                  )}
+                  {runResult && !runError && (
+                    <div className="mt-3 grid grid-cols-4 gap-2 text-center bg-green-900/30 rounded-lg px-3 py-2.5">
+                      {[["Scanned", runResult.scanned], ["Eligible", runResult.eligible], ["Sent", runResult.sent], ["Failed", runResult.failed]].map(([l, v]) => (
+                        <div key={l as string}>
+                          <p className="text-base font-bold text-white">{v}</p>
+                          <p className="text-[9px] text-green-300">{l}</p>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <StatCard label="Queue Today"  value={queue.length}  sub="need follow-up"  color="bg-indigo-50 border-indigo-200 text-indigo-700" />
-              <StatCard label="Sent Today"   value={sentToday}     sub="messages opened" color="bg-emerald-50 border-emerald-200 text-emerald-700" />
-              <StatCard label="At-Risk"      value={atRisk}        sub="need attention"  color="bg-red-50 border-red-200 text-red-700" />
-              <StatCard label="VIP"          value={vip}           sub="loyalty"         color="bg-amber-50 border-amber-200 text-amber-700" />
-            </div>
-
-            {/* Instant Execution card */}
-            <div className="rounded-2xl bg-green-800 text-white overflow-hidden">
-              <div className="p-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <Zap className="w-4 h-4 text-green-300" />
-                  <p className="text-sm font-bold">Instant Execution</p>
-                </div>
-                <p className="text-[11px] text-green-200 mb-1.5 leading-relaxed">
-                  {!settings.enabled
-                    ? "Automation is OFF — enable it in Settings first."
-                    : provider === "unconfigured"
-                    ? `⚠️ Configure ${settings.whatsappMode === "meta" ? "Meta API" : "WATI"} credentials in Settings before running.`
-                    : quietHoursActive
-                    ? `Quiet hours active (${settings.quietHours.start}:00 – ${settings.quietHours.end}:00).`
-                    : `Force sync all pending automations for the current queue immediately. This action bypasses scheduled intervals.`}
-                </p>
-                <p className="text-[10px] text-green-300/70 mb-4">
-                  {!settings.enabled || provider === "unconfigured" || quietHoursActive ? "" :
-                    `Evaluates all ${customers.length} customers · ${
-                      settings.whatsappMode === "meta" ? "Meta WhatsApp Cloud API" :
-                      settings.whatsappMode === "api"  ? "WATI API" :
-                                                         "WhatsApp Web"
-                    }`}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleRunAutomation}
-                  disabled={
-                    running ||
-                    !settings.enabled ||
-                    (settings.whatsappMode === "api" && provider === "unconfigured")
-                  }
-                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border text-white text-sm font-semibold transition-colors min-h-[44px] touch-manipulation ${
-                    !settings.enabled ||
-                    (settings.whatsappMode === "api" && provider === "unconfigured")
-                      ? "bg-green-900/50 border-green-700/30 text-green-400/60 cursor-not-allowed"
-                      : running
-                      ? "bg-green-600/50 border-green-400/40 cursor-wait"
-                      : "bg-green-600/50 hover:bg-green-600/70 border-green-400/40"
-                  }`}
-                >
-                  {running
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Running…</>
-                    : <><Play className="w-4 h-4" /> Run Now</>}
-                </button>
-              </div>
-
-              {/* Run error */}
-              {runError && (
-                <div className="border-t border-red-400/30 px-5 py-3 bg-red-900/40 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
-                  <p className="text-xs text-red-200 font-medium">{runError}</p>
-                </div>
-              )}
-
-              {/* Run result */}
-              {runResult && !runError && (
-                <div className="border-t border-green-700/40 px-5 py-3 bg-green-900/30">
-                  <p className="text-[10px] font-semibold text-green-300 uppercase tracking-wide mb-2">
-                    Run Complete {runResult.mode === "api" ? "· WATI API" : "· WhatsApp Web"}
-                  </p>
-                  <div className="grid grid-cols-4 gap-2 text-center">
-                    <div>
-                      <p className="text-lg font-bold text-white">{runResult.scanned}</p>
-                      <p className="text-[9px] text-green-300">Scanned</p>
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold text-blue-300">{runResult.eligible}</p>
-                      <p className="text-[9px] text-green-300">Eligible</p>
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold text-emerald-300">{runResult.sent}</p>
-                      <p className="text-[9px] text-green-300">Sent</p>
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold text-red-300">{runResult.failed}</p>
-                      <p className="text-[9px] text-green-300">Failed</p>
-                    </div>
-                  </div>
-                  {runResult.skipped > 0 && (
-                    <p className="text-[10px] text-green-300/70 mt-2">
-                      {runResult.skipped} customer{runResult.skipped !== 1 ? "s" : ""} skipped
-                      (no phone / opted out / cooldown)
-                    </p>
-                  )}
-                  {runResult.dryRun !== undefined && runResult.dryRun > 0 && (
-                    <p className="text-[10px] text-orange-300 mt-1">
-                      ⚠ {runResult.dryRun} sent as dry-run (WATI not fully configured on server)
-                    </p>
-                  )}
-                  {runResult.blockedByQuietHours && (
-                    <p className="text-[10px] text-orange-300 mt-2 flex items-center gap-1">
-                      <Moon className="w-3 h-3" /> Quiet hours active — adjust in Settings to send now
-                    </p>
-                  )}
-                  {runResult.failures.length > 0 && (
-                    <details className="mt-2">
-                      <summary className="text-[10px] text-red-300 cursor-pointer">
-                        {runResult.failures.length} failure{runResult.failures.length !== 1 ? "s" : ""} — click to expand
-                      </summary>
-                      <ul className="mt-1 space-y-0.5">
-                        {runResult.failures.map((f, i) => (
-                          <li key={i} className="text-[10px] text-red-300">
-                            • {f.name}: {f.error}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* How it works */}
-            <div className="rounded-xl bg-white border border-gray-100 shadow-sm overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100">
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">How It Works</p>
-              </div>
-              <div className="px-4 py-3 text-[11px] text-gray-600 leading-relaxed space-y-2">
-                <p>Click <strong className="text-gray-800">Run Now</strong> to evaluate all customers. Eligible customers appear in the Queue tab.</p>
-                <p>In <strong className="text-gray-800">WhatsApp Web Mode</strong>, Run opens WhatsApp with a personalised message pre-filled. You confirm before it sends.</p>
-                <p>In <strong className="text-gray-800">WATI / Meta API Mode</strong>, messages are sent automatically via the server. Add credentials in Settings.</p>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* ── Queue ────────────────────────────────────────────────────── */}
-        {panelTab === "queue" && (
-          <>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
-                <MessageSquare className="w-4 h-4 text-indigo-500" /> Follow-Up Queue
-                {queue.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[9px] font-bold rounded-full">
-                    {queue.length}
-                  </span>
-                )}
-              </h2>
-              <span className="text-[10px] text-gray-400">
-                {settings.whatsappMode === "api"
-                  ? "API mode — run from Overview to send via WATI"
-                  : "Opens WhatsApp — confirm before sending"}
-              </span>
-            </div>
-
+            {/* Queue */}
             {queue.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center text-gray-400">
+              <div className="flex flex-col items-center justify-center py-10 text-center text-gray-400">
                 <CheckCircle className="w-10 h-10 mb-3 text-emerald-400" />
                 <p className="text-sm font-semibold text-gray-600">All caught up!</p>
-                <p className="text-xs mt-1">
-                  No follow-ups pending today. Check cooldown settings if you expect customers here.
+                <p className="text-xs mt-1 max-w-[220px]">
+                  {!settings.enabled ? "Automation is OFF — enable it in Setup." : blocked.length > 0 ? `${blocked.length} customer${blocked.length !== 1 ? "s" : ""} need follow-up but can't be reached (see below).` : "No follow-ups pending right now."}
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
-                <AnimatePresence>
-                  {queue.map(item => (
-                    <QueueCard key={item.customer.key} item={item} onSent={handleSent} />
-                  ))}
-                </AnimatePresence>
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-indigo-500" />
+                    {isWebMode ? `${queue.length} message${queue.length !== 1 ? "s" : ""} to send` : `${queue.length} in queue`}
+                  </p>
+                  {isWebMode && <span className="text-[10px] text-gray-400">Click Send → confirm in WhatsApp</span>}
+                </div>
+                <div className="space-y-2">
+                  <AnimatePresence>
+                    {queue.map(item => <QueueCard key={item.customer.key} item={item} onSent={handleSent} />)}
+                  </AnimatePresence>
+                </div>
+              </>
+            )}
+
+            {/* Blocked customers */}
+            {blocked.length > 0 && (
+              <div className="border border-amber-200 bg-amber-50 rounded-xl p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {blocked.length} customer{blocked.length !== 1 ? "s" : ""} need follow-up but can't be reached
+                </p>
+                {blocked.map(b => (
+                  <div key={b.customer.key} className="flex items-center gap-2 text-xs text-amber-700 pl-1">
+                    <span className="font-medium truncate max-w-[120px]">{b.customer.name}</span>
+                    <TriggerBadge trigger={b.trigger} />
+                    <span className="text-[10px] opacity-70 ml-auto shrink-0">{b.reason === "no_phone" ? "No phone number" : "Opted out"}</span>
+                  </div>
+                ))}
+                {blocked.some(b => b.reason === "no_phone") && (
+                  <p className="text-[10px] text-amber-600 pt-1 border-t border-amber-200">
+                    Add phone numbers in Customer Listing → Edit Customer to enable WhatsApp.
+                  </p>
+                )}
               </div>
             )}
           </>
         )}
 
-        {/* ── Log ──────────────────────────────────────────────────────── */}
-        {panelTab === "log" && (
+        {/* ══════════════════════════════════════════════════════════════════
+            RULES TAB — all automation triggers in one place
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === "rules" && (
           <>
-            {/* Run log */}
+            {gcLoading ? (
+              <div className="flex items-center justify-center py-8 text-gray-400 gap-2 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : (
+              <>
+                {gcSaving && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-green-600 font-semibold">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Saving…
+                  </div>
+                )}
+
+                {/* ── Customer Follow-Up ── */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Customer Follow-Up</p>
+                  <div className="space-y-2">
+
+                    <RuleCard emoji="🎂" title="Birthday Wishes" badge="Server"
+                      description="Automatically sends a birthday greeting with a 15% off coupon on the customer's birthday. Runs once daily at the time you set."
+                      checked={gc.birthdayEnabled} onChange={v => saveGc({ birthdayEnabled: v })}
+                    >
+                      <FieldRow label="Send time">
+                        <input type="number" min={0} max={23} value={gc.birthdayHour} onChange={e => saveGc({ birthdayHour: Math.max(0, Math.min(23, +e.target.value)) })} className={`${inputCls} w-16`} />
+                        <span className="text-[11px] text-gray-500">:00 (24h)</span>
+                      </FieldRow>
+                      <BirthdayRunButton />
+                    </RuleCard>
+
+                    <RuleCard emoji="💐" title="Anniversary Wishes" badge="Server"
+                      description="Sends an anniversary greeting with a 20% off coupon. Shares the birthday scan schedule — runs at the same time each day."
+                      checked={gc.birthdayEnabled} onChange={v => saveGc({ birthdayEnabled: v })}
+                    />
+
+                    <RuleCard emoji="🎉" title="Welcome New Customers"
+                      description="Sends a welcome offer after a customer's very first visit. Only fires once per customer."
+                      checked={settings.welcomeEnabled} onChange={v => updateSettings({ ...settings, welcomeEnabled: v })}
+                    />
+
+                    <RuleCard emoji="📢" title="Re-engage Inactive Customers" alwaysOn
+                      description={`Reminds customers who haven't visited in a while. You can adjust how many days counts as "inactive" below.`}
+                      checked onChange={() => {}}
+                    >
+                      <FieldRow label="Inactive after">
+                        <input type="number" min={1} max={90} value={settings.inactivityDays} onChange={e => updateSettings({ ...settings, inactivityDays: +e.target.value })} className={`${inputCls} w-16`} />
+                        <span className="text-[11px] text-gray-500">days</span>
+                      </FieldRow>
+                    </RuleCard>
+
+                    <RuleCard emoji="⭐" title="VIP Loyalty Reward"
+                      description="Sends a 'thank you' message with a complimentary starter offer to your most loyal customers (10+ visits)."
+                      checked={settings.vipEnabled} onChange={v => updateSettings({ ...settings, vipEnabled: v })}
+                    />
+
+                    <RuleCard emoji="🔄" title="Win-Back Lapsed Customers" alwaysOn
+                      description="Sends a 10% off offer to customers who haven't visited in over 30 days. Always active — pairs with Re-engage above."
+                      checked onChange={() => {}}
+                    />
+                  </div>
+                </div>
+
+                {/* ── After Each Visit ── */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">After Each Visit</p>
+                  <div className="space-y-2">
+                    <RuleCard emoji="⭐" title="Ask for Feedback" badge="Server"
+                      description="Sends a review request to the customer after they pay. Great for collecting ratings and identifying issues early."
+                      checked={gc.feedbackEnabled} onChange={v => saveGc({ feedbackEnabled: v })}
+                    >
+                      <FieldRow label="Send after">
+                        <input type="number" min={5} max={1440} value={gc.feedbackDelayMinutes} onChange={e => saveGc({ feedbackDelayMinutes: Math.max(5, +e.target.value) })} className={`${inputCls} w-20`} />
+                        <span className="text-[11px] text-gray-500">minutes after payment</span>
+                      </FieldRow>
+                    </RuleCard>
+                  </div>
+                </div>
+
+                {/* ── Daily Report ── */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Daily Report to Owner</p>
+                  <div className="space-y-2">
+                    <RuleCard emoji="📊" title="Daily Sales Summary" badge="Server"
+                      description="Sends you a WhatsApp summary of today's revenue, orders, and top items at the end of each day."
+                      checked={gc.dailyDigestEnabled} onChange={v => saveGc({ dailyDigestEnabled: v })}
+                    >
+                      <FieldRow label="Owner's phone">
+                        <input type="tel" placeholder="919876543210" value={gc.ownerWhatsappPhone} onChange={e => saveGc({ ownerWhatsappPhone: e.target.value.replace(/\D/g, "") })} className={`${inputCls} w-40`} />
+                      </FieldRow>
+                      <FieldRow label="Send at">
+                        <input type="number" min={0} max={23} value={gc.dailyDigestHour} onChange={e => saveGc({ dailyDigestHour: Math.max(0, Math.min(23, +e.target.value)) })} className={`${inputCls} w-16`} />
+                        <span className="text-[11px] text-gray-500">:00 (24h)</span>
+                      </FieldRow>
+                    </RuleCard>
+                  </div>
+                </div>
+
+                {/* Server badge explanation */}
+                <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+                  <Info className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-blue-700 leading-relaxed">
+                    Rules marked <span className="font-bold bg-indigo-100 text-indigo-700 px-1 rounded">Server</span> run automatically in the background — no manual action needed once enabled.
+                    Other rules feed the <strong>Send tab queue</strong> for you to review and send manually (or automatically via API mode in Setup).
+                  </p>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            MESSAGES TAB — template editor
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === "messages" && (
+          <>
+            <div>
+              <p className="text-sm font-bold text-gray-800 mb-0.5">Message Templates</p>
+              <p className="text-[11px] text-gray-500 mb-3 leading-relaxed">
+                Edit the default message for each rule. Use tokens like{" "}
+                <code className="bg-gray-100 px-1 rounded text-[9px]">{"{name}"}</code> — they are filled in with real customer data when sent.
+                Changes save automatically and apply to all future messages of that type.
+              </p>
+            </div>
+            <MessageTemplatesEditor
+              templates={settings.messageTemplates ?? {}}
+              onChange={tpls => updateSettings({ ...settings, messageTemplates: tpls })}
+            />
+          </>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            HISTORY TAB — logs
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === "history" && (
+          <>
             <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-gray-800">Run Log ({runLog.length})</p>
-              <div className="flex items-center gap-2">
-                {(settings.whatsappMode === "api" || settings.whatsappMode === "meta") && (
-                  <button
-                    type="button"
-                    onClick={fetchServerLogs}
-                    disabled={serverLogsLoading}
-                    className="text-[10px] text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
-                  >
-                    {serverLogsLoading
-                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Loading…</>
-                      : <><RefreshCw className="w-3 h-3" /> Refresh server logs</>}
-                  </button>
+              <p className="text-sm font-bold text-gray-800">Message History</p>
+              {(runLog.length > 0 || sendLog.length > 0) && (
+                <button type="button" onClick={() => { clearRunLog(); clearAutomationLog(); setLogVersion(v => v + 1); }} className="text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" /> Clear all
+                </button>
+              )}
+            </div>
+
+            {sendLog.length === 0 && runLog.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                <History className="w-8 h-8 mb-3 opacity-30" />
+                <p className="text-sm font-semibold text-gray-600">No history yet</p>
+                <p className="text-xs mt-1">Messages you send will appear here.</p>
+              </div>
+            ) : (
+              <>
+                {sendLog.length > 0 && (
+                  <div className="space-y-1.5">
+                    {sendLog.slice(0, 50).map((e, i) => (
+                      <div key={i} className="flex items-center gap-2.5 px-3 py-2 bg-white border border-gray-100 rounded-xl text-xs">
+                        <span className="text-sm">{TRIGGER_LABELS[e.trigger as TriggerType]?.emoji ?? "📨"}</span>
+                        <span className="font-medium text-gray-800 flex-1 truncate">{e.customerName}</span>
+                        <TriggerBadge trigger={e.trigger} />
+                        <span className="text-[9px] text-gray-400 shrink-0">
+                          {new Date(e.sentAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 )}
                 {runLog.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => { clearRunLog(); setLogVersion(v => v + 1); }}
-                    className="text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" /> Clear local
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {runLog.length === 0 && serverLogs.length === 0 ? (
-              <p className="text-xs text-gray-400 py-8 text-center">
-                No run logs yet. Click <strong>Run</strong> on the Overview tab to start.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {runLog.map((entry, i) => (
-                  <RunLogRow key={`local-${i}`} entry={entry} />
-                ))}
-              </div>
-            )}
-
-            {/* Server logs (API mode) */}
-            {(settings.whatsappMode === "api" || settings.whatsappMode === "meta") && serverLogs.length > 0 && (
-              <div className="border-t border-gray-100 pt-4">
-                <p className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5">
-                  {settings.whatsappMode === "meta" ? "🔵" : "🤖"} Server Automation Log ({serverLogs.length})
-                  <span className="text-[9px] font-normal text-gray-400">
-                    from {settings.whatsappMode === "meta" ? "Meta Cloud API" : "WATI"} runs
-                  </span>
-                </p>
-                <div className="space-y-1.5">
-                  {serverLogs.map(entry => (
-                    <ServerLogRow key={entry.id} entry={entry} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Send history */}
-            {sendLog.length > 0 && (
-              <div className="border-t border-gray-100 pt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-bold text-gray-700">
-                    Send History ({sendLog.length})
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => { clearAutomationLog(); setLogVersion(v => v + 1); }}
-                    className="text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" /> Clear
-                  </button>
-                </div>
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                  {sendLog.slice(0, 50).map((e, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-100 rounded-lg"
-                    >
-                      <span className="text-xs">{TRIGGER_META[e.trigger]?.emoji ?? "📨"}</span>
-                      <span className="text-xs font-medium text-gray-700 flex-1">{e.customerName}</span>
-                      <TriggerBadge trigger={e.trigger} />
-                      {e.channel && (
-                        <span className="text-[9px] text-gray-400">
-                          {e.channel === "meta" ? "🔵" : e.channel === "wati" ? "🤖" : "🌐"}
-                        </span>
-                      )}
-                      <span className="text-[9px] text-gray-400 shrink-0">
-                        {new Date(e.sentAt).toLocaleString("en-IN", {
-                          day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-                        })}
-                      </span>
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 mt-3">Run Log</p>
+                    <div className="space-y-1.5">
+                      {runLog.slice(0, 30).map((entry, i) => <LogRow key={i} entry={entry} />)}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
 
-        {/* ── Settings ─────────────────────────────────────────────────── */}
-        {panelTab === "settings" && (
-          <>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
-                <Sliders className="w-4 h-4 text-indigo-500" /> Automation Settings
-              </p>
-              <div className="flex items-center gap-2">
-                {saveFeedback === "ok" && (
-                  <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-semibold">
-                    <CheckCircle className="w-3 h-3" /> Saved
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => updateSettings({ ...DEFAULT_SETTINGS })}
-                  className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1"
-                >
-                  <RotateCcw className="w-3 h-3" /> Reset defaults
-                </button>
-              </div>
-            </div>
-
-            <SettingsPanel settings={settings} onChange={updateSettings} />
-          </>
+        {/* ══════════════════════════════════════════════════════════════════
+            SETUP TAB — WhatsApp connection + advanced settings
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === "setup" && (
+          <SetupTab settings={settings} onSettings={updateSettings} gc={gc} onGc={saveGc} gcLoading={gcLoading} />
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Birthday run button (inside Rules tab) ────────────────────────────────────
+
+function BirthdayRunButton() {
+  const [busy, setBusy]     = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true); setResult(null);
+    try {
+      const res  = await fetch(apiUrl("/api/automation/birthday/run"), { method: "POST", credentials: "include" });
+      const data = await res.json() as any;
+      if (!res.ok) throw new Error(data?.error ?? "Scan failed");
+      const sent = (data.birthdaysSent ?? 0) + (data.anniversariesSent ?? 0);
+      const dry  = data.dryRun ?? 0;
+      if (dry > 0 && sent === 0) setResult(`⚠️ Dry-run: ${dry} found but WhatsApp not configured. Go to Setup.`);
+      else if (sent > 0) setResult(`✅ Sent ${sent} message${sent !== 1 ? "s" : ""}!`);
+      else setResult(`ℹ️ No birthdays/anniversaries today (scanned ${data.scanned ?? 0} customers).`);
+    } catch (e: any) {
+      setResult(`❌ ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <button type="button" onClick={run} disabled={busy} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-pink-700 border border-pink-200 bg-pink-50 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50">
+        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cake className="w-3 h-3" />}
+        Run scan now
+      </button>
+      {result && <p className="text-[10px] text-gray-600 leading-relaxed">{result}</p>}
+    </div>
+  );
+}
+
+// ── Setup tab ─────────────────────────────────────────────────────────────────
+
+function SetupTab({
+  settings, onSettings, gc, onGc, gcLoading,
+}: {
+  settings: AutomationSettings;
+  onSettings: (s: AutomationSettings) => void;
+  gc: GrowthConfig;
+  onGc: (patch: Partial<GrowthConfig>) => Promise<void>;
+  gcLoading: boolean;
+}) {
+  const set = <K extends keyof AutomationSettings>(k: K, v: AutomationSettings[K]) =>
+    onSettings({ ...settings, [k]: v });
+
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [credSaving, setCredSaving]     = useState<"idle" | "saving" | "ok" | "error">("idle");
+
+  const saveCreds = async () => {
+    setCredSaving("saving");
+    try {
+      await onGc({
+        watiApiKey:        gc.watiApiKey,
+        watiEndpoint:      gc.watiEndpoint,
+        metaPhoneNumberId: gc.metaPhoneNumberId,
+        metaAccessToken:   gc.metaAccessToken,
+      });
+      setCredSaving("ok");
+      setTimeout(() => setCredSaving("idle"), 3000);
+    } catch {
+      setCredSaving("error");
+      setTimeout(() => setCredSaving("idle"), 4000);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── Master toggle ── */}
+      <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl">
+        <div>
+          <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+            <Zap className="w-4 h-4 text-green-500" /> Automation Engine
+          </p>
+          <p className="text-[10px] text-gray-500 mt-0.5">Master switch — turn off to pause all automation</p>
+        </div>
+        <Toggle value={settings.enabled} onChange={v => set("enabled", v)} />
+      </div>
+
+      {/* ── WhatsApp connection ── */}
+      <div>
+        <p className="text-xs font-bold text-gray-700 mb-1">How to Send WhatsApp Messages</p>
+        <p className="text-[10px] text-gray-400 mb-2.5">Choose how messages are delivered to customers.</p>
+        <div className="space-y-2">
+          {([
+            { mode: "web",  icon: "🌐", title: "WhatsApp Web — Free",      desc: "Opens WhatsApp on your device. You review and confirm each message before it sends. Best for small teams." },
+            { mode: "meta", icon: "🔵", title: "Meta API — Automatic",     desc: "Messages send automatically without clicking. Requires a Meta WhatsApp Business account." },
+            { mode: "api",  icon: "🤖", title: "WATI API — Automatic",     desc: "Messages send automatically via WATI. Requires a WATI subscription." },
+          ] as const).map(({ mode, icon, title, desc }) => (
+            <button key={mode} type="button" onClick={() => set("whatsappMode", mode)}
+              className={`w-full flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all ${settings.whatsappMode === mode ? "border-green-400 bg-green-50" : "border-gray-200 bg-white hover:border-gray-300"}`}
+            >
+              <span className="text-xl shrink-0 mt-0.5">{icon}</span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                  {title}
+                  {settings.whatsappMode === mode && <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Active</span>}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">{desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Credentials (Meta) ── */}
+      {settings.whatsappMode === "meta" && (
+        <div className="border border-blue-200 bg-blue-50 rounded-xl p-4 space-y-3">
+          <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5">🔵 Meta WhatsApp Credentials</p>
+          <p className="text-[10px] text-blue-700 leading-relaxed">
+            Get these from <strong>developers.facebook.com → Your App → WhatsApp → Getting Started</strong>.
+          </p>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-600 mb-1">Phone Number ID</label>
+            <input type="text" placeholder="123456789012345" value={gc.metaPhoneNumberId} onChange={e => onGc({ metaPhoneNumberId: e.target.value })} className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-600 mb-1">Access Token</label>
+            <input type="password" placeholder="EAAxxxxxxxx…" value={gc.metaAccessToken} onChange={e => onGc({ metaAccessToken: e.target.value })} className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white" />
+          </div>
+          <CredSaveButton saving={credSaving} onSave={saveCreds} disabled={!gc.metaPhoneNumberId || !gc.metaAccessToken} />
+        </div>
+      )}
+
+      {/* ── Credentials (WATI) ── */}
+      {settings.whatsappMode === "api" && (
+        <div className="border border-orange-200 bg-orange-50 rounded-xl p-4 space-y-3">
+          <p className="text-xs font-bold text-orange-800 flex items-center gap-1.5"><Key className="w-3.5 h-3.5" /> WATI API Credentials</p>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-600 mb-1">API Endpoint</label>
+            <input type="text" placeholder="https://live-mt-server.wati.io/YOUR_ID" value={gc.watiEndpoint} onChange={e => onGc({ watiEndpoint: e.target.value })} className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-600 mb-1">API Key</label>
+            <input type="password" placeholder="Your WATI API key" value={gc.watiApiKey} onChange={e => onGc({ watiApiKey: e.target.value })} className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white" />
+          </div>
+          <CredSaveButton saving={credSaving} onSave={saveCreds} disabled={!gc.watiApiKey || !gc.watiEndpoint} color="orange" />
+        </div>
+      )}
+
+      {/* ── Advanced settings (collapsed) ── */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <button type="button" onClick={() => setShowAdvanced(a => !a)} className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
+          <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-gray-400" /> Advanced Settings
+          </p>
+          {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </button>
+        {showAdvanced && (
+          <div className="px-4 py-4 space-y-4 bg-white border-t border-gray-100">
+
+            {/* Auto-off quiet hours */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5"><Moon className="w-3.5 h-3.5 text-slate-400" /> Auto-Off During Quiet Hours</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">Pause automation at night, resume in the morning</p>
+              </div>
+              <Toggle value={settings.autoOff} onChange={v => set("autoOff", v)} />
+            </div>
+
+            {/* Quiet hours */}
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">No messages sent between:</p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} max={23} value={settings.quietHours.start} onChange={e => set("quietHours", { ...settings.quietHours, start: +e.target.value })} className={`${inputCls} w-16`} />
+                  <span className="text-[11px] text-gray-500">:00</span>
+                </div>
+                <span className="text-[11px] text-gray-400">to</span>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} max={23} value={settings.quietHours.end} onChange={e => set("quietHours", { ...settings.quietHours, end: +e.target.value })} className={`${inputCls} w-16`} />
+                  <span className="text-[11px] text-gray-500">:00</span>
+                </div>
+              </div>
+              {isInQuietHours(settings.quietHours) && <p className="text-[10px] text-orange-500 font-semibold mt-1">⚠ Quiet hours active right now</p>}
+            </div>
+
+            {/* Limits grid */}
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { key: "maxPerRun",      label: "Max per run",     hint: "Messages per single run",       min: 1,   max: 200 },
+                { key: "dailyLimit",     label: "Daily limit",     hint: "Max total messages per day",    min: 1,   max: 200 },
+                { key: "cooldownHours",  label: "Cooldown (hours)",hint: "Min hours between msgs per customer", min: 1, max: 720 },
+                { key: "inactivityDays", label: "Inactivity days", hint: "Days before 'At Risk' triggers",min: 1,   max: 90  },
+              ] as const).map(({ key, label, hint, min, max }) => (
+                <div key={key}>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">{label}</label>
+                  <input type="number" min={min} max={max} value={settings[key] as number} onChange={e => set(key, +e.target.value)} className={`${inputCls} w-full`} />
+                  <p className="text-[9px] text-gray-400 mt-0.5">{hint}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Template mode */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5"><Bot className="w-3.5 h-3.5 text-purple-400" /> Template Mode</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">{settings.templateMode ? "Using smart templates (always works)" : "Using Claude AI — requires Anthropic key on server"}</p>
+              </div>
+              <Toggle value={settings.templateMode} onChange={v => set("templateMode", v)} />
+            </div>
+
+            {/* Reset */}
+            <button type="button" onClick={() => onSettings({ ...DEFAULT_SETTINGS })} className="text-[10px] text-red-500 hover:text-red-700 flex items-center gap-1">
+              <RotateCcw className="w-3 h-3" /> Reset all settings to default
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Opt-out note ── */}
+      <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+        <Bell className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
+        <p className="text-[10px] text-blue-700 leading-relaxed">
+          <strong>Opt-out is always respected.</strong> Customers marked "Do Not Contact" or with notifications off are never messaged, regardless of any settings here.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CredSaveButton({ saving, onSave, disabled, color = "blue" }: { saving: string; onSave: () => void; disabled: boolean; color?: string }) {
+  const cls = color === "orange"
+    ? "bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200"
+    : "bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200";
+  return (
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={onSave} disabled={disabled || saving === "saving"} className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-white transition-colors disabled:text-gray-400 ${cls}`}>
+        {saving === "saving" ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : <><CheckCircle2 className="w-3 h-3" /> Save Credentials</>}
+      </button>
+      {saving === "ok" && <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Saved</span>}
+      {saving === "error" && <span className="text-[10px] text-red-600 font-semibold">Save failed</span>}
     </div>
   );
 }

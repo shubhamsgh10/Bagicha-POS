@@ -1,6 +1,6 @@
 import { apiUrl } from '@/lib/api';
 import { useMemo, useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Users, Phone, ShoppingBag, TrendingUp, Clock, Star, AlertTriangle,
@@ -63,6 +63,8 @@ function formatDate(dateStr: string): string {
 // ── Extra customer data persisted in localStorage ─────────────────────────────
 
 interface CustomerExtra {
+  phone: string;         // manually-added phone (used when no order-derived phone exists)
+  displayName: string;   // editable preferred name (overrides order-derived name in listings)
   email: string;
   dateOfBirth: string;
   dateOfAnniversary: string;
@@ -86,6 +88,7 @@ function saveExtras(data: Record<string, CustomerExtra>) {
 }
 function defaultExtra(): CustomerExtra {
   return {
+    phone: "", displayName: "",
     email: "", dateOfBirth: "", dateOfAnniversary: "",
     locality: "", gstNo: "", address: "",
     doNotSendUpdate: false, isFavorite: false,
@@ -272,25 +275,47 @@ function EditCustomerModal({
         {/* Form body */}
         <div className="px-8 py-5 space-y-4">
 
-          {/* Mobile — read-only (primary key) */}
+          {/* Mobile */}
           <div className="flex items-start gap-4">
             <label className={labelCls}>Mobile</label>
-            <input
-              value={customer.phone || customer.name}
-              readOnly
-              className={`${inputCls} bg-gray-50 text-gray-600 cursor-not-allowed`}
-            />
+            {customer.phone ? (
+              // Phone derived from orders — read-only (it's the CRM key)
+              <input
+                value={customer.phone}
+                readOnly
+                className={`${inputCls} bg-gray-50 text-gray-600 cursor-not-allowed`}
+              />
+            ) : (
+              // No order-derived phone — allow manual entry
+              <div className="flex-1 flex flex-col gap-1">
+                <input
+                  value={form.phone}
+                  onChange={e => set("phone", e.target.value)}
+                  placeholder="Add phone number"
+                  type="tel"
+                  className={inputCls}
+                />
+                <p className="text-xs text-amber-600">No phone on record — add one to enable WhatsApp automation.</p>
+              </div>
+            )}
           </div>
 
           {/* Name */}
           <div className="flex items-start gap-4">
             <label className={labelCls}>Name</label>
-            <input
-              value={form.email ? customer.name : customer.name}
-              readOnly
-              className={`${inputCls} bg-gray-50 text-gray-600 cursor-not-allowed`}
-              placeholder="Derived from orders"
-            />
+            <div className="flex-1 flex flex-col gap-1">
+              <input
+                value={form.displayName || customer.name}
+                onChange={e => set("displayName", e.target.value)}
+                placeholder={customer.name}
+                className={inputCls}
+              />
+              {form.displayName && form.displayName !== customer.name && (
+                <p className="text-xs text-blue-600">
+                  Display name updated — original: <span className="font-mono">{customer.name}</span>
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Email */}
@@ -511,7 +536,7 @@ function CustomerListingView({
                   {/* Name + tag */}
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-sm font-bold text-gray-900 truncate">
-                      {c.name !== "Unknown" ? c.name : <span className="text-gray-400">Unknown</span>}
+                      {ex.displayName || c.name !== "Unknown" ? (ex.displayName || c.name) : <span className="text-gray-400">Unknown</span>}
                     </span>
                     <TagBadge tag={c.tag} />
                   </div>
@@ -519,7 +544,10 @@ function CustomerListingView({
                   {/* Phone */}
                   <div className="flex items-center gap-1.5 mb-3">
                     <Phone className="w-3 h-3 text-gray-400 shrink-0" />
-                    <span className="text-xs text-gray-500">{c.phone || "—"}</span>
+                    <span className="text-xs text-gray-500">{c.phone || ex.phone || "—"}</span>
+                    {!c.phone && ex.phone && (
+                      <span className="text-[10px] text-amber-500 font-medium">(manual)</span>
+                    )}
                   </div>
 
                   {/* Action buttons */}
@@ -1015,6 +1043,7 @@ function IntelligenceView({
 export default function CustomerDashboard() {
   const { customers, stats, isLoading } = useCustomerIntelligence();
 
+  const queryClient = useQueryClient();
   const [tab, setTab]               = useState<"listing" | "intelligence" | "automation">("listing");
   const [extras, setExtras]         = useState<Record<string, CustomerExtra>>(loadExtras);
   const [editTarget, setEditTarget] = useState<CustomerProfile | null>(null);
@@ -1026,23 +1055,31 @@ export default function CustomerDashboard() {
   useCrmExtrasSync(extras, !isLoading);
 
   const handleSaveExtra = (customer: CustomerProfile, data: CustomerExtra) => {
-    // 1. Update localStorage immediately (existing behavior — unchanged)
+    // 1. Update localStorage immediately
     setExtras(prev => ({ ...prev, [customer.key]: data }));
 
-    // 2. Sync to DB in background (non-blocking — failure is silent)
+    // 2. Sync to DB — also backfills orders.customerPhone for past orders
+    const phone = customer.phone || data.phone || undefined;
     fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`), {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },
       credentials: "include",
       body:        JSON.stringify({
         ...data,
-        name:  customer.name,
-        phone: customer.phone || undefined,
-        // Remap UI field names → DB field names
+        name:        data.displayName || customer.name,
+        phone,
         dob:         data.dateOfBirth,
         anniversary: data.dateOfAnniversary,
       }),
-    }).catch(e => console.warn("[CRM] Profile sync failed (non-fatal):", e));
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(res => {
+        if (res?.backfilled > 0) {
+          // Phone was written into old orders — refresh the orders query cache
+          queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        }
+      })
+      .catch(e => console.warn("[CRM] Profile sync failed (non-fatal):", e));
   };
 
   const handleToggleNotif = (key: string) => {

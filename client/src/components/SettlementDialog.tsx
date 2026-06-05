@@ -176,7 +176,7 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Collect Payment · ₹{grandTotal.toFixed(0)}</DialogTitle>
         </DialogHeader>

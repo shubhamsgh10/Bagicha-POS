@@ -72,8 +72,6 @@ export function TopNav() {
   const handleLogout = async () => {
     try {
       await logout();
-      setSidebarOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     } catch {
       toast({ title: "Logout failed", variant: "destructive" });
     }

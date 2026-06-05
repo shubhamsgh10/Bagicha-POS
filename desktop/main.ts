@@ -62,13 +62,15 @@ function isValidPrintJob(job: unknown): job is PrintJob {
   );
 }
 
-async function fetchPrinters(): Promise<PrinterConfig[]> {
+// Returns null when the user isn't logged in yet (401) — caller must not cache this.
+async function fetchPrinters(): Promise<PrinterConfig[] | null> {
   const base = resolveApiBase();
   const cookies = await session.defaultSession.cookies.get({ url: base });
   const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
   const res = await fetch(`${base}/api/settings`, {
     headers: cookieHeader ? { Cookie: cookieHeader } : {},
   });
+  if (res.status === 401) return null; // not logged in yet — skip silently
   if (!res.ok) throw new Error(`Failed to load printer settings: ${res.status}`);
   const settings = (await res.json()) as { printSettings?: { printers?: PrinterConfig[] } };
   return settings.printSettings?.printers ?? [];
@@ -80,7 +82,9 @@ let printLog: PrintLog | null = null;
 
 async function getPrinters(): Promise<PrinterConfig[]> {
   if (printerCache !== null) return printerCache;
-  printerCache = await fetchPrinters();
+  const result = await fetchPrinters();
+  if (result === null) return []; // unauthenticated — don't cache, retry on next call
+  printerCache = result;
   return printerCache;
 }
 
@@ -293,7 +297,9 @@ ipcMain.handle(IPC.PRINT_LOGS, (_e, n?: number) => printLog?.getRecent(n) ?? [])
 ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
   printerCache = null;
   try {
-    printerCache = await fetchPrinters();
+    const result = await fetchPrinters();
+    if (result === null) return { ok: false, error: "Not logged in" };
+    printerCache = result;
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e.message };

@@ -20,8 +20,8 @@ export function useAuth() {
 
   const logout = async () => {
     await apiRequest("POST", "/api/auth/logout");
-    queryClient.setQueryData(["/api/auth/me"], null);
-    queryClient.clear();
+    // Hard-navigate to login: unmounts all components before they can refetch with an expired session
+    window.location.href = "/login";
   };
 
   return {

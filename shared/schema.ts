@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -79,13 +79,14 @@ export const orders = pgTable("orders", {
     printedAt: string;
   } | null>(),
   createdBy: integer("created_by"),  // staff user id who created the order
+  createdByName: text("created_by_name"),  // display name — works for both users and PIN staff
 });
 
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(),
   menuItemId: integer("menu_item_id").notNull(),
-  quantity: integer("quantity").notNull(),
+  quantity: real("quantity").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   specialInstructions: text("special_instructions"),
   size: text("size"),

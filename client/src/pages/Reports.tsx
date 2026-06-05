@@ -255,6 +255,13 @@ export default function Reports() {
     queryFn: () => fetch(apiUrl(`/api/reports/payment-summary${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
+  const { data: staffTableReport = [] } = useQuery<Array<{
+    date: string; staff: string; tables: string[]; orderCount: number; revenue: number;
+  }>>({
+    queryKey: ["/api/reports/staff-tables", dateRange.start, dateRange.end],
+    queryFn: () => fetch(apiUrl(`/api/reports/staff-tables${params}`), { credentials: "include" }).then(r => r.json()),
+  });
+
   const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales, orders: d.orders ?? 0 }));
   const topItems  = topItemsData.map((d: any) => ({ name: d.name, sold: d.totalSold, revenue: d.revenue }));
 
@@ -263,6 +270,7 @@ export default function Reports() {
     { id: "items",    label: "Top Items" },
     { id: "orders",   label: "Order Details" },
     { id: "payments", label: "Payments" },
+    { id: "staff",    label: "Staff & Tables" },
   ];
 
   if (isLoading) {
@@ -602,6 +610,75 @@ export default function Reports() {
                 <p className="text-sm text-gray-400">All orders have been settled</p>
               </div>
             )}
+          </motion.div>
+        )}
+
+        {/* ── Staff & Tables ── */}
+        {activeTab === "staff" && (
+          <motion.div
+            key={`staff-${dateRange.start}-${dateRange.end}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+          >
+            <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-white/30 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-800">Staff Table Assignments</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Which staff member served which table, per day</p>
+                </div>
+                <span className="text-sm font-medium text-emerald-600">{staffTableReport.length} entries</span>
+              </div>
+              {staffTableReport.length === 0 ? (
+                <div className="p-10 text-center">
+                  <Users className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-medium">No data for this period</p>
+                  <p className="text-sm text-gray-400 mt-1">Orders must be placed while staff are logged in</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-white/30 text-left">
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Staff</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tables Served</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Orders</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Revenue</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/20">
+                      {staffTableReport.map((row, i) => (
+                        <tr key={i} className="hover:bg-white/20 transition-colors">
+                          <td className="px-5 py-3 text-gray-600 whitespace-nowrap">
+                            {new Date(row.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600 shrink-0">
+                                {row.staff.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="font-medium text-gray-800">{row.staff}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {row.tables.map(t => (
+                                <span key={t} className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-medium border border-emerald-100">
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-right font-semibold text-gray-700">{row.orderCount}</td>
+                          <td className="px-5 py-3 text-right font-semibold text-emerald-700">₹{row.revenue.toFixed(0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
       </main>

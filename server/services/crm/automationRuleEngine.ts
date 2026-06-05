@@ -15,7 +15,7 @@
  */
 
 import { db } from "../../db";
-import { eq, and, desc, isNull, sql } from "drizzle-orm";
+import { eq, and, desc, isNull, sql, count, or } from "drizzle-orm";
 import {
   orders,
   automationRules,
@@ -453,4 +453,83 @@ export async function seedDefaultRules(): Promise<void> {
   } catch (err) {
     console.warn("[CRM] Could not seed default rules:", err);
   }
+}
+
+// ── Immediate first-order welcome trigger ─────────────────────────────────────
+
+/**
+ * Called immediately after a brand-new customer places their first order.
+ * Sends a WELCOME message if:
+ *   - server automation is enabled
+ *   - customer has a phone number
+ *   - no WELCOME job has already been sent/pending for this customer today
+ *
+ * Fire-and-forget — caller should .catch() and swallow errors.
+ */
+export async function triggerWelcomeIfEligible(
+  key:   string,
+  name:  string,
+  phone: string | null | undefined
+): Promise<void> {
+  const config = getAutomationConfig();
+  if (!config.enabled) return;
+  if (!phone) return;
+
+  // Only fire on the customer's very first order
+  const [{ orderCount }] = await db
+    .select({ orderCount: count() })
+    .from(orders)
+    .where(
+      or(
+        eq(orders.customerPhone, phone),
+        eq(orders.customerName, name)
+      )
+    );
+  if ((orderCount ?? 0) > 1) return;
+
+  // Idempotency check — skip if already welcomed today
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const customerId = await resolveCustomerId(key, name, phone);
+
+  const existing = await db
+    .select({ id: automationJobs.id })
+    .from(automationJobs)
+    .where(
+      and(
+        eq(automationJobs.customerId, customerId),
+        eq(automationJobs.triggerType, "WELCOME"),
+        sql`${automationJobs.scheduledAt} >= ${todayStart}`
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) return;
+
+  const first   = name.split(" ")[0];
+  const restaurant = config.restaurantName || RESTAURANT;
+  const message = `Hi ${first}! 🎉 Welcome to the *${restaurant}* family! We're so glad you dined with us. ` +
+    `As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. 🌿`;
+
+  const [job] = await db
+    .insert(automationJobs)
+    .values({ customerId, triggerType: "WELCOME", status: "pending", message, scheduledAt: new Date() })
+    .returning();
+
+  const msgConfig: MessagingConfig = {
+    watiApiKey:    config.watiApiKey,
+    watiEndpoint:  config.watiEndpoint,
+    msg91AuthKey:  config.msg91AuthKey,
+    msg91SenderId: config.msg91SenderId,
+  };
+
+  const result = await sendMessage(key, name, { channel: "whatsapp", to: phone, message, trigger: "WELCOME" }, msgConfig);
+
+  await db
+    .update(automationJobs)
+    .set({ status: result.success ? "sent" : "failed", executedAt: new Date(), error: result.error ?? null })
+    .where(eq(automationJobs.id, job.id));
+
+  console.log(`[CRM] Welcome ${result.success ? "✓" : "✗"} ${name} → ${result.mode ?? (result.success ? "sent" : "failed")}`);
 }

@@ -16,6 +16,41 @@ export type {
 } from "@shared/print/types";
 import type { PrintConfigSettings } from "@shared/print/types";
 
+// ── Cart-level permission types ───────────────────────────────────────────────
+
+export type CartAction =
+  | "discount" | "complimentary" | "clearCart" | "cancelOrder"
+  | "editItem" | "removeItem" | "splitBill" | "moveTable" | "mergeTable"
+  | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder";
+
+export type CartActionPermission = "off" | "pin" | "allowed";
+
+export interface CartPermissions {
+  manager: Record<CartAction, CartActionPermission>;
+  staff:   Record<CartAction, CartActionPermission>;
+}
+
+const CART_ACTIONS: CartAction[] = [
+  "discount", "complimentary", "clearCart", "cancelOrder",
+  "editItem", "removeItem", "splitBill", "moveTable", "mergeTable",
+  "holdOrder", "printKot", "printBill", "saveOrder", "settleOrder",
+];
+
+export const DEFAULT_CART_PERMISSIONS: CartPermissions = {
+  manager: Object.fromEntries(CART_ACTIONS.map(a => [
+    a,
+    (["editItem", "removeItem"] as CartAction[]).includes(a) ? "pin" :
+    (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
+    "allowed",
+  ])) as Record<CartAction, CartActionPermission>,
+  staff: Object.fromEntries(CART_ACTIONS.map(a => [
+    a,
+    (["editItem", "removeItem"] as CartAction[]).includes(a) ? "pin" :
+    (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
+    "allowed",
+  ])) as Record<CartAction, CartActionPermission>,
+};
+
 // ── Restaurant settings ───────────────────────────────────────────────────────
 
 export interface RestaurantSettings {
@@ -34,6 +69,7 @@ export interface RestaurantSettings {
   printSettings: PrintConfigSettings;
   managerAllowedPages: string[] | null; // null = all pages allowed
   staffAllowedPages: string[] | null;   // null = all pages allowed
+  cartPermissions: CartPermissions;
   billCounter: number;
   kotCounter: number;
 }
@@ -91,6 +127,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   printSettings: DEFAULT_PRINT_SETTINGS,
   managerAllowedPages: null,
   staffAllowedPages: null,
+  cartPermissions: DEFAULT_CART_PERMISSIONS,
   billCounter: 0,
   kotCounter: 0,
 };
@@ -108,6 +145,10 @@ function buildSettings(data: Record<string, any>): RestaurantSettings {
       ...(data.printSettings ?? {}),
       kot: { ...DEFAULT_PRINT_SETTINGS.kot, ...(data.printSettings?.kot ?? {}) },
       bill: { ...DEFAULT_PRINT_SETTINGS.bill, ...(data.printSettings?.bill ?? {}) },
+    },
+    cartPermissions: {
+      manager: { ...DEFAULT_CART_PERMISSIONS.manager, ...(data.cartPermissions?.manager ?? {}) },
+      staff:   { ...DEFAULT_CART_PERMISSIONS.staff,   ...(data.cartPermissions?.staff   ?? {}) },
     },
   };
 }

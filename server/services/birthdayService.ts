@@ -77,9 +77,15 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
   anniversariesSent: number;
   failed: number;
   skipped: number;
+  dryRun: number;
+  whatsappConfigured: boolean;
 }> {
   const config = getAutomationConfig();
-  const stats = { scanned: 0, birthdaysSent: 0, anniversariesSent: 0, failed: 0, skipped: 0 };
+  const whatsappConfigured = !!(
+    (config.metaPhoneNumberId && config.metaAccessToken) ||
+    (config.watiApiKey && config.watiEndpoint)
+  );
+  const stats = { scanned: 0, birthdaysSent: 0, anniversariesSent: 0, failed: 0, skipped: 0, dryRun: 0, whatsappConfigured };
 
   if (!config.birthdayEnabled && !options.force) {
     console.log("[Birthday] disabled");
@@ -115,7 +121,11 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
     if (!isBday && !isAnni) continue;
 
     const trigger = isBday ? "BIRTHDAY" : "ANNIVERSARY";
-    if (await alreadySentToday(c.customerId, trigger)) { stats.skipped++; continue; }
+    try {
+      if (await alreadySentToday(c.customerId, trigger)) { stats.skipped++; continue; }
+    } catch {
+      // automationJobs table not yet migrated — skip duplicate check and proceed
+    }
 
     // Issue coupon
     let coupon: { code: string } | null = null;
@@ -151,30 +161,40 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
       metaAccessToken:   config.metaAccessToken,
     });
 
-    await db.insert(automationJobs).values({
-      customerId:  c.customerId,
-      triggerType: trigger,
-      status:      result.success ? "sent" : "failed",
-      message,
-      scheduledAt: new Date(),
-      executedAt:  new Date(),
-      error:       result.error ?? null,
-    });
+    try {
+      await db.insert(automationJobs).values({
+        customerId:  c.customerId,
+        triggerType: trigger,
+        status:      result.success ? "sent" : "failed",
+        message,
+        scheduledAt: new Date(),
+        executedAt:  new Date(),
+        error:       result.error ?? null,
+      });
+    } catch (dbErr: any) {
+      console.warn("[Birthday] automationJobs insert failed (run db:push):", dbErr?.message);
+    }
 
     if (result.success) {
-      if (isBday) stats.birthdaysSent++; else stats.anniversariesSent++;
+      if (result.mode === "dry_run") {
+        stats.dryRun++;
+      } else {
+        if (isBday) stats.birthdaysSent++; else stats.anniversariesSent++;
+      }
       logEventByKey(c.key, c.name, CRM_EVENT_TYPES.MESSAGE_SENT, {
         channel: "whatsapp",
         trigger,
         couponCode: coupon?.code,
+        dryRun:    result.mode === "dry_run",
       }).catch(() => {});
     } else {
       stats.failed++;
+      console.warn(`[Birthday] send failed for ${c.name}: ${result.error}`);
     }
 
     await new Promise(r => setTimeout(r, 1500));
   }
 
-  console.log(`[Birthday] today=${md} scanned=${stats.scanned} bday=${stats.birthdaysSent} anni=${stats.anniversariesSent} skip=${stats.skipped} fail=${stats.failed}`);
+  console.log(`[Birthday] today=${md} scanned=${stats.scanned} bday=${stats.birthdaysSent} anni=${stats.anniversariesSent} dryRun=${stats.dryRun} skip=${stats.skipped} fail=${stats.failed} waConfigured=${whatsappConfigured}`);
   return stats;
 }

@@ -11,10 +11,11 @@
  */
 
 import { db } from "../../db";
-import { eq } from "drizzle-orm";
+import { eq, and, or, isNull, sql } from "drizzle-orm";
 import {
   customersMaster,
   customerProfiles,
+  orders,
   type CustomerMaster,
   type CustomerProfile_DB,
 } from "../../../shared/schema";
@@ -50,12 +51,21 @@ export async function resolveCustomerId(
 ): Promise<string> {
   // 1. Try to find existing record
   const existing = await db
-    .select({ id: customersMaster.id })
+    .select({ id: customersMaster.id, phone: customersMaster.phone })
     .from(customersMaster)
     .where(eq(customersMaster.key, key))
     .limit(1);
 
-  if (existing.length > 0) return existing[0].id;
+  if (existing.length > 0) {
+    // Backfill phone if we now have one but the record didn't
+    if (phone && !existing[0].phone) {
+      await db
+        .update(customersMaster)
+        .set({ phone })
+        .where(eq(customersMaster.key, key));
+    }
+    return existing[0].id;
+  }
 
   // 2. Insert new master record
   const inserted = await db
@@ -64,6 +74,39 @@ export async function resolveCustomerId(
     .returning({ id: customersMaster.id });
 
   return inserted[0].id;
+}
+
+/**
+ * Backfills orders.customerPhone for all orders belonging to a customer
+ * where the phone was empty at order-creation time but is now known.
+ *
+ * Matches case-insensitively by both key and name so casing differences
+ * between what was typed in POS vs the CRM display name don't cause misses.
+ */
+export async function backfillOrderPhone(
+  customerKey: string,   // customer.key = phone || name (as stored in orders)
+  customerName: string,  // display name (may differ in casing)
+  phone: string
+): Promise<number> {
+  if (!phone || (!customerKey && !customerName)) return 0;
+
+  const noPhone = or(isNull(orders.customerPhone), sql`${orders.customerPhone} = ''`);
+
+  // Match by key (most reliable — same dedup logic as order entry)
+  // and by name as case-insensitive fallback
+  const nameMatch = or(
+    sql`lower(${orders.customerName}) = lower(${customerKey})`,
+    sql`lower(${orders.customerName}) = lower(${customerName})`
+  );
+
+  const result = await db
+    .update(orders)
+    .set({ customerPhone: phone })
+    .where(and(nameMatch, noPhone))
+    .returning({ id: orders.id });
+
+  console.log(`[backfillOrderPhone] key="${customerKey}" name="${customerName}" → updated ${result.length} order(s)`);
+  return result.length;
 }
 
 /**
