@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as E from "../shared/print/escpos.js";
-import { IPC, type PrintJob, type PrintTestPayload } from "../shared/electron/ipc.js";
+import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig } from "../shared/electron/ipc.js";
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
@@ -12,6 +12,7 @@ import { warmPrinterSession, closePrinterSession } from "../shared/print/persist
 import { windowsPrinterQueueExists } from "../shared/print/windowsPrinters.js";
 import { PrintQueue } from "./print/printQueue.js";
 import { PrintLog } from "./print/printLog.js";
+import { AttendanceAgent } from "./attendance/attendanceAgent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICON_PATH = path.join(__dirname, "../icons/icon.png");
@@ -76,9 +77,29 @@ async function fetchPrinters(): Promise<PrinterConfig[] | null> {
   return settings.printSettings?.printers ?? [];
 }
 
+/** Reusable cookie header for authenticated API calls (matches the POS session). */
+async function getCookieHeader(): Promise<string> {
+  const base = resolveApiBase();
+  const cookies = await session.defaultSession.cookies.get({ url: base });
+  return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+/** Read biometric-device config from /api/settings (null until a POS user is logged in). */
+async function fetchAttendanceConfig(): Promise<AttendanceDeviceConfig | null> {
+  const base = resolveApiBase();
+  const cookieHeader = await getCookieHeader();
+  const res = await fetch(`${base}/api/settings`, {
+    headers: cookieHeader ? { Cookie: cookieHeader } : {},
+  });
+  if (res.status === 401 || !res.ok) return null; // not logged in yet — agent retries later
+  const settings = (await res.json()) as { attendanceDevice?: AttendanceDeviceConfig };
+  return settings.attendanceDevice ?? null;
+}
+
 let printerCache: PrinterConfig[] | null = null;
 let printQueue: PrintQueue | null = null;
 let printLog: PrintLog | null = null;
+let attendanceAgent: AttendanceAgent | null = null;
 
 async function getPrinters(): Promise<PrinterConfig[]> {
   if (printerCache !== null) return printerCache;
@@ -218,6 +239,14 @@ if (!gotLock) {
       resolveApiBase,
       printLog,
     );
+    // Biometric attendance agent (K30 Pro) — LAN-local sibling of the print queue.
+    attendanceAgent = new AttendanceAgent(
+      app.getPath("userData"),
+      fetchAttendanceConfig,
+      getCookieHeader,
+      resolveApiBase,
+    );
+    attendanceAgent.start().catch((e) => console.warn("[attendance] start failed:", e));
     // Startup health check — runs after window is ready to receive IPC events
     mainWindow?.webContents.once("did-finish-load", () => {
       runStartupHealthCheck();
@@ -230,7 +259,10 @@ if (!gotLock) {
   });
 }
 
-app.on("will-quit", () => closePrinterSession());
+app.on("will-quit", () => {
+  closePrinterSession();
+  void attendanceAgent?.stop();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -304,4 +336,21 @@ ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
   } catch (e: any) {
     return { ok: false, error: e.message };
   }
+});
+
+// ── Biometric attendance device (K30 Pro) ────────────────────────────────────
+
+ipcMain.handle(IPC.ATTENDANCE_TEST, async (_event, cfg: AttendanceDeviceConfig) => {
+  if (!attendanceAgent) return { ok: false, error: "Agent not ready" };
+  return attendanceAgent.testConnection(cfg);
+});
+
+ipcMain.handle(IPC.ATTENDANCE_STATUS, () =>
+  attendanceAgent?.getStatus() ?? { enabled: false, connected: false, lastSyncAt: null, buffered: 0 },
+);
+
+ipcMain.handle(IPC.ATTENDANCE_REFRESH, async () => {
+  if (!attendanceAgent) return { ok: false };
+  await attendanceAgent.restart().catch((e) => console.warn("[attendance] refresh failed:", e));
+  return { ok: true };
 });

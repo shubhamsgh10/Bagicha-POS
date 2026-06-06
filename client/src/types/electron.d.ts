@@ -7,6 +7,9 @@ import type {
   UpdateProgressPayload,
   UpdateDownloadedPayload,
   UpdateInstallResult,
+  AttendanceDeviceConfig,
+  AttendanceTestResult,
+  AttendanceStatus,
 } from "@shared/electron/ipc";
 
 export interface ElectronAPI {
@@ -38,6 +41,13 @@ export interface ElectronAPI {
     orderId?: number;
     error?: string;
   }>>;
+
+  // ── Biometric attendance device (K30 Pro) ─────────────────────────────────
+  attendance: {
+    test: (cfg: AttendanceDeviceConfig) => Promise<AttendanceTestResult>;
+    status: () => Promise<AttendanceStatus>;
+    refresh: () => Promise<{ ok: boolean }>;
+  };
 
   // ── Auto-update actions ───────────────────────────────────────────────────
   setPosActive: (active: boolean) => Promise<void>;

@@ -43,6 +43,7 @@ export function useRealtime(_url?: string) {
       "ORDER_UPDATE",
       "KOT_UPDATE",
       "NEW_DELIVERY_ORDER",
+      "ATTENDANCE_UPDATE",
       "CACHE_BUST",
     ];
 

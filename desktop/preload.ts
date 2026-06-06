@@ -9,6 +9,9 @@ import {
   type UpdateProgressPayload,
   type UpdateDownloadedPayload,
   type UpdateInstallResult,
+  type AttendanceDeviceConfig,
+  type AttendanceTestResult,
+  type AttendanceStatus,
 } from "../shared/electron/ipc.js";
 
 const electronAPI = {
@@ -47,6 +50,18 @@ const electronAPI = {
   }>> => ipcRenderer.invoke(IPC.PRINT_LOGS, n),
 
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
+
+  // ── Biometric attendance device (K30 Pro) ────────────────────────────────────
+
+  attendance: {
+    /** Test a device connection without starting the agent. */
+    test: (cfg: AttendanceDeviceConfig): Promise<AttendanceTestResult> =>
+      ipcRenderer.invoke(IPC.ATTENDANCE_TEST, cfg),
+    /** Live agent status: connected? last sync? buffered punches? */
+    status: (): Promise<AttendanceStatus> => ipcRenderer.invoke(IPC.ATTENDANCE_STATUS),
+    /** Re-read device config from settings and restart the agent. */
+    refresh: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.ATTENDANCE_REFRESH),
+  },
 
   // ── Auto-update actions ──────────────────────────────────────────────────────
 

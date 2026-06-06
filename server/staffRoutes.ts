@@ -8,6 +8,7 @@ import { db } from "./db";
 import { attendanceRecords, attendanceSyncLog, orders, users } from "../shared/schema";
 import { eq, desc, gte, lte, and, sql, count } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "./routes";
+import { storage } from "./storage";
 import { syncAttendanceFromSheet, previewSheet } from "./services/attendanceService";
 import { getAutomationConfig, saveAutomationConfig } from "./services/automationStore";
 
@@ -15,13 +16,19 @@ export function registerStaffRoutes(app: Express) {
 
   // ── Staff list (users) ──────────────────────────────────────────────────────
 
+  // Rich staff list: profile fields (userId, biometricId, salary, dept…) + nested `user`,
+  // PLUS flat id/username/role mirrors so every consumer works regardless of which it reads.
+  // (Both this and routes.ts register /api/staff; this one wins by registration order, so it
+  // must carry the full shape the Payroll editor and attendance board depend on.)
   app.get("/api/staff", requireAuth, async (_req, res) => {
     try {
-      const staff = await db
-        .select({ id: users.id, username: users.username, role: users.role, createdAt: users.createdAt })
-        .from(users)
-        .orderBy(users.role, users.username);
-      res.json(staff);
+      const profiles = await storage.getStaffProfiles();
+      res.json(profiles.map((p) => ({
+        ...p,
+        id: p.user.id,
+        username: p.user.username,
+        role: p.user.role,
+      })));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

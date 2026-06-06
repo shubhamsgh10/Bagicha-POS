@@ -10,6 +10,7 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
 import { getSettings, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
+import { timingSafeEqual } from "crypto";
 import { getLogBuffer } from "./logBuffer";
 import {
   getAutomationConfig,
@@ -64,6 +65,7 @@ import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
+import { ingestDevicePunches } from "./services/deviceAttendanceService";
 import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
@@ -126,6 +128,25 @@ passport.deserializeUser(async (key: any, done) => {
 export function requireAuth(req: any, res: any, next: any) {
   if (req.isAuthenticated()) return next();
   res.status(401).json({ message: "Unauthorized" });
+}
+
+function safeEqual(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try { return timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch { return false; }
+}
+
+/**
+ * Auth for the biometric-device feed. Accepts EITHER a valid device token
+ * (the Electron agent on the LAN, independent of any login) OR an authenticated
+ * admin (owner) session — for testing. Managers and staff are rejected, so only
+ * the owner or the device itself can write attendance/payroll punches.
+ */
+export function requireDeviceAuth(req: any, res: any, next: any) {
+  const token = getSettings().attendanceDevice?.token;
+  const provided = req.headers["x-device-token"] as string | undefined;
+  if (token && provided && safeEqual(provided, token)) return next();
+  if (req.isAuthenticated?.() && req.user?.role === "admin") return next();
+  return res.status(401).json({ message: "Device authentication required" });
 }
 
 // Middleware to require admin role
@@ -931,7 +952,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/settings", requireAuth, (req, res) => {
     try {
-      res.json(getSettings());
+      const s = getSettings();
+      const role = (req.user as any)?.role;
+      // Only the owner (admin) may see the device token (defense in depth).
+      if (role !== "admin") {
+        res.json({ ...s, attendanceDevice: { ...s.attendanceDevice, token: "" } });
+      } else {
+        res.json(s);
+      }
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch settings" });
     }
@@ -2601,8 +2629,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/attendance/import — upload biometric Excel (.xlsx/.xls/.csv)
-  app.post("/api/attendance/import", requireAuth, upload.single("file"), async (req, res) => {
+  // POST /api/attendance/import — upload biometric Excel (.xlsx/.xls/.csv). Owner-only.
+  app.post("/api/attendance/import", requireAdmin, upload.single("file"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
@@ -2678,8 +2706,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // PUT /api/attendance/:id — admin override
-  app.put("/api/attendance/:id", requireAuth, async (req, res) => {
+  // POST /api/attendance/device-punch — biometric (K30) feed from the Electron agent.
+  // Body: { deviceId?, punches: [{ biometricId, date?, time?, timestamp? }] }
+  // Auth: device token (LAN agent) or an admin (owner) session only — managers & staff cannot.
+  app.post("/api/attendance/device-punch", requireDeviceAuth, async (req, res) => {
+    try {
+      const { deviceId, punches } = req.body ?? {};
+      const result = await ingestDevicePunches(punches ?? [], deviceId);
+      if (result.affected.length > 0) {
+        broadcast({
+          type: "ATTENDANCE_UPDATE",
+          dates: Array.from(new Set(result.affected.map(a => a.date))),
+          userIds: Array.from(new Set(result.affected.map(a => a.userId))),
+        });
+      }
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/me?month=YYYY-MM — the logged-in user's OWN records only
+  app.get("/api/attendance/me", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const month = (req.query.month as string) || undefined;
+      res.json(await storage.getAttendance({ userId, month }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/payroll/me/:month — the logged-in user's OWN payroll row only
+  app.get("/api/payroll/me/:month", requireAuth, async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const all = await storage.getPayrollReport(req.params.month);
+      res.json(all.find((r: any) => r.userId === userId) ?? null);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // PUT /api/attendance/:id — admin override. Owner-only.
+  app.put("/api/attendance/:id", requireAdmin, async (req, res) => {
     try {
       const updated = await storage.updateAttendance(parseInt(req.params.id), {
         ...req.body,
@@ -2689,8 +2753,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/attendance/manual — admin marks attendance manually
-  app.post("/api/attendance/manual", requireAuth, async (req, res) => {
+  // POST /api/attendance/manual — admin marks attendance manually. Owner-only.
+  app.post("/api/attendance/manual", requireAdmin, async (req, res) => {
     try {
       const { userId, date, status, clockIn, clockOut, notes } = req.body;
       const record = await storage.upsertAttendance(userId, date, {

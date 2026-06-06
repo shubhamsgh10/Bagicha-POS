@@ -21,6 +21,7 @@ import LiveTablesDashboard from "@/pages/LiveTablesDashboard";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import Billing from "@/pages/Billing";
 import Staff from "@/pages/Staff";
+import MyAttendance from "@/pages/MyAttendance";
 import KOT from "@/pages/KOT";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
@@ -182,6 +183,7 @@ function Router() {
                       <Route path="/dashboard"      component={Dashboard} />
                       <Route path="/billing"        component={Billing} />
                       <Route path="/staff"          component={Staff} />
+                      <Route path="/my-attendance"  component={MyAttendance} />
                       <Route path="/orders"         component={Orders} />
                       <Route path="/menu"           component={Menu} />
                       <Route path="/inventory"      component={Inventory} />

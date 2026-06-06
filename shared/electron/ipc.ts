@@ -19,6 +19,11 @@ export const IPC = {
   QUEUE_STATUS: "queue:status",
   PRINTER_HEALTH: "printer:health",
   PRINT_LOGS: "print:logs",
+
+  // ── Biometric attendance device (K30 Pro) ─────────────────────────────────
+  ATTENDANCE_TEST: "attendance:test",       // renderer → main: test a device connection
+  ATTENDANCE_STATUS: "attendance:status",   // renderer → main: agent status
+  ATTENDANCE_REFRESH: "attendance:refresh", // renderer → main: re-read config + restart agent
 } as const;
 
 // ── Update payload types ──────────────────────────────────────────────────────
@@ -72,6 +77,33 @@ export interface PrintTestPayload {
   printerId: string;
   /** Optional test page; if omitted, main builds a default test slip */
   printJob?: PrintJob;
+}
+
+// ── Biometric attendance device ────────────────────────────────────────────────
+
+export interface AttendanceDeviceConfig {
+  enabled: boolean;
+  ip: string;
+  port: number;
+  commKey: number;
+  standardHours: number;
+  syncIntervalSec: number;
+  token?: string; // shared secret for authenticating punch uploads
+}
+
+export interface AttendanceTestResult {
+  ok: boolean;
+  error?: string;
+  info?: { users: number; logs: number; logCapacity?: number };
+}
+
+export interface AttendanceStatus {
+  enabled: boolean;       // agent running
+  connected: boolean;     // socket open to the device
+  lastSyncAt: number | null;
+  buffered: number;       // punches waiting to flush
+  lastError?: string;
+  deviceIp?: string;
 }
 
 export type { PrintJob };
