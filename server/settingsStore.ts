@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 import { eq, max } from "drizzle-orm";
 import { db } from "./db";
 import { restaurantSettings, orders } from "@shared/schema";
@@ -51,6 +52,28 @@ export const DEFAULT_CART_PERMISSIONS: CartPermissions = {
   ])) as Record<CartAction, CartActionPermission>,
 };
 
+// ── Biometric attendance device (K30 Pro) ─────────────────────────────────────
+
+export interface AttendanceDeviceSettings {
+  enabled: boolean;
+  ip: string;
+  port: number;            // ZKTeco TCP port, default 4370
+  commKey: number;         // device comm key/password (0 = none)
+  standardHours: number;   // hours/day before overtime kicks in
+  syncIntervalSec: number; // reconcile full-pull interval for the Electron agent
+  token: string;           // shared secret the Electron agent sends to authenticate punches
+}
+
+const DEFAULT_ATTENDANCE_DEVICE: AttendanceDeviceSettings = {
+  enabled: false,
+  ip: "",
+  port: 4370,
+  commKey: 0,
+  standardHours: 8,
+  syncIntervalSec: 60,
+  token: "",
+};
+
 // ── Restaurant settings ───────────────────────────────────────────────────────
 
 export interface RestaurantSettings {
@@ -72,6 +95,7 @@ export interface RestaurantSettings {
   cartPermissions: CartPermissions;
   billCounter: number;
   kotCounter: number;
+  attendanceDevice: AttendanceDeviceSettings;
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -130,6 +154,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   cartPermissions: DEFAULT_CART_PERMISSIONS,
   billCounter: 0,
   kotCounter: 0,
+  attendanceDevice: DEFAULT_ATTENDANCE_DEVICE,
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
@@ -150,6 +175,7 @@ function buildSettings(data: Record<string, any>): RestaurantSettings {
       manager: { ...DEFAULT_CART_PERMISSIONS.manager, ...(data.cartPermissions?.manager ?? {}) },
       staff:   { ...DEFAULT_CART_PERMISSIONS.staff,   ...(data.cartPermissions?.staff   ?? {}) },
     },
+    attendanceDevice: { ...DEFAULT_ATTENDANCE_DEVICE, ...(data.attendanceDevice ?? {}) },
   };
 }
 
@@ -239,6 +265,17 @@ export function incrementKotCounter(): number {
 export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
   const current = getSettings();
   const updated: RestaurantSettings = { ...current, ...settings };
+  if (settings.attendanceDevice) {
+    updated.attendanceDevice = { ...current.attendanceDevice, ...settings.attendanceDevice };
+    // A blank incoming token (e.g. redacted from a non-owner view) must never wipe the real one.
+    if (!settings.attendanceDevice.token) {
+      updated.attendanceDevice.token = current.attendanceDevice.token;
+    }
+    // Auto-provision a device token the first time the device is enabled.
+    if (updated.attendanceDevice.enabled && !updated.attendanceDevice.token) {
+      updated.attendanceDevice = { ...updated.attendanceDevice, token: randomBytes(24).toString("hex") };
+    }
+  }
   if (settings.printSettings) {
     updated.printSettings = {
       ...current.printSettings,

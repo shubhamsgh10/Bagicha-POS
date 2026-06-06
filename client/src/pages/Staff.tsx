@@ -17,10 +17,13 @@ import {
   Users, RefreshCw, Settings2, Clock, TrendingUp,
   CheckCircle2, XCircle, AlertCircle, Loader2, Link2,
   CalendarDays, IndianRupee, Plus, ChevronLeft, ChevronRight,
-  FileText, ClipboardList,
+  FileText, ClipboardList, Fingerprint,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useRealtime } from "@/hooks/useRealtime";
+import { BiometricDevicePanel } from "@/components/staff/BiometricDevicePanel";
+import { LiveAttendanceBoard } from "@/components/staff/LiveAttendanceBoard";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -552,7 +555,7 @@ export default function Staff() {
   const [fromDate, setFromDate] = useState(monthStart());
   const [toDate,   setToDate]   = useState(today());
   const [empFilter, setEmpFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState<"attendance" | "summary" | "shifts" | "leaves" | "payroll" | "performance">("attendance");
+  const [activeTab, setActiveTab] = useState<"attendance" | "summary" | "shifts" | "leaves" | "payroll" | "performance" | "device">("attendance");
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sheetUrl,     setSheetUrl]     = useState("");
@@ -693,6 +696,7 @@ export default function Staff() {
     { id: "leaves",      label: "Leaves",     icon: ClipboardList},
     { id: "payroll",     label: "Payroll",    icon: IndianRupee  },
     { id: "performance", label: "Sales",      icon: TrendingUp   },
+    { id: "device",      label: "Device",     icon: Fingerprint  },
   ] as const;
 
   const RANK_COLORS = [
@@ -702,6 +706,18 @@ export default function Staff() {
   ];
 
   // ── render ────────────────────────────────────────────────────────────────────
+
+  // Live refresh when the biometric device pushes new punches
+  const { lastMessage } = useRealtime();
+  useEffect(() => {
+    if (lastMessage?.type !== "ATTENDANCE_UPDATE") return;
+    queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/staff"] });
+    queryClient.invalidateQueries({
+      predicate: (q) =>
+        typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/api/payroll/report/"),
+    });
+  }, [lastMessage]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -737,8 +753,16 @@ export default function Staff() {
 
       <main className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-6 space-y-3 sm:space-y-5">
 
+        {/* Device tab — live board + biometric device setup */}
+        {activeTab === "device" && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 sm:space-y-5">
+            <LiveAttendanceBoard />
+            <BiometricDevicePanel />
+          </motion.div>
+        )}
+
         {/* No sheet banner */}
-        {!hasSheet && (
+        {activeTab !== "device" && !hasSheet && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
             style={{ background: "linear-gradient(135deg,rgba(245,158,11,0.12),rgba(251,191,36,0.08))", border: "1px solid rgba(245,158,11,0.30)", borderRadius: "16px", padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px" }}
           >
@@ -756,7 +780,7 @@ export default function Staff() {
         )}
 
         {/* Last sync chip */}
-        {lastSync && (
+        {activeTab !== "device" && lastSync && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
             <Clock size={12} />
             Last sync: {new Date(lastSync.syncedAt).toLocaleString()} —&nbsp;

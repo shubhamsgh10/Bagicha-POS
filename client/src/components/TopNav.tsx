@@ -7,7 +7,7 @@ import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid, History, UtensilsCrossed, Package,
   BarChart3, Activity, Monitor, User, Users,
-  Settings, LogOut, ClipboardList, Menu, X, CreditCard, UserCheck,
+  Settings, LogOut, ClipboardList, Menu, X, CreditCard, UserCheck, CalendarClock,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { toPosRole } from "@/hooks/useRole";
@@ -20,12 +20,15 @@ interface NavItem {
   href: string;
   icon: any;
   roles?: string[];
+  /** Visible to everyone regardless of role / allowed-pages config (e.g. self-service). */
+  alwaysVisible?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Tables",      href: "/tables",        icon: LayoutGrid },
   { label: "Orders",      href: "/orders",         icon: History },
   { label: "Billing",     href: "/billing",        icon: CreditCard },
+  { label: "My Attendance", href: "/my-attendance", icon: CalendarClock, alwaysVisible: true },
   { label: "Staff",       href: "/staff",          icon: UserCheck,        roles: ["admin", "manager"] },
   { label: "KOT",         href: "/kot",            icon: ClipboardList },
   { label: "Menu",        href: "/menu",           icon: UtensilsCrossed,  roles: ["admin", "manager"] },
@@ -56,6 +59,7 @@ export function TopNav() {
   });
 
   const visibleNav = NAV_ITEMS.filter(item => {
+    if (item.alwaysVisible) return true; // self-service pages — never hidden by role config
     const posRole = toPosRole(activeRole);
     // Dynamic settings take full ownership when configured — override static item.roles
     if (posRole === "staff" && settings?.staffAllowedPages != null) {
