@@ -147,8 +147,8 @@ const TYPE_CFG: Record<"pickup" | "delivery", TypeConfig> = {
     emoji:           "🛵",
     label:           "Delivery",
     accentHex:       "#3b82f6",
-    tabActiveBg:     "rgba(59,130,246,0.10)",
-    tabActiveBorder: "rgba(59,130,246,0.32)",
+    tabActiveBg:     "rgba(52,80,122,0.10)",
+    tabActiveBorder: "rgba(52,80,122,0.32)",
     panelHeadBg:     "bg-blue-50",
     panelHeadText:   "text-blue-700",
   },
@@ -199,7 +199,7 @@ function RailSection({ type, orders }: { type: "pickup" | "delivery"; orders: Li
               borderLeft:     "1px solid rgba(229,231,235,0.75)",
               borderTop:      "1px solid rgba(229,231,235,0.75)",
               borderBottom:   "1px solid rgba(229,231,235,0.75)",
-              background:     "rgba(255,255,255,0.97)",
+              background:     "var(--paper-0)",
               backdropFilter: "blur(12px)",
             }}
           >
@@ -228,7 +228,7 @@ function RailSection({ type, orders }: { type: "pickup" | "delivery"; orders: Li
       {/* Rail tab — always visible, flush with right edge of screen */}
       <motion.div
         className="w-10 flex flex-col items-center justify-center gap-1.5 py-4 rounded-l-xl cursor-pointer select-none"
-        animate={{ backgroundColor: open ? cfg.tabActiveBg : "rgba(255,255,255,0.88)" }}
+        animate={{ backgroundColor: open ? cfg.tabActiveBg : "#FBF8F1" }}
         transition={{ duration: 0.15 }}
         style={{
           backdropFilter:  "blur(10px)",

@@ -619,7 +619,7 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
             </button>
             <button
               onClick={addPrinter}
-              className="flex-1 py-2 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-colors"
+              className="flex-1 py-2 text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] rounded-lg transition-colors"
             >
               Add Printer
             </button>
@@ -780,7 +780,7 @@ export function PrintSettingsPanel({
     >
       <div
         className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col rounded-t-3xl sm:rounded-2xl overflow-hidden shadow-2xl"
-        style={{ background: 'rgba(255,255,255,0.97)', border: '1px solid rgba(0,0,0,0.08)' }}
+        style={{ background: 'var(--paper-0)', border: '1px solid var(--line)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Drag handle — mobile only */}
@@ -1003,7 +1003,7 @@ export function PrintSettingsPanel({
           <button
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
-            className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-6 py-2 text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl transition-colors disabled:opacity-60 touch-manipulation"
+            className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-6 py-2 text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] rounded-xl transition-colors disabled:opacity-60 touch-manipulation"
           >
             {saveMutation.isPending
               ? <Loader2 className="w-4 h-4 animate-spin" />

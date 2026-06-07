@@ -37,10 +37,10 @@ const STATUS: Record<string, { label: string; color: string; bg: string; dot: st
 };
 
 const glass: React.CSSProperties = {
-  background: "rgba(255,255,255,0.72)",
+  background: "var(--paper-0)",
   backdropFilter: "blur(20px) saturate(1.6)",
   WebkitBackdropFilter: "blur(20px) saturate(1.6)",
-  border: "1px solid rgba(255,255,255,0.7)",
+  border: "1px solid var(--line)",
   boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
 };
 
@@ -112,7 +112,7 @@ export default function MyAttendance() {
     { label: "Half day", value: tally.half,    icon: Clock,        color: "#f59e0b", bg: "rgba(245,158,11,0.10)" },
     { label: "Absent",   value: tally.absent,  icon: XCircle,      color: "#ef4444", bg: "rgba(239,68,68,0.10)" },
     { label: "Leaves",   value: tally.leave,   icon: Plane,        color: "#0ea5e9", bg: "rgba(14,165,233,0.10)" },
-    { label: "Hours",    value: fmtHours(tally.hours), icon: CalendarClock, color: "#6366f1", bg: "rgba(99,102,241,0.10)" },
+    { label: "Hours",    value: fmtHours(tally.hours), icon: CalendarClock, color: "#34507A", bg: "rgba(52,80,122,0.10)" },
     { label: "Overtime", value: fmtHours(tally.ot),    icon: TrendingUp,    color: "#8b5cf6", bg: "rgba(139,92,246,0.10)" },
   ];
 

@@ -715,10 +715,10 @@ export default function Admin() {
         <div className="overflow-x-auto">
         <TabsList className={`flex min-w-full justify-start rounded-xl p-1`}
           style={{
-            background: "rgba(255,255,255,0.50)",
+            background: "var(--paper-0)",
             backdropFilter: "blur(16px) saturate(1.8)",
             WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-            border: "1px solid rgba(255,255,255,0.70)",
+            border: "1px solid var(--line)",
             boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
           }}>
           {isAdmin && <TabsTrigger value="accounts"><Users className="w-4 h-4 mr-1.5" />Accounts</TabsTrigger>}
@@ -765,10 +765,10 @@ export default function Admin() {
         <TabsContent value="profile" className="mt-6">
           <div className="rounded-2xl p-5"
             style={{
-              background: "rgba(255,255,255,0.55)",
+              background: "var(--paper-0)",
               backdropFilter: "blur(18px) saturate(1.8)",
               WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-              border: "1px solid rgba(255,255,255,0.72)",
+              border: "1px solid var(--line)",
               boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
             }}>
             <div className="flex items-center gap-2 mb-1">
@@ -779,12 +779,12 @@ export default function Admin() {
             <form onSubmit={usernameForm.handleSubmit(onUsernameSubmit)} className="space-y-4">
               <div className="space-y-2">
                 <Label>New Username</Label>
-                <Input placeholder="Enter new username" {...usernameForm.register("username")} className="bg-white/60 border-white/50" />
+                <Input placeholder="Enter new username" {...usernameForm.register("username")} className="bg-[var(--paper-0)] border-[var(--line)]" />
                 {usernameForm.formState.errors.username && (
                   <p className="text-xs text-destructive">{usernameForm.formState.errors.username.message}</p>
                 )}
               </div>
-              <Button type="submit" disabled={usernameLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
+              <Button type="submit" disabled={usernameLoading} className="bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white border-0">
                 {usernameLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : "Save Username"}
               </Button>
             </form>
@@ -795,10 +795,10 @@ export default function Admin() {
         <TabsContent value="password" className="mt-6">
           <div className="rounded-2xl p-5"
             style={{
-              background: "rgba(255,255,255,0.55)",
+              background: "var(--paper-0)",
               backdropFilter: "blur(18px) saturate(1.8)",
               WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-              border: "1px solid rgba(255,255,255,0.72)",
+              border: "1px solid var(--line)",
               boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
             }}>
             <div className="flex items-center gap-2 mb-1">
@@ -809,26 +809,26 @@ export default function Admin() {
             <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
               <div className="space-y-2">
                 <Label>Current Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="current-password" {...passwordForm.register("currentPassword")} className="bg-white/60 border-white/50" />
+                <Input type="password" placeholder="••••••••" autoComplete="current-password" {...passwordForm.register("currentPassword")} className="bg-[var(--paper-0)] border-[var(--line)]" />
                 {passwordForm.formState.errors.currentPassword && (
                   <p className="text-xs text-destructive">{passwordForm.formState.errors.currentPassword.message}</p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label>New Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("newPassword")} className="bg-white/60 border-white/50" />
+                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("newPassword")} className="bg-[var(--paper-0)] border-[var(--line)]" />
                 {passwordForm.formState.errors.newPassword && (
                   <p className="text-xs text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label>Confirm New Password</Label>
-                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("confirmPassword")} className="bg-white/60 border-white/50" />
+                <Input type="password" placeholder="••••••••" autoComplete="new-password" {...passwordForm.register("confirmPassword")} className="bg-[var(--paper-0)] border-[var(--line)]" />
                 {passwordForm.formState.errors.confirmPassword && (
                   <p className="text-xs text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
                 )}
               </div>
-              <Button type="submit" disabled={passwordLoading} className="bg-gradient-to-r from-emerald-500 to-green-500 text-white border-0">
+              <Button type="submit" disabled={passwordLoading} className="bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white border-0">
                 {passwordLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Changing...</> : "Change Password"}
               </Button>
             </form>

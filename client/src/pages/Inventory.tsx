@@ -69,11 +69,11 @@ export default function Inventory() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
         <Header title="Inventory" description="Loading inventory..." />
         <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
+            <div key={i} className="h-44 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] animate-pulse" />
           ))}
         </div>
       </div>
@@ -81,7 +81,7 @@ export default function Inventory() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header title="Inventory" description="Track stock levels and manage inventory items" />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
@@ -97,7 +97,7 @@ export default function Inventory() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05, duration: 0.2 }}
-              className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5 flex items-center justify-between"
+              className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5 flex items-center justify-between"
             >
               <div>
                 <p className="text-sm text-gray-500">{stat.label}</p>
@@ -120,14 +120,14 @@ export default function Inventory() {
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {lowStockItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 bg-white/60 rounded-xl border border-white/40">
+                <div key={item.id} className="flex items-center justify-between p-3 bg-[var(--paper-0)] rounded-xl border border-[var(--line)]">
                   <div>
                     <h4 className="font-medium text-sm">{item.itemName}</h4>
                     <p className="text-xs text-gray-500">{item.currentStock} {item.unit} remaining</p>
                   </div>
                   <motion.button
                     whileTap={{ scale: 0.95 }}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-white/70 border border-white/50 text-gray-600 hover:bg-white/90 transition-all"
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)] transition-all"
                   >
                     Restock
                   </motion.button>
@@ -147,7 +147,7 @@ export default function Inventory() {
             whileTap={{ scale: 0.95 }}
             onClick={handleAddItem}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
-                       bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm
+                       bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm
                        hover:shadow-emerald-400/40 hover:shadow-md transition-all"
           >
             <Plus className="w-4 h-4" /> Add Item
@@ -167,8 +167,8 @@ export default function Inventory() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.2 }}
-                className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-4
-                           hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
+                className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-4
+                           hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-[var(--paper-0)]
                            transition-all duration-200"
               >
                 <div className="flex justify-between items-start mb-3">
@@ -176,7 +176,7 @@ export default function Inventory() {
                   <motion.button
                     whileTap={{ scale: 0.9 }}
                     onClick={() => handleEditItem(item)}
-                    className="w-7 h-7 flex items-center justify-center rounded-xl bg-white/60 border border-white/40 text-gray-500 hover:text-emerald-600 hover:bg-white/80 transition-all"
+                    className="w-7 h-7 flex items-center justify-center rounded-xl bg-[var(--paper-0)] border border-[var(--line)] text-gray-500 hover:text-emerald-600 hover:bg-[var(--paper-0)] transition-all"
                   >
                     <Edit className="w-3 h-3" />
                   </motion.button>
@@ -199,14 +199,14 @@ export default function Inventory() {
                       </span>
                     </div>
                     {/* Glass progress bar */}
-                    <div className="h-1.5 bg-white/40 rounded-full overflow-hidden border border-white/30">
+                    <div className="h-1.5 bg-[var(--paper-100)] rounded-full overflow-hidden border border-[var(--line)]">
                       <div
                         className={`h-full rounded-full transition-all ${getStatusColor(status)}`}
                         style={{ width: `${stockLevel}%` }}
                       />
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 border-t border-white/40 pt-2">
+                  <p className="text-xs text-gray-400 border-t border-[var(--line)] pt-2">
                     Last restocked: {new Date(item.lastRestocked).toLocaleDateString()}
                   </p>
                 </div>
@@ -216,14 +216,14 @@ export default function Inventory() {
         </div>
 
         {inventory.length === 0 && (
-          <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30 mt-4">
+          <div className="text-center py-16 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] mt-4">
             <Package className="w-10 h-10 mx-auto mb-3 text-gray-300" />
             <h3 className="text-base font-semibold text-gray-600 mb-1">No inventory items yet</h3>
             <p className="text-sm text-gray-400 mb-4">Start tracking by adding your first item</p>
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handleAddItem}
-              className="px-4 py-2 rounded-xl text-sm font-semibold bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm hover:shadow-md transition-all"
+              className="px-4 py-2 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm hover:shadow-md transition-all"
             >
               <Plus className="w-4 h-4 inline mr-1" /> Add First Item
             </motion.button>

@@ -22,10 +22,10 @@ interface DeviceCfg {
 const DEFAULTS: DeviceCfg = { enabled: false, ip: "", port: 4370, commKey: 0, standardHours: 8, syncIntervalSec: 60 };
 
 const glass: React.CSSProperties = {
-  background: "rgba(255,255,255,0.72)",
+  background: "var(--paper-0)",
   backdropFilter: "blur(20px) saturate(1.6)",
   WebkitBackdropFilter: "blur(20px) saturate(1.6)",
-  border: "1px solid rgba(255,255,255,0.7)",
+  border: "1px solid var(--line)",
   boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
 };
 

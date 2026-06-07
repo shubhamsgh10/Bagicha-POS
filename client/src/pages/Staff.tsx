@@ -41,7 +41,7 @@ const AVATAR_GRADIENTS: [string, string][] = [
   ["#10b981", "#059669"], ["#0ea5e9", "#0284c7"],
   ["#8b5cf6", "#7c3aed"], ["#f59e0b", "#d97706"],
   ["#ef4444", "#dc2626"], ["#ec4899", "#db2777"],
-  ["#14b8a6", "#0d9488"], ["#6366f1", "#4f46e5"],
+  ["#14b8a6", "#0d9488"], ["#34507A", "#4f46e5"],
 ];
 function getAvatarColors(name: string): [string, string] {
   const idx = name.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % AVATAR_GRADIENTS.length;
@@ -54,19 +54,15 @@ function getInitials(name: string) {
 // ── style constants ───────────────────────────────────────────────────────────
 
 const glass: React.CSSProperties = {
-  background: "rgba(255,255,255,0.42)",
-  backdropFilter: "blur(24px) saturate(1.8)",
-  WebkitBackdropFilter: "blur(24px) saturate(1.8)",
-  border: "1px solid rgba(255,255,255,0.60)",
-  boxShadow: "0 8px 32px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.80) inset",
+  background: "var(--paper-0)",
+  border: "1px solid var(--line)",
+  boxShadow: "var(--shadow-md)",
 };
 
 const glassCard: React.CSSProperties = {
-  background: "rgba(255,255,255,0.55)",
-  backdropFilter: "blur(16px) saturate(1.8)",
-  WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-  border: "1px solid rgba(255,255,255,0.72)",
-  boxShadow: "0 4px 16px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+  background: "var(--paper-0)",
+  border: "1px solid var(--line)",
+  boxShadow: "var(--shadow-sm)",
 };
 
 const statusMeta: Record<string, { bg: string; text: string; dot: string }> = {
@@ -167,7 +163,7 @@ function ShiftsPanel() {
           </Button>
         </div>
         {showNewShift && (
-          <div className="flex flex-wrap gap-2 items-end p-3 rounded-xl bg-white/40">
+          <div className="flex flex-wrap gap-2 items-end p-3 rounded-xl bg-[var(--paper-100)]">
             <div className="space-y-1 flex-1 min-w-[110px]">
               <Label className="text-xs">Name</Label>
               <Input placeholder="e.g. Morning" value={newShift.name} onChange={e => setNewShift(f => ({ ...f, name: e.target.value }))} className="h-8 text-xs" />
@@ -209,7 +205,7 @@ function ShiftsPanel() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-white/40">
+              <tr className="border-b border-[var(--line)]">
                 <th className="text-left p-3 min-w-[100px]">Staff</th>
                 {dates.map((d: string) => (
                   <th key={d} className="text-center p-2 min-w-[90px]">
@@ -221,7 +217,7 @@ function ShiftsPanel() {
             </thead>
             <tbody>
               {roster.map((row: any) => (
-                <tr key={row.userId} className="border-b border-white/30 hover:bg-white/20">
+                <tr key={row.userId} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
                   <td className="p-3">
                     <div className="font-medium">{row.username}</div>
                     <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.role}</span>
@@ -297,15 +293,15 @@ function LeavesPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-lg overflow-hidden border border-white/60" style={{ background: "rgba(255,255,255,0.4)" }}>
+        <div className="flex rounded-lg overflow-hidden border border-[var(--line)]" style={{ background: "var(--paper-0)" }}>
           {["pending","approved","rejected",""].map(s => (
             <button key={s || "all"} onClick={() => setFilterStatus(s)}
-              className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${filterStatus === s ? "bg-white/80 shadow-sm text-gray-900" : "text-gray-600"}`}>
+              className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${filterStatus === s ? "bg-[var(--paper-0)] shadow-sm text-gray-900" : "text-gray-600"}`}>
               {s || "All"}
             </button>
           ))}
         </div>
-        <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className="text-xs border rounded-lg px-2 py-1.5 bg-white/60 border-white/60" />
+        <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className="text-xs border rounded-lg px-2 py-1.5 bg-[var(--paper-0)] border-[var(--line)]" />
         <Button size="sm" className="ml-auto" onClick={() => setShowApply(true)}>
           <Plus className="w-3.5 h-3.5 mr-1" />Apply Leave
         </Button>
@@ -346,7 +342,7 @@ function LeavesPanel() {
       </Dialog>
 
       {isLoading ? (
-        <div className="space-y-2">{[...Array(3)].map((_,i) => <div key={i} className="h-24 rounded-xl bg-white/40" />)}</div>
+        <div className="space-y-2">{[...Array(3)].map((_,i) => <div key={i} className="h-24 rounded-xl bg-[var(--paper-100)]" />)}</div>
       ) : leavesData.length === 0 ? (
         <p className="text-center py-10 text-sm text-gray-400">No leave requests found</p>
       ) : (
@@ -402,7 +398,7 @@ function StaffProfileRow({ staff }: { staff: any }) {
     finally { setSaving(false); }
   };
   return (
-    <div className="flex flex-wrap items-center gap-2 p-2 rounded-xl bg-white/30">
+    <div className="flex flex-wrap items-center gap-2 p-2 rounded-xl bg-[var(--paper-100)]">
       <span className="text-xs font-medium w-24 shrink-0">{staff.user?.username}</span>
       <Input placeholder="Biometric ID" value={form.biometricId} className="h-7 text-xs w-24" onChange={e => setForm(f => ({ ...f, biometricId: e.target.value }))} />
       <Input placeholder="Department" value={form.department} className="h-7 text-xs w-28" onChange={e => setForm(f => ({ ...f, department: e.target.value }))} />
@@ -452,7 +448,7 @@ function PayrollPanel() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="space-y-0.5">
           <Label className="text-xs">Month</Label>
-          <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="block text-xs border rounded-lg px-2 py-1.5 bg-white/60 border-white/60" />
+          <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="block text-xs border rounded-lg px-2 py-1.5 bg-[var(--paper-0)] border-[var(--line)]" />
         </div>
         <Button size="sm" variant="outline" className="ml-auto gap-1" onClick={handlePrint}>
           <FileText className="w-3.5 h-3.5" />Print Register
@@ -473,12 +469,12 @@ function PayrollPanel() {
         ))}
       </div>
 
-      {isLoading ? <div className="h-40 rounded-2xl bg-white/40" /> : (
+      {isLoading ? <div className="h-40 rounded-2xl bg-[var(--paper-100)]" /> : (
         <div className="rounded-2xl overflow-hidden" style={glassCard}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-white/40">
+                <tr className="border-b border-[var(--line)]">
                   <th className="text-left p-3">Staff</th>
                   <th className="text-center p-3">Salary<br/><span className="text-[10px] font-normal text-gray-400">(click to edit)</span></th>
                   <th className="text-center p-3">Working<br/>Days</th>
@@ -492,7 +488,7 @@ function PayrollPanel() {
               </thead>
               <tbody>
                 {payrollData.map((row: any, i: number) => (
-                  <tr key={row.userId ?? i} className="border-b border-white/30 hover:bg-white/20">
+                  <tr key={row.userId ?? i} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
                     <td className="p-3">
                       <div className="font-medium">{row.username}</div>
                       <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.role}</span>
@@ -526,7 +522,7 @@ function PayrollPanel() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-white/60 bg-white/20">
+                <tr className="border-t-2 border-[var(--line)] bg-[var(--paper-100)]">
                   <td className="p-3 font-semibold text-sm" colSpan={8}>Total Net Payable</td>
                   <td className="p-3 text-right font-bold text-lg text-green-700">Rs.{totalNet.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
                 </tr>
@@ -796,7 +792,7 @@ export default function Staff() {
             className="grid grid-cols-2 sm:grid-cols-4 gap-3"
           >
             {[
-              { label: "Employees",    value: summary.length,       icon: Users,         color: "#6366f1", bg: "rgba(99,102,241,0.10)" },
+              { label: "Employees",    value: summary.length,       icon: Users,         color: "#34507A", bg: "rgba(52,80,122,0.10)" },
               { label: "Present Days", value: totalPresent,         icon: CheckCircle2,  color: "#10b981", bg: "rgba(16,185,129,0.10)" },
               { label: "Absent Days",  value: totalAbsent,          icon: XCircle,       color: "#ef4444", bg: "rgba(239,68,68,0.10)"  },
               { label: "Total Hours",  value: fmtHours(totalHours), icon: Clock,         color: "#f59e0b", bg: "rgba(245,158,11,0.10)" },
@@ -866,7 +862,7 @@ export default function Staff() {
                   padding: "7px 12px", borderRadius: 10, border: "none",
                   fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.18s ease",
                   ...(activeTab === tab.id
-                    ? { background: "rgba(255,255,255,0.85)", color: "#10b981", boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }
+                    ? { background: "var(--paper-0)", color: "#10b981", boxShadow: "0 2px 8px rgba(0,0,0,0.10)" }
                     : { background: "transparent", color: "#6b7280" }),
                 }}
               >
@@ -1002,9 +998,9 @@ export default function Staff() {
                             { icon: CheckCircle2, label: "Present", value: s.present,             color: "#10b981" },
                             { icon: XCircle,      label: "Absent",  value: s.absent,              color: "#ef4444" },
                             { icon: AlertCircle,  label: "Late",    value: s.late,                color: "#f59e0b" },
-                            { icon: Clock,        label: "Hours",   value: fmtHours(s.totalHours), color: "#6366f1" },
+                            { icon: Clock,        label: "Hours",   value: fmtHours(s.totalHours), color: "#34507A" },
                           ].map(stat => (
-                            <div key={stat.label} style={{ background: "rgba(255,255,255,0.45)", borderRadius: 10, padding: "8px 10px", display: "flex", alignItems: "center", gap: 7 }}>
+                            <div key={stat.label} style={{ background: "var(--paper-0)", borderRadius: 10, padding: "8px 10px", display: "flex", alignItems: "center", gap: 7 }}>
                               <stat.icon size={13} color={stat.color} />
                               <div>
                                 <p style={{ fontSize: 10, color: "#6b7280", fontWeight: 500 }}>{stat.label}</p>
@@ -1170,7 +1166,7 @@ export default function Staff() {
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setSettingsOpen(false)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}
-                className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                className="px-4 py-2 rounded-lg bg-[var(--green-700)] hover:bg-[var(--green-800)] text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5">
                 {saveSettingsMutation.isPending && <Loader2 size={13} className="animate-spin" />}
                 Save Settings
               </button>

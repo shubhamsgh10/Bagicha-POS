@@ -78,7 +78,7 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                    bg-muted border border-border text-foreground
                    hover:bg-muted/80 transition-all"
       >
-        <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+        <Calendar className="w-3.5 h-3.5 text-[var(--ink-500)]" />
         <span>{value.label === "Custom" ? formatRangeLabel(value.start, value.end) : value.label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -104,12 +104,12 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm
                             transition-colors text-left ${
                               value.label === p.label
-                                ? "bg-indigo-500/10 text-indigo-600 font-semibold"
+                                ? "bg-[var(--info-bg)] text-[var(--ink-700)] font-semibold"
                                 : "text-foreground hover:bg-muted"
                             }`}
               >
                 {p.label}
-                {value.label === p.label && <Check className="w-3.5 h-3.5 text-indigo-500" />}
+                {value.label === p.label && <Check className="w-3.5 h-3.5 text-[var(--ink-600)]" />}
               </button>
             ))}
 
@@ -120,12 +120,12 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm
                             transition-colors text-left ${
                               value.label === "Custom"
-                                ? "bg-indigo-500/10 text-indigo-600 font-semibold"
+                                ? "bg-[var(--info-bg)] text-[var(--ink-700)] font-semibold"
                                 : "text-foreground hover:bg-muted"
                             }`}
               >
                 Custom Range
-                {value.label === "Custom" && <Check className="w-3.5 h-3.5 text-indigo-500" />}
+                {value.label === "Custom" && <Check className="w-3.5 h-3.5 text-[var(--ink-600)]" />}
               </button>
               <AnimatePresence>
                 {showCustom && (
@@ -144,7 +144,7 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                         max={customEnd || today()}
                         onChange={e => setCustomStart(e.target.value)}
                         className="w-full text-base sm:text-xs border border-border rounded-lg px-2 py-1.5
-                                   bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                   bg-background focus:outline-none focus:ring-1 focus:ring-[var(--green-500)]"
                       />
                     </div>
                     <div>
@@ -156,15 +156,15 @@ function DateRangePicker({ value, onChange }: { value: DateRange; onChange: (r: 
                         max={today()}
                         onChange={e => setCustomEnd(e.target.value)}
                         className="w-full text-base sm:text-xs border border-border rounded-lg px-2 py-1.5
-                                   bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                   bg-background focus:outline-none focus:ring-1 focus:ring-[var(--green-500)]"
                       />
                     </div>
                     <button
                       type="button"
                       onClick={applyCustom}
                       disabled={!customStart || !customEnd || customStart > customEnd}
-                      className="w-full py-1.5 rounded-xl text-xs font-semibold bg-indigo-500
-                                 text-white hover:bg-indigo-600 disabled:bg-muted
+                      className="w-full py-1.5 rounded-xl text-xs font-semibold bg-[var(--ink-700)]
+                                 text-white hover:bg-[var(--ink-800)] disabled:bg-muted
                                  disabled:text-muted-foreground transition-colors"
                     >
                       Apply
@@ -188,8 +188,8 @@ const fmt = (n: number) =>
   }).format(n);
 
 const PALETTE = [
-  "#6366f1", "#8b5cf6", "#06b6d4", "#10b981",
-  "#f59e0b", "#ef4444", "#ec4899", "#14b8a6",
+  "#1B4D33", "#34507A", "#B85C38", "#D89A3E",
+  "#2E8B57", "#9E4A28", "#6FBF73", "#243B5E",
 ];
 
 const cardAnim = {
@@ -326,7 +326,7 @@ export default function LiveAnalytics() {
       value: fmt(stats?.todaySales || 0),
       sub: `${stats?.todayOrders || 0} orders placed`,
       icon: IndianRupee,
-      gradient: "from-violet-500 to-purple-600",
+      gradient: "from-[#226B43] to-[#1B4D33]",
       bg: "bg-violet-500/10",
     },
     {
@@ -335,7 +335,7 @@ export default function LiveAnalytics() {
       value: String(stats?.todayOrders || 0),
       sub: `Avg ${fmt(stats?.avgOrderValue || 0)} / order`,
       icon: ShoppingBag,
-      gradient: "from-blue-500 to-cyan-500",
+      gradient: "from-[#34507A] to-[#243B5E]",
       bg: "bg-blue-500/10",
     },
     {
@@ -353,7 +353,7 @@ export default function LiveAnalytics() {
       value: fmt(stats?.totalRevenue || 0),
       sub: "All time",
       icon: TrendingUp,
-      gradient: "from-emerald-500 to-green-500",
+      gradient: "from-[#2E8B57] to-[#226B43]",
       bg: "bg-emerald-500/10",
     },
     {
@@ -362,7 +362,7 @@ export default function LiveAnalytics() {
       value: String(stats?.lowStockCount || 0),
       sub: stats?.lowStockCount > 0 ? "Needs attention" : "All good",
       icon: AlertTriangle,
-      gradient: stats?.lowStockCount > 0 ? "from-red-500 to-rose-600" : "from-green-500 to-emerald-500",
+      gradient: stats?.lowStockCount > 0 ? "from-red-500 to-rose-600" : "from-[#2E8B57] to-[#226B43]",
       bg: stats?.lowStockCount > 0 ? "bg-red-500/10" : "bg-green-500/10",
     },
     {
@@ -381,7 +381,7 @@ export default function LiveAnalytics() {
       sub: `of ${stats?.totalTables || 0} total tables`,
       icon: LayoutGrid,
       gradient: "from-indigo-500 to-blue-500",
-      bg: "bg-indigo-500/10",
+      bg: "bg-[var(--info-bg)]",
     },
     {
       id: "outer-running",
@@ -457,7 +457,7 @@ export default function LiveAnalytics() {
               className={`rounded-2xl p-4 border shadow-sm cursor-pointer transition-shadow select-none
                 ${card.bg}
                 ${openCard === card.id
-                  ? "border-white/50 shadow-md ring-2 ring-white/30"
+                  ? "border-[var(--line)] shadow-md ring-2 ring-white/30"
                   : "border-border/40 hover:shadow-md"
                 }`}
             >
@@ -483,7 +483,7 @@ export default function LiveAnalytics() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                   {todayOrders.map((o: any) => (
-                    <div key={o.id} className="flex items-center justify-between bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                    <div key={o.id} className="flex items-center justify-between bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
                       <div>
                         <p className="text-xs font-semibold">{serialNum(o.id)}</p>
                         <p className="text-[11px] text-muted-foreground capitalize">{o.orderType?.replace("-", " ")} {o.tableNumber ? `· Table ${o.tableNumber}` : ""}</p>
@@ -530,7 +530,7 @@ export default function LiveAnalytics() {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                   {categorySales.map((c: any, idx: number) => (
-                    <div key={c.category} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                    <div key={c.category} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="w-2 h-2 rounded-full" style={{ background: PALETTE[idx % PALETTE.length] }} />
                         <p className="text-[11px] font-medium text-muted-foreground truncate">{c.category}</p>
@@ -568,7 +568,7 @@ export default function LiveAnalytics() {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                   {topItems.map((item: any, idx: number) => (
-                    <div key={item.name} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40">
+                    <div key={item.name} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: PALETTE[idx % PALETTE.length] }}>{idx + 1}</span>
                         <p className="text-[11px] font-medium truncate">{item.name}</p>
@@ -589,7 +589,7 @@ export default function LiveAnalytics() {
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {(openCard === "inner-running" ? innerTables : outerTables).map((t: any) => (
-                    <div key={t.id} className="bg-white/50 rounded-xl px-3 py-2 border border-white/40 min-w-[100px]">
+                    <div key={t.id} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)] min-w-[100px]">
                       <p className="text-xs font-bold">Table {t.tableNumber}</p>
                       <p className="text-[11px] text-muted-foreground capitalize">{t.status}</p>
                     </div>
@@ -633,9 +633,9 @@ export default function LiveAnalytics() {
                 <Line
                   type="monotone"
                   dataKey="total"
-                  stroke="#6366f1"
+                  stroke="#1B4D33"
                   strokeWidth={2.5}
-                  dot={{ fill: "#6366f1", r: 3, strokeWidth: 0 }}
+                  dot={{ fill: "#1B4D33", r: 3, strokeWidth: 0 }}
                   activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
                 />
               </LineChart>
@@ -763,8 +763,8 @@ export default function LiveAnalytics() {
             </div>
             {lowStockItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[170px] text-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center">
-                  <span className="text-emerald-500 text-xl font-bold">✓</span>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "var(--success-bg)" }}>
+                  <span className="text-xl font-bold" style={{ color: "var(--green-600)" }}>✓</span>
                 </div>
                 <p className="text-sm text-muted-foreground">All items in stock</p>
               </div>

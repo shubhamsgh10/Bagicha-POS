@@ -64,7 +64,7 @@ export const DeliveryCard = memo(function DeliveryCard({
     status === "delivered"  ? "bg-emerald-50/80 border-emerald-300/60" :
     status === "dispatched" ? "bg-blue-50/80    border-blue-300/60"    :
     status === "ready"      ? "bg-green-50/80   border-green-300/60"   :
-                              "bg-white/80      border-gray-200/70";
+                              "bg-[var(--paper-0)]      border-gray-200/70";
 
   return (
     <motion.div
