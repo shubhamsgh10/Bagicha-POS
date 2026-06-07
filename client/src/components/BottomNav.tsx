@@ -40,11 +40,9 @@ export function BottomNav() {
   return (
     <nav className="md:hidden shrink-0 safe-bottom"
       style={{
-        background: "rgba(255,255,255,0.82)",
-        backdropFilter: "blur(22px) saturate(1.8)",
-        WebkitBackdropFilter: "blur(22px) saturate(1.8)",
-        borderTop: "1px solid rgba(255,255,255,0.65)",
-        boxShadow: "0 -4px 24px rgba(0,0,0,0.06), 0 -1px 0 rgba(255,255,255,0.9) inset",
+        background: "var(--paper-0)",
+        borderTop: "1px solid var(--line)",
+        boxShadow: "0 -6px 20px rgba(20,34,27,0.07)",
       }}
     >
       <div className="flex items-center h-[56px]">
@@ -57,9 +55,10 @@ export function BottomNav() {
               key={item.href}
               onClick={() => navigate(item.href)}
               className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 touch-manipulation"
+              style={{ color: isActive ? "var(--green-800)" : "var(--text-3)" }}
             >
-              <Icon className={`w-5 h-5 transition-colors ${isActive ? "text-emerald-600" : "text-gray-400"}`} />
-              <span className={`text-[9px] font-semibold leading-none ${isActive ? "text-emerald-600" : "text-gray-400"}`}>
+              <Icon className="w-5 h-5 transition-colors" />
+              <span className="text-[9px] font-semibold leading-none">
                 {item.label}
               </span>
             </button>

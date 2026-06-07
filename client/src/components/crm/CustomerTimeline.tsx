@@ -31,8 +31,8 @@ const EVENT_META: Record<string, {
   dot:   string;
   label: string;
 }> = {
-  ORDER_PLACED:    { Icon: ShoppingBag,    dot: "bg-indigo-500",  label: "Order placed" },
-  VISIT:           { Icon: ShoppingBag,    dot: "bg-indigo-400",  label: "Visit" },
+  ORDER_PLACED:    { Icon: ShoppingBag,    dot: "bg-[var(--ink-700)]",  label: "Order placed" },
+  VISIT:           { Icon: ShoppingBag,    dot: "bg-[var(--ink-500)]",  label: "Visit" },
   MESSAGE_SENT:    { Icon: MessageCircle,  dot: "bg-green-500",   label: "Message sent" },
   MILESTONE:       { Icon: Star,           dot: "bg-amber-500",   label: "Milestone" },
   INACTIVE:        { Icon: AlertCircle,    dot: "bg-orange-400",  label: "Went inactive" },
@@ -119,7 +119,7 @@ function TimelineRow({ entry, isLast }: { entry: TimelineEntry; isLast: boolean 
 
         {/* Extra detail for orders */}
         {entry.eventType === "ORDER_PLACED" && (entry.metadata as any)?.totalAmount && (
-          <p className="text-[9px] text-indigo-500 font-medium mt-0.5">
+          <p className="text-[9px] text-[var(--ink-600)] font-medium mt-0.5">
             ₹{Number((entry.metadata as any).totalAmount).toFixed(0)}
           </p>
         )}
@@ -156,7 +156,7 @@ export function CustomerTimeline({ customerKey }: CustomerTimelineProps) {
         Activity Timeline
       </h3>
 
-      <div className="bg-white/60 border border-gray-100 rounded-xl px-3 pt-3 pb-1">
+      <div className="bg-[var(--paper-0)] border border-gray-100 rounded-xl px-3 pt-3 pb-1">
         {entries.map((entry, i) => (
           <TimelineRow
             key={entry.id}

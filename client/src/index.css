@@ -6,45 +6,96 @@
    DESIGN TOKENS — Light / White Theme
    ───────────────────────────────────────────────────────────── */
 :root {
-  --background:           hsl(0, 0%, 98%);
-  --foreground:           hsl(0, 0%, 13%);
-  --muted:                hsl(0, 0%, 96%);
-  --muted-foreground:     hsl(0, 0%, 46%);
-  --popover:              hsl(0, 0%, 100%);
-  --popover-foreground:   hsl(0, 0%, 13%);
-  --card:                 hsl(0, 0%, 100%);
-  --card-foreground:      hsl(0, 0%, 13%);
-  --border:               hsl(0, 0%, 90%);
-  --input:                hsl(0, 0%, 90%);
-  --primary:              hsl(122, 39%, 49%);
-  --primary-foreground:   hsl(0, 0%, 100%);
-  --secondary:            hsl(28, 100%, 50%);
-  --secondary-foreground: hsl(0, 0%, 100%);
-  --accent:               hsl(0, 0%, 96%);
-  --accent-foreground:    hsl(0, 0%, 13%);
-  --destructive:          hsl(0, 84%, 60%);
-  --destructive-foreground: hsl(0, 0%, 98%);
-  --ring:                 hsl(0, 0%, 13%);
-  --radius:               0.5rem;
-  --success:              hsl(122, 39%, 49%);
-  --warning:              hsl(36, 100%, 50%);
-  --bagicha-primary:      hsl(210, 29%, 29%);
-  --bagicha-secondary:    hsl(122, 39%, 49%);
+  /* ───────────────────────────────────────────────
+     shadcn semantic tokens → Bagicha warm garden theme
+     (drives every shadcn component + Tailwind utility)
+     ─────────────────────────────────────────────── */
+  --background:           #FBF8F1;  /* paper-50 — warm cream canvas */
+  --foreground:           #2C382F;  /* text-1 */
+  --muted:                #F5F0E4;  /* paper-100 */
+  --muted-foreground:     #5F6A61;  /* text-2 */
+  --popover:              #FFFFFF;
+  --popover-foreground:   #1C2A22;  /* text-strong */
+  --card:                 #FFFFFF;  /* paper-0 — elevated cards */
+  --card-foreground:      #1C2A22;
+  --border:               #E7DFCE;  /* line — warm hairline */
+  --input:                #D8CFB9;  /* line-strong */
+  --primary:              #1B4D33;  /* green-800 — deep pine */
+  --primary-foreground:   #F4F8F0;  /* text-on-green */
+  --secondary:            #F5F0E4;  /* calm warm neutral (clay reserved for accents) */
+  --secondary-foreground: #2C382F;
+  --accent:               #F5F0E4;
+  --accent-foreground:    #1C2A22;
+  --destructive:          #BE4630;  /* warm clay-red */
+  --destructive-foreground: #FFFFFF;
+  --ring:                 #2E8B57;  /* green-600 focus */
+  --radius:               1rem;     /* 16px — premium cards (inputs/buttons derive smaller) */
+  --success:              #2E8B57;
+  --warning:              #C68A2E;
 
-  /* ── Glass system tokens (Option B — Premium Glass) */
-  --glass-bg:             rgba(255, 255, 255, 0.52);
-  --glass-bg-heavy:       rgba(255, 255, 255, 0.78);
-  --glass-bg-light:       rgba(255, 255, 255, 0.38);
-  --glass-border:         rgba(255, 255, 255, 0.75);
-  --glass-border-subtle:  rgba(255, 255, 255, 0.55);
-  --glass-inset:          0 1px 0 rgba(255, 255, 255, 0.92) inset;
-  --glass-shadow:         0 4px 24px rgba(0, 0, 0, 0.07);
-  --glass-shadow-md:      0 8px 32px rgba(0, 0, 0, 0.10);
-  --glass-blur:           blur(18px) saturate(1.8);
-  --glass-blur-heavy:     blur(24px) saturate(1.9);
-  --focus-ring-color:     rgba(16, 185, 129, 0.14);
-  --motion-dur:           0.42s;
-  --motion-ease:          cubic-bezier(0.22, 1, 0.36, 1);
+  /* Recharts palette (previously undefined) — warm */
+  --chart-1: #1B4D33;  /* pine */
+  --chart-2: #34507A;  /* ink */
+  --chart-3: #B85C38;  /* clay */
+  --chart-4: #D89A3E;  /* amber */
+  --chart-5: #6FBF73;  /* leaf */
+
+  /* legacy brand-logo tokens (used by .bagicha-logo) */
+  --bagicha-primary:      #243B5E;  /* ink-700 */
+  --bagicha-secondary:    #2E8B57;  /* green-600 */
+
+  /* ═══════════════════════════════════════════════
+     BAGICHA RAW SCALES (from design system)
+     ═══════════════════════════════════════════════ */
+  --green-950:#0E2A1C; --green-900:#143A26; --green-800:#1B4D33; --green-700:#226B43;
+  --green-600:#2E8B57; --green-500:#4CAF50; --green-400:#6FBF73; --green-300:#9FD3A1;
+  --green-200:#C8E6C9; --green-100:#E4F1E1; --green-50:#F1F7EE;
+
+  --ink-900:#14223B; --ink-800:#1B2E4D; --ink-700:#243B5E; --ink-600:#34507A; --ink-500:#4A6A96;
+
+  --clay-700:#9E4A28; --clay-600:#B85C38; --clay-500:#CD6E3E;
+  --amber-600:#C68A2E; --amber-500:#D89A3E; --amber-400:#E6B564;
+
+  --paper-0:#FFFFFF; --paper-50:#FBF8F1; --paper-100:#F5F0E4; --paper-200:#ECE5D5;
+  --line:#E7DFCE; --line-strong:#D8CFB9;
+
+  --text-strong:#1C2A22; --text-1:#2C382F; --text-2:#5F6A61; --text-3:#8C958B;
+  --text-on-green:#F4F8F0; --text-on-ink:#EAF0F8;
+
+  --success-bg:#E7F2EA; --warning-bg:#FAF1DD; --danger:#BE4630; --danger-bg:#FAE8E3;
+  --info:#34507A; --info-bg:#E8EDF5;
+
+  --status-pending:#C68A2E; --status-preparing:#34507A; --status-ready:#2E8B57;
+  --status-served:#6B7A6E; --status-cancelled:#BE4630;
+
+  /* Typography */
+  --font-display: 'Cormorant Garamond', 'Georgia', serif;
+  --font-sans:    'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+
+  --text-xs:0.75rem; --text-sm:0.875rem; --text-base:1rem; --text-lg:1.125rem;
+  --text-xl:1.375rem; --text-2xl:1.75rem; --text-3xl:2.25rem; --text-4xl:3rem; --text-5xl:4.25rem;
+  --leading-tight:1.12; --leading-snug:1.3; --leading-body:1.55;
+  --tracking-wordmark:0.18em; --tracking-label:0.08em; --tracking-tight:-0.01em;
+
+  /* Spacing / radii / shadows / motion */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px;
+  --space-6:24px; --space-8:32px; --space-10:40px; --space-12:48px; --space-16:64px;
+  --r-xs:6px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:22px; --r-full:999px;
+  --shadow-xs:0 1px 2px rgba(20,34,27,0.06); --shadow-sm:0 2px 8px rgba(20,34,27,0.06);
+  --shadow-md:0 6px 20px rgba(20,34,27,0.09); --shadow-lg:0 16px 40px rgba(20,34,27,0.13);
+  --shadow-green:0 8px 22px rgba(27,77,51,0.26); --shadow-inset-top:inset 0 1px 0 rgba(255,255,255,0.55);
+  --ease-out:cubic-bezier(0.22,1,0.36,1); --ease-in-out:cubic-bezier(0.65,0,0.35,1);
+  --dur-fast:140ms; --dur:220ms; --dur-slow:420ms;
+
+  /* Legacy glass vars — neutralised to warm-solid so any stray var() refs degrade gracefully */
+  --glass-bg:#FFFFFF; --glass-bg-heavy:#FFFFFF; --glass-bg-light:var(--paper-50);
+  --glass-border:var(--line); --glass-border-subtle:var(--line);
+  --glass-inset:var(--shadow-inset-top);
+  --glass-shadow:var(--shadow-sm); --glass-shadow-md:var(--shadow-md);
+  --glass-blur:none; --glass-blur-heavy:none;
+  --focus-ring-color:rgba(46,139,87,0.16);
+  --motion-dur:0.42s; --motion-ease:cubic-bezier(0.22,1,0.36,1);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -69,11 +120,25 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    font-family: 'Inter', 'Roboto', system-ui, sans-serif;
-    letter-spacing: -0.01em;
-    line-height: 1.45;
+    font-family: var(--font-sans);   /* Plus Jakarta Sans */
+    line-height: 1.5;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   SEMANTIC TYPE CLASSES (Bagicha design system)
+   ───────────────────────────────────────────────────────────── */
+.bg-wordmark { font-family: var(--font-display); font-weight: 600; letter-spacing: var(--tracking-wordmark); text-transform: uppercase; color: var(--ink-700); }
+.bg-display  { font-family: var(--font-display); font-weight: 600; font-size: var(--text-4xl); line-height: var(--leading-tight); letter-spacing: 0.005em; color: var(--text-strong); }
+.bg-h1       { font-family: var(--font-display); font-weight: 600; font-size: var(--text-3xl); line-height: var(--leading-tight); color: var(--text-strong); }
+.bg-h2       { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-2xl); line-height: var(--leading-snug); letter-spacing: var(--tracking-tight); color: var(--text-strong); }
+.bg-h3       { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xl); line-height: var(--leading-snug); color: var(--text-strong); }
+.bg-eyebrow  { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xs); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--green-700); }
+.bg-body     { font-family: var(--font-sans); font-weight: 400; font-size: var(--text-base); line-height: var(--leading-body); color: var(--text-1); }
+.bg-small    { font-family: var(--font-sans); font-weight: 500; font-size: var(--text-sm); color: var(--text-2); }
+.bg-label    { font-family: var(--font-sans); font-weight: 600; font-size: var(--text-xs); letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-2); }
+.bg-mono     { font-family: var(--font-mono); font-weight: 500; font-size: var(--text-sm); color: var(--text-1); font-variant-numeric: tabular-nums; }
+.bg-price    { font-family: var(--font-sans); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: var(--text-strong); }
 
 /* ─────────────────────────────────────────────────────────────
    APP LAYOUT — Light animated background
@@ -81,7 +146,10 @@
 .app-layout {
   position: fixed;
   inset: 0;
-  background: linear-gradient(135deg, #edf7f2 0%, #ffffff 45%, #f0f4ff 100%);
+  /* Warm cream canvas with a single soft green halo (mirrors .pos-app) */
+  background:
+    radial-gradient(1200px 600px at 88% -10%, rgba(46,139,87,0.05), transparent 60%),
+    var(--paper-50);
   overflow: hidden;
 }
 
@@ -94,38 +162,10 @@
   flex-direction: column;
 }
 
-/* Subtle ambient orbs — very soft, light-mode */
-.orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  pointer-events: none;
-  animation: orb-float 14s ease-in-out infinite alternate;
-}
-.orb-1 {
-  width: 600px; height: 600px;
-  top: -200px; left: -150px;
-  background: radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 70%);
-  animation-delay: 0s;
-}
-.orb-2 {
-  width: 500px; height: 500px;
-  bottom: -150px; right: -100px;
-  background: radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 70%);
-  animation-delay: 5s;
-}
-.orb-3 {
-  width: 350px; height: 350px;
-  top: 35%; left: 52%;
-  background: radial-gradient(circle, rgba(6,182,212,0.05) 0%, transparent 70%);
-  animation-delay: 10s;
-}
-
-@keyframes orb-float {
-  0%   { transform: translate(0px, 0px) scale(1); }
-  50%  { transform: translate(18px, -25px) scale(1.04); }
-  100% { transform: translate(-12px, 12px) scale(0.97); }
-}
+/* Ambient orbs retired — the warm garden canvas stays calm and uncluttered
+   (design system: "never busy patterns behind content"). The .orb nodes in
+   AppLayout are kept in markup but hidden. */
+.orb { display: none; }
 
 /* ─────────────────────────────────────────────────────────────
    PAGE CONTENT — transparent so AppLayout bg shows through
@@ -135,153 +175,144 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   GLASS CARD SYSTEM — Light mode
+   CARD / BUTTON / INPUT SYSTEM — warm garden-paper (solid)
+   Class names preserved from the old glass system so every
+   consumer reskins automatically. No glass/blur anymore.
    ───────────────────────────────────────────────────────────── */
 @layer components {
 
   .glass-card {
     @apply rounded-2xl border transition-all duration-300 transform-gpu;
-    background:      var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-color:    var(--glass-border);
-    box-shadow:      var(--glass-shadow), var(--glass-inset);
+    background:    var(--paper-0);
+    border-color:  var(--line);
+    box-shadow:    var(--shadow-sm);
   }
 
   .glass-card:hover {
-    background:   rgba(255, 255, 255, 0.70);
-    border-color: rgba(255, 255, 255, 0.88);
-    box-shadow:   var(--glass-shadow-md),
-                  0 0 0 1px rgba(16,185,129,0.07),
-                  var(--glass-inset);
-    transform: translateY(-2px) scale(1.004);
+    border-color: var(--green-200);
+    box-shadow:   var(--shadow-md);
+    transform: translateY(-2px);
   }
 
   .glass-panel {
     @apply rounded-2xl border;
-    background:      rgba(255, 255, 255, 0.46);
-    backdrop-filter: blur(16px) saturate(1.7);
-    -webkit-backdrop-filter: blur(16px) saturate(1.7);
-    border-color:    var(--glass-border-subtle);
-    box-shadow:      0 2px 16px rgba(0,0,0,0.05), var(--glass-inset);
+    background:    var(--paper-0);
+    border-color:  var(--line);
+    box-shadow:    var(--shadow-xs);
   }
 
-  /* Colored glass variants for status cards */
+  /* Tinted variants for status / KPI cards — warm semantic backgrounds */
   .glass-card-blue {
     @apply rounded-2xl border transition-all duration-300 transform-gpu;
-    background:      rgba(239, 246, 255, 0.62);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-color:    rgba(147, 197, 253, 0.55);
-    box-shadow:      0 4px 20px rgba(59,130,246,0.10), var(--glass-inset);
+    background:   var(--info-bg);
+    border-color: #C9D6E8;
+    box-shadow:   var(--shadow-xs);
   }
   .glass-card-amber {
     @apply rounded-2xl border transition-all duration-300 transform-gpu;
-    background:      rgba(255, 251, 235, 0.62);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-color:    rgba(252, 211, 77, 0.50);
-    box-shadow:      0 4px 20px rgba(245,158,11,0.10), var(--glass-inset);
+    background:   var(--warning-bg);
+    border-color: #EAD9AE;
+    box-shadow:   var(--shadow-xs);
   }
   .glass-card-red {
     @apply rounded-2xl border transition-all duration-300 transform-gpu;
-    background:      rgba(254, 242, 242, 0.62);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-color:    rgba(252, 165, 165, 0.50);
-    box-shadow:      0 4px 20px rgba(239,68,68,0.08), var(--glass-inset);
+    background:   var(--danger-bg);
+    border-color: #E8C9BF;
+    box-shadow:   var(--shadow-xs);
   }
 
   /* ── GLOW UTILITIES ── */
   .glow-hover { transition: box-shadow 0.3s ease; }
   .glow-hover:hover {
-    box-shadow: 0 0 20px rgba(16,185,129,0.2), 0 4px 24px rgba(0,0,0,0.08);
+    box-shadow: var(--shadow-green), var(--shadow-md);
   }
 
-  /* ── PRIMARY BUTTON ── */
+  /* ── PRIMARY BUTTON — forest green ── */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2
-           rounded-xl text-sm font-semibold text-white
+           rounded-xl text-sm font-semibold
            transition-all duration-200 select-none cursor-pointer;
-    background: linear-gradient(135deg, #10b981 0%, #22c55e 100%);
-    box-shadow: 0 4px 14px rgba(16,185,129,0.3), 0 1px 0 rgba(255,255,255,0.2) inset;
+    color: var(--text-on-green);
+    background: linear-gradient(180deg, var(--green-700) 0%, var(--green-800) 100%);
+    box-shadow: var(--shadow-green);
   }
   .btn-primary:hover {
-    transform: scale(1.04);
-    box-shadow: 0 6px 20px rgba(16,185,129,0.4), 0 1px 0 rgba(255,255,255,0.2) inset;
+    background: linear-gradient(180deg, var(--green-700) 0%, var(--green-900) 100%);
+    box-shadow: var(--shadow-green), 0 0 0 1px rgba(27,77,51,0.18);
   }
-  .btn-primary:active  { transform: scale(0.96); }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-primary:active  { transform: scale(0.97); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
-  /* ── SECONDARY BUTTON ── */
+  /* ── SECONDARY BUTTON — warm white ── */
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2
-           rounded-xl text-sm font-medium text-gray-700
+           rounded-xl text-sm font-medium
            transition-all duration-200 select-none cursor-pointer;
-    background:      rgba(255,255,255,0.7);
-    backdrop-filter: blur(12px);
-    border:          1px solid rgba(0,0,0,0.08);
-    box-shadow:      0 2px 8px rgba(0,0,0,0.06);
+    color:        var(--text-1);
+    background:    var(--paper-0);
+    border:        1px solid var(--line-strong);
+    box-shadow:    var(--shadow-xs);
   }
   .btn-secondary:hover {
-    background:  rgba(255,255,255,0.9);
-    box-shadow:  0 4px 14px rgba(0,0,0,0.1);
-    transform:   scale(1.03);
+    background:  var(--paper-100);
+    box-shadow:  var(--shadow-sm);
   }
   .btn-secondary:active { transform: scale(0.97); }
 
-  /* ── DANGER BUTTON ── */
+  /* ── DANGER BUTTON — warm clay-red ── */
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2
            rounded-xl text-sm font-semibold text-white
            transition-all duration-200 select-none cursor-pointer;
-    background: linear-gradient(135deg, #ef4444, #dc2626);
-    box-shadow: 0 4px 14px rgba(239,68,68,0.25);
+    background: var(--danger);
+    box-shadow: 0 4px 14px rgba(190,70,48,0.22);
   }
-  .btn-danger:hover  { transform: scale(1.03); box-shadow: 0 6px 18px rgba(239,68,68,0.35); }
+  .btn-danger:hover  { background: var(--clay-700); box-shadow: 0 6px 18px rgba(190,70,48,0.3); }
   .btn-danger:active { transform: scale(0.97); }
 
   /* ── INPUT SYSTEM ── */
   .app-input {
     @apply w-full rounded-xl px-3 py-2 text-sm outline-none
-           transition-all duration-200 text-gray-800;
-    background:   rgba(255,255,255,0.8);
-    border:       1px solid rgba(0,0,0,0.1);
+           transition-all duration-200;
+    color:        var(--text-1);
+    background:    var(--paper-0);
+    border:        1px solid var(--line-strong);
   }
-  .app-input::placeholder { color: rgba(0,0,0,0.35); }
+  .app-input::placeholder { color: var(--text-3); }
   .app-input:focus {
-    background:   #fff;
-    border-color: rgba(16,185,129,0.5);
-    box-shadow:   0 0 0 3px rgba(16,185,129,0.1);
+    background:   var(--paper-0);
+    border-color: var(--green-600);
+    box-shadow:   0 0 0 3px rgba(46,139,87,0.16);
   }
 
-  /* ── SCROLLBAR — light ── */
+  /* ── SCROLLBAR — warm ── */
   .custom-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: rgba(0,0,0,0.15) transparent;
+    scrollbar-color: var(--line-strong) transparent;
   }
   .custom-scrollbar::-webkit-scrollbar       { width: 5px; }
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(0,0,0,0.15);
+    background: var(--line-strong);
     border-radius: 99px;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: rgba(0,0,0,0.25);
+    background: var(--text-3);
   }
 
   /* ── LEGACY ── */
   .touch-button { @apply min-h-[44px] touch-manipulation; }
-  .bagicha-logo       { @apply font-bold text-xl; }
+  /* Serif wordmark — Cormorant caps, wide-tracked (brand). Size comes from the size prop. */
+  .bagicha-logo       { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; line-height: 1; }
   .bagicha-logo .bag  { color: var(--bagicha-primary); }
   .bagicha-logo .icha { color: var(--bagicha-secondary); }
 
-  /* ── STATUS CLASSES ── */
-  .status-pending   { @apply bg-orange-50 text-orange-600; }
-  .status-preparing { @apply bg-blue-50 text-blue-600; }
-  .status-ready     { @apply bg-green-50 text-green-600; }
-  .status-delivered { @apply bg-purple-50 text-purple-600; }
-  .status-served    { @apply bg-green-50 text-green-600; }
+  /* ── STATUS CLASSES — design-system order hues ── */
+  .status-pending   { background: var(--warning-bg); color: var(--status-pending); }
+  .status-preparing { background: var(--info-bg);    color: var(--status-preparing); }
+  .status-ready     { background: var(--success-bg); color: var(--status-ready); }
+  .status-delivered { background: var(--success-bg); color: var(--green-700); }
+  .status-served    { background: var(--paper-100);  color: var(--status-served); }
 
   /* ── MICRO-INTERACTIONS — tap feedback ── */
   /* Apply .tap-scale to any tappable element for a 97% press-down feel. */
@@ -292,28 +323,29 @@
   }
   .tap-scale:active { transform: scale(0.97); }
 
-  /* ── SKELETON SHIMMER ── */
+  /* ── SKELETON SHIMMER — warm ── */
   .skeleton {
-    @apply rounded-xl bg-gray-100 relative overflow-hidden;
+    @apply rounded-xl relative overflow-hidden;
+    background: var(--paper-100);
   }
   .skeleton::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
     animation: skeleton-shimmer 1.4s ease-in-out infinite;
   }
-  /* Glass-style skeleton for pages with glass bg */
+  /* Warm card skeleton */
   .skeleton-glass {
     @apply rounded-xl relative overflow-hidden;
-    background: rgba(255,255,255,0.40);
-    border: 1px solid rgba(255,255,255,0.60);
+    background: var(--paper-100);
+    border: 1px solid var(--line);
   }
   .skeleton-glass::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
     animation: skeleton-shimmer 1.4s ease-in-out infinite;
   }
   @keyframes skeleton-shimmer {

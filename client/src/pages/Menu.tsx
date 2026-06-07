@@ -211,18 +211,18 @@ export default function Menu() {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header title="Menu" description="Manage your restaurant menu items and categories" />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Tab Bar */}
-        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-white/40 border border-white/30 shadow-sm w-fit">
+        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-[var(--paper-100)] border border-[var(--line)] shadow-sm w-fit">
           <button
             onClick={() => switchTab("items")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               activeTab === "items"
-                ? "bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm"
-                : "text-gray-600 hover:text-gray-900 hover:bg-white/60"
+                ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-[var(--paper-0)]"
             }`}
           >
             <UtensilsCrossed className="w-4 h-4" /> Menu Items
@@ -231,8 +231,8 @@ export default function Menu() {
             onClick={() => switchTab("categories")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               activeTab === "categories"
-                ? "bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm"
-                : "text-gray-600 hover:text-gray-900 hover:bg-white/60"
+                ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-[var(--paper-0)]"
             }`}
           >
             <Tag className="w-4 h-4" /> Categories
@@ -245,7 +245,7 @@ export default function Menu() {
             {isLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {[...Array(6)].map((_, i) => (
-                  <div key={i} className="h-44 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
+                  <div key={i} className="h-44 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] animate-pulse" />
                 ))}
               </div>
             ) : (
@@ -266,7 +266,7 @@ export default function Menu() {
                       className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border ${
                         bulkMode
                           ? "bg-amber-50 border-amber-300 text-amber-700"
-                          : "bg-white/60 border-white/40 text-gray-600 hover:bg-white/80"
+                          : "bg-[var(--paper-0)] border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)]"
                       }`}
                     >
                       <CheckSquare className="w-4 h-4" />
@@ -278,7 +278,7 @@ export default function Menu() {
                       className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border ${
                         showFilters || hasActiveFilters
                           ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-                          : "bg-white/60 border-white/40 text-gray-600 hover:bg-white/80"
+                          : "bg-[var(--paper-0)] border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)]"
                       }`}
                     >
                       <Filter className="w-4 h-4" /> Filters
@@ -290,7 +290,7 @@ export default function Menu() {
                       whileTap={{ scale: 0.95 }}
                       onClick={handleAddItem}
                       className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
-                                 bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm
+                                 bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm
                                  hover:shadow-emerald-400/40 hover:shadow-md transition-all"
                     >
                       <Plus className="w-4 h-4" /> Add Item
@@ -315,7 +315,7 @@ export default function Menu() {
                         transform: showFilters ? "translateY(0)" : "translateY(-6px)",
                         transition: "opacity 0.18s ease, transform 0.18s ease",
                       }}
-                      className="rounded-2xl bg-white/50 border border-white/40 shadow-sm p-4"
+                      className="rounded-2xl bg-[var(--paper-0)] border border-[var(--line)] shadow-sm p-4"
                     >
                       <div className="flex flex-wrap gap-4 items-end">
                         {/* Search */}
@@ -327,7 +327,7 @@ export default function Menu() {
                               value={searchQuery}
                               onChange={(e) => setSearchQuery(e.target.value)}
                               placeholder="Item name…"
-                              className="pl-8 h-8 text-sm bg-white/60"
+                              className="pl-8 h-8 text-sm bg-[var(--paper-0)]"
                             />
                             {searchQuery && (
                               <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2">
@@ -341,7 +341,7 @@ export default function Menu() {
                         <div className="min-w-40">
                           <label className="text-xs font-medium text-gray-500 mb-1 block">Category</label>
                           <Select value={filterCategory} onValueChange={setFilterCategory}>
-                            <SelectTrigger className="h-8 text-sm bg-white/60">
+                            <SelectTrigger className="h-8 text-sm bg-[var(--paper-0)]">
                               <SelectValue placeholder="All categories" />
                             </SelectTrigger>
                             <SelectContent>
@@ -357,7 +357,7 @@ export default function Menu() {
                         <div className="min-w-36">
                           <label className="text-xs font-medium text-gray-500 mb-1 block">Availability</label>
                           <Select value={filterAvailability} onValueChange={setFilterAvailability}>
-                            <SelectTrigger className="h-8 text-sm bg-white/60">
+                            <SelectTrigger className="h-8 text-sm bg-[var(--paper-0)]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -429,7 +429,7 @@ export default function Menu() {
                         {/* Change category */}
                         <div className="flex items-center gap-1.5">
                           <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
-                            <SelectTrigger className="h-7 text-xs w-36 bg-white/80">
+                            <SelectTrigger className="h-7 text-xs w-36 bg-[var(--paper-0)]">
                               <SelectValue placeholder="Change category" />
                             </SelectTrigger>
                             <SelectContent>
@@ -450,7 +450,7 @@ export default function Menu() {
                         {/* Price update */}
                         <div className="flex items-center gap-1.5">
                           <Select value={bulkPriceMode} onValueChange={(v: any) => setBulkPriceMode(v)}>
-                            <SelectTrigger className="h-7 text-xs w-24 bg-white/80">
+                            <SelectTrigger className="h-7 text-xs w-24 bg-[var(--paper-0)]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -463,7 +463,7 @@ export default function Menu() {
                             value={bulkPriceValue}
                             onChange={(e) => setBulkPriceValue(e.target.value)}
                             placeholder={bulkPriceMode === "fixed" ? "e.g. 150" : "e.g. 10"}
-                            className="h-7 text-xs w-24 bg-white/80"
+                            className="h-7 text-xs w-24 bg-[var(--paper-0)]"
                           />
                           <button
                             onClick={handleBulkPrice}
@@ -510,14 +510,14 @@ export default function Menu() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.03, duration: 0.2 }}
                         onClick={bulkMode ? () => toggleSelect(item.id) : undefined}
-                        className={`rounded-2xl bg-white/40 border shadow-md p-4
-                                   hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
+                        className={`rounded-2xl bg-[var(--paper-100)] border shadow-md p-4
+                                   hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-[var(--paper-0)]
                                    transition-all duration-200 ${
                           bulkMode ? "cursor-pointer" : ""
                         } ${
                           isSelected
                             ? "border-emerald-400 bg-emerald-50/40 ring-2 ring-emerald-300/50"
-                            : "border-white/30"
+                            : "border-[var(--line)]"
                         }`}
                       >
                         <div className="flex justify-between items-start mb-3">
@@ -538,7 +538,7 @@ export default function Menu() {
                               <motion.button
                                 whileTap={{ scale: 0.9 }}
                                 onClick={() => handleEditItem(item)}
-                                className="w-7 h-7 flex items-center justify-center rounded-xl bg-white/60 border border-white/40 text-gray-500 hover:text-emerald-600 hover:bg-white/80 transition-all"
+                                className="w-7 h-7 flex items-center justify-center rounded-xl bg-[var(--paper-0)] border border-[var(--line)] text-gray-500 hover:text-emerald-600 hover:bg-[var(--paper-0)] transition-all"
                               >
                                 <Edit className="w-3 h-3" />
                               </motion.button>
@@ -546,7 +546,7 @@ export default function Menu() {
                                 whileTap={{ scale: 0.9 }}
                                 onClick={() => handleDeleteItem(item)}
                                 disabled={deleteMenuItemMutation.isPending}
-                                className="w-7 h-7 flex items-center justify-center rounded-xl bg-white/60 border border-white/40 text-gray-500 hover:text-red-500 hover:bg-red-50/60 transition-all"
+                                className="w-7 h-7 flex items-center justify-center rounded-xl bg-[var(--paper-0)] border border-[var(--line)] text-gray-500 hover:text-red-500 hover:bg-red-50/60 transition-all"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </motion.button>
@@ -575,7 +575,7 @@ export default function Menu() {
                           </span>
                         </div>
 
-                        <div className="mt-3 flex justify-between text-xs text-gray-400 border-t border-white/40 pt-2">
+                        <div className="mt-3 flex justify-between text-xs text-gray-400 border-t border-[var(--line)] pt-2">
                           <span>Prep: {item.preparationTime}min</span>
                           <div className="flex items-center gap-2">
                             {item.inventoryLinks && item.inventoryLinks.length > 0 && (
@@ -590,7 +590,7 @@ export default function Menu() {
                 </div>
 
                 {menuItems.length === 0 && (
-                  <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30 mt-4">
+                  <div className="text-center py-16 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] mt-4">
                     {hasActiveFilters ? (
                       <>
                         <Search className="w-10 h-10 mx-auto mb-3 text-gray-300" />
@@ -607,7 +607,7 @@ export default function Menu() {
                         <motion.button
                           whileTap={{ scale: 0.95 }}
                           onClick={handleAddItem}
-                          className="px-4 py-2 rounded-xl text-sm font-semibold bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm hover:shadow-md transition-all"
+                          className="px-4 py-2 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm hover:shadow-md transition-all"
                         >
                           <Plus className="w-4 h-4 inline mr-1" /> Add Menu Item
                         </motion.button>

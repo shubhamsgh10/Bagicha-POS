@@ -58,7 +58,7 @@ export const PickupCard = memo(function PickupCard({
   const cardBg =
     status === "collected" ? "bg-orange-50/80  border-orange-300/60" :
     status === "ready"     ? "bg-green-50/80   border-green-300/60"  :
-                             "bg-white/80      border-gray-200/70";
+                             "bg-[var(--paper-0)]      border-gray-200/70";
 
   return (
     <motion.div

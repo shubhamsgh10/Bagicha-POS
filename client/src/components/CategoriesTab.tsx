@@ -76,7 +76,7 @@ function SortableCategoryRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="rounded-xl bg-white/50 border border-white/40 shadow-sm p-3"
+      className="rounded-xl bg-[var(--paper-0)] border border-[var(--line)] shadow-sm p-3"
     >
       {editingId === cat.id ? (
         <div className="space-y-2">
@@ -231,7 +231,7 @@ export function CategoriesTab() {
   return (
     <div className="space-y-4">
       {/* Add Category */}
-      <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-4">
+      <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-4">
         <p className="text-sm font-semibold text-gray-700 mb-3">Add New Category</p>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
@@ -272,7 +272,7 @@ export function CategoriesTab() {
       {isLoading ? (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-14 bg-white/40 rounded-xl animate-pulse" />
+            <div key={i} className="h-14 bg-[var(--paper-100)] rounded-xl animate-pulse" />
           ))}
         </div>
       ) : (

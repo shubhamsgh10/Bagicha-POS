@@ -55,7 +55,7 @@ const STATUS_CONFIG: Record<
   free: {
     label: "Idle",
     dot: "bg-emerald-400",
-    card: "bg-white/70 border-emerald-200/60",
+    card: "bg-[var(--paper-0)] border-emerald-200/60",
     badge: "bg-emerald-100 text-emerald-700",
     pulse: false,
   },

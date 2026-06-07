@@ -47,7 +47,7 @@ const styles = `
     top: 50%; left: 50%;
     transform-origin: center;
     translate: -50% -50%;
-    background: rgba(99,102,241,0.18);
+    background: rgba(46,139,87,0.18);
     animation: ripple 0.45s ease-out forwards;
     pointer-events: none;
   }
@@ -130,26 +130,24 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const accentColor = isAdmin ? "#f59e0b" : "#6366f1";
-  const accentLight = isAdmin ? "rgba(245,158,11,0.12)" : "rgba(99,102,241,0.10)";
+  const accentColor = isAdmin ? "#C68A2E" : "#34507A";
+  const accentLight = isAdmin ? "rgba(198,138,46,0.12)" : "rgba(52,80,122,0.10)";
 
   const modal = (
     <>
       <style>{styles}</style>
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center"
-        style={{ background: "rgba(240,242,248,0.55)", backdropFilter: "blur(12px)" }}
+        style={{ background: "rgba(20,34,27,0.42)", backdropFilter: "blur(3px)" }}
         onClick={onCancel}
       >
         <div
           className={`pin-guard-card${shake ? " pin-shake" : ""} flex flex-col items-center`}
           style={{
-            background: "rgba(255,255,255,0.82)",
-            backdropFilter: "blur(24px) saturate(180%)",
-            WebkitBackdropFilter: "blur(24px) saturate(180%)",
-            border: "1px solid rgba(255,255,255,0.7)",
-            boxShadow: "0 8px 40px rgba(100,110,160,0.18), 0 1px 0 rgba(255,255,255,0.9) inset",
-            borderRadius: "24px",
+            background: "var(--paper-0)",
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow-lg)",
+            borderRadius: "22px",
             width: "300px",
             padding: "28px 24px 22px",
             gap: "0",
@@ -234,7 +232,7 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
                 disabled={verifyMutation.isPending}
                 className="key-btn h-12 rounded-2xl text-gray-700 text-[17px] font-medium disabled:opacity-40"
                 style={{
-                  background: "rgba(255,255,255,0.75)",
+                  background: "var(--paper-0)",
                   border: "1px solid rgba(0,0,0,0.08)",
                   boxShadow: "0 2px 6px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.9) inset",
                 }}
@@ -252,9 +250,9 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
               disabled={verifyMutation.isPending}
               className="key-btn h-12 rounded-2xl flex items-center justify-center text-gray-500 disabled:opacity-40"
               style={{
-                background: "rgba(255,255,255,0.75)",
-                border: "1px solid rgba(0,0,0,0.08)",
-                boxShadow: "0 2px 6px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.9) inset",
+                background: "var(--paper-50)",
+                border: "1px solid var(--line-strong)",
+                boxShadow: "var(--shadow-xs)",
               }}
             >
               <Delete className="w-4 h-4" />
@@ -266,9 +264,9 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
               disabled={verifyMutation.isPending}
               className="key-btn h-12 rounded-2xl text-gray-700 text-[17px] font-medium disabled:opacity-40"
               style={{
-                background: "rgba(255,255,255,0.75)",
-                border: "1px solid rgba(0,0,0,0.08)",
-                boxShadow: "0 2px 6px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.9) inset",
+                background: "var(--paper-50)",
+                border: "1px solid var(--line-strong)",
+                boxShadow: "var(--shadow-xs)",
               }}
             >
               0

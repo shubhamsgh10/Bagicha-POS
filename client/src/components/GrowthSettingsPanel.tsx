@@ -365,7 +365,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
       <button
         onClick={save}
         disabled={saving}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-60"
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
       >
         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
         {saving ? "Saving..." : "Save Growth Settings"}
