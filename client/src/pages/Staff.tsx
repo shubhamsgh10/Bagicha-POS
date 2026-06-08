@@ -391,7 +391,9 @@ function StaffProfileRow({ staff }: { staff: any }) {
   const save = async () => {
     setSaving(true);
     try {
-      await apiRequest("PUT", `/api/staff/${staff.userId}/profile`, form);
+      const uid = staff.userId ?? staff.user?.id ?? staff.id;
+      if (uid == null) { toast({ title: "Failed", description: "This staff row has no user id", variant: "destructive" }); return; }
+      await apiRequest("PUT", `/api/staff/${uid}/profile`, form);
       queryClient.invalidateQueries({ queryKey: ["/api/staff"] });
       toast({ title: "Saved" });
     } catch (err: any) { toast({ title: "Failed", description: err.message, variant: "destructive" }); }

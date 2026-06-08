@@ -2597,7 +2597,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // PUT /api/staff/:id/profile — upsert staff profile (salary, biometricId, dept, etc.)
   app.put("/api/staff/:id/profile", requireAuth, async (req, res) => {
     try {
-      const profile = await storage.upsertStaffProfile(parseInt(req.params.id), req.body);
+      const userId = parseInt(req.params.id, 10);
+      if (Number.isNaN(userId)) return res.status(400).json({ message: "Invalid staff id" });
+      const profile = await storage.upsertStaffProfile(userId, req.body);
       res.json(profile);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
