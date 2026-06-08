@@ -151,7 +151,7 @@ function RfmScoreBar({ label, score, color }: { label: string; score: number; co
 function RfmPanel({ segment }: { segment: CrmSegment }) {
   const segColors: Record<string, string> = {
     VIP:      "text-amber-600 bg-amber-50 border-amber-200",
-    Regular:  "text-indigo-600 bg-indigo-50 border-indigo-200",
+    Regular:  "text-[var(--ink-700)] bg-indigo-50 border-indigo-200",
     New:      "text-emerald-600 bg-emerald-50 border-emerald-200",
     "At Risk":"text-red-600 bg-red-50 border-red-200",
     Lapsed:   "text-gray-500 bg-gray-50 border-gray-200",
@@ -179,7 +179,7 @@ function RfmPanel({ segment }: { segment: CrmSegment }) {
         {/* Score bars */}
         <div className="space-y-1.5">
           <RfmScoreBar label="Recency"   score={segment.recencyScore}   color="text-blue-500"    />
-          <RfmScoreBar label="Frequency" score={segment.frequencyScore} color="text-indigo-500"  />
+          <RfmScoreBar label="Frequency" score={segment.frequencyScore} color="text-[var(--ink-600)]"  />
           <RfmScoreBar label="Monetary"  score={segment.monetaryScore}  color="text-emerald-500" />
         </div>
 
@@ -212,7 +212,7 @@ function ServerRecsPanel({ customerKey }: { customerKey: string }) {
           <Sparkles className="w-3 h-3" /> Items this customer hasn't tried yet
         </p>
         {upsells.map((item, i) => (
-          <div key={item.itemId} className="flex items-center gap-2 bg-white/70 rounded-lg px-2 py-1.5">
+          <div key={item.itemId} className="flex items-center gap-2 bg-[var(--paper-0)] rounded-lg px-2 py-1.5">
             <span className="text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full bg-purple-100 text-purple-600 shrink-0">
               {i + 1}
             </span>
@@ -589,7 +589,7 @@ function StatPill({ icon: Icon, label, value, color, sub }: {
   icon: any; label: string; value: number | string; color: string; sub?: string;
 }) {
   return (
-    <div className="flex-1 min-w-[70px] bg-white/60 border border-white/50 rounded-xl px-3 py-2.5 shadow-sm">
+    <div className="flex-1 min-w-[70px] bg-[var(--paper-0)] border border-[var(--line)] rounded-xl px-3 py-2.5 shadow-sm">
       <div className="flex items-center gap-1.5 mb-1">
         <Icon className={`w-3.5 h-3.5 ${color}`} />
         <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">{label}</span>
@@ -614,7 +614,7 @@ function CustomerCard({ customer, index, onClick }: {
       exit={{ opacity: 0, y: 4 }}
       transition={{ delay: index * 0.02, duration: 0.18, ease: "easeOut" }}
       onClick={onClick}
-      className={`bg-white/70 border border-white/60 rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-white/90 transition-all duration-150 ${ring}`}
+      className={`bg-[var(--paper-0)] border border-[var(--line)] rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-[var(--paper-0)] transition-all duration-150 ${ring}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -632,7 +632,7 @@ function CustomerCard({ customer, index, onClick }: {
         {/* RFM score chip — only shown when DB has computed it */}
         {rfm ? (
           <div className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 flex items-center gap-0.5">
+            <span className="text-[9px] font-bold text-[var(--ink-700)] bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 flex items-center gap-0.5">
               <BarChart className="w-2.5 h-2.5" />{rfm.rfmScore}
             </span>
           </div>
@@ -693,7 +693,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="fixed top-14 right-0 bottom-0 w-full max-w-sm bg-white/95 border-l border-gray-200/60 shadow-2xl z-40 flex flex-col overflow-hidden"
+      className="fixed top-14 right-0 bottom-0 w-full max-w-sm bg-[var(--paper-0)] border-l border-gray-200/60 shadow-2xl z-40 flex flex-col overflow-hidden"
     >
       <div className="shrink-0 px-5 pt-5 pb-4 border-b border-gray-100">
         <div className="flex items-start justify-between gap-3">
@@ -732,7 +732,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
                 const sent = waSent === t;
                 return (
                   <button key={t} onClick={() => handleSendWA(t)} className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${
-                    sent ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white/70 border-gray-200 text-gray-600 hover:bg-green-50 hover:border-green-300 hover:text-green-700"
+                    sent ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-[var(--paper-0)] border-gray-200 text-gray-600 hover:bg-green-50 hover:border-green-300 hover:text-green-700"
                   }`}>
                     <span>{info.emoji}</span>
                     <span>{sent ? "Opened!" : info.label}</span>
@@ -749,7 +749,7 @@ function CustomerDrawer({ customer, onClose }: { customer: CustomerProfile; onCl
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Metrics</h3>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { label: "Visits",      value: customer.totalVisits,                  icon: ShoppingBag, color: "text-indigo-600" },
+              { label: "Visits",      value: customer.totalVisits,                  icon: ShoppingBag, color: "text-[var(--ink-700)]" },
               { label: "Total Spend", value: formatCurrency(customer.totalSpend),   icon: TrendingUp,  color: "text-emerald-600" },
               { label: "Avg Order",   value: formatCurrency(customer.avgOrderValue),icon: BarChart2,   color: "text-amber-600" },
             ].map(m => (
@@ -875,7 +875,7 @@ function CrmStatusBanner({ customerCount }: { customerCount: number }) {
       isLoading
         ? "bg-gray-50 border-gray-100 text-gray-400"
         : isConnected
-        ? "bg-indigo-50 border-indigo-100 text-indigo-600"
+        ? "bg-indigo-50 border-indigo-100 text-[var(--ink-700)]"
         : "bg-amber-50 border-amber-100 text-amber-600"
     }`}>
       {isLoading ? (
@@ -1097,7 +1097,7 @@ export default function CustomerDashboard() {
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-indigo-100">
-              <Users className="w-4 h-4 text-indigo-600" />
+              <Users className="w-4 h-4 text-[var(--ink-700)]" />
             </div>
             <div>
               <h1 className="text-base font-bold text-gray-900 leading-tight">Customers</h1>

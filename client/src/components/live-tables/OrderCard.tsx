@@ -303,7 +303,7 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
             </div>
             {/* Timer */}
             {order.startTime && (
-              <div className="bg-white/80 border border-gray-200 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold text-gray-600 whitespace-nowrap">
+              <div className="bg-[var(--paper-0)] border border-gray-200 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold text-gray-600 whitespace-nowrap">
                 <LiveTimer startTime={order.startTime} />
               </div>
             )}

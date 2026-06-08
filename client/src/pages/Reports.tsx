@@ -102,8 +102,8 @@ function DateRangePicker({
         whileTap={{ scale: 0.95 }}
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
-                   bg-white/60 border border-white/50 text-gray-700
-                   hover:bg-white/80 transition-all shadow-sm"
+                   bg-[var(--paper-0)] border border-[var(--line)] text-gray-700
+                   hover:bg-[var(--paper-0)] transition-all shadow-sm"
       >
         <Calendar className="w-4 h-4 text-emerald-500" />
         <span>{value.label === "Custom" ? formatRangeLabel(value.start, value.end) : value.label}</span>
@@ -118,7 +118,7 @@ function DateRangePicker({
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
             transition={{ duration: 0.15 }}
             className="absolute right-0 top-full mt-2 z-50 w-64 rounded-2xl
-                       bg-white/90 border border-white/50
+                       bg-[var(--paper-0)] border border-[var(--line)]
                        shadow-xl shadow-black/10 p-2 overflow-hidden"
           >
             {/* Presets */}
@@ -275,11 +275,11 @@ export default function Reports() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
         <Header title="Reports" description="Loading reports..." />
         <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-32 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
+            <div key={i} className="h-32 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] animate-pulse" />
           ))}
         </div>
       </div>
@@ -319,7 +319,7 @@ export default function Reports() {
   ];
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header title="Reports" description="Analytics and insights for your restaurant performance" />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
@@ -334,8 +334,8 @@ export default function Reports() {
             <motion.button
               whileTap={{ scale: 0.95 }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
-                         bg-white/50 border border-white/40 text-gray-600
-                         hover:bg-white/70 transition-all"
+                         bg-[var(--paper-0)] border border-[var(--line)] text-gray-600
+                         hover:bg-[var(--paper-0)] transition-all"
             >
               <Download className="w-4 h-4" /> Export
             </motion.button>
@@ -350,8 +350,8 @@ export default function Reports() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05, duration: 0.2 }}
-              className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5
-                         hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-white/50
+              className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5
+                         hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-[var(--paper-0)]
                          transition-all duration-200"
             >
               <div className="flex items-start justify-between">
@@ -367,15 +367,15 @@ export default function Reports() {
         </div>
 
         {/* Tabs */}
-        <div className="rounded-xl bg-white/40 border border-white/30 p-1 flex gap-1 mb-5 w-fit">
+        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex gap-1 mb-5 w-fit">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
-                  ? "bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm"
-                  : "text-gray-600 hover:bg-white/50"
+                  ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-[var(--paper-0)]"
               }`}
             >
               {tab.label}
@@ -389,7 +389,7 @@ export default function Reports() {
             key={`sales-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">Sales Performance</h3>
@@ -419,7 +419,7 @@ export default function Reports() {
                     <Bar dataKey="sales" fill="url(#barGradient)" radius={[4, 4, 0, 0]} />
                     <defs>
                       <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#10b981" />
+                        <stop offset="0%" stopColor="#2E8B57" />
                         <stop offset="100%" stopColor="#22c55e" />
                       </linearGradient>
                     </defs>
@@ -436,7 +436,7 @@ export default function Reports() {
             key={`items-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">Top Selling Items</h3>
@@ -446,10 +446,10 @@ export default function Reports() {
               {topItems.map((item, index) => (
                 <div
                   key={item.name}
-                  className="flex items-center justify-between p-3 rounded-xl bg-white/50 border border-white/40"
+                  className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#226B43] to-[#1B4D33] flex items-center justify-center text-white text-xs font-bold shrink-0">
                       {index + 1}
                     </div>
                     <div>
@@ -478,7 +478,7 @@ export default function Reports() {
             key={`orders-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5"
+            className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800">
@@ -493,7 +493,7 @@ export default function Reports() {
               {salesReport?.orders?.map((order: any) => (
                 <div
                   key={order.id}
-                  className="flex items-center justify-between p-3 rounded-xl bg-white/50 border border-white/40"
+                  className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]"
                 >
                   <div>
                     <p className="font-medium text-sm text-gray-800">{serialNum(order.id)}</p>
@@ -502,7 +502,7 @@ export default function Reports() {
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-sm text-gray-800">{formatCurrency(parseFloat(order.totalAmount))}</p>
-                    <span className="text-[11px] font-medium bg-white/70 border border-white/50 text-gray-600 px-2 py-0.5 rounded-lg">
+                    <span className="text-[11px] font-medium bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 px-2 py-0.5 rounded-lg">
                       {order.paymentMethod}
                     </span>
                   </div>
@@ -523,22 +523,22 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
           >
-            <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5">
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-semibold text-gray-800">Payment Summary</h3>
                 <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
                 {[
-                  { key: "cash",   label: "Cash",   icon: <Banknote className="w-5 h-5" />,   color: "from-emerald-500 to-green-500", bg: "bg-emerald-50/60",  text: "text-emerald-700" },
-                  { key: "card",   label: "Card",   icon: <CreditCard className="w-5 h-5" />, color: "from-blue-500 to-cyan-500",     bg: "bg-blue-50/60",     text: "text-blue-700" },
-                  { key: "upi",    label: "UPI",    icon: <Smartphone className="w-5 h-5" />, color: "from-purple-500 to-violet-500", bg: "bg-purple-50/60",   text: "text-purple-700" },
+                  { key: "cash",   label: "Cash",   icon: <Banknote className="w-5 h-5" />,   color: "from-[#226B43] to-[#1B4D33]", bg: "bg-emerald-50/60",  text: "text-emerald-700" },
+                  { key: "card",   label: "Card",   icon: <CreditCard className="w-5 h-5" />, color: "from-[#34507A] to-[#243B5E]",     bg: "bg-blue-50/60",     text: "text-blue-700" },
+                  { key: "upi",    label: "UPI",    icon: <Smartphone className="w-5 h-5" />, color: "from-[#CD6E3E] to-[#B85C38]", bg: "bg-purple-50/60",   text: "text-purple-700" },
                   { key: "online", label: "Online", icon: <Wifi className="w-5 h-5" />,       color: "from-orange-500 to-amber-500",  bg: "bg-orange-50/60",   text: "text-orange-700" },
                   { key: "other",  label: "Other",  icon: <DollarSign className="w-5 h-5" />, color: "from-gray-500 to-slate-500",    bg: "bg-gray-50/60",     text: "text-gray-700" },
                 ].map(({ key, label, icon, color, bg, text }) => {
                   const d = paymentSummary?.breakdown?.[key] || { count: 0, amount: 0 };
                   return (
-                    <div key={key} className={`rounded-xl ${bg} border border-white/50 p-4`}>
+                    <div key={key} className={`rounded-xl ${bg} border border-[var(--line)] p-4`}>
                       <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center text-white mb-3`}>
                         {icon}
                       </div>
@@ -549,7 +549,7 @@ export default function Reports() {
                   );
                 })}
               </div>
-              <div className="flex flex-wrap gap-3 pt-4 border-t border-white/40">
+              <div className="flex flex-wrap gap-3 pt-4 border-t border-[var(--line)]">
                 <div className="flex-1 min-w-[140px] rounded-xl bg-emerald-50/60 border border-emerald-200/40 p-3">
                   <p className="text-xs text-gray-500">Total Collected</p>
                   <p className="text-xl font-bold text-emerald-700">{formatCurrency(paymentSummary?.totalPaid || 0)}</p>
@@ -565,7 +565,7 @@ export default function Reports() {
             </div>
 
             {(paymentSummary?.dueOrders?.length > 0) && (
-              <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-5">
+              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <AlertCircle className="w-5 h-5 text-red-500" />
                   <h3 className="text-base font-semibold text-gray-800">Unpaid / Due Orders</h3>
@@ -602,7 +602,7 @@ export default function Reports() {
             )}
 
             {(paymentSummary?.dueCount === 0) && (
-              <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md p-8 text-center">
+              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-8 text-center">
                 <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
                   <DollarSign className="w-6 h-6 text-emerald-600" />
                 </div>
@@ -621,8 +621,8 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
           >
-            <div className="rounded-2xl bg-white/40 border border-white/30 shadow-md overflow-hidden">
-              <div className="px-5 py-4 border-b border-white/30 flex items-center justify-between">
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-800">Staff Table Assignments</h3>
                   <p className="text-xs text-gray-400 mt-0.5">Which staff member served which table, per day</p>
@@ -639,7 +639,7 @@ export default function Reports() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-white/30 text-left">
+                      <tr className="bg-[var(--paper-100)] text-left">
                         <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
                         <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Staff</th>
                         <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tables Served</th>
@@ -649,7 +649,7 @@ export default function Reports() {
                     </thead>
                     <tbody className="divide-y divide-white/20">
                       {staffTableReport.map((row, i) => (
-                        <tr key={i} className="hover:bg-white/20 transition-colors">
+                        <tr key={i} className="hover:bg-[var(--paper-100)] transition-colors">
                           <td className="px-5 py-3 text-gray-600 whitespace-nowrap">
                             {new Date(row.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                           </td>

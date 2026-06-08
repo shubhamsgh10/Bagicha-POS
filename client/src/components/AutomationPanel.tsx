@@ -117,7 +117,7 @@ function RuleCard({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <p className="text-sm font-semibold text-gray-800">{title}</p>
-              {badge && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">{badge}</span>}
+              {badge && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--info-bg)] text-[var(--ink-700)] border border-[var(--line)]">{badge}</span>}
             </div>
             {alwaysOn
               ? <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 shrink-0">Always On</span>
@@ -173,7 +173,7 @@ function QueueCard({ item, onSent }: { item: FollowUpItem; onSent: (item: Follow
   return (
     <motion.div layout className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
       <div className="flex items-center gap-3 px-4 py-3">
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center shrink-0 text-sm font-bold text-indigo-600">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[var(--paper-100)] to-[var(--paper-200)] flex items-center justify-center shrink-0 text-sm font-bold text-[var(--ink-700)]">
           {item.customer.name.charAt(0).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
@@ -245,16 +245,16 @@ function MessageTemplatesEditor({
             <button type="button" onClick={() => setOpen(isOpen ? null : trigger)} className="w-full flex items-center gap-2 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left">
               <span className="text-sm">{meta.emoji}</span>
               <span className="flex-1 text-xs font-semibold text-gray-700">{meta.label}</span>
-              {isCustom && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 border border-indigo-200">Custom</span>}
+              {isCustom && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--info-bg)] text-[var(--ink-700)] border border-[var(--line)]">Custom</span>}
               {isOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
             </button>
             {isOpen && (
               <div className="px-3 py-3 space-y-2 bg-white border-t border-gray-100">
-                <textarea value={current} onChange={e => setTpl(trigger, e.target.value)} rows={4} className="w-full text-xs text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:bg-white transition-colors" />
+                <textarea value={current} onChange={e => setTpl(trigger, e.target.value)} rows={4} className="w-full text-xs text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-[var(--green-500)] focus:bg-white transition-colors" />
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex flex-wrap gap-1">
                     {TOKEN_CHIPS.map(({ token, hint }) => (
-                      <button key={token} type="button" title={hint} onClick={() => setTpl(trigger, current + token)} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors">
+                      <button key={token} type="button" title={hint} onClick={() => setTpl(trigger, current + token)} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--info-bg)] border border-[var(--line)] text-[var(--ink-700)] hover:bg-[var(--info-bg)] transition-colors">
                         {token}
                       </button>
                     ))}
@@ -470,10 +470,10 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
 
             {/* Stats row */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5">
-                <p className="text-[9px] font-semibold text-indigo-500 uppercase tracking-wide">Need Follow-Up</p>
-                <p className="text-2xl font-bold text-indigo-700">{queue.length}</p>
-                <p className="text-[9px] text-indigo-400">customers today</p>
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--info-bg)] px-3 py-2.5">
+                <p className="text-[9px] font-semibold text-[var(--ink-600)] uppercase tracking-wide">Need Follow-Up</p>
+                <p className="text-2xl font-bold text-[var(--ink-700)]">{queue.length}</p>
+                <p className="text-[9px] text-[var(--ink-500)]">customers today</p>
               </div>
               <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5">
                 <p className="text-[9px] font-semibold text-emerald-500 uppercase tracking-wide">Sent Today</p>
@@ -535,7 +535,7 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5 text-indigo-500" />
+                    <MessageSquare className="w-3.5 h-3.5 text-[var(--ink-600)]" />
                     {isWebMode ? `${queue.length} message${queue.length !== 1 ? "s" : ""} to send` : `${queue.length} in queue`}
                   </p>
                   {isWebMode && <span className="text-[10px] text-gray-400">Click Send → confirm in WhatsApp</span>}
@@ -676,7 +676,7 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
                 <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
                   <Info className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-blue-700 leading-relaxed">
-                    Rules marked <span className="font-bold bg-indigo-100 text-indigo-700 px-1 rounded">Server</span> run automatically in the background — no manual action needed once enabled.
+                    Rules marked <span className="font-bold bg-[var(--info-bg)] text-[var(--ink-700)] px-1 rounded">Server</span> run automatically in the background — no manual action needed once enabled.
                     Other rules feed the <strong>Send tab queue</strong> for you to review and send manually (or automatically via API mode in Setup).
                   </p>
                 </div>

@@ -124,9 +124,9 @@ export default function KOT() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: idx * 0.04, duration: 0.2 }}
-      className={`rounded-2xl bg-white/40 border border-white/30 shadow-md
+      className={`rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md
                   border-l-4 ${statusAccent[ticket.status] || "border-l-gray-300"}
-                  hover:shadow-xl hover:bg-white/50 transition-all duration-200`}
+                  hover:shadow-xl hover:bg-[var(--paper-0)] transition-all duration-200`}
     >
       <div className="px-4 pt-3 pb-2 flex justify-between items-start">
         <div>
@@ -164,12 +164,12 @@ export default function KOT() {
         ))}
       </div>
 
-      <div className="px-4 pb-3 flex gap-2 border-t border-white/40 pt-2.5">
+      <div className="px-4 pb-3 flex gap-2 border-t border-[var(--line)] pt-2.5">
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={() => reprintKOT(ticket)}
           className="flex-1 flex items-center justify-center gap-1 text-xs font-medium py-1.5 rounded-lg
-                     bg-white/60 border border-white/40 text-gray-600 hover:bg-white/80 transition-all"
+                     bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)] transition-all"
         >
           <Printer className="w-3 h-3" /> Print KOT
         </motion.button>
@@ -192,7 +192,7 @@ export default function KOT() {
             disabled={updateStatusMutation.isPending}
             onClick={() => updateStatusMutation.mutate({ id: ticket.id, status: "completed" })}
             className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold py-1.5 rounded-lg
-                       bg-gradient-to-r from-emerald-500 to-green-500 text-white hover:shadow-md transition-all"
+                       bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white hover:shadow-md transition-all"
           >
             <CheckCircle className="w-3 h-3" /> Mark Ready
           </motion.button>
@@ -203,11 +203,11 @@ export default function KOT() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
         <Header title="Kitchen — KOT" description="Loading tickets..." />
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-40 rounded-2xl bg-white/40 border border-white/30 animate-pulse" />
+            <div key={i} className="h-40 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] animate-pulse" />
           ))}
         </div>
       </div>
@@ -250,7 +250,7 @@ export default function KOT() {
   const currentTickets = ticketsForTab();
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header
         title="Kitchen — KOT"
         description={`${pending.length} pending · ${inProgress.length} cooking · ${completed.length} ready`}
@@ -258,15 +258,15 @@ export default function KOT() {
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Glass Tabs */}
-        <div className="rounded-xl bg-white/40 border border-white/30 p-1 flex flex-wrap gap-1 mb-5">
+        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex flex-wrap gap-1 mb-5">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
-                  ? "bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm"
-                  : "text-gray-600 hover:bg-white/50"
+                  ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-[var(--paper-0)]"
               }`}
             >
               {tab.label}
@@ -275,7 +275,7 @@ export default function KOT() {
         </div>
 
         {currentTickets.length === 0 ? (
-          <div className="text-center py-16 rounded-2xl bg-white/30 border border-white/30">
+          <div className="text-center py-16 rounded-2xl bg-[var(--paper-100)] border border-[var(--line)]">
             {emptyIcon()}
             <p className="font-medium text-gray-500">{emptyText()}</p>
             <p className="text-sm text-gray-400 mt-1">New orders will appear here</p>

@@ -237,10 +237,10 @@ function Modal({
           transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
           className="w-full sm:max-w-lg max-h-[90vh] sm:max-h-[85vh] flex flex-col rounded-t-3xl sm:rounded-2xl overflow-hidden"
           style={{
-            background: "rgba(255,255,255,0.97)",
+            background: "var(--paper-0)",
             backdropFilter: "blur(24px) saturate(1.9)",
             WebkitBackdropFilter: "blur(24px) saturate(1.9)",
-            border: "1px solid rgba(255,255,255,0.80)",
+            border: "1px solid var(--line)",
             boxShadow: "0 -4px 32px rgba(0,0,0,0.14), 0 8px 40px rgba(100,110,160,0.12)",
           }}
           onClick={(e) => e.stopPropagation()}
@@ -461,7 +461,7 @@ function RestaurantConfigPanel({
         <button
           onClick={onSave}
           disabled={saving}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-60"
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
           {saving ? "Saving..." : "Save Settings"}
@@ -532,7 +532,7 @@ function GenerateCodePanel() {
       <button
         onClick={generate}
         disabled={loading}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-60"
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
       >
         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
         {loading ? "Generating..." : code ? "Regenerate Code" : "Generate Code"}
@@ -814,7 +814,7 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
           <button
             onClick={handleImport}
             disabled={importing}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
           >
             {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             {importing ? "Importing..." : `Import ${rows.length} rows`}
@@ -852,7 +852,7 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
             </button>
             <button
               onClick={onClose}
-              className="flex-1 py-2 rounded-lg text-sm font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition-colors"
+              className="flex-1 py-2 rounded-lg text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors"
             >
               Done
             </button>
@@ -984,7 +984,7 @@ export default function Settings() {
                 onClick={() => { setActiveModal(card.id); setConfirmStep(false); }}
                 className="flex flex-col items-center justify-center gap-2 rounded-xl p-4 min-h-[100px] text-center select-none cursor-pointer transition-all duration-200 touch-manipulation"
                 style={{
-                  background: card.destructive ? "rgba(254,242,242,0.60)" : "rgba(255,255,255,0.52)",
+                  background: card.destructive ? "var(--danger-bg)" : "var(--paper-0)",
                   backdropFilter: "blur(16px) saturate(1.8)",
                   WebkitBackdropFilter: "blur(16px) saturate(1.8)",
                   border: card.destructive ? "1px solid rgba(252,165,165,0.45)" : "1px solid rgba(255,255,255,0.72)",

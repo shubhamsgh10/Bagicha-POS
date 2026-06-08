@@ -79,7 +79,7 @@ export function UpdateNotification() {
         transition={{ type: "spring", stiffness: 420, damping: 30 }}
         className="fixed bottom-4 right-4 z-[9999] w-64 rounded-2xl shadow-2xl overflow-hidden"
         style={{
-          background: "rgba(255,255,255,0.97)",
+          background: "var(--paper-0)",
           backdropFilter: "blur(12px)",
           border: "1px solid rgba(229,231,235,0.8)",
         }}
