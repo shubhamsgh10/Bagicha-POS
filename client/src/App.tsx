@@ -113,12 +113,15 @@ function Router() {
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
 
-      {/* ── Login panel: x:0 when logged out, x:-100% when logged in ── */}
+      {/* ── Login panel: x:0 when logged out, x:-100% when logged in ──
+          NOTE: fontFamily pins login to its original Inter stack so the global
+          design-system font (Plus Jakarta Sans) does NOT alter the login UI.
+          The login page is intentionally left visually unchanged. ── */}
       <motion.div
         initial={{ x: isAuthenticated ? "-100%" : "0%" }}
         animate={{ x: isAuthenticated ? "-100%" : "0%" }}
         transition={pushTransition}
-        style={{ position: "absolute", inset: 0, zIndex: 10 }}
+        style={{ position: "absolute", inset: 0, zIndex: 10, fontFamily: "'Inter', 'Roboto', system-ui, sans-serif" }}
       >
         <Login
           onLoginSuccess={() => {

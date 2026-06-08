@@ -112,11 +112,9 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       transition={{ duration: 0.22 }}
       className="rounded-2xl overflow-hidden transition-all duration-200 hover:scale-[1.005]"
       style={{
-        background: "rgba(255,255,255,0.52)",
-        backdropFilter: "blur(18px) saturate(1.8)",
-        WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-        border: "1px solid rgba(255,255,255,0.75)",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.92) inset",
+        background: "var(--paper-0)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow-sm)",
       }}
     >
       {/* ── Summary row ── */}
@@ -126,7 +124,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       >
         <div className="flex items-center gap-3 min-w-0">
           {/* avatar */}
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center text-white text-[11px] font-bold shrink-0 shadow-sm">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#2E8B57] to-[#1B4D33] flex items-center justify-center text-white text-[11px] font-bold shrink-0 shadow-sm">
             {avatarNum(order.id)}
           </div>
 
@@ -172,7 +170,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
           {/* status select */}
           <div onClick={(e) => e.stopPropagation()}>
             <Select value={order.status} onValueChange={(v) => onStatusChange(order.id, v)}>
-              <SelectTrigger className="h-7 text-xs w-28 rounded-xl bg-white/50 border-white/40">
+              <SelectTrigger className="h-7 text-xs w-28 rounded-xl bg-[var(--paper-0)] border-[var(--line)]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -202,7 +200,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
             transition={{ duration: 0.25, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="border-t border-white/30 bg-white/20 px-4 py-3 space-y-3">
+            <div className="border-t border-[var(--line)] bg-[var(--paper-100)] px-4 py-3 space-y-3">
               {/* Info grid */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
                 {[
@@ -213,7 +211,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   { label: "Payment",   value: order.paymentStatus === "paid" ? (order.paymentMethod || "cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
                   ...(order.createdByName ? [{ label: "Served By", value: order.createdByName }] : []),
                 ].map(({ label, value }) => (
-                  <div key={label} className="bg-white/30 rounded-xl px-3 py-2">
+                  <div key={label} className="bg-[var(--paper-100)] rounded-xl px-3 py-2">
                     <p className="text-gray-400 font-medium uppercase tracking-wide text-[10px] mb-0.5">{label}</p>
                     <p className={`font-semibold capitalize truncate ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : "text-gray-700"}`}>{value}</p>
                   </div>
@@ -233,10 +231,10 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                     Loading…
                   </div>
                 ) : (
-                  <div className="rounded-xl overflow-hidden border border-white/30 bg-white/40">
+                  <div className="rounded-xl overflow-hidden border border-[var(--line)] bg-[var(--paper-100)]">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="bg-white/50 border-b border-white/30">
+                        <tr className="bg-[var(--paper-0)] border-b border-[var(--line)]">
                           <th className="text-left px-3 py-2 font-semibold text-gray-500">Item</th>
                           <th className="text-center px-3 py-2 font-semibold text-gray-500 w-12">Qty</th>
                           <th className="text-right px-3 py-2 font-semibold text-gray-500 w-20">Price</th>
@@ -245,7 +243,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                       </thead>
                       <tbody>
                         {items.map((item: any, i: number) => (
-                          <tr key={i} className="border-b border-white/20 last:border-b-0 hover:bg-white/30 transition-colors">
+                          <tr key={i} className="border-b border-white/20 last:border-b-0 hover:bg-[var(--paper-100)] transition-colors">
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-medium text-gray-700">{item.name || "Item"}</span>
@@ -276,7 +274,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
 
               {/* Totals */}
               <div className="flex justify-end">
-                <div className="text-xs space-y-1 w-48 bg-white/30 rounded-xl px-3 py-2">
+                <div className="text-xs space-y-1 w-48 bg-[var(--paper-100)] rounded-xl px-3 py-2">
                   {parseFloat(order.discountAmount || "0") > 0 && (
                     <div className="flex justify-between text-gray-500">
                       <span>Discount</span>
@@ -289,7 +287,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                       <span>{fmt(parseFloat(order.taxAmount))}</span>
                     </div>
                   )}
-                  <div className="flex justify-between font-bold border-t border-white/40 pt-1.5 mt-1 text-sm">
+                  <div className="flex justify-between font-bold border-t border-[var(--line)] pt-1.5 mt-1 text-sm">
                     <span className="text-gray-700">Total</span>
                     <span className="text-emerald-600">{fmt(parseFloat(order.totalAmount || "0"))}</span>
                   </div>
@@ -393,8 +391,9 @@ const q = search.trim().toLowerCase();
           whileTap={{ scale: 0.95 }}
           onClick={() => navigate("/tables")}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold
-                     bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-sm
-                     hover:shadow-emerald-400/40 hover:shadow-md transition-all"
+                     bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white
+                     hover:shadow-md transition-all"
+          style={{ boxShadow: "var(--shadow-green)" }}
         >
           <Plus className="w-4 h-4" /> New Order
         </motion.button>
@@ -403,16 +402,16 @@ const q = search.trim().toLowerCase();
           whileTap={{ scale: 0.95 }}
           onClick={() => refetch()}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
-                     bg-white/60 border border-white/40 text-gray-600
-                     hover:bg-white/80 hover:shadow-sm transition-all"
+                     bg-[var(--paper-0)] border border-[var(--line)] text-gray-600
+                     hover:bg-[var(--paper-0)] hover:shadow-sm transition-all"
         >
           <RefreshCw className="w-3.5 h-3.5" /> Refresh
         </motion.button>
 
         {/* Search */}
-        <div className="flex items-center gap-2 bg-white/60 border border-white/40
+        <div className="flex items-center gap-2 bg-[var(--paper-0)] border border-[var(--line)]
                         rounded-xl px-3 py-1.5 flex-1 max-w-sm ml-1
-                        focus-within:ring-2 focus-within:ring-emerald-400/50 focus-within:bg-white/80
+                        focus-within:ring-2 focus-within:ring-emerald-400/50 focus-within:bg-[var(--paper-0)]
                         transition-all">
           <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
           <input
@@ -434,11 +433,9 @@ const q = search.trim().toLowerCase();
         <Tabs defaultValue="all" className="w-full">
           <TabsList className="flex w-full overflow-x-auto rounded-xl p-1 mb-4 gap-0.5"
             style={{
-              background: "rgba(255,255,255,0.50)",
-              backdropFilter: "blur(16px) saturate(1.8)",
-              WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-              border: "1px solid rgba(255,255,255,0.70)",
-              boxShadow: "0 2px 12px rgba(0,0,0,0.05), 0 1px 0 rgba(255,255,255,0.9) inset",
+              background: "var(--paper-100)",
+              border: "1px solid var(--line)",
+              boxShadow: "var(--shadow-xs)",
             }}>
             {["all","pending","preparing","ready","served","delivered"].map((t) => (
               <TabsTrigger

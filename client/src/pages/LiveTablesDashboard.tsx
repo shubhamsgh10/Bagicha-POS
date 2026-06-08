@@ -67,7 +67,7 @@ function SkeletonCard() {
 
 function StatPill({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-white/70 border border-white/50 rounded-xl px-3 py-2 text-center shadow-sm min-w-[60px]">
+    <div className="bg-[var(--paper-0)] border border-[var(--line)] rounded-xl px-3 py-2 text-center shadow-sm min-w-[60px]">
       <div className={`text-lg font-bold leading-none ${color}`}>{value}</div>
       <div className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide mt-0.5">{label}</div>
     </div>
@@ -313,7 +313,7 @@ export default function LiveTablesDashboard() {
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
           <button onClick={() => setCompact(v => !v)} title={compact ? "Comfortable view" : "Compact view"}
-            className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${compact ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:bg-gray-100"}`}>
+            className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${compact ? "text-[var(--ink-700)] bg-indigo-50" : "text-gray-400 hover:bg-gray-100"}`}>
             {compact ? <LayoutGrid className="w-3.5 h-3.5" /> : <Rows3 className="w-3.5 h-3.5" />}
           </button>
           <button onClick={handleRefresh} disabled={isRefreshing}
@@ -379,7 +379,7 @@ export default function LiveTablesDashboard() {
       </div>
 
       {/* ── Filter + search bar ────────────────────────────────── */}
-      <div className="shrink-0 px-3 sm:px-5 py-1.5 sm:py-2.5 bg-white/60 border-b border-gray-100/60 flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none">
+      <div className="shrink-0 px-3 sm:px-5 py-1.5 sm:py-2.5 bg-[var(--paper-0)] border-b border-gray-100/60 flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none">
         {([
           { key: "food-ready" as StatusFilter, label: "Food Ready", short: "Ready",      count: statusCounts["food-ready"], active: "bg-green-600 text-white", inactive: "text-gray-600 bg-white" },
           { key: "dispatched" as StatusFilter, label: "Dispatched", short: "Dispatched", count: statusCounts.dispatched,    active: "bg-blue-600 text-white",  inactive: "text-gray-600 bg-white" },
@@ -394,7 +394,7 @@ export default function LiveTablesDashboard() {
             <span className="sm:hidden">{sf.short}</span>
             <span className="hidden sm:inline">{sf.label}</span>
             <span className={`text-[9px] font-bold px-1 py-px rounded-full ${
-              statusFilter === sf.key ? "bg-white/25 text-current" : "bg-gray-100 text-gray-500"
+              statusFilter === sf.key ? "bg-[var(--paper-100)] text-current" : "bg-gray-100 text-gray-500"
             }`}>{sf.count}</span>
           </button>
         ))}

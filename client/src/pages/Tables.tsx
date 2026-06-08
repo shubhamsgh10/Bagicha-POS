@@ -39,40 +39,34 @@ const SECTION_OPTIONS = [
   { value: "hall",    label: "Hall" },
 ];
 
-// Premium glass status card styles (Option B)
+// Warm garden status card styles (free / running / billed)
 const statusConfig = {
   free: {
     style: {
-      background: "rgba(255,255,255,0.50)",
-      backdropFilter: "blur(16px) saturate(1.8)",
-      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-      border: "1.5px dashed rgba(0,0,0,0.11)",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.055), 0 1px 0 rgba(255,255,255,0.95) inset",
+      background: "var(--paper-0)",
+      border: "1.5px dashed var(--line-strong)",
+      boxShadow: "var(--shadow-xs)",
     },
-    nameText: "text-zinc-700",
-    subText: "text-zinc-400",
+    nameText: "text-[var(--text-1)]",
+    subText: "text-[var(--text-3)]",
   },
   running: {
     style: {
-      background: "rgba(239,246,255,0.62)",
-      backdropFilter: "blur(16px) saturate(1.8)",
-      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-      border: "1px solid rgba(147,197,253,0.55)",
-      boxShadow: "0 4px 20px rgba(59,130,246,0.10), 0 1px 0 rgba(255,255,255,0.92) inset",
+      background: "var(--success-bg)",
+      border: "1px solid #BBD9C4",
+      boxShadow: "0 4px 20px rgba(46,139,87,0.10)",
     },
-    nameText: "text-blue-900",
-    subText: "text-blue-600",
+    nameText: "text-[var(--green-900)]",
+    subText: "text-[var(--green-700)]",
   },
   billed: {
     style: {
-      background: "rgba(255,251,235,0.62)",
-      backdropFilter: "blur(16px) saturate(1.8)",
-      WebkitBackdropFilter: "blur(16px) saturate(1.8)",
-      border: "1px solid rgba(252,211,77,0.50)",
-      boxShadow: "0 4px 20px rgba(245,158,11,0.10), 0 1px 0 rgba(255,255,255,0.92) inset",
+      background: "var(--warning-bg)",
+      border: "1px solid #EAD9AE",
+      boxShadow: "0 4px 20px rgba(198,138,46,0.10)",
     },
-    nameText: "text-amber-900",
-    subText: "text-amber-600",
+    nameText: "text-[var(--clay-700)]",
+    subText: "text-[var(--amber-600)]",
   },
 };
 
@@ -289,11 +283,9 @@ export default function Tables() {
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 sm:px-4 py-2"
         style={{
-          background: "rgba(255,255,255,0.52)",
-          backdropFilter: "blur(16px) saturate(1.7)",
-          WebkitBackdropFilter: "blur(16px) saturate(1.7)",
-          borderBottom: "1px solid rgba(255,255,255,0.68)",
-          boxShadow: "0 1px 0 rgba(255,255,255,0.92) inset, 0 2px 12px rgba(0,0,0,0.05)",
+          background: "var(--paper-0)",
+          borderBottom: "1px solid var(--line)",
+          boxShadow: "0 2px 12px rgba(20,34,27,0.05)",
         }}
       >
         {/* Row 1: Status pills + desktop action buttons */}
@@ -391,11 +383,9 @@ export default function Tables() {
             <div
               className="rounded-2xl px-4 py-3"
               style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(14px) saturate(1.6)",
-                WebkitBackdropFilter: "blur(14px) saturate(1.6)",
-                border: "1px solid rgba(147,197,253,0.35)",
-                boxShadow: "0 2px 12px rgba(59,130,246,0.07)",
+                background: "var(--paper-0)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--shadow-sm)",
               }}
             >
               <div className="flex items-center gap-2 mb-2.5">
@@ -460,7 +450,7 @@ export default function Tables() {
                 <h2 className="text-xs font-bold text-foreground uppercase tracking-[0.1em]">
                   {sectionLabel(section)}
                 </h2>
-                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.6)", boxShadow: "0 1px 0 rgba(0,0,0,0.06)" }} />
+                <div className="flex-1 h-px" style={{ background: "var(--paper-0)", boxShadow: "0 1px 0 rgba(0,0,0,0.06)" }} />
                 <span className="text-xs text-muted-foreground font-medium">
                   {grouped[section].filter(t => t.status === "running").length} running
                   {" · "}
@@ -564,7 +554,7 @@ export default function Tables() {
                           )}
                           <button
                             onClick={e => openEdit(e, table)}
-                            className="w-6 h-6 rounded-md bg-black/5 dark:bg-white/10 flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/20 transition-colors"
+                            className="w-6 h-6 rounded-md bg-black/5 dark:bg-white/10 flex items-center justify-center hover:bg-black/10 dark:hover:bg-[var(--paper-100)] transition-colors"
                             title="Edit"
                           >
                             <Edit2 className="w-3 h-3 text-zinc-600 dark:text-zinc-300" />

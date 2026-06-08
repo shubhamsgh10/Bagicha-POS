@@ -1306,11 +1306,9 @@ export default function POS() {
       ════════════════════════════════════════════════════════════════════════ */}
       <div className="shrink-0 relative z-40"
         style={{
-          background: "rgba(255,255,255,0.88)",
-          backdropFilter: "blur(20px) saturate(1.8)",
-          WebkitBackdropFilter: "blur(20px) saturate(1.8)",
-          borderBottom: "1px solid rgba(255,255,255,0.65)",
-          boxShadow: "0 1px 0 rgba(255,255,255,0.95) inset, 0 2px 16px rgba(0,0,0,0.05)",
+          background: "var(--paper-0)",
+          borderBottom: "1px solid var(--line)",
+          boxShadow: "0 2px 16px rgba(20,34,27,0.05)",
         }}>
         <div className="flex items-center gap-2 px-3 py-2">
 
@@ -1778,7 +1776,7 @@ export default function POS() {
 
       {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped ── */}
       <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
-        style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(12px)" }}>
+        style={{ background: "var(--paper-0)" }}>
         {(() => {
           const nameVal = form.watch("customerName") || "";
           const filtered = nameVal.trim()
@@ -1830,7 +1828,7 @@ export default function POS() {
       {/* ── Mobile: "Adding as:" strip — table sessions only ──────────────────── */}
       {(!posMode && (!!preselectedTableId || isEditMode)) && (
         <div className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-100/60"
-          style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(12px)" }}>
+          style={{ background: "var(--paper-0)" }}>
           <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Adding as</span>
           {([["dinein", "🍽", "Dine-In"], ["pickup", "📦", "Pickup"], ["delivery", "🛵", "Delivery"]] as [ItemServiceMode, string, string][]).map(([mode, icon, label]) => (
             <button
@@ -1890,11 +1888,11 @@ export default function POS() {
 
         {/* ── CENTER: Items grid ──────────────────────────────────────────────── */}
         <div className={`flex-1 flex-col overflow-hidden ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}
-          style={{ background: "rgba(241,245,249,0.70)" }}>
+          style={{ background: "var(--paper-50)" }}>
 
           {/* Mobile category pills — horizontal scroll, mobile only */}
           <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 scrollbar-hide shrink-0"
-            style={{ background: "rgba(255,255,255,0.75)", borderBottom: "1px solid rgba(255,255,255,0.60)" }}>
+            style={{ background: "var(--paper-0)", borderBottom: "1px solid var(--line)" }}>
             <button
               onClick={() => setSelectedCategory("all")}
               className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
@@ -1970,27 +1968,26 @@ export default function POS() {
         {/* ── RIGHT: Billing panel — full width on mobile when cart tab active ── */}
         <div className={`md:w-[290px] w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
           style={{
-            background: "rgba(255,255,255,0.80)",
-            backdropFilter: "blur(18px) saturate(1.8)",
-            WebkitBackdropFilter: "blur(18px) saturate(1.8)",
-            borderLeft: "1px solid rgba(255,255,255,0.65)",
+            background: "var(--paper-0)",
+            borderLeft: "1px solid var(--line)",
+            boxShadow: "-8px 0 30px rgba(20,34,27,0.04)",
           }}>
 
           {/* Panel header */}
           <div className="px-3 py-2 shrink-0 flex items-center justify-between"
-            style={{ borderBottom: "1px solid rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.60)" }}>
+            style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-0)" }}>
             <div className="flex items-center gap-2">
-              <ShoppingCart className="w-3.5 h-3.5 text-gray-500" />
-              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">Order</span>
+              <ShoppingCart className="w-3.5 h-3.5 text-[var(--text-2)]" />
+              <span className="text-xs font-bold text-[var(--text-1)] uppercase tracking-wide">Order</span>
               {hasItems && (
-                <span className="text-[10px] bg-green-600 text-white rounded-full px-1.5 py-0.5 font-bold">{cartItems.length}</span>
+                <span className="text-[10px] bg-[var(--green-700)] text-white rounded-full px-1.5 py-0.5 font-bold">{cartItems.length}</span>
               )}
             </div>
             {hasItems && (
               <button
                 disabled={isOff("clearCart")}
                 onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
-                className="text-[10px] text-gray-400 hover:text-green-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
+                className="text-[10px] text-[var(--text-3)] hover:text-[var(--danger)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
               >
                 Clear all
                 {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
@@ -2001,11 +1998,11 @@ export default function POS() {
           {/* Column headers */}
           {hasItems && (
             <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 px-3 py-1 shrink-0"
-              style={{ borderBottom: "1px solid rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.55)" }}>
-              <span className="text-[10px] font-semibold text-gray-500 uppercase">Item</span>
-              <span className="text-[10px] font-semibold text-gray-500 uppercase w-14 text-center">Qty</span>
-              <span className="text-[10px] font-semibold text-gray-500 uppercase w-10 text-right">Rate</span>
-              <span className="text-[10px] font-semibold text-gray-500 uppercase w-12 text-right">Amt</span>
+              style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-50)" }}>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase">Item</span>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-14 text-center">Qty</span>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-10 text-right">Rate</span>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-12 text-right">Amt</span>
             </div>
           )}
           <ScrollArea className="flex-1">
@@ -2059,11 +2056,18 @@ export default function POS() {
               );
 
               if (cartItems.length === 0) return (
-                <div className="p-3">
-                  <div className="text-center text-muted-foreground py-12">
-                    <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                    <p className="text-sm">Tap items to add to cart</p>
-                  </div>
+                <div className="flex flex-col items-center justify-center text-center px-6 py-10">
+                  <img
+                    src="/brand/illustration-wood-fire-oven.png"
+                    alt=""
+                    aria-hidden
+                    className="w-40 max-w-[70%] mb-1 select-none pointer-events-none"
+                    style={{ mixBlendMode: "multiply", opacity: 0.92 }}
+                  />
+                  <h4 className="font-display font-semibold text-[var(--text-strong)] text-[1.375rem] leading-tight">The oven's warm.</h4>
+                  <p className="text-sm text-muted-foreground mt-1.5 max-w-[220px] leading-relaxed">
+                    Add a few dishes from the menu and the bill builds itself.
+                  </p>
                 </div>
               );
 
@@ -2097,7 +2101,7 @@ export default function POS() {
           </ScrollArea>
 
           {/* Totals */}
-          <div className="border-t px-3 py-2 space-y-1 shrink-0 bg-gray-50">
+          <div className="border-t px-3 py-2 space-y-1 shrink-0" style={{ background: "var(--paper-50)" }}>
             <div className="flex justify-between text-xs text-gray-500">
               <span>Subtotal</span>
               <span className="font-medium text-gray-700">{fmt(subtotal)}</span>

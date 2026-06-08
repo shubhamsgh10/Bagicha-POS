@@ -13,7 +13,7 @@ import { useLocation } from "wouter";
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(n);
 
-const PALETTE = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6'];
+const PALETTE = ['#1B4D33', '#34507A', '#B85C38', '#D89A3E', '#2E8B57', '#9E4A28', '#6FBF73', '#243B5E'];
 
 const cardAnim = {
   hidden: { opacity: 0, y: 16 },
@@ -76,80 +76,72 @@ export default function Dashboard() {
       value: fmt(stats?.todaySales || 0),
       sub: `${stats?.todayOrders || 0} orders placed`,
       icon: IndianRupee,
-      gradient: 'from-violet-500 to-purple-600',
-      glassColor: 'rgba(99,102,241,0.07)',
-      glowColor:  'rgba(99,102,241,0.12)',
-      borderColor: 'rgba(99,102,241,0.22)',
+      gradient: 'from-[#226B43] to-[#1B4D33]',
+      glowColor:  'rgba(27,77,51,0.14)',
+      borderColor: 'rgba(27,77,51,0.20)',
     },
     {
       label: 'Orders Today',
       value: String(stats?.todayOrders || 0),
       sub: `Avg ${fmt(stats?.avgOrderValue || 0)} / order`,
       icon: ShoppingBag,
-      gradient: 'from-blue-500 to-cyan-500',
-      glassColor: 'rgba(59,130,246,0.07)',
-      glowColor:  'rgba(59,130,246,0.12)',
-      borderColor: 'rgba(59,130,246,0.22)',
+      gradient: 'from-[#34507A] to-[#243B5E]',
+      glowColor:  'rgba(36,59,94,0.14)',
+      borderColor: 'rgba(36,59,94,0.20)',
     },
     {
       label: 'Active Orders',
       value: String(stats?.activeOrders || 0),
       sub: 'Pending / preparing',
       icon: Clock,
-      gradient: 'from-amber-500 to-orange-500',
-      glassColor: 'rgba(245,158,11,0.07)',
-      glowColor:  'rgba(245,158,11,0.12)',
-      borderColor: 'rgba(245,158,11,0.22)',
+      gradient: 'from-[#E6B564] to-[#C68A2E]',
+      glowColor:  'rgba(198,138,46,0.16)',
+      borderColor: 'rgba(198,138,46,0.24)',
     },
     {
       label: 'Total Revenue',
       value: fmt(stats?.totalRevenue || 0),
       sub: 'All time',
       icon: TrendingUp,
-      gradient: 'from-emerald-500 to-green-500',
-      glassColor: 'rgba(16,185,129,0.07)',
-      glowColor:  'rgba(16,185,129,0.12)',
-      borderColor: 'rgba(16,185,129,0.22)',
+      gradient: 'from-[#2E8B57] to-[#226B43]',
+      glowColor:  'rgba(46,139,87,0.14)',
+      borderColor: 'rgba(46,139,87,0.20)',
     },
     {
       label: 'Low Stock',
       value: String(stats?.lowStockCount || 0),
       sub: stats?.lowStockCount > 0 ? 'Needs attention' : 'All good',
       icon: AlertTriangle,
-      gradient: stats?.lowStockCount > 0 ? 'from-red-500 to-rose-600' : 'from-green-500 to-emerald-500',
-      glassColor: stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.07)'  : 'rgba(16,185,129,0.07)',
-      glowColor:  stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.12)'  : 'rgba(16,185,129,0.12)',
-      borderColor:stats?.lowStockCount > 0 ? 'rgba(239,68,68,0.22)'  : 'rgba(16,185,129,0.22)',
+      gradient: stats?.lowStockCount > 0 ? 'from-[#BE4630] to-[#9E4A28]' : 'from-[#2E8B57] to-[#226B43]',
+      glowColor:  stats?.lowStockCount > 0 ? 'rgba(190,70,48,0.14)'  : 'rgba(46,139,87,0.14)',
+      borderColor:stats?.lowStockCount > 0 ? 'rgba(190,70,48,0.22)'  : 'rgba(46,139,87,0.20)',
     },
     {
       label: 'Top Item Today',
       value: stats?.topItem || '—',
       sub: 'Best seller',
       icon: Star,
-      gradient: 'from-pink-500 to-rose-500',
-      glassColor: 'rgba(236,72,153,0.07)',
-      glowColor:  'rgba(236,72,153,0.12)',
-      borderColor: 'rgba(236,72,153,0.22)',
+      gradient: 'from-[#CD6E3E] to-[#B85C38]',
+      glowColor:  'rgba(184,92,56,0.14)',
+      borderColor: 'rgba(184,92,56,0.22)',
     },
     {
       label: 'Inner Running',
       value: String(stats?.innerRunning || 0),
       sub: `of ${stats?.totalTables || 0} total tables`,
       icon: LayoutGrid,
-      gradient: 'from-indigo-500 to-blue-500',
-      glassColor: 'rgba(79,70,229,0.07)',
-      glowColor:  'rgba(79,70,229,0.12)',
-      borderColor: 'rgba(79,70,229,0.22)',
+      gradient: 'from-[#34507A] to-[#243B5E]',
+      glowColor:  'rgba(36,59,94,0.14)',
+      borderColor: 'rgba(36,59,94,0.20)',
     },
     {
       label: 'Outer Running',
       value: String(stats?.outerRunning || 0),
       sub: `of ${stats?.totalTables || 0} total tables`,
       icon: LayoutGrid,
-      gradient: 'from-teal-500 to-cyan-500',
-      glassColor: 'rgba(20,184,166,0.07)',
-      glowColor:  'rgba(20,184,166,0.12)',
-      borderColor: 'rgba(20,184,166,0.22)',
+      gradient: 'from-[#226B43] to-[#143A26]',
+      glowColor:  'rgba(27,77,51,0.14)',
+      borderColor: 'rgba(27,77,51,0.20)',
     },
   ];
 
@@ -175,11 +167,9 @@ export default function Dashboard() {
               whileHover={{ scale: 1.03, transition: { duration: 0.15 } }}
               className="rounded-2xl p-3 sm:p-4"
               style={{
-                background: `rgba(255,255,255,0.50)`,
-                backdropFilter: "blur(16px) saturate(1.8)",
-                WebkitBackdropFilter: "blur(16px) saturate(1.8)",
+                background: "var(--paper-0)",
                 border: `1px solid ${card.borderColor}`,
-                boxShadow: `0 4px 20px ${card.glowColor}, 0 1px 0 rgba(255,255,255,0.92) inset`,
+                boxShadow: `0 4px 20px ${card.glowColor}`,
               }}
             >
               <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3`}
@@ -207,8 +197,8 @@ export default function Dashboard() {
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${v}`} width={55} />
                 <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2.5}
-                  dot={{ fill: '#6366f1', r: 3, strokeWidth: 0 }}
+                <Line type="monotone" dataKey="total" stroke="#1B4D33" strokeWidth={2.5}
+                  dot={{ fill: '#1B4D33', r: 3, strokeWidth: 0 }}
                   activeDot={{ r: 5, strokeWidth: 2, stroke: '#fff' }} />
               </LineChart>
             </ResponsiveContainer>
@@ -294,8 +284,8 @@ export default function Dashboard() {
             </div>
             {lowStockItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[170px] text-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center">
-                  <span className="text-emerald-500 text-xl font-bold">✓</span>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "var(--success-bg)" }}>
+                  <span className="text-xl font-bold" style={{ color: "var(--green-600)" }}>✓</span>
                 </div>
                 <p className="text-sm text-muted-foreground">All items in stock</p>
               </div>

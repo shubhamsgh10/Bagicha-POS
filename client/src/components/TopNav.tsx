@@ -85,18 +85,16 @@ export function TopNav() {
       {/* ── Top bar (always visible) ──────────────────────────────────────── */}
       <header className="shrink-0 h-14 flex items-center px-3 gap-2 z-50"
         style={{
-          background: "rgba(255,255,255,0.78)",
-          backdropFilter: "blur(22px) saturate(1.9)",
-          WebkitBackdropFilter: "blur(22px) saturate(1.9)",
-          borderBottom: "1px solid rgba(255,255,255,0.65)",
-          boxShadow: "0 1px 0 rgba(255,255,255,0.95) inset, 0 2px 20px rgba(0,0,0,0.06)",
+          background: "var(--paper-0)",
+          borderBottom: "1px solid var(--line)",
+          boxShadow: "0 2px 20px rgba(20,34,27,0.05)",
         }}
       >
 
         {/* Hamburger — mobile only */}
         <button
           onClick={() => setSidebarOpen(true)}
-          className="md:hidden p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors shrink-0"
+          className="md:hidden p-2 rounded-lg text-[var(--text-2)] hover:bg-[var(--paper-100)] hover:text-[var(--text-strong)] transition-colors shrink-0"
           aria-label="Open menu"
         >
           <Menu className="w-5 h-5" />
@@ -107,7 +105,7 @@ export function TopNav() {
           <BagichaLogo size="sm" />
         </div>
 
-        <div className="w-px h-7 bg-gray-200 mx-1 shrink-0 hidden md:block" />
+        <div className="w-px h-7 bg-[var(--line)] mx-1 shrink-0 hidden md:block" />
 
         {/* Navigation icons — desktop only */}
         <nav className="hidden md:flex items-center gap-0.5 flex-1 overflow-x-auto scrollbar-hide">
@@ -119,8 +117,8 @@ export function TopNav() {
                   flex flex-col items-center justify-center gap-0.5 px-3 py-1.5
                   rounded-lg cursor-pointer transition-all duration-150 select-none min-w-[56px]
                   ${active
-                    ? "bg-gradient-to-br from-emerald-500 to-green-500 text-white shadow-sm"
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-800"}
+                    ? "bg-[var(--green-800)] text-[var(--text-on-green)] shadow-sm"
+                    : "text-[var(--text-2)] hover:bg-[var(--paper-100)] hover:text-[var(--text-strong)]"}
                 `}>
                   <item.icon className="w-[18px] h-[18px]" />
                   <span className="text-[9px] font-semibold leading-none whitespace-nowrap">
@@ -145,22 +143,22 @@ export function TopNav() {
           onRevert={revertRole}
         />
 
-        <div className="w-px h-7 bg-gray-200 mx-1 shrink-0 hidden md:block" />
+        <div className="w-px h-7 bg-[var(--line)] mx-1 shrink-0 hidden md:block" />
 
         {/* User info + logout — desktop */}
         <div className="hidden md:flex items-center gap-1 shrink-0">
           <div className="flex flex-col items-end mr-1">
-            <span className="text-xs font-semibold text-gray-800 leading-none">
+            <span className="text-xs font-semibold text-[var(--text-strong)] leading-none">
               {user?.username ?? "—"}
             </span>
-            <span className="text-[10px] text-gray-400 capitalize mt-0.5">
+            <span className="text-[10px] text-[var(--text-3)] capitalize mt-0.5">
               {activeRole}
             </span>
           </div>
           <button
             onClick={handleLogout}
             title="Logout"
-            className="flex flex-col items-center justify-center gap-0.5 px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all duration-150"
+            className="flex flex-col items-center justify-center gap-0.5 px-2.5 py-1.5 rounded-lg text-[var(--text-2)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] transition-all duration-150"
           >
             <LogOut className="w-[18px] h-[18px]" />
             <span className="text-[9px] font-semibold leading-none">Logout</span>
@@ -180,23 +178,21 @@ export function TopNav() {
           {/* Drawer panel */}
           <div className="relative w-72 max-w-[85vw] h-full flex flex-col"
             style={{
-              background: "rgba(255,255,255,0.88)",
-              backdropFilter: "blur(24px) saturate(1.8)",
-              WebkitBackdropFilter: "blur(24px) saturate(1.8)",
-              borderRight: "1px solid rgba(255,255,255,0.65)",
-              boxShadow: "4px 0 32px rgba(0,0,0,0.10)",
+              background: "var(--paper-0)",
+              borderRight: "1px solid var(--line)",
+              boxShadow: "4px 0 32px rgba(20,34,27,0.12)",
             }}
           >
 
             {/* Drawer header */}
-            <div className="flex items-center justify-between px-4 py-4 border-b">
+            <div className="flex items-center justify-between px-4 py-4 border-b border-[var(--line)]">
               <div>
-                <p className="text-sm font-bold text-gray-800">{user?.username}</p>
-                <p className="text-xs text-gray-400 capitalize">{activeRole}</p>
+                <p className="text-sm font-bold text-[var(--text-strong)]">{user?.username}</p>
+                <p className="text-xs text-[var(--text-3)] capitalize">{activeRole}</p>
               </div>
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"
+                className="p-2 rounded-lg hover:bg-[var(--paper-100)] text-[var(--text-3)]"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -212,14 +208,14 @@ export function TopNav() {
                       onClick={() => setSidebarOpen(false)}
                       className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-colors cursor-pointer ${
                         active
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                          ? "bg-[var(--green-50)] text-[var(--green-800)]"
+                          : "text-[var(--text-2)] hover:bg-[var(--paper-50)] hover:text-[var(--text-strong)]"
                       }`}
                     >
-                      <item.icon className={`w-5 h-5 ${active ? "text-emerald-600" : "text-gray-400"}`} />
+                      <item.icon className="w-5 h-5" style={{ color: active ? "var(--green-700)" : "var(--text-3)" }} />
                       <span className="text-sm font-semibold">{item.label}</span>
                       {active && (
-                        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--green-500)]" />
                       )}
                     </div>
                   </Link>
@@ -228,10 +224,10 @@ export function TopNav() {
             </nav>
 
             {/* Logout */}
-            <div className="shrink-0 px-3 py-4 border-t">
+            <div className="shrink-0 px-3 py-4 border-t border-[var(--line)]">
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-red-500 hover:bg-red-50 transition-colors"
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-colors"
               >
                 <LogOut className="w-5 h-5" />
                 <span className="text-sm font-semibold">Logout</span>
