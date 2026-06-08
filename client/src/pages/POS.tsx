@@ -180,6 +180,14 @@ export default function POS() {
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
+  // Mobile: collapse the cart order-summary (totals + action buttons) to browse more items
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  const prevHasItemsRef = useRef(false);
+  useEffect(() => {
+    // Auto-open the summary when the cart goes from empty → has items
+    if (cartItems.length > 0 && !prevHasItemsRef.current) setSummaryOpen(true);
+    prevHasItemsRef.current = cartItems.length > 0;
+  }, [cartItems.length]);
   // Mobile customer autocomplete dropdown
   const [showMobileCustomerDropdown, setShowMobileCustomerDropdown] = useState(false);
   // Discount input ref (for re-focus after PIN unlock)
@@ -2005,7 +2013,7 @@ export default function POS() {
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-12 text-right">Amt</span>
             </div>
           )}
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             {(() => {
               const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
               const renderCartRow = (item: CartItem) => (
@@ -2100,8 +2108,38 @@ export default function POS() {
             })()}
           </ScrollArea>
 
+          {/* ── Collapsible order-summary handle (mobile only) ── */}
+          {hasItems && (
+            <button
+              type="button"
+              onClick={() => setSummaryOpen((o) => !o)}
+              aria-expanded={summaryOpen}
+              aria-controls="cart-summary-body"
+              aria-label={summaryOpen ? "Hide order summary" : "Show order summary"}
+              className="md:hidden shrink-0 flex items-center justify-between gap-3 px-3 h-11 border-t active:bg-black/[0.03] transition-colors"
+              style={{
+                background: "var(--paper-50)",
+                boxShadow: summaryOpen ? "none" : "0 -6px 16px rgba(20,34,27,0.08)",
+              }}
+            >
+              <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-medium text-gray-500">Total</span>
+                <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
+              </span>
+            </button>
+          )}
+
+          {/* Collapsible body: totals + actions. Grid-rows 1fr↔0fr animates height and frees space for the list. */}
+          <div
+            id="cart-summary-body"
+            className="grid shrink-0 transition-[grid-template-rows] duration-300 ease-out md:!grid-rows-[1fr]"
+            style={{ gridTemplateRows: summaryOpen ? "1fr" : "0fr" }}
+          >
+           <div className="overflow-hidden">
           {/* Totals */}
-          <div className="border-t px-3 py-2 space-y-1 shrink-0" style={{ background: "var(--paper-50)" }}>
+          <div className="md:border-t px-3 py-2 space-y-1" style={{ background: "var(--paper-50)" }}>
             <div className="flex justify-between text-xs text-gray-500">
               <span>Subtotal</span>
               <span className="font-medium text-gray-700">{fmt(subtotal)}</span>
@@ -2238,6 +2276,8 @@ export default function POS() {
                 {isOff("settleOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>
+          </div>
+           </div>
           </div>
         </div>
       </div>
