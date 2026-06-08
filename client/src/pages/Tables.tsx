@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -582,9 +582,14 @@ export default function Tables() {
         open={showAdd}
         onOpenChange={o => { if (!o) { setShowAdd(false); setEditTable(null); } }}
       >
-        <DialogContent className="w-full max-w-sm mx-4 sm:mx-auto max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{editTable ? "Edit Table" : "Add New Table"}</DialogTitle>
+            <DialogDescription>
+              {editTable
+                ? "Update this table's name, capacity and section."
+                : "Create a new table with a name, capacity and section."}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div>
