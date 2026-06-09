@@ -62,6 +62,7 @@ export interface RestaurantSettings {
   email: string;
   gstNumber: string;
   taxRate: number;
+  containerCharge: number; // flat per-container charge for pickup/delivery items & dine-in leftover parcels
   currency: string;
   currencySymbol: string;
   footerNote: string;
@@ -120,6 +121,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   email: "",
   gstNumber: "",
   taxRate: 18,
+  containerCharge: 15,
   currency: "INR",
   currencySymbol: "₹",
   footerNote: "Thank you for dining with us!",

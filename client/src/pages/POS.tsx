@@ -75,6 +75,7 @@ interface CartItem {
   quantity: number;
   size?: string;
   serviceMode: ItemServiceMode;
+  parcelLeftover?: boolean; // dine-in leftover packed as takeaway → flat container charge
 }
 interface ModalState {
   item: any;
@@ -570,6 +571,7 @@ export default function POS() {
         size: item.size || undefined,
         quantity: item.quantity,
         serviceMode: sm,
+        parcelLeftover: !!item.parcelLeftover,
       };
     });
     setCartItems(loadedItems);
@@ -856,6 +858,8 @@ export default function POS() {
     if (qty <= 0) { removeFromCart(cartKey); return; }
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
   };
+  const toggleParcel = (cartKey: string) =>
+    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, parcelLeftover: !c.parcelLeftover } : c));
 
   // ── Filter ───────────────────────────────────────────────────────────────────
 
@@ -880,7 +884,12 @@ export default function POS() {
   const containerQty = isTableSession
     ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
     : (isDeliveryOrPickup ? totalItemQty : 0);
-  const appliedContainerCharge = containerQty * 15;
+  // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty)
+  const containerRate = Number(settings?.containerCharge ?? 15);
+  const parcelCount = cartItems.filter(
+    i => i.parcelLeftover && i.serviceMode !== "pickup" && i.serviceMode !== "delivery"
+  ).length;
+  const appliedContainerCharge = containerQty * containerRate + parcelCount * containerRate;
   const grandTotal = total + appliedContainerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
@@ -908,6 +917,7 @@ export default function POS() {
       size: c.size || null,
       addons: c.addons,
       serviceMode: c.serviceMode ?? "dinein",
+      parcelLeftover: c.parcelLeftover ?? false,
     }));
 
     if (activeOrderId) {
@@ -2032,6 +2042,9 @@ export default function POS() {
                       {item.notes && (
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
+                      {item.parcelLeftover && (
+                        <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel (+{fmt(containerRate)})</div>
+                      )}
                     </div>
                     <div className="flex items-center gap-0.5 w-16 justify-center">
                       <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity - 0.5) * 10) / 10)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
@@ -2059,6 +2072,16 @@ export default function POS() {
                       <Trash2 className="w-2.5 h-2.5" />Remove
                       {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
+                    {(item.serviceMode ?? "dinein") === "dinein" && (
+                      <button
+                        onClick={() => toggleParcel(item.cartKey)}
+                        className={`text-[10px] flex items-center gap-0.5 transition-colors ${
+                          item.parcelLeftover ? "text-amber-600 font-semibold" : "text-amber-400 hover:text-amber-600"
+                        }`}
+                      >
+                        🥡 {item.parcelLeftover ? "Parcel ✓" : "Parcel"}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -2178,10 +2201,10 @@ export default function POS() {
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
 
-            {/* Container Charge — delivery & pickup items only */}
+            {/* Container Charge — pickup/delivery items + dine-in leftover parcels */}
             {appliedContainerCharge > 0 && (
               <div className="flex justify-between text-xs text-gray-500">
-                <span>Container Charge <span className="text-gray-400">(₹15 × {containerQty})</span></span>
+                <span>Container Charge <span className="text-gray-400">({fmt(containerRate)} × {containerQty + parcelCount})</span></span>
                 <span className="font-medium text-gray-700">{fmt(appliedContainerCharge)}</span>
               </div>
             )}
