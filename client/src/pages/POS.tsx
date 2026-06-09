@@ -350,7 +350,7 @@ export default function POS() {
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
-  const showKOTPreview = (order: any) => {
+  const showKOTPreview = (order: any, kotNumber?: string) => {
     // Delta: compare current cart against what was in the order before this KOT action.
     // preKOTItemsRef is captured at button-click time so it always has the pre-mutation state,
     // regardless of whether lastKotSnapshot was ever updated (it only updates on successful print).
@@ -369,6 +369,7 @@ export default function POS() {
       ? deltaItems
       : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode }));
     const lines = kotLines({
+      kotNumber,
       orderRef: order.orderNumber ?? String(order.id),
       tableNumber: order.tableNumber ?? null,
       items,
@@ -416,7 +417,7 @@ export default function POS() {
           description: data?.message ?? 'Printer error — showing preview instead.',
           variant: 'destructive',
         });
-        if (order) showKOTPreview(order);
+        if (order) showKOTPreview(order, data?.kotNumber);
         return;
       }
       const { handlePrintResponse } = await import('@/lib/printGateway');
@@ -446,13 +447,14 @@ export default function POS() {
               ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
               : 'Use Print in the preview panel.'),
         });
+        if (order) showKOTPreview(order, data?.kotNumber);
       } else if (outcome === 'noop' && data.printJob) {
         toast({
           title: 'Print job ready',
           description: 'Use the Electron app for thermal printing.',
           variant: 'destructive',
         });
-        if (order) showKOTPreview(order);
+        if (order) showKOTPreview(order, data?.kotNumber);
       }
     } catch {
       if (order) showKOTPreview(order);
