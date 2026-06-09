@@ -1504,6 +1504,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           specialInstructions: item.specialInstructions || "",
           size: item.size || null,
           serviceMode: item.serviceMode || null,
+          parcelLeftover: item.parcelLeftover ?? false,
         });
       }
 
@@ -1514,9 +1515,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const discount = parseFloat(discountAmount || "0");
       const taxable = subtotal - discount;
       const tax = taxable * taxRate;
+      const containerRate = Number((settings as any)?.containerCharge ?? 15);
       const containerCharge = items.reduce((s: number, i: any) => {
         const sm = i.serviceMode ?? null;
-        return (sm === 'pickup' || sm === 'delivery') ? s + Number(i.quantity) * 15 : s;
+        if (sm === 'pickup' || sm === 'delivery') return s + Number(i.quantity) * containerRate;
+        if (i.parcelLeftover) return s + containerRate; // dine-in leftover parcel → flat container charge per item
+        return s;
       }, 0);
       const total = taxable + tax + containerCharge;
 

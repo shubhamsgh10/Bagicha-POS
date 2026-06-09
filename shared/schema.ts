@@ -91,6 +91,7 @@ export const orderItems = pgTable("order_items", {
   specialInstructions: text("special_instructions"),
   size: text("size"),
   serviceMode: text("service_mode"), // "dinein" | "pickup" | "delivery" — null treated as "dinein"
+  parcelLeftover: boolean("parcel_leftover").default(false), // dine-in leftover packed as takeaway → flat container charge
 });
 
 export const kotTickets = pgTable("kot_tickets", {
