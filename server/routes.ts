@@ -1086,7 +1086,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const todaySales = allOrders
         .filter(o => {
           const d = new Date(o.createdAt);
-          return d >= today && d < tomorrow;
+          return d >= today && d < tomorrow && o.paymentStatus === 'paid';
         })
         .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
 

@@ -60,7 +60,7 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
   const remaining    = grandTotal - totalEntered;
   const changeDue    = remaining < 0 ? Math.abs(remaining) : 0;
   const balanceDue   = remaining > 0 ? remaining : 0;
-  const canSettle    = isDue || totalEntered >= grandTotal;
+  const canSettle    = isDue || Math.round(totalEntered * 100) >= Math.round(grandTotal * 100);
 
   useEffect(() => {
     if (!open) {
@@ -178,7 +178,7 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Collect Payment · ₹{grandTotal.toFixed(0)}</DialogTitle>
+          <DialogTitle>Collect Payment · ₹{grandTotal % 1 === 0 ? grandTotal.toFixed(0) : grandTotal.toFixed(2)}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">

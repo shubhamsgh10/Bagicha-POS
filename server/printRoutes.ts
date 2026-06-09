@@ -311,6 +311,15 @@ export function registerPrintRoutes(app: Express): void {
         if (auto) {
           return res.json({ printed: false, reason: "no_hardware_printer" });
         }
+        // Fetch KOT tickets to get the real sequential KOT number for the browser preview
+        const browserKotTickets = await db
+          .select()
+          .from(kotTickets)
+          .where(eq(kotTickets.orderId, orderId))
+          .orderBy(asc(kotTickets.id));
+        const browserKotNum = browserKotTickets.length > 0
+          ? (reprint ? browserKotTickets[0].kotNumber : browserKotTickets[browserKotTickets.length - 1].kotNumber)
+          : undefined;
         if (!reprint) {
           await db
             .update(orders)
@@ -325,6 +334,7 @@ export function registerPrintRoutes(app: Express): void {
           isDelta,
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
+          kotNumber: browserKotNum,
           items: newItems.map((i) => ({ name: i.name, quantity: i.quantity, size: i.size, serviceMode: i.serviceMode })),
         });
       }
