@@ -884,9 +884,10 @@ export default function POS() {
   const containerQty = isTableSession
     ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
     : (isDeliveryOrPickup ? totalItemQty : 0);
-  // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty)
+  // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty).
+  // Never applied to pickup/delivery orders — those already charge a container per item.
   const containerRate = Number(settings?.containerCharge ?? 15);
-  const parcelCount = cartItems.filter(
+  const parcelCount = isDeliveryOrPickup ? 0 : cartItems.filter(
     i => i.parcelLeftover && i.serviceMode !== "pickup" && i.serviceMode !== "delivery"
   ).length;
   const appliedContainerCharge = containerQty * containerRate + parcelCount * containerRate;
@@ -2072,7 +2073,8 @@ export default function POS() {
                       <Trash2 className="w-2.5 h-2.5" />Remove
                       {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
-                    {(item.serviceMode ?? "dinein") === "dinein" && (
+                    {/* Parcel toggle only for dine-in items — pickup/delivery already add a container charge per item */}
+                    {!isDeliveryOrPickup && (item.serviceMode ?? "dinein") === "dinein" && (
                       <button
                         onClick={() => toggleParcel(item.cartKey)}
                         className={`text-[10px] flex items-center gap-0.5 transition-colors ${
