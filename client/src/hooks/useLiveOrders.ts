@@ -95,14 +95,15 @@ export function useLiveOrders() {
     try {
       const rawList = await apiFetch<any[]>("/api/orders");
 
-      // Only today's delivery / pickup orders that aren't cancelled
+      // Delivery / pickup orders: keep every OPEN (unsettled) order regardless of age so nothing
+      // unfinished ever hides; completed (served) orders are shown for today only, then roll off.
+      // (Settling an order sets status = "served"; see POST /api/orders/:id/payment.)
       const candidates = rawList.filter((o: any) => {
         const ot = normalizeOrderType(o.orderType, false);
-        return (
-          (ot === "delivery" || ot === "pickup") &&
-          isToday(o.createdAt) &&
-          o.status !== "cancelled"
-        );
+        if (ot !== "delivery" && ot !== "pickup") return false;
+        if (o.status === "cancelled") return false;
+        const isOpen = o.status !== "served";
+        return isOpen || isToday(o.createdAt);
       });
 
       // Fetch full detail (includes items array)
