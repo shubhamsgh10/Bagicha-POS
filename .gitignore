@@ -12,3 +12,4 @@ code-review-graph/
 .vercel
 .worktrees/
 bagicha-design-system/
+.playwright-mcp/
