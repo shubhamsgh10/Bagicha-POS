@@ -385,6 +385,9 @@ function StaffProfileRow({ staff }: { staff: any }) {
   const { toast } = useToast();
   const [form, setForm] = useState({ biometricId: staff.biometricId ?? "", department: staff.department ?? "", designation: staff.designation ?? "" });
   const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setForm({ biometricId: staff.biometricId ?? "", department: staff.department ?? "", designation: staff.designation ?? "" });
+  }, [staff.userId, staff.biometricId, staff.department, staff.designation]);
   const save = async () => {
     setSaving(true);
     try {

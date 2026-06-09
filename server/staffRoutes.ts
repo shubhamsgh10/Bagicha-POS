@@ -13,20 +13,6 @@ import { getAutomationConfig, saveAutomationConfig } from "./services/automation
 
 export function registerStaffRoutes(app: Express) {
 
-  // ── Staff list (users) ──────────────────────────────────────────────────────
-
-  app.get("/api/staff", requireAuth, async (_req, res) => {
-    try {
-      const staff = await db
-        .select({ id: users.id, username: users.username, role: users.role, createdAt: users.createdAt })
-        .from(users)
-        .orderBy(users.role, users.username);
-      res.json(staff);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
   // ── Per-staff performance report ────────────────────────────────────────────
 
   app.get("/api/staff/performance", requireAuth, async (req, res) => {
