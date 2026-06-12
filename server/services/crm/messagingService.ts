@@ -15,6 +15,9 @@ import { eq } from "drizzle-orm";
 import { customerMessages } from "../../../shared/schema";
 import { resolveCustomerId } from "./customerIdService";
 import { logMessageSentEvent } from "./eventService";
+import { getDriver } from "../whatsapp/driverManager";
+import { getOrCreateConversation, recordMessage } from "../whatsapp/conversationStore";
+import { publishRealtime } from "../../realtime/publisher";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,7 +33,9 @@ export interface MessagePayload {
 
 export interface SendResult {
   success: boolean;
-  mode:    "api" | "dry_run" | "web";
+  mode:    "api" | "dry_run" | "web" | "driver";
+  /** Driver/Meta message id — enables delivery-receipt tracking. */
+  waMessageId?: string;
   error?:  string;
 }
 
@@ -178,10 +183,33 @@ export async function sendMessage(
 
   // ── Route by channel ──────────────────────────────────────────────────────
   if (payload.channel === "whatsapp") {
-    if (config.watiApiKey && config.watiEndpoint) {
+    const driver = getDriver();
+    if (driver && driver.getState() === "connected") {
+      // Active driver (Baileys / Meta) — real automated delivery with receipts
+      const sent = await driver.sendText(payload.to, payload.message);
+      result = { success: sent.success, mode: "driver", waMessageId: sent.waMessageId, error: sent.error };
+      if (sent.success) {
+        // Mirror into the conversation thread so the agent inbox shows it
+        try {
+          const conversation = await getOrCreateConversation(payload.to);
+          const msg = await recordMessage({
+            conversationId: conversation.id,
+            direction: "out",
+            sender: "automation",
+            body: payload.message,
+            waMessageId: sent.waMessageId ?? null,
+            status: "sent",
+            trigger: payload.trigger ?? null,
+          });
+          void publishRealtime({ type: "WA_MESSAGE", conversationId: conversation.id, message: msg });
+        } catch (err) {
+          console.warn("[CRM] conversation mirror failed:", err);
+        }
+      }
+    } else if (config.watiApiKey && config.watiEndpoint) {
       result = await sendWhatsAppWATI(payload.to, payload.message, config.watiApiKey, config.watiEndpoint);
     } else {
-      // No WATI key — log as dry_run (client-side wa.me is the actual sender)
+      // No driver, no WATI — log as dry_run (client-side wa.me is the actual sender)
       console.log(`[CRM][WhatsApp][DRY-RUN] To: ${payload.to}`);
       result = { success: true, mode: "dry_run" };
     }
@@ -219,6 +247,7 @@ async function logToDb(
       message: payload.message,
       status:  result.success ? "sent" : "failed",
       trigger: payload.trigger ?? null,
+      waMessageId: result.waMessageId ?? null,
       sentAt:  result.success ? new Date() : null,
     });
 

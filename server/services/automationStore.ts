@@ -85,6 +85,29 @@ export interface AutomationConfig {
   } | null;
   /** Auto-sync attendance daily at this hour (0–23). -1 = disabled. */
   attendanceAutoSyncHour: number;
+
+  // ── WhatsApp driver / chatbot / agent inbox ───────────────────────────────
+  /** Active WhatsApp driver. "baileys" = unofficial QR-paired, "meta" = Cloud API, "none" = off. */
+  whatsappDriver: "baileys" | "meta" | "none";
+  /** When true, automation messages are queued and sent automatically through the
+   *  active driver. When false, the manual wa.me Send-tab flow is used. */
+  whatsappAutoSend: boolean;
+  /** Hard daily cap on automated outbound messages (ban avoidance for Baileys). */
+  maxPerDay: number;
+  /** FAQ chatbot enable flag (inbound auto-replies). */
+  botEnabled: boolean;
+  /** Minutes of agent inactivity before a human-takeover conversation returns to the bot. */
+  botReturnMinutes: number;
+  /** Bot answer for opening-hours questions (free text, e.g. "12pm–11pm, all days"). */
+  botHoursText: string;
+  /** Public menu link sent by the bot (e.g. Google Drive PDF / website). */
+  menuUrl: string;
+  /** Fallback text menu if no menuUrl is set. */
+  menuText: string;
+  /** Meta webhook verify token (you choose this; must match the Meta dashboard). */
+  metaWebhookVerifyToken: string;
+  /** Meta app secret — used to verify X-Hub-Signature-256 on webhooks. */
+  metaAppSecret: string;
 }
 
 export interface AutomationLog {
@@ -136,6 +159,16 @@ const DEFAULT_CONFIG: AutomationConfig = {
   attendanceSheetUrl: "",
   attendanceColumnMapping: null,
   attendanceAutoSyncHour: -1,
+  whatsappDriver: "none",
+  whatsappAutoSend: false,
+  maxPerDay: 100,
+  botEnabled: true,
+  botReturnMinutes: 30,
+  botHoursText: "",
+  menuUrl: "",
+  menuText: "",
+  metaWebhookVerifyToken: "",
+  metaAppSecret: "",
 };
 
 // ── Generic JSON helpers ───────────────────────────────────────────────────────

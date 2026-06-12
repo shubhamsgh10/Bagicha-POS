@@ -26,5 +26,15 @@
   "msg91SenderId": "",
   "attendanceSheetUrl": "",
   "attendanceColumnMapping": null,
-  "attendanceAutoSyncHour": -1
+  "attendanceAutoSyncHour": -1,
+  "whatsappDriver": "baileys",
+  "whatsappAutoSend": true,
+  "maxPerDay": 100,
+  "botEnabled": true,
+  "botReturnMinutes": 30,
+  "botHoursText": "4pm - 11pm",
+  "menuUrl": "file:///E:/Claude%20Code/BagichaOrderMaster/BagichaOrderMaster/attached_assets/Bagicha%20Menu_final.pdf",
+  "menuText": "",
+  "metaWebhookVerifyToken": "",
+  "metaAppSecret": ""
 }

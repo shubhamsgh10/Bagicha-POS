@@ -32,6 +32,9 @@ import {
   sendWhatsAppMessage,
   delay,
 } from "./whatsappService";
+import { getDriver } from "./whatsapp/driverManager";
+import { enqueueWhatsApp } from "./whatsapp/outboundQueue";
+import { resolveCustomerId } from "./crm/customerIdService";
 
 // ── Constants (mirrors useCustomerIntelligence thresholds) ────────────────────
 
@@ -201,14 +204,15 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
   skipped: number;
   failed: number;
   dryRun: number;
+  queued: number;
 }> {
   if (isRunning) {
     console.log("[Automation] Previous run still in progress — skipping");
-    return { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0 };
+    return { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0, queued: 0 };
   }
 
   isRunning = true;
-  const stats = { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0 };
+  const stats = { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0, queued: 0 };
 
   try {
     const config = getAutomationConfig();
@@ -247,7 +251,29 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
         trackingLink
       );
 
-      // Send (Meta takes priority over WATI when both configured)
+      // Fully automated path: queue through the active WhatsApp driver.
+      // The outbound worker owns pacing (sendDelayMs + jitter), retries, the
+      // maxPerDay cap, and all logging — so we just enqueue and move on.
+      if (config.whatsappAutoSend && getDriver()) {
+        try {
+          const customerId = await resolveCustomerId(customer.key, customer.name, customer.phone);
+          await enqueueWhatsApp({
+            customerId,
+            phone:   customer.phone,
+            message,
+            trigger,
+          });
+          messagesSent++;
+          stats.queued++;
+          console.log(`[Automation] ⇢ queued ${customer.name} (${trigger})`);
+        } catch (err: any) {
+          stats.failed++;
+          console.warn(`[Automation] ✗ enqueue failed for ${customer.name} — ${err?.message}`);
+        }
+        continue;
+      }
+
+      // Manual/legacy path (Meta takes priority over WATI when both configured)
       const result = await sendWhatsAppMessage(customer.phone, message, {
         watiApiKey:        config.watiApiKey,
         watiEndpoint:      config.watiEndpoint,

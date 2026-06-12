@@ -7,7 +7,7 @@ import {
   UserCheck, UserPlus, Search, X, Flame, Lightbulb,
   CalendarDays, BarChart2, Loader2, Send, Bell, BellOff, Edit2,
   LayoutList, Brain, Zap, Activity, Database, Sparkles,
-  Target, BarChart, SlidersHorizontal, ChevronRight,
+  Target, BarChart, SlidersHorizontal, ChevronRight, MessageCircle,
 } from "lucide-react";
 import {
   useCustomerIntelligence,
@@ -25,6 +25,8 @@ import {
   type WhatsAppTemplate,
 } from "@/utils/whatsapp";
 import { AutomationPanel } from "@/components/AutomationPanel";
+import { ConversationsView } from "@/components/conversations/ConversationsView";
+import { useConversations } from "@/hooks/useConversations";
 import { CustomerTimeline } from "@/components/crm/CustomerTimeline";
 import {
   useCrmProfile,
@@ -1044,7 +1046,8 @@ export default function CustomerDashboard() {
   const { customers, stats, isLoading } = useCustomerIntelligence();
 
   const queryClient = useQueryClient();
-  const [tab, setTab]               = useState<"listing" | "intelligence" | "automation">("listing");
+  const [tab, setTab]               = useState<"listing" | "intelligence" | "automation" | "conversations">("listing");
+  const { unreadTotal }             = useConversations();
   const [extras, setExtras]         = useState<Record<string, CustomerExtra>>(loadExtras);
   const [editTarget, setEditTarget] = useState<CustomerProfile | null>(null);
 
@@ -1109,9 +1112,10 @@ export default function CustomerDashboard() {
         {/* Tabs */}
         <div className="flex overflow-x-auto scrollbar-none">
           {([
-            { key: "listing",      label: "Customer Listing", icon: LayoutList },
-            { key: "intelligence", label: "Intelligence",     icon: Brain },
-            { key: "automation",   label: "Automation",       icon: Zap },
+            { key: "listing",       label: "Customer Listing", icon: LayoutList },
+            { key: "intelligence",  label: "Intelligence",     icon: Brain },
+            { key: "automation",    label: "Automation",       icon: Zap },
+            { key: "conversations", label: "Conversations",    icon: MessageCircle },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -1124,6 +1128,11 @@ export default function CustomerDashboard() {
             >
               <t.icon className="w-3.5 h-3.5 shrink-0" />
               {t.label}
+              {t.key === "conversations" && unreadTotal > 0 && (
+                <span className="min-w-[16px] h-4 px-1 rounded-full bg-green-600 text-white text-[9px] font-bold flex items-center justify-center">
+                  {unreadTotal}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1144,12 +1153,14 @@ export default function CustomerDashboard() {
           stats={stats}
           isLoading={isLoading}
         />
-      ) : (
+      ) : tab === "automation" ? (
         <AutomationPanel
           customers={customers}
           extras={extras}
           isLoading={isLoading}
         />
+      ) : (
+        <ConversationsView customers={customers} />
       )}
 
       {/* ── Edit Customer modal ──────────────────────────────────────────────── */}

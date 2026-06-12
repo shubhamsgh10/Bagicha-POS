@@ -60,6 +60,7 @@ import { eq, desc, or, ilike, isNotNull, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
+import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
@@ -923,6 +924,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // wildcard, otherwise Express matches "stats" as a :token and returns 404.
   registerGrowthRoutes(app, broadcast);
   registerPublicGrowthRoutes(app);
+
+  // ── WhatsApp driver control + agent inbox + Meta webhook ──────────────────
+  registerWhatsAppRoutes(app);
+  registerPublicWhatsAppRoutes(app);
 
   // ── Staff management + attendance routes ──────────────────────────────────
   registerStaffRoutes(app);
