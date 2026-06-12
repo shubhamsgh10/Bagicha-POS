@@ -34,6 +34,7 @@ import {
   isInQuietHours,
   syncSettingsToServer,
 } from "@/lib/automationEngine";
+import { WhatsAppConnectionCard } from "@/components/conversations/WhatsAppConnectionCard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -847,6 +848,9 @@ function SetupTab({
         </div>
         <Toggle value={settings.enabled} onChange={v => set("enabled", v)} />
       </div>
+
+      {/* ── Automated WhatsApp driver (Baileys / Meta) + chatbot ── */}
+      <WhatsAppConnectionCard />
 
       {/* ── WhatsApp connection ── */}
       <div>

@@ -8,6 +8,8 @@ import { initSettings } from "./settingsStore";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
+import { initWhatsAppDriver } from "./services/whatsapp/driverManager";
+import { startOutboundWorker } from "./services/whatsapp/outboundQueue";
 import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 import { startDailyScheduler } from "./services/dailyScheduler";
 import { applyCors } from "./cors";
@@ -28,7 +30,16 @@ if (process.env.SENTRY_DSN) {
   });
   log("Sentry initialised");
 }
-app.use(express.json());
+app.use(express.json({
+  // Webhook signatures (Meta X-Hub-Signature-256) must be verified against the
+  // exact bytes received — re-serializing req.body does not round-trip. Stash
+  // the raw body for webhook paths only.
+  verify: (req, _res, buf) => {
+    if (req.url?.startsWith("/api/whatsapp/webhook")) {
+      (req as any).rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: false }));
 
 app.use(session({
@@ -133,5 +144,9 @@ app.use((req, res, next) => {
     seedDefaultRules().catch(e => console.warn("[CRM] seed rules failed:", e));
     // Start daily scheduler (feedback dispatch, birthday, AI digest)
     startDailyScheduler();
+    // WhatsApp driver (Baileys/Meta) + outbound queue worker.
+    // Persistent-process only — never start these from a serverless entry.
+    initWhatsAppDriver().catch(e => console.error("[WhatsApp] driver init failed:", e));
+    startOutboundWorker();
   });
 })();
