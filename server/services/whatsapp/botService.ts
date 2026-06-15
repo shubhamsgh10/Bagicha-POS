@@ -40,8 +40,12 @@ function detectIntent(text: string): BotIntent {
   const t = text.toLowerCase().trim();
   for (const { intent, words } of KEYWORDS) {
     for (const w of words) {
-      // Whole-word match so "history" doesn't trigger "hi"
-      const re = new RegExp(`(^|\\W)${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|\\W)`);
+      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Whole-word match so "history" doesn't trigger "hi". Allow an optional
+      // trailing "s" for words of 4+ chars so plurals match too ("hour"→"hours",
+      // "time"→"times") — but keep short words strict (no "hi"→"his").
+      const plural = w.length >= 4 ? "s?" : "";
+      const re = new RegExp(`(^|\\W)${esc}${plural}($|\\W)`);
       if (re.test(t)) return intent;
     }
   }

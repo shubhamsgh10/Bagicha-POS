@@ -56,6 +56,12 @@ interface GrowthConfig {
   metaPhoneNumberId:    string;
   metaAccessToken:      string;
   restaurantName:       string;
+  // Checkout (settlement-time) messaging
+  settlementWelcomeEnabled: boolean;
+  settlementReturningMode:  "off" | "auto" | "vip_reward" | "favorite_item" | "thank_you";
+  settlementReturningText:  string;
+  dueMessageEnabled:        boolean;
+  dueMessageTemplate:       string;
 }
 
 const DEFAULT_GC: GrowthConfig = {
@@ -71,6 +77,11 @@ const DEFAULT_GC: GrowthConfig = {
   metaPhoneNumberId:    "",
   metaAccessToken:      "",
   restaurantName:       "Bagicha",
+  settlementWelcomeEnabled: true,
+  settlementReturningMode:  "auto",
+  settlementReturningText:  "",
+  dueMessageEnabled:        true,
+  dueMessageTemplate:       "",
 };
 
 interface Props {
@@ -392,7 +403,18 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   const today     = new Date().toDateString();
   const sentToday = sendLog.filter(e => new Date(e.sentAt).toDateString() === today).length;
 
-  const provider         = getAutomationProvider(settings);
+  // The Setup → Meta/WATI credential form persists to the SERVER config (gc),
+  // while AutomationSettings lives in localStorage and may not carry the same
+  // credentials. Fall back to the server copy so the badge reflects what's
+  // actually saved (otherwise it reads "Not configured" despite valid creds).
+  const effectiveSettings = {
+    ...settings,
+    metaPhoneNumberId: settings.metaPhoneNumberId || gc.metaPhoneNumberId,
+    metaAccessToken:   settings.metaAccessToken   || gc.metaAccessToken,
+    watiApiKey:        settings.watiApiKey         || gc.watiApiKey,
+    watiEndpoint:      settings.watiEndpoint       || gc.watiEndpoint,
+  };
+  const provider         = getAutomationProvider(effectiveSettings);
   const quietHoursActive = isInQuietHours(settings.quietHours);
   const isWebMode        = settings.whatsappMode === "web";
   const whatsappLabel    = provider === "unconfigured" ? "⚠️ Not configured" : settings.whatsappMode === "meta" ? "🔵 Meta API" : settings.whatsappMode === "api" ? "🤖 WATI API" : "🌐 WhatsApp Web";
@@ -851,6 +873,74 @@ function SetupTab({
 
       {/* ── Automated WhatsApp driver (Baileys / Meta) + chatbot ── */}
       <WhatsAppConnectionCard />
+
+      {/* ── Checkout (settlement-time) messages ── */}
+      <div className="border border-gray-200 rounded-xl p-4 space-y-3.5">
+        <div>
+          <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5">💬 Checkout messages</p>
+          <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">
+            Sent automatically when a bill is settled. Paid bills get a welcome (new) or a thank-you (returning); unpaid bills get an itemized reminder.
+          </p>
+        </div>
+
+        {/* New customer welcome */}
+        <RuleCard
+          emoji="🎉"
+          title="Welcome new customers"
+          description="When a first-time customer's paid bill is settled, send them a welcome message."
+          checked={gc.settlementWelcomeEnabled}
+          onChange={v => onGc({ settlementWelcomeEnabled: v })}
+        />
+
+        {/* Returning customer */}
+        <div className="border border-gray-200 rounded-xl p-3.5 space-y-2.5">
+          <p className="text-sm font-semibold text-gray-800">🔁 Returning customers</p>
+          <p className="text-[11px] text-gray-500 leading-relaxed">What a returning customer receives at a paid checkout.</p>
+          <select
+            value={gc.settlementReturningMode}
+            onChange={e => onGc({ settlementReturningMode: e.target.value as GrowthConfig["settlementReturningMode"] })}
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-green-400"
+          >
+            <option value="off">Don't send anything</option>
+            <option value="auto">Auto — best for their segment (VIP / favourite / thank-you)</option>
+            <option value="thank_you">Always: Thank-you &amp; come again</option>
+            <option value="favorite_item">Always: Favourite-item offer</option>
+            <option value="vip_reward">Always: VIP reward</option>
+          </select>
+          {(gc.settlementReturningMode === "thank_you" || gc.settlementReturningMode === "auto") && (
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-600 mb-1">Thank-you template</label>
+              <textarea
+                rows={3}
+                value={gc.settlementReturningText}
+                placeholder="Hi {name}! 🙏 Thank you for dining with us at *{restaurant}* again…"
+                onChange={e => onGc({ settlementReturningText: e.target.value })}
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-green-400 resize-y"
+              />
+              <p className="text-[9px] text-gray-400 mt-1">Tokens: {"{name} {visits} {favItem} {restaurant}"} — leave blank to use the default.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Due bill reminder */}
+        <RuleCard
+          emoji="🧾"
+          title="Due-bill reminder"
+          description="When a bill is left unpaid, send the customer their itemized bill and the amount due."
+          checked={gc.dueMessageEnabled}
+          onChange={v => onGc({ dueMessageEnabled: v })}
+        >
+          <label className="block text-[10px] font-semibold text-gray-600 mb-1">Reminder template</label>
+          <textarea
+            rows={4}
+            value={gc.dueMessageTemplate}
+            placeholder="Hi {name}! 🙏 Here are your bill details:\n\n{bill}\n\n*Amount due: ₹{due}*"
+            onChange={e => onGc({ dueMessageTemplate: e.target.value })}
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-green-400 resize-y"
+          />
+          <p className="text-[9px] text-gray-400 mt-1">Tokens: {"{name} {restaurant} {due} {bill}"} — {"{bill}"} inserts the itemized list. Leave blank to use the default.</p>
+        </RuleCard>
+      </div>
 
       {/* ── WhatsApp connection ── */}
       <div>

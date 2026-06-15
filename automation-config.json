@@ -36,5 +36,10 @@
   "menuUrl": "file:///E:/Claude%20Code/BagichaOrderMaster/BagichaOrderMaster/attached_assets/Bagicha%20Menu_final.pdf",
   "menuText": "",
   "metaWebhookVerifyToken": "",
-  "metaAppSecret": ""
+  "metaAppSecret": "",
+  "settlementWelcomeEnabled": true,
+  "settlementReturningMode": "auto",
+  "settlementReturningText": "Hi {name}! 🙏 Thank you for dining with us at *{restaurant}* again — we always love having you. See you next time! 🌿",
+  "dueMessageEnabled": true,
+  "dueMessageTemplate": "Hi {name}! 🙏 Thank you for visiting *{restaurant}*. Here are your bill details:\n\n{bill}\n\n*Amount due: ₹{due}*\n\nPlease settle it at your convenience. Thank you! 🌿"
 }

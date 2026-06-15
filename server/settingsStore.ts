@@ -1,10 +1,10 @@
 import fs from "fs";
-import path from "path";
 import { eq, max } from "drizzle-orm";
 import { db } from "./db";
 import { restaurantSettings, orders } from "@shared/schema";
+import { dataPath } from "./dataDir";
 
-const SETTINGS_FILE = path.join(process.cwd(), "restaurant-settings.json");
+const SETTINGS_FILE = dataPath("restaurant-settings.json");
 
 // ── Print types (shared with client/Electron) ─────────────────────────────────
 
