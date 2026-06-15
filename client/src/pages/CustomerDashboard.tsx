@@ -1120,7 +1120,7 @@ export default function CustomerDashboard() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap touch-manipulation ${
+              className={`shrink-0 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap touch-manipulation ${
                 tab === t.key
                   ? "border-green-700 text-green-700"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"

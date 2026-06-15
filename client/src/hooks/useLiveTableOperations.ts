@@ -27,6 +27,9 @@ export interface LiveTableState {
   orderNumber: string | null;
   orderType: OrderType;
   startedAt: string | null;
+  servedByName: string | null;   // staff who created/opened the order
+  customerName: string | null;
+  customerPhone: string | null;
   items: LiveItem[];
   hasNewItems: boolean;
   lastUpdated: number;
@@ -121,6 +124,9 @@ function buildTableState(table: any, order: any | null): LiveTableState {
     orderNumber: order?.orderNumber ?? null,
     orderType: normalizeOrderType(order?.orderType, !!table.currentOrderId),
     startedAt: order?.createdAt ?? null,
+    servedByName: order?.createdByName ?? table.servedByName ?? null,
+    customerName: order?.customerName ?? null,
+    customerPhone: order?.customerPhone ?? null,
     items,
     hasNewItems: false,
     lastUpdated: Date.now(),
@@ -278,6 +284,9 @@ export function useLiveTableOperations() {
                 orderNumber: order.orderNumber,
                 orderType: normalizeOrderType(order.orderType, !!order.tableId),
                 startedAt: order.createdAt,
+                servedByName: order.createdByName ?? null,
+                customerName: order.customerName ?? null,
+                customerPhone: order.customerPhone ?? null,
                 items: newItems,
                 hasNewItems: newItems.length > 0,
                 lastUpdated: Date.now(),
@@ -342,6 +351,9 @@ export function useLiveTableOperations() {
               if (hasAnyNew) maybeSound();
               return {
                 ...t,
+                servedByName:  fullOrder.createdByName ?? t.servedByName,
+                customerName:  fullOrder.customerName ?? t.customerName,
+                customerPhone: fullOrder.customerPhone ?? t.customerPhone,
                 items,
                 hasNewItems: hasAnyNew,
                 lastUpdated: Date.now(),

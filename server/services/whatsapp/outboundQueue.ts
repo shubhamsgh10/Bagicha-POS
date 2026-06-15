@@ -9,7 +9,7 @@
  */
 
 import { db } from "../../db";
-import { and, asc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   automationJobs,
   conversations,
@@ -36,14 +36,22 @@ export interface EnqueueInput {
 }
 
 export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
-  // Dedup: the daily-send log is only written when the worker actually sends,
-  // so an offline driver must not let hourly runs stack duplicate jobs.
+  // Dedup so no path double-sends the same template to a customer in a day:
+  //  - any pending/sending job for this customer + trigger (offline driver can't
+  //    let hourly runs stack), OR
+  //  - a job already SENT today for the same customer + trigger (cross-path guard
+  //    — e.g. settlement already sent WELCOME, so the scheduler must not resend).
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const existing = await db.select({ id: automationJobs.id })
     .from(automationJobs)
     .where(and(
       eq(automationJobs.customerId, input.customerId),
       eq(automationJobs.triggerType, input.trigger),
-      or(eq(automationJobs.status, "pending"), eq(automationJobs.status, "sending")),
+      or(
+        inArray(automationJobs.status, ["pending", "sending"]),
+        and(eq(automationJobs.status, "sent"), gte(automationJobs.scheduledAt, todayStart)),
+      ),
     ))
     .limit(1);
   if (existing[0]) return;

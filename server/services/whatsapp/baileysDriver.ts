@@ -10,7 +10,6 @@
  * instead of crash-looping.
  */
 
-import path from "path";
 import fs from "fs";
 import makeWASocket, {
   useMultiFileAuthState,
@@ -28,8 +27,9 @@ import {
   type WaSendResult,
   type WaDeliveryStatus,
 } from "./types";
+import { dataPath } from "../../dataDir";
 
-const AUTH_DIR = path.join(process.cwd(), "baileys-auth");
+const AUTH_DIR = dataPath("baileys-auth");
 const MAX_RECONNECT_DELAY_MS = 60_000;
 
 /** Baileys ack codes (proto.WebMessageInfo.Status) → our statuses. */
@@ -143,8 +143,14 @@ export class BaileysDriver implements WhatsAppDriver {
 
           // Direct chats only — skip groups (@g.us), broadcasts, newsletters
           if (!phoneJid.endsWith("@s.whatsapp.net")) {
-            console.log(`[WhatsApp][Baileys] Skipping inbound from unsupported JID: ${rawJid}` +
-              (rawJid.endsWith("@lid") ? " (LID chat with no phone alt — cannot resolve sender)" : ""));
+            // Status updates / groups / newsletters / broadcasts arrive constantly —
+            // ignore them silently. Only log a genuinely unexpected JID (e.g. a LID
+            // chat we couldn't resolve a phone for) so the logs stay useful.
+            const noisy = /@(g\.us|broadcast|newsletter)$/.test(rawJid);
+            if (!noisy) {
+              console.log(`[WhatsApp][Baileys] Skipping inbound from unsupported JID: ${rawJid}` +
+                (rawJid.endsWith("@lid") ? " (LID chat with no phone alt — cannot resolve sender)" : ""));
+            }
             continue;
           }
 

@@ -46,7 +46,7 @@ import {
 } from "./services/crm/segmentationService";
 import { getRecommendations } from "./services/crm/recommendationService";
 import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
-import { runAutomationServerSide, triggerWelcomeIfEligible } from "./services/crm/automationRuleEngine";
+import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -868,9 +868,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const imported: string[] = [];
     const errors: string[] = [];
 
-    // Build phone/name → existing customer id cache to skip duplicates
-    const existingCustomers = await db.select({ id: customersMaster.id, key: customersMaster.key }).from(customersMaster);
+    // Build key + phone caches to skip duplicates. A person can already exist
+    // under a different key (e.g. created by name, imported by phone), so we
+    // also dedupe on the last 10 phone digits to avoid stale duplicate rows.
+    const existingCustomers = await db
+      .select({ id: customersMaster.id, key: customersMaster.key, phone: customersMaster.phone })
+      .from(customersMaster);
     const existingKeys = new Set(existingCustomers.map(c => c.key.toLowerCase()));
+    const last10 = (p?: string | null) => (p ?? "").replace(/\D/g, "").slice(-10);
+    const existingPhones = new Set(
+      existingCustomers.map(c => last10(c.phone)).filter(p => p.length === 10),
+    );
 
     for (const row of rows) {
       const name = row.name?.trim();
@@ -878,8 +886,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const phone = row.phone?.trim().replace(/\D/g, "") || undefined;
       const key   = phone || name;
+      const phone10 = last10(phone);
 
-      if (existingKeys.has(key.toLowerCase())) {
+      if (existingKeys.has(key.toLowerCase()) || (phone10.length === 10 && existingPhones.has(phone10))) {
         errors.push(`"${name}": already exists (skipped)`);
         continue;
       }
@@ -906,6 +915,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         existingKeys.add(key.toLowerCase());
+        if (phone10.length === 10) existingPhones.add(phone10);
         imported.push(master.id);
       } catch (err: any) {
         errors.push(`"${name}": ${err.message}`);
@@ -1477,9 +1487,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         runSegmentationForCustomer(crmKey, crmName, order.customerPhone)
           .catch(e => console.warn("[CRM] segmentation failed:", e));
 
-        // Immediate welcome for brand-new customers (fires if automation is enabled + phone present)
-        triggerWelcomeIfEligible(crmKey, crmName, order.customerPhone)
-          .catch(e => console.warn("[CRM] welcome trigger failed:", e));
+        // NOTE: customer-facing messages (welcome / returning / due reminder) are
+        // NOT sent here. They fire at bill SETTLEMENT — see POST /api/orders/:id/payment.
       }
 
       res.json(order);
@@ -1652,8 +1661,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id,
             parseFloat(String((order as any).totalAmount ?? 0)),
           ).catch((e: any) => console.warn("[Loyalty] earn failed:", e));
+
+          // Settlement relationship message — welcome (new) / admin template (returning)
+          triggerSettlementMessage(key, (order as any).customerName ?? key, (order as any).customerPhone)
+            .catch((e: any) => console.warn("[CRM] settlement message failed:", e));
         }
         scheduleFeedbackForOrder(id).catch((e: any) => console.warn("[Feedback] schedule failed:", e));
+      } else {
+        // Bill left unpaid → itemized due-bill reminder with the customer's order details
+        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
+        if (key) {
+          triggerDueBillMessage(id, (order as any).customerName ?? key, (order as any).customerPhone)
+            .catch((e: any) => console.warn("[CRM] due reminder failed:", e));
+        }
       }
 
       res.json(order);
