@@ -44,6 +44,10 @@ export function useRealtime(_url?: string) {
       "KOT_UPDATE",
       "NEW_DELIVERY_ORDER",
       "CACHE_BUST",
+      "WA_MESSAGE",
+      "WA_STATUS",
+      "WA_CONVERSATION_UPDATE",
+      "WA_CONNECTION",
     ];
 
     (async () => {
@@ -93,10 +97,9 @@ export function useRealtime(_url?: string) {
   const delayRef = useRef(MIN_DELAY);
 
   useEffect(() => {
-    if (pusherKey || !import.meta.env.DEV) {
-      if (!pusherKey && !import.meta.env.DEV) setConnectionStatus("Closed");
-      return;
-    }
+    // Pusher deployments (Vercel) never use the local WS. Everywhere else —
+    // dev AND production LAN builds — Express serves /ws on the same host.
+    if (pusherKey) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;

@@ -297,5 +297,82 @@
     "status": "failed",
     "error": "Invalid or missing phone number",
     "campaign": "WIN_BACK"
+  },
+  {
+    "id": "45306156-2aef-4000-a8cd-ff6611e0f3cf",
+    "customerId": "Rupa",
+    "customerName": "Rupa",
+    "phone": "919981636949",
+    "trigger": "WELCOME",
+    "message": "Hi Rupa! 🎉 Welcome to the *Bagicha* family! We're so glad you dined with us. As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. 🌿",
+    "sentAt": "2026-06-13T10:19:01.548Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "732fd6e6-742e-4b0d-9836-a27962425322",
+    "customerId": "8349429528",
+    "customerName": "Priya",
+    "phone": "918349429528",
+    "trigger": "WELCOME",
+    "message": "Hi Priya! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-06-13T10:57:46.120Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "44d94096-2094-462c-b7f3-425d927cc1dd",
+    "customerId": "9893094825",
+    "customerName": "Parul Singh",
+    "phone": "919893094825",
+    "trigger": "WELCOME",
+    "message": "Hi Parul! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-06-13T10:57:49.876Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "b935449e-a8c3-449f-bb1e-958044c94a46",
+    "customerId": "9981636949",
+    "customerName": "Rupa",
+    "phone": "919981636949",
+    "trigger": "WELCOME",
+    "message": "Hi Rupa! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-06-13T10:57:54.654Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "295c1fd5-a851-4cc6-ac9a-24c847c7845d",
+    "customerId": "9109550322",
+    "customerName": "9109550322",
+    "phone": "919109550322",
+    "trigger": "WELCOME",
+    "message": "Hi shubham! 🎉 Welcome to the *Bagicha* family! We hope your first experience was delightful. As a welcome gift, enjoy *10% off your next visit* on your next visit — show this message to claim it. Looking forward to seeing you again! 🌿",
+    "sentAt": "2026-06-13T10:57:59.718Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "9551c5d3-99a7-4b62-aa39-7936c32a6b41",
+    "customerId": "9893369804",
+    "customerName": "Rita Fua",
+    "phone": "919893369804",
+    "trigger": "WELCOME",
+    "message": "Hi Rita! 🎉 Welcome to the *Bagicha* family! We're so glad you dined with us. As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. 🌿",
+    "sentAt": "2026-06-13T19:14:37.538Z",
+    "status": "sent",
+    "campaign": "WELCOME"
+  },
+  {
+    "id": "226e36fc-82d5-4ad7-91b3-71ddc63a6454",
+    "customerId": "9669022221",
+    "customerName": "Ayush",
+    "phone": "919669022221",
+    "trigger": "WELCOME",
+    "message": "Hi Ayush! 🎉 Welcome to the *Bagicha* family! We're so glad you dined with us. As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. 🌿",
+    "sentAt": "2026-06-14T12:46:25.625Z",
+    "status": "sent",
+    "campaign": "WELCOME"
   }
 ]

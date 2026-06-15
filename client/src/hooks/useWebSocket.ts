@@ -18,8 +18,10 @@ export function useWebSocket(_url: string) {
 
   useEffect(() => {
     // WebSocket requires a persistent server — not available on serverless (Vercel).
-    // Only connect in local dev where the Express WS server is running.
-    if (!import.meta.env.DEV) return;
+    // Vercel deployments set VITE_PUSHER_KEY and use useRealtime's Pusher path
+    // instead; everywhere else (dev AND production LAN builds) the Express WS
+    // server is co-located, so connect.
+    if (import.meta.env.VITE_PUSHER_KEY) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
