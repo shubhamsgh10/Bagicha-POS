@@ -15,7 +15,7 @@
 
 import { db } from "../db";
 import { orders, orderItems, menuItems } from "../../shared/schema";
-import { desc } from "drizzle-orm";
+import { desc, eq, or, sql, inArray } from "drizzle-orm";
 import {
   getAutomationConfig,
   hasBeenMessagedToday,
@@ -32,6 +32,9 @@ import {
   sendWhatsAppMessage,
   delay,
 } from "./whatsappService";
+import { getDriver } from "./whatsapp/driverManager";
+import { enqueueWhatsApp } from "./whatsapp/outboundQueue";
+import { resolveCustomerId } from "./crm/customerIdService";
 
 // ── Constants (mirrors useCustomerIntelligence thresholds) ────────────────────
 
@@ -165,16 +168,95 @@ async function buildCustomerProfiles(): Promise<CustomerSnapshot[]> {
   return profiles;
 }
 
+/**
+ * Builds a single customer's snapshot (visits / spend / favorite / tag) on demand —
+ * used at settlement time so we don't rebuild every profile. Matches the same
+ * aggregation as buildCustomerProfiles. Returns null if no orders are found.
+ */
+export async function buildSnapshotForKey(
+  key: string,
+  name: string,
+  phone?: string | null,
+): Promise<CustomerSnapshot | null> {
+  const last10 = (phone ?? "").replace(/\D/g, "").slice(-10);
+  const conds: any[] = [];
+  if (last10.length === 10) {
+    conds.push(sql`right(regexp_replace(coalesce(${orders.customerPhone}, ''), '\\D', '', 'g'), 10) = ${last10}`);
+  }
+  if (name) conds.push(eq(orders.customerName, name));
+  if (key && key !== name) conds.push(eq(orders.customerName, key));
+  if (!conds.length) return null;
+
+  const customerOrders = await db
+    .select()
+    .from(orders)
+    .where(conds.length === 1 ? conds[0] : or(...conds))
+    .orderBy(desc(orders.createdAt)) as RawOrder[];
+  if (!customerOrders.length) return null;
+
+  const newest = customerOrders[0];
+  const now = Date.now();
+
+  const totalSpend = customerOrders.reduce(
+    (s, o) => s + parseFloat(String(o.totalAmount ?? "0")),
+    0,
+  );
+  const avgOrderValue      = totalSpend / customerOrders.length;
+  const lastVisit          = new Date(newest.createdAt);
+  const daysSinceLastVisit = Math.floor((now - lastVisit.getTime()) / 86_400_000);
+
+  const hourCounts: Record<number, number> = {};
+  for (const o of customerOrders) {
+    const h = new Date(o.createdAt).getHours();
+    hourCounts[h] = (hourCounts[h] ?? 0) + 1;
+  }
+  const peakHour = +Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0][0];
+
+  // Favorite item — frequency over the 5 most recent orders
+  const top5Ids = customerOrders.slice(0, 5).map(o => o.id);
+  const items = top5Ids.length
+    ? await db.select().from(orderItems).where(inArray(orderItems.orderId, top5Ids)) as RawOrderItem[]
+    : [];
+  const allMenuItems = await db.select().from(menuItems) as RawMenuItem[];
+  const menuNameMap: Record<number, string> = {};
+  for (const m of allMenuItems) menuNameMap[m.id] = m.name;
+
+  const freqMap: Record<string, number> = {};
+  for (const item of items) {
+    const itemName = menuNameMap[item.menuItemId] ?? "Unknown";
+    freqMap[itemName] = (freqMap[itemName] ?? 0) + item.quantity;
+  }
+  const freqEntries = Object.entries(freqMap);
+  const favoriteItem = freqEntries.length
+    ? freqEntries.sort((a, b) => b[1] - a[1])[0][0]
+    : null;
+
+  const tag = tagFor(customerOrders.length, avgOrderValue, daysSinceLastVisit);
+
+  return {
+    key,
+    name:              newest.customerName ?? name ?? "Guest",
+    phone:             newest.customerPhone ?? phone ?? "",
+    totalVisits:       customerOrders.length,
+    totalSpend,
+    avgOrderValue,
+    daysSinceLastVisit,
+    tag,
+    peakHour,
+    favoriteItem,
+  };
+}
+
 // ── Trigger engine ─────────────────────────────────────────────────────────────
 
 function evaluateTrigger(customer: CustomerSnapshot): TriggerType | null {
-  const { tag, daysSinceLastVisit, favoriteItem } = customer;
+  const { tag, daysSinceLastVisit } = customer;
 
-  if (daysSinceLastVisit >= WIN_BACK_DAYS)                    return "WIN_BACK";
+  // Lapsed re-engagement only. WELCOME / VIP_REWARD / FAVORITE_ITEM are sent at
+  // bill settlement (automationRuleEngine.triggerSettlementMessage) — emitting
+  // them here too would double-message the customer.
+  if (daysSinceLastVisit >= WIN_BACK_DAYS)                        return "WIN_BACK";
   if (tag === "At Risk" && daysSinceLastVisit >= AT_RISK_TRIGGER) return "AT_RISK";
-  if (tag === "VIP")                                           return "VIP_REWARD";
-  if (tag === "New" && customer.totalVisits === 1)             return "WELCOME";
-  if (favoriteItem && tag === "Regular")                       return "FAVORITE_ITEM";
 
   return null;
 }
@@ -201,14 +283,15 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
   skipped: number;
   failed: number;
   dryRun: number;
+  queued: number;
 }> {
   if (isRunning) {
     console.log("[Automation] Previous run still in progress — skipping");
-    return { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0 };
+    return { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0, queued: 0 };
   }
 
   isRunning = true;
-  const stats = { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0 };
+  const stats = { processed: 0, sent: 0, skipped: 0, failed: 0, dryRun: 0, queued: 0 };
 
   try {
     const config = getAutomationConfig();
@@ -247,7 +330,29 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
         trackingLink
       );
 
-      // Send (Meta takes priority over WATI when both configured)
+      // Fully automated path: queue through the active WhatsApp driver.
+      // The outbound worker owns pacing (sendDelayMs + jitter), retries, the
+      // maxPerDay cap, and all logging — so we just enqueue and move on.
+      if (config.whatsappAutoSend && getDriver()) {
+        try {
+          const customerId = await resolveCustomerId(customer.key, customer.name, customer.phone);
+          await enqueueWhatsApp({
+            customerId,
+            phone:   customer.phone,
+            message,
+            trigger,
+          });
+          messagesSent++;
+          stats.queued++;
+          console.log(`[Automation] ⇢ queued ${customer.name} (${trigger})`);
+        } catch (err: any) {
+          stats.failed++;
+          console.warn(`[Automation] ✗ enqueue failed for ${customer.name} — ${err?.message}`);
+        }
+        continue;
+      }
+
+      // Manual/legacy path (Meta takes priority over WATI when both configured)
       const result = await sendWhatsAppMessage(customer.phone, message, {
         watiApiKey:        config.watiApiKey,
         watiEndpoint:      config.watiEndpoint,

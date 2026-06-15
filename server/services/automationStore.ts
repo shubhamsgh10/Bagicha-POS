@@ -5,14 +5,14 @@
  */
 
 import fs from "fs";
-import path from "path";
 import crypto from "crypto";
+import { dataPath } from "../dataDir";
 
 // ── File paths ─────────────────────────────────────────────────────────────────
 
-const CONFIG_FILE  = path.join(process.cwd(), "automation-config.json");
-const LOG_FILE     = path.join(process.cwd(), "automation-logs.json");
-const PREFS_FILE   = path.join(process.cwd(), "customer-prefs.json");
+const CONFIG_FILE  = dataPath("automation-config.json");
+const LOG_FILE     = dataPath("automation-logs.json");
+const PREFS_FILE   = dataPath("customer-prefs.json");
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,43 @@ export interface AutomationConfig {
   } | null;
   /** Auto-sync attendance daily at this hour (0–23). -1 = disabled. */
   attendanceAutoSyncHour: number;
+
+  // ── WhatsApp driver / chatbot / agent inbox ───────────────────────────────
+  /** Active WhatsApp driver. "baileys" = unofficial QR-paired, "meta" = Cloud API, "none" = off. */
+  whatsappDriver: "baileys" | "meta" | "none";
+  /** When true, automation messages are queued and sent automatically through the
+   *  active driver. When false, the manual wa.me Send-tab flow is used. */
+  whatsappAutoSend: boolean;
+  /** Hard daily cap on automated outbound messages (ban avoidance for Baileys). */
+  maxPerDay: number;
+  /** FAQ chatbot enable flag (inbound auto-replies). */
+  botEnabled: boolean;
+  /** Minutes of agent inactivity before a human-takeover conversation returns to the bot. */
+  botReturnMinutes: number;
+  /** Bot answer for opening-hours questions (free text, e.g. "12pm–11pm, all days"). */
+  botHoursText: string;
+  /** Public menu link sent by the bot (e.g. Google Drive PDF / website). */
+  menuUrl: string;
+  /** Fallback text menu if no menuUrl is set. */
+  menuText: string;
+  /** Meta webhook verify token (you choose this; must match the Meta dashboard). */
+  metaWebhookVerifyToken: string;
+  /** Meta app secret — used to verify X-Hub-Signature-256 on webhooks. */
+  metaAppSecret: string;
+
+  // ── Checkout (settlement-time) messaging ──────────────────────────────────
+  /** Send a welcome message to brand-new customers when their (paid) bill is settled. */
+  settlementWelcomeEnabled: boolean;
+  /** What a returning customer receives at a paid settlement.
+   *  "off" = nothing, "auto" = segment-appropriate (VIP/favorite/thank-you),
+   *  or force a specific template. */
+  settlementReturningMode: "off" | "auto" | "vip_reward" | "favorite_item" | "thank_you";
+  /** Editable thank-you template for returning customers. Tokens: {name} {visits} {favItem} {restaurant}. */
+  settlementReturningText: string;
+  /** Send an itemized reminder when a bill is left unpaid (due). */
+  dueMessageEnabled: boolean;
+  /** Editable due-reminder wrapper. Tokens: {name} {restaurant} {due} {bill} (where {bill} = itemized list). */
+  dueMessageTemplate: string;
 }
 
 export interface AutomationLog {
@@ -136,6 +173,26 @@ const DEFAULT_CONFIG: AutomationConfig = {
   attendanceSheetUrl: "",
   attendanceColumnMapping: null,
   attendanceAutoSyncHour: -1,
+  whatsappDriver: "none",
+  whatsappAutoSend: false,
+  maxPerDay: 100,
+  botEnabled: true,
+  botReturnMinutes: 30,
+  botHoursText: "",
+  menuUrl: "",
+  menuText: "",
+  metaWebhookVerifyToken: "",
+  metaAppSecret: "",
+  settlementWelcomeEnabled: true,
+  settlementReturningMode: "auto",
+  settlementReturningText:
+    "Hi {name}! 🙏 Thank you for dining with us at *{restaurant}* again — we always love having you. " +
+    "See you next time! 🌿",
+  dueMessageEnabled: true,
+  dueMessageTemplate:
+    "Hi {name}! 🙏 Thank you for visiting *{restaurant}*. Here are your bill details:\n\n" +
+    "{bill}\n\n" +
+    "*Amount due: ₹{due}*\n\nPlease settle it at your convenience. Thank you! 🌿",
 };
 
 // ── Generic JSON helpers ───────────────────────────────────────────────────────
