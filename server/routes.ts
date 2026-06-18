@@ -158,6 +158,13 @@ export function requireAdmin(req: any, res: any, next: any) {
   next();
 }
 
+// Manager OR admin — gates staff/payroll data so staff-tier (PIN) sessions can't read salaries/roster.
+export function requireManagerOrAdmin(req: any, res: any, next: any) {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+  if (req.user?.role !== "admin" && req.user?.role !== "manager") return res.status(403).json({ message: "Manager access required" });
+  next();
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
@@ -689,7 +696,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ];
   }
 
-  app.get("/api/settings/staff-page-access", requireAuth, async (_req, res) => {
+  app.get("/api/settings/staff-page-access", requireAdmin, async (_req, res) => {
     try {
       res.json({ staffPageAccess: getSettings().staffPageAccess ?? {}, roster: await staffPageRoster() });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
@@ -3015,14 +3022,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // GET /api/payroll/people — the unified payroll roster (accounts {manager,staff} + staff members;
   // admins/owner excluded). Used by the Staff "Biometric Setup" annotate-only list.
-  app.get("/api/payroll/people", requireAuth, async (_req, res) => {
+  app.get("/api/payroll/people", requireManagerOrAdmin, async (_req, res) => {
     try { res.json(await storage.getPayrollPeople()); }
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   // GET /api/staff/accounts — login accounts with role manager/staff (owner/admins excluded).
   // For account-keyed tabs (Shifts roster, Leaves apply) that don't yet support staff members.
-  app.get("/api/staff/accounts", requireAuth, async (_req, res) => {
+  app.get("/api/staff/accounts", requireManagerOrAdmin, async (_req, res) => {
     try {
       const all = await storage.getUsers();
       res.json(all.filter(u => u.role === "manager" || u.role === "staff").map(u => ({ id: u.id, username: u.username, role: u.role })));
@@ -3030,7 +3037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/payroll/report/:month — YYYY-MM
-  app.get("/api/payroll/report/:month", requireAuth, async (req, res) => {
+  app.get("/api/payroll/report/:month", requireManagerOrAdmin, async (req, res) => {
     try { res.json(await storage.getPayrollReport(req.params.month)); }
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });

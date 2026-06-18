@@ -116,6 +116,8 @@ Two identity systems (see `docs/superpowers/specs/2026-05-21-unified-role-user-m
 
 **⚠️ Id-collision gotcha:** `users` and `staffMembers` share the integer id space, and a staff-member session is `{ id: sm.id, _isStaffMember: true }`. Any "self" endpoint that keys on `req.user.id` MUST disambiguate by `_isStaffMember` (→ `staffMemberId` vs `userId`) or it's a cross-table IDOR. Already guarded: `/api/attendance/me`, `/api/payroll/me/:month`.
 
+**Authorization:** payroll/roster reads expose salaries → gated by **`requireManagerOrAdmin`** (`/api/payroll/people`, `/api/payroll/report/:month`, `/api/staff/accounts`) so staff-tier (PIN) sessions can't read them; managers keep Staff-page access. Admin-only config (`GET/POST /api/settings/staff-page-access` + `apply-role`) is `requireAdmin`. Self-service `/api/*/me` stays `requireAuth`.
+
 **Payroll + biometric run on a UNION of both** (`storage.getPayrollPeople()`):
 - `users` with role ∈ {manager, staff} (admins/owner excluded) via `staffProfiles`, **plus** `staffMembers` (skip `excludeFromPayroll`). Each person is `{ kind:'user'|'staff', id, name, role, biometricId, monthlySalary }`.
 - `attendance` rows key on **either** `userId` **or** `staffMemberId` (`userId` nullable; `upsertAttendanceForStaffMember` mirrors the user version; `getAttendance({ staffMemberId })` + `displayName` resolve either).
