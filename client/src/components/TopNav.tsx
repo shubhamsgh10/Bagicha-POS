@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { toPosRole } from "@/hooks/useRole";
+import { useAllowedPages } from "@/hooks/useAllowedPages";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -58,13 +59,15 @@ export function TopNav() {
     staleTime: 30000,
   });
 
+  const allowedPages = useAllowedPages(); // per-person set for staff tier, null for admin/manager
   const visibleNav = NAV_ITEMS.filter(item => {
     if (item.alwaysVisible) return true; // self-service pages — never hidden by role config
     const posRole = toPosRole(activeRole);
-    // Dynamic settings take full ownership when configured — override static item.roles
-    if (posRole === "staff" && settings?.staffAllowedPages != null) {
-      return (settings.staffAllowedPages as string[]).includes(item.href);
+    // Staff tier: per-person page access (resolved per-person → role default).
+    if (posRole === "staff") {
+      return allowedPages ? allowedPages.has(item.href) : false;
     }
+    // Manager: dynamic settings take full ownership when configured — override static item.roles
     if (posRole === "manager" && settings?.managerAllowedPages != null) {
       return (settings.managerAllowedPages as string[]).includes(item.href);
     }

@@ -156,7 +156,7 @@ export function BiometricDevicePanel() {
           <Stat icon={<Activity size={13} color={status.connected ? "#10b981" : "#9ca3af"} />} label="Agent" value={status.connected ? "Connected" : status.enabled ? "Connecting…" : "Idle"} />
           <Stat label="Buffered" value={`${status.buffered} punch${status.buffered === 1 ? "" : "es"}`} />
           <Stat label="Last sync" value={status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleTimeString() : "—"} />
-          {status.lastError && <Stat label="Last error" value={status.lastError} danger />}
+          {status.lastError && <Stat label="Last error" value={typeof status.lastError === "string" ? status.lastError : ((status.lastError as any)?.message ?? JSON.stringify(status.lastError))} danger />}
         </div>
       )}
 

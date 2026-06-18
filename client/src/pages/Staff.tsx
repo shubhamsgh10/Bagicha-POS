@@ -216,7 +216,7 @@ function ShiftsPanel() {
               </tr>
             </thead>
             <tbody>
-              {roster.map((row: any) => (
+              {roster.filter((row: any) => row.role === "manager" || row.role === "staff").map((row: any) => (
                 <tr key={row.userId} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
                   <td className="p-3">
                     <div className="font-medium">{row.username}</div>
@@ -264,7 +264,7 @@ function LeavesPanel() {
   const [leaveForm, setLeaveForm] = useState({ userId: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
-  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/staff"] });
+  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/staff/accounts"] });
   const leavesKey = `/api/leaves?status=${filterStatus}&month=${filterMonth}`;
   const { data: leavesData = [], isLoading } = useQuery<any[]>({ queryKey: [leavesKey] });
 
@@ -315,7 +315,7 @@ function LeavesPanel() {
               <Label>Staff</Label>
               <Select value={leaveForm.userId} onValueChange={v => setLeaveForm(f => ({ ...f, userId: v }))}>
                 <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
-                <SelectContent>{staffList.map((s: any, i: number) => <SelectItem key={s.userId ?? i} value={String(s.userId)}>{s.user?.username}</SelectItem>)}</SelectContent>
+                <SelectContent>{staffList.map((s: any, i: number) => <SelectItem key={s.id ?? i} value={String(s.id)}>{s.username}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
@@ -384,28 +384,56 @@ function LeavesPanel() {
 
 // ── Payroll sub-component ─────────────────────────────────────────────────────
 
-function StaffProfileRow({ staff }: { staff: any }) {
+// Invalidate the people roster + whatever payroll month is currently loaded.
+function refreshPeopleAndPayroll() {
+  queryClient.invalidateQueries({ queryKey: ["/api/payroll/people"] });
+  queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] ?? "").startsWith("/api/payroll/report") });
+}
+
+// A payroll person — a system account (kind 'user') OR a staff member (kind 'staff'). Name + role are
+// set in Admin and read-only here; this row only sets the Biometric ID and Salary. Saves route by
+// `kind` (account → staff profile, staff member → staff-member record).
+function PersonRow({ person }: { person: any }) {
   const { toast } = useToast();
-  const [form, setForm] = useState({ biometricId: staff.biometricId ?? "", department: staff.department ?? "", designation: staff.designation ?? "" });
+  const [form, setForm] = useState({
+    biometricId: person.biometricId ?? "", monthlySalary: String(person.monthlySalary ?? "0"),
+  });
   const [saving, setSaving] = useState(false);
   const save = async () => {
     setSaving(true);
     try {
-      const uid = staff.userId ?? staff.user?.id ?? staff.id;
-      if (uid == null) { toast({ title: "Failed", description: "This staff row has no user id", variant: "destructive" }); return; }
-      await apiRequest("PUT", `/api/staff/${uid}/profile`, form);
-      queryClient.invalidateQueries({ queryKey: ["/api/staff"] });
+      const body = { biometricId: form.biometricId.trim(), monthlySalary: form.monthlySalary || "0" };
+      const url = person.kind === "user" ? `/api/staff/${person.id}/profile` : `/api/staff-members/${person.id}`;
+      await apiRequest("PUT", url, body);
+      refreshPeopleAndPayroll();
       toast({ title: "Saved" });
     } catch (err: any) { toast({ title: "Failed", description: err.message, variant: "destructive" }); }
     finally { setSaving(false); }
   };
   return (
     <div className="flex flex-wrap items-center gap-2 p-2 rounded-xl bg-[var(--paper-100)]">
-      <span className="text-xs font-medium w-24 shrink-0">{staff.user?.username}</span>
-      <Input placeholder="Biometric ID" value={form.biometricId} className="h-7 text-xs w-24" onChange={e => setForm(f => ({ ...f, biometricId: e.target.value }))} />
-      <Input placeholder="Department" value={form.department} className="h-7 text-xs w-28" onChange={e => setForm(f => ({ ...f, department: e.target.value }))} />
-      <Input placeholder="Designation" value={form.designation} className="h-7 text-xs w-28" onChange={e => setForm(f => ({ ...f, designation: e.target.value }))} />
+      <span className="text-xs font-medium w-24 shrink-0 truncate" title={person.name}>{person.name}</span>
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 shrink-0 w-20 text-center truncate">
+        {person.role || (person.kind === "user" ? "account" : "—")}
+      </span>
+      <Input placeholder="Biometric ID" value={form.biometricId} className="h-7 text-xs w-28" onChange={e => setForm(f => ({ ...f, biometricId: e.target.value }))} />
+      <Input placeholder="Salary" type="number" value={form.monthlySalary} className="h-7 text-xs w-28" onChange={e => setForm(f => ({ ...f, monthlySalary: e.target.value }))} />
       <Button size="sm" className="h-7 text-xs" disabled={saving} onClick={save}>{saving ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}</Button>
+    </div>
+  );
+}
+
+// Biometric/salary setup for the unified roster — lives in the Device tab (next to the K30 panel).
+function StaffBiometricSetup() {
+  const { data: people = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
+  return (
+    <div className="rounded-2xl p-4 space-y-3" style={glassCard}>
+      <p className="text-sm font-semibold text-gray-700">Staff &amp; Biometric Setup</p>
+      <p className="text-xs text-gray-500">People (and their role) are created in <span className="font-medium">Admin → Accounts</span>. Here, set each person's <span className="font-medium">Biometric ID</span> (= their device User ID) and <span className="font-medium">salary</span> — payroll &amp; device attendance use these. The owner/admins aren't listed (off payroll).</p>
+      <div className="space-y-2">
+        {people.length === 0 && <p className="text-xs text-gray-400 italic py-2">No staff yet — add accounts or staff members in Admin → Accounts.</p>}
+        {people.map((p: any) => <PersonRow key={`${p.kind}-${p.id}`} person={p} />)}
+      </div>
     </div>
   );
 }
@@ -413,18 +441,18 @@ function StaffProfileRow({ staff }: { staff: any }) {
 function PayrollPanel() {
   const { toast } = useToast();
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [editingSalary, setEditingSalary] = useState<{ userId: number; salary: string } | null>(null);
+  const [editingSalary, setEditingSalary] = useState<{ kind: string; id: number; salary: string } | null>(null);
 
   const { data: payrollData = [], isLoading } = useQuery<any[]>({ queryKey: [`/api/payroll/report/${selectedMonth}`] });
-  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/staff"] });
+  const { data: people = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
 
   const updateSalaryMutation = useMutation({
-    mutationFn: async ({ userId, salary }: { userId: number; salary: string }) =>
-      apiRequest("PUT", `/api/staff/${userId}/profile`, { monthlySalary: salary }),
+    mutationFn: async ({ kind, id, salary }: { kind: string; id: number; salary: string }) =>
+      apiRequest("PUT", kind === "user" ? `/api/staff/${id}/profile` : `/api/staff-members/${id}`, { monthlySalary: salary }),
     onSuccess: () => {
       toast({ title: "Salary updated" });
       queryClient.invalidateQueries({ queryKey: [`/api/payroll/report/${selectedMonth}`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/staff"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payroll/people"] });
       setEditingSalary(null);
     },
     onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
@@ -489,25 +517,28 @@ function PayrollPanel() {
                 </tr>
               </thead>
               <tbody>
-                {payrollData.map((row: any, i: number) => (
-                  <tr key={row.userId ?? i} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
+                {payrollData.map((row: any, i: number) => {
+                  const rowId = row.userId ?? row.staffMemberId;
+                  const isEditing = editingSalary && editingSalary.kind === row.kind && editingSalary.id === rowId;
+                  return (
+                  <tr key={`${row.kind}-${rowId ?? i}`} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
                     <td className="p-3">
-                      <div className="font-medium">{row.username}</div>
-                      <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.role}</span>
+                      <div className="font-medium">{row.name}</div>
+                      <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.designation || row.role}</span>
                     </td>
                     <td className="p-3 text-center">
-                      {editingSalary?.userId === row.userId ? (
+                      {isEditing ? (
                         <div className="flex items-center gap-1 justify-center">
                           <Input type="number" value={editingSalary!.salary} className="h-6 w-24 text-xs text-center"
                             onChange={e => setEditingSalary(s => s ? { ...s, salary: e.target.value } : null)} />
                           <Button size="sm" className="h-6 text-[10px] px-2" disabled={updateSalaryMutation.isPending}
-                            onClick={() => updateSalaryMutation.mutate({ userId: row.userId, salary: editingSalary!.salary })}>
+                            onClick={() => updateSalaryMutation.mutate({ kind: row.kind, id: rowId, salary: editingSalary!.salary })}>
                             {updateSalaryMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
                           </Button>
                           <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1" onClick={() => setEditingSalary(null)}>×</Button>
                         </div>
                       ) : (
-                        <button onClick={() => setEditingSalary({ userId: row.userId, salary: String(row.monthlySalary) })}
+                        <button onClick={() => setEditingSalary({ kind: row.kind, id: rowId, salary: String(row.monthlySalary) })}
                           className="text-blue-700 hover:underline font-medium">
                           Rs.{Number(row.monthlySalary).toLocaleString("en-IN")}
                         </button>
@@ -521,7 +552,8 @@ function PayrollPanel() {
                     <td className="p-3 text-center text-green-600">+Rs.{row.overtimePay.toFixed(2)}</td>
                     <td className="p-3 text-right font-bold text-green-700">Rs.{row.netSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-[var(--line)] bg-[var(--paper-100)]">
@@ -534,13 +566,6 @@ function PayrollPanel() {
         </div>
       )}
 
-      <div className="rounded-2xl p-4 space-y-3" style={glassCard}>
-        <p className="text-sm font-semibold text-gray-700">Staff Profiles &amp; Biometric ID Setup</p>
-        <p className="text-xs text-gray-500">Set the Biometric ID matching your fingerprint machine's Employee ID column so imports map correctly.</p>
-        <div className="space-y-2">
-          {staffList.map((staff: any, i: number) => <StaffProfileRow key={staff.userId ?? i} staff={staff} />)}
-        </div>
-      </div>
     </div>
   );
 }
@@ -555,63 +580,34 @@ export default function Staff() {
   const [empFilter, setEmpFilter] = useState("all");
   const [activeTab, setActiveTab] = useState<"attendance" | "summary" | "shifts" | "leaves" | "payroll" | "performance" | "device">("attendance");
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sheetUrl,     setSheetUrl]     = useState("");
-  const [autoSyncHour, setAutoSyncHour] = useState("-1");
-  const [colMapping, setColMapping] = useState<Record<string, string>>({
-    employeeName: "", date: "", punchIn: "", punchOut: "", hoursWorked: "", status: "",
-  });
-
-  const [preview, setPreview] = useState<SheetPreview | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-
-  // ── queries ──────────────────────────────────────────────────────────────────
-
-  const { data: attendanceSettings } = useQuery<AttendanceSettings>({
-    queryKey: ["/api/attendance/settings"],
-    queryFn: async () => {
-      const res = await fetch(apiUrl("/api/attendance/settings"), { credentials: "include" });
-      if (!res.ok) return { sheetUrl: "", columnMapping: null, autoSyncHour: -1 };
-      return res.json();
-    },
-  });
-
-  useEffect(() => {
-    if (!attendanceSettings) return;
-    setSheetUrl(attendanceSettings.sheetUrl ?? "");
-    setAutoSyncHour(String(attendanceSettings.autoSyncHour ?? -1));
-    if (attendanceSettings.columnMapping) {
-      setColMapping(prev => ({ ...prev, ...attendanceSettings.columnMapping }));
-    }
-  }, [attendanceSettings]);
-
-  const { data: employees = [] } = useQuery<string[]>({
-    queryKey: ["/api/attendance/employees"],
-    queryFn: async () => {
-      const res = await fetch(apiUrl("/api/attendance/employees"), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
+  // ── queries (device-driven attendance over the unified roster) ───────────────
+  // Roster = unified payroll people (owner/admins excluded); used for the EMPLOYEE filter.
+  const { data: roster = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
 
   const { data: attendance = [], isLoading: attLoading } = useQuery<AttendanceRecord[]>({
-    queryKey: ["/api/attendance", fromDate, toDate, empFilter],
+    queryKey: ["/api/attendance/range", fromDate, toDate, empFilter],
+    retry: false,
     queryFn: async () => {
-      const params = new URLSearchParams({ from: fromDate, to: toDate });
-      if (empFilter !== "all") params.set("employee", empFilter);
-      const res = await fetch(apiUrl(`/api/attendance?${params}`), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const params = new URLSearchParams({ from: fromDate, to: toDate });
+        if (empFilter !== "all") params.set("key", empFilter);
+        const res = await fetch(apiUrl(`/api/attendance/range?${params}`), { credentials: "include" });
+        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
+        return await res.json();
+      } catch { return []; }
     },
   });
 
   const { data: summary = [] } = useQuery<AttendanceSummary[]>({
     queryKey: ["/api/attendance/summary", fromDate, toDate],
+    retry: false,
     queryFn: async () => {
-      const params = new URLSearchParams({ from: fromDate, to: toDate });
-      const res = await fetch(apiUrl(`/api/attendance/summary?${params}`), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const params = new URLSearchParams({ from: fromDate, to: toDate });
+        const res = await fetch(apiUrl(`/api/attendance/summary?${params}`), { credentials: "include" });
+        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
+        return await res.json();
+      } catch { return []; }
     },
   });
 
@@ -625,63 +621,8 @@ export default function Staff() {
     },
   });
 
-  const { data: syncLog = [] } = useQuery<any[]>({
-    queryKey: ["/api/attendance/sync-log"],
-    queryFn: async () => {
-      const res = await fetch(apiUrl("/api/attendance/sync-log"), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  // ── mutations ────────────────────────────────────────────────────────────────
-
-  const syncMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/attendance/sync").then(r => r.json()),
-    onSuccess: (data) => {
-      if (data.status === "failed") {
-        toast({ title: "Sync failed", description: data.error, variant: "destructive" });
-      } else {
-        toast({ title: "Sync complete", description: `${data.rowsInserted} new records added, ${data.rowsSkipped} updated.` });
-        queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/attendance/sync-log"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/attendance/employees"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/attendance/summary"] });
-      }
-    },
-    onError: () => toast({ title: "Sync error", variant: "destructive" }),
-  });
-
-  const saveSettingsMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/attendance/settings", {
-      sheetUrl, columnMapping: colMapping, autoSyncHour: parseInt(autoSyncHour),
-    }),
-    onSuccess: () => {
-      toast({ title: "Settings saved" });
-      setSettingsOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/attendance/settings"] });
-    },
-    onError: () => toast({ title: "Save failed", variant: "destructive" }),
-  });
-
-  async function handlePreview() {
-    if (!sheetUrl) return;
-    setPreviewLoading(true);
-    setPreview(null);
-    try {
-      const res = await apiRequest("POST", "/api/attendance/preview", { sheetUrl });
-      setPreview(await res.json());
-    } catch {
-      setPreview({ headers: [], rows: [], error: "Failed to fetch sheet." });
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
-
   // ── derived ───────────────────────────────────────────────────────────────────
 
-  const hasSheet = !!attendanceSettings?.sheetUrl;
-  const lastSync = syncLog[0];
   const totalPresent = summary.reduce((s, e) => s + e.present, 0);
   const totalAbsent  = summary.reduce((s, e) => s + e.absent, 0);
   const totalHours   = summary.reduce((s, e) => s + e.totalHours, 0);
@@ -709,11 +650,10 @@ export default function Staff() {
   const { lastMessage } = useRealtime();
   useEffect(() => {
     if (lastMessage?.type !== "ATTENDANCE_UPDATE") return;
-    queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/staff"] });
+    // Refresh every device-driven view (today board, attendance range/summary, payroll).
     queryClient.invalidateQueries({
-      predicate: (q) =>
-        typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/api/payroll/report/"),
+      predicate: (q) => typeof q.queryKey[0] === "string" &&
+        ((q.queryKey[0] as string).startsWith("/api/attendance/") || (q.queryKey[0] as string).startsWith("/api/payroll/")),
     });
   }, [lastMessage]);
 
@@ -722,31 +662,6 @@ export default function Staff() {
       <Header
         title="Staff"
         description="Attendance, shifts, leaves & payroll"
-        action={
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSettingsOpen(true)}
-              style={{ ...glass, borderRadius: "10px", padding: "6px 14px", fontSize: "13px", fontWeight: 600, color: "#374151", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}
-            >
-              <Settings2 size={14} /><span className="hidden sm:inline">Configure Sheet</span>
-            </button>
-            <button
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending || !hasSheet}
-              style={{
-                borderRadius: "10px", padding: "6px 14px", fontSize: "13px", fontWeight: 600, color: "white",
-                background: hasSheet ? "linear-gradient(135deg,#10b981,#059669)" : "#d1d5db",
-                border: "none", cursor: hasSheet ? "pointer" : "not-allowed",
-                display: "flex", alignItems: "center", gap: "6px",
-                boxShadow: hasSheet ? "0 4px 14px rgba(16,185,129,0.35)" : "none",
-              }}
-            >
-              {syncMutation.isPending
-                ? <><Loader2 size={14} className="animate-spin" /><span className="hidden sm:inline">Syncing…</span></>
-                : <><RefreshCw size={14} /><span className="hidden sm:inline">Sync Now</span></>}
-            </button>
-          </div>
-        }
       />
 
       <main className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-6 space-y-3 sm:space-y-5">
@@ -756,36 +671,8 @@ export default function Staff() {
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 sm:space-y-5">
             <LiveAttendanceBoard />
             <BiometricDevicePanel />
+            <StaffBiometricSetup />
           </motion.div>
-        )}
-
-        {/* No sheet banner */}
-        {activeTab !== "device" && !hasSheet && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-            style={{ background: "linear-gradient(135deg,rgba(245,158,11,0.12),rgba(251,191,36,0.08))", border: "1px solid rgba(245,158,11,0.30)", borderRadius: "16px", padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px" }}
-          >
-            <div style={{ width: 40, height: 40, borderRadius: "10px", background: "rgba(245,158,11,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Link2 size={18} color="#d97706" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontWeight: 600, color: "#92400e", fontSize: 14 }}>Google Sheet not connected</p>
-              <p style={{ fontSize: 12, color: "#a16207", marginTop: 2 }}>Click <strong>Configure Sheet</strong> to paste your biometric export URL and map columns.</p>
-            </div>
-            <button onClick={() => setSettingsOpen(true)} style={{ background: "#d97706", color: "white", border: "none", borderRadius: "8px", padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-              Configure
-            </button>
-          </motion.div>
-        )}
-
-        {/* Last sync chip */}
-        {activeTab !== "device" && lastSync && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
-            <Clock size={12} />
-            Last sync: {new Date(lastSync.syncedAt).toLocaleString()} —&nbsp;
-            {lastSync.status === "success"
-              ? <span style={{ color: "#059669" }}>{lastSync.rowsInserted} added, {lastSync.rowsSkipped} updated</span>
-              : <span style={{ color: "#dc2626" }}>failed — {lastSync.error}</span>}
-          </div>
         )}
 
         {/* Stat strip — shown only on attendance/summary */}
@@ -842,7 +729,10 @@ export default function Staff() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All employees</SelectItem>
-                      {employees.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+                      {roster.map((p: any) => {
+                        const k = p.kind === "staff" ? `sm:${p.id}` : `u:${p.id}`;
+                        return <SelectItem key={k} value={k}>{p.name}{p.role ? ` · ${p.role}` : ""}</SelectItem>;
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -890,7 +780,7 @@ export default function Staff() {
                 <div style={{ textAlign: "center", padding: "60px 0", color: "#9ca3af" }}>
                   <CalendarDays size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
                   <p style={{ fontSize: 14 }}>No attendance records for this period.</p>
-                  {hasSheet && <p style={{ fontSize: 12, marginTop: 4 }}>Click <strong>Sync Now</strong> to import from Google Sheets.</p>}
+                  <p style={{ fontSize: 12, marginTop: 4, color: "#9ca3af" }}>Punches from the fingerprint device appear here automatically.</p>
                 </div>
               ) : (
                 <div style={{ ...glass, borderRadius: 16, overflow: "hidden" }}>
@@ -1103,79 +993,6 @@ export default function Staff() {
         </AnimatePresence>
       </main>
 
-      {/* ── Sheet Settings Dialog ── */}
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Attendance Sheet Settings</DialogTitle>
-            <DialogDescription>Connect your biometric export Google Sheet. Share the sheet as "Anyone with link can view" first.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5 py-2">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">Google Sheet URL</label>
-              <div className="flex gap-2">
-                <input value={sheetUrl} onChange={e => setSheetUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..."
-                  className="flex-1 h-9 rounded-lg border border-gray-200 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-                <button onClick={handlePreview} disabled={!sheetUrl || previewLoading}
-                  className="px-3 h-9 rounded-lg border border-gray-200 text-sm font-medium disabled:opacity-40 hover:bg-gray-50 transition-colors">
-                  {previewLoading ? <Loader2 size={14} className="animate-spin" /> : "Preview"}
-                </button>
-              </div>
-            </div>
-            {preview && (
-              <div className="rounded-lg border p-3 space-y-2">
-                {preview.error ? <p className="text-sm text-red-600">{preview.error}</p> : (
-                  <>
-                    <p className="text-xs font-medium text-gray-500">Found {preview.headers.length} columns. Map them below:</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {preview.headers.map(h => <span key={h} className="text-xs bg-gray-100 px-2 py-0.5 rounded font-mono">{h}</span>)}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="space-y-3">
-              <label className="text-sm font-semibold text-gray-700">Column Mapping</label>
-              <p className="text-xs text-gray-500">Type the exact column header name from your sheet for each field.</p>
-              {([
-                ["employeeName", "Employee Name *"],
-                ["date",         "Date *"],
-                ["punchIn",      "Punch In Time"],
-                ["punchOut",     "Punch Out Time"],
-                ["hoursWorked",  "Total Hours"],
-                ["status",       "Status (Present/Absent)"],
-                ["employeeCode", "Employee Code / ID"],
-              ] as const).map(([field, label]) => (
-                <div key={field} className="flex items-center gap-3">
-                  <span className="text-xs w-44 shrink-0 text-gray-500">{label}</span>
-                  <input value={colMapping[field] ?? ""} onChange={e => setColMapping(m => ({ ...m, [field]: e.target.value }))} placeholder="Column header…"
-                    className="flex-1 h-7 rounded-md border border-gray-200 px-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-                </div>
-              ))}
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">Auto-sync daily at</label>
-              <Select value={autoSyncHour} onValueChange={setAutoSyncHour}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="-1">Disabled (manual only)</SelectItem>
-                  {Array.from({ length: 24 }, (_, i) => (
-                    <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setSettingsOpen(false)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}
-                className="px-4 py-2 rounded-lg bg-[var(--green-700)] hover:bg-[var(--green-800)] text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5">
-                {saveSettingsMutation.isPending && <Loader2 size={13} className="animate-spin" />}
-                Save Settings
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

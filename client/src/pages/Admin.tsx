@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { STAFF_ROLE_OPTIONS, STAFF_PAGES, resolveStaffAllowedPages } from "@shared/pageAccess";
 import {
   Dialog,
   DialogContent,
@@ -140,14 +141,14 @@ function AccountsTab() {
   });
 
   const createStaffMember = useMutation({
-    mutationFn: (data: { name: string; pin: string }) => apiRequest("POST", "/api/staff-members", data),
+    mutationFn: (data: { name: string; pin?: string; designation?: string }) => apiRequest("POST", "/api/staff-members", data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }); setShowAddStaff(false); toast({ title: "Staff member added" }); },
     onError: (err: any) => {
       toast({ title: "Failed to add staff member", description: parseError(err), variant: "destructive" });
     },
   });
   const updateStaffMember = useMutation({
-    mutationFn: ({ id, ...data }: { id: number; name?: string; pin?: string; isActive?: boolean }) =>
+    mutationFn: ({ id, ...data }: { id: number; name?: string; pin?: string; isActive?: boolean; designation?: string }) =>
       apiRequest("PUT", `/api/staff-members/${id}`, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }); setEditStaff(null); toast({ title: "Staff member updated" }); },
     onError: (err: any) => {
@@ -160,6 +161,17 @@ function AccountsTab() {
     onError: (err: any) => {
       toast({ title: "Failed to remove staff member", description: parseError(err), variant: "destructive" });
     },
+  });
+  // Mobile-card (PIN name-card login) on/off toggles.
+  const toggleUserCard = useMutation({
+    mutationFn: ({ id, showOnMobile }: { id: number; showOnMobile: boolean }) => apiRequest("PUT", `/api/users/${id}`, { showOnMobile }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/users"] }),
+    onError: (err: any) => toast({ title: "Failed", description: parseError(err), variant: "destructive" }),
+  });
+  const toggleStaffCard = useMutation({
+    mutationFn: ({ id, showOnMobile }: { id: number; showOnMobile: boolean }) => apiRequest("PUT", `/api/staff-members/${id}`, { showOnMobile }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/staff-members/all"] }),
+    onError: (err: any) => toast({ title: "Failed", description: parseError(err), variant: "destructive" }),
   });
 
   return (
@@ -191,9 +203,27 @@ function AccountsTab() {
                   <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase ${roleColors[user.role] ?? "bg-gray-100 text-gray-800"}`}>
                     {user.role}
                   </span>
+                  {user.username === "admin" && (
+                    <span
+                      className="ml-1.5 px-2 py-0.5 rounded-full text-xs font-bold uppercase bg-amber-200 text-amber-900"
+                      title="Restaurant owner — excluded from payroll & attendance"
+                    >
+                      Owner
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs">Username + Password{(user as any).pin ? " + PIN" : ""}</td>
-                <td className="px-4 py-3 text-gray-400 text-xs">—</td>
+                <td className="px-4 py-3 text-xs">
+                  {user.role === "admin" ? (
+                    <span className="text-gray-300" title="Admins/owner sign in with password only">—</span>
+                  ) : (
+                    <div className="flex items-center gap-2" title={!(user as any).pin ? "Set a PIN for this account first" : "Show as a tap-to-login card on mobile"}>
+                      <Switch checked={!!(user as any).showOnMobile} disabled={!(user as any).pin}
+                        onCheckedChange={(c) => toggleUserCard.mutate({ id: user.id, showOnMobile: c })} />
+                      {!(user as any).pin && <span className="text-[10px] text-gray-400">needs PIN</span>}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                   <button className="text-blue-500 text-xs hover:underline" onClick={() => setEditAccount(user)}>Edit</button>
                   <button
@@ -222,7 +252,11 @@ function AccountsTab() {
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs">PIN only</td>
                 <td className="px-4 py-3 text-xs">
-                  {s.isActive ? <span className="text-green-600">✓ Shown</span> : <span className="text-gray-400">Hidden</span>}
+                  <div className="flex items-center gap-2" title={!s.hasPin ? "Set a PIN for this staff member first" : "Show as a tap-to-login card on mobile"}>
+                    <Switch checked={!!s.showOnMobile} disabled={!s.hasPin}
+                      onCheckedChange={(c) => toggleStaffCard.mutate({ id: s.id, showOnMobile: c })} />
+                    {!s.hasPin && <span className="text-[10px] text-gray-400">needs PIN</span>}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                   <button className="text-blue-500 text-xs hover:underline" onClick={() => setEditStaff(s)}>Edit</button>
@@ -349,13 +383,13 @@ function StaffMemberDialog({
   open: boolean;
   initial: any | null;
   onClose: () => void;
-  onSave: (data: { name: string; pin: string }) => void;
+  onSave: (data: { name: string; pin?: string; designation?: string }) => void;
   isPending?: boolean;
 }) {
-  const form = useForm({ defaultValues: { name: "", pin: "", confirmPin: "" } });
+  const form = useForm({ defaultValues: { name: "", pin: "", confirmPin: "", role: "" } });
   useEffect(() => {
-    if (initial) form.reset({ name: initial.name, pin: "", confirmPin: "" });
-    else form.reset({ name: "", pin: "", confirmPin: "" });
+    if (initial) form.reset({ name: initial.name, pin: "", confirmPin: "", role: initial.designation ?? "" });
+    else form.reset({ name: "", pin: "", confirmPin: "", role: "" });
   }, [initial, open, form]);
 
   return (
@@ -364,15 +398,16 @@ function StaffMemberDialog({
         <DialogHeader>
           <DialogTitle>{initial ? "Edit Staff Member" : "Add Staff Member"}</DialogTitle>
           <DialogDescription>
-            Staff members appear as name cards on the mobile login screen and log in with PIN.
+            With a PIN, they appear as a name card on the mobile login screen. Leave the PIN blank for
+            attendance-only staff (e.g. cleaners) who just clock in by fingerprint — no login card.
           </DialogDescription>
         </DialogHeader>
         <form
           onSubmit={form.handleSubmit((d) => {
-            if (!initial && !d.pin) { form.setError("pin", { message: "PIN is required" }); return; }
             if (d.pin !== d.confirmPin) { form.setError("confirmPin", { message: "PINs don't match" }); return; }
             if (d.pin && (d.pin.length !== 4 && d.pin.length !== 6)) { form.setError("pin", { message: "PIN must be 4 or 6 digits" }); return; }
-            onSave({ name: d.name, pin: d.pin });
+            // Blank PIN = attendance-only (no login card) on add; leaves the PIN unchanged on edit.
+            onSave({ name: d.name, designation: d.role || undefined, ...(d.pin ? { pin: d.pin } : {}) });
           })}
           className="space-y-4"
         >
@@ -381,7 +416,14 @@ function StaffMemberDialog({
             <Input {...form.register("name", { required: true })} placeholder="e.g. Balawant" className="mt-1" />
           </div>
           <div>
-            <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(4 or 6 digits)</span></label>
+            <label className="text-sm font-medium">Role <span className="text-gray-400 font-normal">(sets payroll &amp; default page access)</span></label>
+            <select {...form.register("role")} className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm">
+              <option value="">Select role…</option>
+              {STAFF_ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">PIN <span className="text-gray-400 font-normal">(optional · 4 or 6 digits — blank = attendance-only, no login)</span></label>
             <Input type="password" inputMode="numeric" {...form.register("pin")} placeholder="4 or 6 digits" maxLength={6} className="mt-1" />
             {form.formState.errors.pin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message as string}</p>}
           </div>
@@ -417,12 +459,8 @@ function RolePermissionsTab({
   savingStaff?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <div className="rounded-xl border border-gray-200 p-5 opacity-50">
-        <h3 className="font-semibold text-sm text-gray-700 mb-3">Admin <span className="text-gray-400 font-normal text-xs">— always full access</span></h3>
-        <p className="text-xs text-gray-400">Admin always has access to all pages. This cannot be changed.</p>
-      </div>
-
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Manager — tier-wide page access (left). Admin always has full access (no card needed). */}
       <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-5">
         <h3 className="font-semibold text-sm text-blue-700 mb-4">Manager</h3>
         <div className="space-y-3">
@@ -439,21 +477,92 @@ function RolePermissionsTab({
         <Button className="w-full mt-4" size="sm" onClick={saveManagerPages} disabled={savingManager}>Save Manager Access</Button>
       </div>
 
-      <div className="rounded-xl border border-green-200 bg-green-50/30 p-5">
-        <h3 className="font-semibold text-sm text-green-700 mb-4">Staff</h3>
-        <div className="space-y-3">
-          {PAGE_ACCESS_LIST.map(p => (
-            <div key={p.href} className="flex items-center justify-between">
-              <span className="text-sm text-gray-700">{p.label}</span>
-              <Switch
-                checked={staffPages[p.href] ?? true}
-                onCheckedChange={(checked) => setStaffPages({ ...staffPages, [p.href]: checked })}
-              />
-            </div>
-          ))}
-        </div>
-        <Button className="w-full mt-4" size="sm" onClick={saveStaffPages} disabled={savingStaff}>Save Staff Access</Button>
-      </div>
+      {/* Staff — per person (seeded from their role default; overridable). */}
+      <StaffPageAccessCard />
+    </div>
+  );
+}
+
+// Per-person page access for staff-tier people: pick someone → toggle their pages → Save, or
+// "Apply to all <role>" to copy this person's pages to everyone who shares their role.
+function StaffPageAccessCard() {
+  const { toast } = useToast();
+  const { data } = useQuery<{ staffPageAccess: Record<string, string[]>; roster: { key: string; name: string; role: string | null }[] }>({
+    queryKey: ["/api/settings/staff-page-access"],
+  });
+  const roster = data?.roster ?? [];
+  const map = data?.staffPageAccess ?? {};
+  const [selectedKey, setSelectedKey] = useState("");
+  const [pages, setPages] = useState<Record<string, boolean>>({});
+  const selected = roster.find(r => r.key === selectedKey);
+
+  const onSelect = (key: string) => {
+    setSelectedKey(key);
+    const r = roster.find(x => x.key === key);
+    if (!r) { setPages({}); return; }
+    const allowed = new Set(resolveStaffAllowedPages(r.key, r.role, map));
+    setPages(Object.fromEntries(STAFF_PAGES.map(p => [p.href, allowed.has(p.href)])));
+  };
+
+  const allowedHrefs = () => STAFF_PAGES.filter(p => pages[p.href]).map(p => p.href);
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/settings/staff-page-access"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+  };
+
+  const save = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/settings/staff-page-access", { key: selectedKey, pages: allowedHrefs() }),
+    onSuccess: () => { invalidate(); toast({ title: "Page access saved" }); },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+  const applyRole = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/settings/staff-page-access", { key: selectedKey, pages: allowedHrefs() }); // persist on-screen first
+      return apiRequest("POST", "/api/settings/staff-page-access/apply-role", { sourceKey: selectedKey });
+    },
+    onSuccess: async (res) => { const j = await res.json().catch(() => ({})); invalidate(); toast({ title: `Applied to ${j.appliedTo ?? "all"} ${selected?.role ?? ""} staff` }); },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const allOn = STAFF_PAGES.every(p => pages[p.href]);
+
+  return (
+    <div className="rounded-xl border border-green-200 bg-green-50/30 p-5">
+      <h3 className="font-semibold text-sm text-green-700 mb-1">Staff <span className="text-gray-400 font-normal text-xs">— per person</span></h3>
+      <p className="text-xs text-gray-500 mb-3">Pick a staff member and choose the pages they can open. My Attendance is always visible.</p>
+      <select value={selectedKey} onChange={e => onSelect(e.target.value)}
+        className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm mb-3">
+        <option value="">Select staff member…</option>
+        {roster.map(r => <option key={r.key} value={r.key}>{r.name}{r.role ? ` — ${r.role}` : ""}</option>)}
+      </select>
+      {selected ? (
+        <>
+          <div className="flex justify-end mb-2">
+            <button type="button" className="text-xs text-blue-600 hover:underline"
+              onClick={() => setPages(Object.fromEntries(STAFF_PAGES.map(p => [p.href, !allOn])))}>
+              {allOn ? "Clear all" : "Select all"}
+            </button>
+          </div>
+          <div className="space-y-3">
+            {STAFF_PAGES.map(p => (
+              <div key={p.href} className="flex items-center justify-between">
+                <span className="text-sm text-gray-700">{p.label}</span>
+                <Switch checked={!!pages[p.href]} onCheckedChange={(c) => setPages(prev => ({ ...prev, [p.href]: c }))} />
+              </div>
+            ))}
+          </div>
+          <Button className="w-full mt-4" size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+          {selected.role && (
+            <Button variant="outline" className="w-full mt-2" size="sm" onClick={() => applyRole.mutate()} disabled={applyRole.isPending}>
+              {applyRole.isPending ? "Applying…" : `Apply to all ${selected.role}`}
+            </Button>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-gray-400 italic py-4 text-center">Select a staff member to set their pages.</p>
+      )}
     </div>
   );
 }

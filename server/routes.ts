@@ -6,6 +6,7 @@ import { spawn } from "child_process";
 import { storage } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertOrderSchema } from "@shared/schema";
+import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -114,7 +115,7 @@ passport.deserializeUser(async (key: any, done) => {
   try {
     if (typeof key === "string" && key.startsWith("sm:")) {
       const sm = await storage.getStaffMember(Number(key.slice(3)));
-      done(null, sm ? { id: sm.id, username: sm.name, role: "staff", _isStaffMember: true } : false);
+      done(null, sm ? { id: sm.id, username: sm.name, role: "staff", designation: sm.designation ?? null, _isStaffMember: true } : false);
     } else {
       const user = await storage.getUser(Number(key));
       done(null, user || false);
@@ -406,6 +407,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Unified mobile name-card PIN login — staff members OR non-admin accounts ──
+  // Body { kind:"staff"|"user", id, pin }. An account logs in as its real role; admin is never card-eligible.
+  app.post("/api/auth/card-login", staffPinLimiter, async (req, res, next) => {
+    try {
+      const { kind, id, pin } = req.body as { kind?: string; id?: number; pin?: string };
+      if (!id || !pin) return res.status(400).json({ message: "id and pin required" });
+
+      if (kind === "user") {
+        const user = await storage.getUser(Number(id));
+        if (!user || !user.showOnMobile || user.role === "admin") return res.status(401).json({ message: "Card login not available" });
+        if (!user.pin) return res.status(401).json({ message: "No PIN set for this account" });
+        if (user.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
+        return req.logIn(user as any, (err) => {
+          if (err) return next(err);
+          const { password, ...safe } = user as any;
+          res.json(safe);
+        });
+      }
+
+      // default: staff member
+      const sm = await storage.getStaffMember(Number(id));
+      if (!sm || !sm.isActive || !sm.showOnMobile) return res.status(401).json({ message: "Card login not available" });
+      if (!sm.pin) return res.status(401).json({ message: "No PIN set for this staff member" });
+      if (sm.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
+      const staffUser = { id: sm.id, username: sm.name, role: "staff", designation: sm.designation ?? null, _isStaffMember: true };
+      req.logIn(staffUser as any, (err) => {
+        if (err) return next(err);
+        res.json({ id: sm.id, username: sm.name, role: "staff" });
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated()) return res.status(200).json(null);
     const user = req.user as any;
@@ -527,20 +562,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Staff Members — public selector list (no auth) ───────────────────────────
+  // Public mobile-login cards: staff members + NON-ADMIN accounts that have `showOnMobile` ON and a PIN.
+  // Each card carries `kind` so the PIN login (/api/auth/card-login) routes to the right path.
   app.get("/api/staff-members", async (_req, res) => {
     try {
-      const all = await storage.getStaffMembers();
-      res.json(all.filter(s => s.isActive).map(({ id, name }) => ({ id, name })));
+      const members = await storage.getStaffMembers();
+      const allUsers = await storage.getUsers();
+      const cards = [
+        ...members.filter(s => s.isActive && s.pin && s.showOnMobile)
+          .map(s => ({ kind: "staff" as const, id: s.id, name: s.name, designation: s.designation ?? null })),
+        ...allUsers.filter(u => u.pin && u.showOnMobile && u.role !== "admin")
+          .map(u => ({ kind: "user" as const, id: u.id, name: u.username, designation: u.role })),
+      ];
+      res.json(cards);
     } catch {
-      res.status(500).json({ message: "Failed to fetch staff members" });
+      res.status(500).json({ message: "Failed to fetch login cards" });
     }
   });
 
-  // ── Staff Members CRUD (admin only) ──────────────────────────────────────────
+  // ── Staff Members CRUD (admin only) — the unified employee record ─────────────
+  // Shapes a staff member for the admin UI (includes HR fields; hides raw PIN).
+  const shapeStaffMember = (sm: any) => ({
+    id: sm.id, name: sm.name, hasPin: !!sm.pin, designation: sm.designation ?? null,
+    biometricId: sm.biometricId ?? null, monthlySalary: sm.monthlySalary ?? "0",
+    excludeFromPayroll: !!sm.excludeFromPayroll, showOnMobile: !!sm.showOnMobile,
+    isActive: sm.isActive, createdAt: sm.createdAt,
+  });
+
   app.get("/api/staff-members/all", requireAdmin, async (_req, res) => {
     try {
       const all = await storage.getStaffMembers();
-      res.json(all.map(({ id, name, pin, isActive, createdAt }) => ({ id, name, hasPin: !!pin, isActive, createdAt })));
+      res.json(all.map(shapeStaffMember));
     } catch {
       res.status(500).json({ message: "Failed to fetch staff members" });
     }
@@ -548,11 +600,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/staff-members", requireAdmin, async (req, res) => {
     try {
-      const { name, pin } = req.body;
+      const { name, pin, designation, biometricId, monthlySalary, excludeFromPayroll, showOnMobile } = req.body;
       if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
       if (pin && !/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ message: "PIN must be 4–6 digits" });
-      const sm = await storage.createStaffMember({ name: name.trim(), pin: pin ? String(pin) : null, isActive: true });
-      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+      const sm = await storage.createStaffMember({
+        name: name.trim(),
+        pin: pin ? String(pin) : null,
+        designation: designation?.trim() || null,
+        biometricId: biometricId != null && String(biometricId).trim() !== "" ? String(biometricId).trim() : null,
+        monthlySalary: monthlySalary != null && String(monthlySalary) !== "" ? String(monthlySalary) : "0",
+        excludeFromPayroll: !!excludeFromPayroll,
+        showOnMobile: showOnMobile === undefined ? true : !!showOnMobile,
+        isActive: true,
+      });
+      res.json(shapeStaffMember(sm));
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
@@ -561,7 +622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/staff-members/:id", requireAdmin, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { name, pin, isActive } = req.body;
+      const { name, pin, isActive, designation, biometricId, monthlySalary, excludeFromPayroll, showOnMobile } = req.body;
       if (pin !== undefined && pin !== null && pin !== "" && !/^\d{4,6}$/.test(String(pin))) {
         return res.status(400).json({ message: "PIN must be 4–6 digits" });
       }
@@ -569,8 +630,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (name !== undefined) updates.name = name.trim();
       if (pin !== undefined) updates.pin = pin === "" ? null : String(pin);
       if (isActive !== undefined) updates.isActive = isActive;
+      if (designation !== undefined) updates.designation = designation?.trim() || null;
+      if (biometricId !== undefined) updates.biometricId = String(biometricId).trim() || null;
+      if (monthlySalary !== undefined) updates.monthlySalary = String(monthlySalary) === "" ? "0" : String(monthlySalary);
+      if (excludeFromPayroll !== undefined) updates.excludeFromPayroll = !!excludeFromPayroll;
+      if (showOnMobile !== undefined) updates.showOnMobile = !!showOnMobile;
       const sm = await storage.updateStaffMember(id, updates);
-      res.json({ id: sm.id, name: sm.name, hasPin: !!sm.pin, isActive: sm.isActive, createdAt: sm.createdAt });
+      res.json(shapeStaffMember(sm));
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
@@ -609,6 +675,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { staffAllowedPages } = req.body;
     const updated = await saveSettings({ staffAllowedPages: staffAllowedPages ?? null });
     res.json({ staffAllowedPages: updated.staffAllowedPages });
+  });
+
+  // ── Per-person page access (staff tier) ───────────────────────────────────────
+  // Roster of staff-tier people for the picker: every staff member + staff-role accounts.
+  async function staffPageRoster(): Promise<{ key: string; name: string; role: string | null }[]> {
+    const members = await storage.getStaffMembers();
+    const allUsers = await storage.getUsers();
+    return [
+      ...members.map(m => ({ key: personPageKey("staff", m.id), name: m.name, role: m.designation ?? null })),
+      ...allUsers.filter(u => u.role === "staff").map(u => ({ key: personPageKey("user", u.id), name: u.username, role: "staff" })),
+    ];
+  }
+
+  app.get("/api/settings/staff-page-access", requireAuth, async (_req, res) => {
+    try {
+      res.json({ staffPageAccess: getSettings().staffPageAccess ?? {}, roster: await staffPageRoster() });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // Set one person's allowed pages.
+  app.post("/api/settings/staff-page-access", requireAdmin, async (req, res) => {
+    try {
+      const { key, pages } = req.body as { key: string; pages: string[] };
+      if (!key) return res.status(400).json({ message: "key required" });
+      const map = { ...(getSettings().staffPageAccess ?? {}) };
+      map[key] = Array.isArray(pages) ? pages : [];
+      const updated = await saveSettings({ staffPageAccess: map });
+      res.json({ staffPageAccess: updated.staffPageAccess });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // Copy the source person's resolved pages to everyone who shares their role.
+  app.post("/api/settings/staff-page-access/apply-role", requireAdmin, async (req, res) => {
+    try {
+      const { sourceKey } = req.body as { sourceKey: string };
+      const roster = await staffPageRoster();
+      const source = roster.find(r => r.key === sourceKey);
+      if (!source) return res.status(404).json({ message: "Person not found" });
+      const map = { ...(getSettings().staffPageAccess ?? {}) };
+      const sourcePages = resolveStaffAllowedPages(sourceKey, source.role, map);
+      const role = (source.role ?? "").toLowerCase();
+      let appliedTo = 0;
+      for (const r of roster) {
+        if ((r.role ?? "").toLowerCase() === role) { map[r.key] = [...sourcePages]; appliedTo++; }
+      }
+      const updated = await saveSettings({ staffPageAccess: map });
+      res.json({ staffPageAccess: updated.staffPageAccess, appliedTo });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   // ── User Management (Admin only) ──────────────────────────────────────────────
@@ -651,7 +765,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const currentUser = req.user as any;
-      const { role, username, password, pin } = req.body;
+      const { role, username, password, pin, showOnMobile } = req.body;
       const updateData: any = {};
       if (role) updateData.role = role;
       if (pin !== undefined) {
@@ -660,6 +774,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         updateData.pin = pin ? String(pin) : null;
       }
+      // Admin/owner accounts may never appear as a mobile card (password-only).
+      if (showOnMobile !== undefined) updateData.showOnMobile = !!showOnMobile && (updateData.role ?? (await storage.getUser(id))?.role) !== "admin";
       if (username) {
         const existing = await storage.getUserByUsername(username.trim());
         if (existing && existing.id !== id) return res.status(409).json({ message: "Username already taken" });
@@ -2623,6 +2739,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
+  // GET /api/attendance/range?from&to&key= — device attendance rows for the unified roster.
+  app.get("/api/attendance/range", requireAuth, async (req, res) => {
+    try {
+      const { from, to, key } = req.query as { from?: string; to?: string; key?: string };
+      res.json(await storage.getAttendanceRange({ from, to, key: key && key !== "all" ? key : undefined }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/summary?from&to — per-person device attendance summary (unified roster).
+  app.get("/api/attendance/summary", requireAuth, async (req, res) => {
+    try {
+      const { from, to } = req.query as { from?: string; to?: string };
+      res.json(await storage.getAttendanceSummary({ from, to }));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
   // GET /api/attendance/report?month=YYYY-MM
   app.get("/api/attendance/report", requireAuth, async (req, res) => {
     try {
@@ -2726,21 +2858,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/attendance/me?month=YYYY-MM — the logged-in user's OWN records only
+  // GET /api/attendance/me?month=YYYY-MM — the logged-in person's OWN records only.
+  // `users` and `staffMembers` share the integer id space, so disambiguate by `_isStaffMember`
+  // to avoid a cross-table IDOR (a staff member reading a user's records with the same id).
   app.get("/api/attendance/me", requireAuth, async (req, res) => {
     try {
-      const userId = (req.user as any)?.id;
+      const u = req.user as any;
       const month = (req.query.month as string) || undefined;
-      res.json(await storage.getAttendance({ userId, month }));
+      const filter = u?._isStaffMember ? { staffMemberId: u.id, month } : { userId: u.id, month };
+      res.json(await storage.getAttendance(filter));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/payroll/me/:month — the logged-in user's OWN payroll row only
+  // GET /api/payroll/me/:month — the logged-in person's OWN payroll row only (kind-disambiguated).
   app.get("/api/payroll/me/:month", requireAuth, async (req, res) => {
     try {
-      const userId = (req.user as any)?.id;
+      const u = req.user as any;
       const all = await storage.getPayrollReport(req.params.month);
-      res.json(all.find((r: any) => r.userId === userId) ?? null);
+      const row = all.find((r: any) => u?._isStaffMember
+        ? r.kind === "staff" && r.staffMemberId === u.id
+        : r.kind === "user"  && r.userId === u.id);
+      res.json(row ?? null);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -2843,6 +2981,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteShiftAssignment(parseInt(req.params.id));
       res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/payroll/people — the unified payroll roster (accounts {manager,staff} + staff members;
+  // admins/owner excluded). Used by the Staff "Biometric Setup" annotate-only list.
+  app.get("/api/payroll/people", requireAuth, async (_req, res) => {
+    try { res.json(await storage.getPayrollPeople()); }
+    catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/staff/accounts — login accounts with role manager/staff (owner/admins excluded).
+  // For account-keyed tabs (Shifts roster, Leaves apply) that don't yet support staff members.
+  app.get("/api/staff/accounts", requireAuth, async (_req, res) => {
+    try {
+      const all = await storage.getUsers();
+      res.json(all.filter(u => u.role === "manager" || u.role === "staff").map(u => ({ id: u.id, username: u.username, role: u.role })));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
