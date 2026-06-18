@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { canAccess, ROLE_SAFE_REDIRECT } from "@/lib/routePermissions";
+import { useAllowedPages } from "@/hooks/useAllowedPages";
+import { STAFF_PAGE_HREFS } from "@shared/pageAccess";
 
 interface RouteGuardProps {
   children: React.ReactNode;
@@ -21,15 +23,29 @@ interface RouteGuardProps {
 export function RouteGuard({ children }: RouteGuardProps) {
   const [location, navigate] = useLocation();
   const { activeRole } = useActiveRoleContext();
+  const allowedPages = useAllowedPages(); // Set for staff-tier, null for admin/manager
 
-  const allowed = canAccess(location, activeRole);
+  const roleAllowed = canAccess(location, activeRole);
+
+  // Per-person page access for staff-tier people. Only the configurable staff pages are gated;
+  // My Attendance and any unknown path pass. Root "/" resolves to Tables.
+  const pageAllowed = (() => {
+    if (allowedPages == null) return true; // admin/manager — not restricted by this layer
+    if (location === "/my-attendance") return true;
+    const base = location === "/" ? "/tables" : "/" + (location.split("/")[1] ?? "");
+    if (!STAFF_PAGE_HREFS.includes(base)) return true; // non-configurable path — leave to canAccess
+    return allowedPages.has(base);
+  })();
+
+  const allowed = roleAllowed && pageAllowed;
 
   useEffect(() => {
     if (!allowed) {
-      const safePath = ROLE_SAFE_REDIRECT[activeRole];
+      // Staff-tier always lands on My Attendance (it's the one page they can always see).
+      const safePath = allowedPages != null ? "/my-attendance" : ROLE_SAFE_REDIRECT[activeRole];
       navigate(safePath, { replace: true });
     }
-  }, [location, activeRole, allowed]);
+  }, [location, activeRole, allowed, allowedPages]);
 
   // Block render immediately — don't let restricted content flash
   if (!allowed) return null;

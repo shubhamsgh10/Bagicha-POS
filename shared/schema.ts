@@ -9,6 +9,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: text("role").notNull().default("staff"),
   pin: text("pin"),
+  showOnMobile: boolean("show_on_mobile").notNull().default(false), // appear as a PIN name-card on mobile login
   totpSecret: text("totp_secret"),
   totpEnabled: boolean("totp_enabled").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -396,7 +397,8 @@ export const staffProfiles = pgTable("staff_profiles", {
 
 export const attendance = pgTable("attendance", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id"),                 // system-account attendance (legacy/manual). Nullable…
+  staffMemberId: integer("staff_member_id"),  // …exactly one of userId / staffMemberId is set per row
   date: text("date").notNull(),        // "YYYY-MM-DD"
   clockIn: text("clock_in"),           // "HH:MM" or "HH:MM AM/PM"
   clockOut: text("clock_out"),         // "HH:MM" or "HH:MM AM/PM"
@@ -668,6 +670,12 @@ export const staffMembers = pgTable("staff_members", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   pin: text("pin"),
+  // ── HR / payroll / biometric (the staff member is now the employee record) ──
+  designation: text("designation"),                                                  // free-text role: Service/Cook/Manager/Cleaning/…
+  biometricId: text("biometric_id"),                                                 // device User ID — links punches to this person
+  monthlySalary: decimal("monthly_salary", { precision: 10, scale: 2 }).notNull().default("0"),
+  excludeFromPayroll: boolean("exclude_from_payroll").notNull().default(false),
+  showOnMobile: boolean("show_on_mobile").notNull().default(true), // appear as a PIN name-card on mobile login
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

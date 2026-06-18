@@ -13,7 +13,7 @@ import pizzaBgImage from "@assets/Wood-Fire-Pizza.png";
 
 /* ─── Types ─── */
 interface LoginProps  { onLoginSuccess: () => void; }
-interface StaffMember { id: number; name: string; }
+interface StaffMember { id: number; name: string; kind?: "staff" | "user"; designation?: string | null; }
 interface DeviceCtx  { isLocalNetwork: boolean; isMobile: boolean; }
 
 const loginSchema = z.object({
@@ -220,7 +220,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
     if (!selected) return;
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/auth/staff-pin-login", { staffId: selected.id, pin });
+      await apiRequest("POST", "/api/auth/card-login", { kind: selected.kind ?? "staff", id: selected.id, pin });
       onLoginSuccess();
     } catch (err: any) {
       setShake(true);

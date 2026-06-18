@@ -26,8 +26,8 @@ export interface InboundPunch {
 export interface DeviceIngestResult {
   punches: number;                                   // punches received
   imported: number;                                  // attendance rows written/updated
-  unmatched: string[];                               // biometricIds with no staff profile
-  affected: { userId: number; date: string }[];      // for the realtime broadcast
+  unmatched: string[];                               // biometricIds with no staff member / profile
+  affected: { userId?: number; staffMemberId?: number; date: string }[]; // for the realtime broadcast
   status: "success" | "partial" | "failed";
   error?: string;
 }
@@ -64,39 +64,51 @@ export async function ingestDevicePunches(
 
   const standardHours = getSettings().attendanceDevice?.standardHours ?? 8;
 
-  // biometricId (device user-ID) -> userId
+  // biometricId (device user-ID) -> employee. Staff members are the primary employee
+  // record; system-account profiles remain a fallback for any legacy biometric setup.
+  const members = await storage.getStaffMembers();
+  const smBio = new Map<string, number>();          // biometricId -> staffMemberId
+  for (const m of members) {
+    if (m.biometricId != null && String(m.biometricId).trim() !== "") {
+      smBio.set(String(m.biometricId).trim(), m.id);
+    }
+  }
   const profiles = await storage.getStaffProfiles();
-  const bioMap = new Map<string, number>();
+  const userBio = new Map<string, number>();        // biometricId -> userId (legacy fallback)
   for (const p of profiles) {
     if (p.biometricId != null && String(p.biometricId).trim() !== "") {
-      bioMap.set(String(p.biometricId).trim(), p.userId);
+      userBio.set(String(p.biometricId).trim(), p.userId);
     }
   }
 
-  // Group all punch times by (userId, date)
-  const groups = new Map<string, { userId: number; date: string; times: string[] }>();
+  // Group all punch times by the matched employee (staff member OR legacy user) + date.
+  const groups = new Map<string, { staffMemberId?: number; userId?: number; date: string; times: string[] }>();
   const unmatched = new Set<string>();
 
   for (const punch of punches) {
     const bio = String(punch.biometricId ?? "").trim();
     if (!bio) continue;
-    const userId = bioMap.get(bio);
-    if (userId == null) { unmatched.add(bio); continue; }
     const split = splitPunch(punch);
     if (!split) continue;
-    const key = `${userId}|${split.date}`;
-    if (!groups.has(key)) groups.set(key, { userId, date: split.date, times: [] });
+    let key: string;
+    let who: { staffMemberId?: number; userId?: number };
+    if (smBio.has(bio))        { who = { staffMemberId: smBio.get(bio)! }; key = `s${who.staffMemberId}|${split.date}`; }
+    else if (userBio.has(bio)) { who = { userId: userBio.get(bio)! };       key = `u${who.userId}|${split.date}`; }
+    else { unmatched.add(bio); continue; }
+    if (!groups.has(key)) groups.set(key, { ...who, date: split.date, times: [] });
     groups.get(key)!.times.push(split.time);
   }
 
   try {
-    for (const { userId, date, times } of Array.from(groups.values())) {
+    for (const { staffMemberId, userId, date, times } of Array.from(groups.values())) {
       // Merge with the existing row so incremental / live single punches stay correct.
-      const [existing] = await storage.getAttendance({ userId, date });
+      const [existing] = staffMemberId != null
+        ? await storage.getAttendance({ staffMemberId, date })
+        : await storage.getAttendance({ userId, date });
 
       // Respect a manual admin override (markedBy != null) — device only fills biometric rows.
       if (existing && existing.markedBy != null) {
-        result.affected.push({ userId, date });
+        result.affected.push({ staffMemberId, userId, date });
         continue;
       }
 
@@ -123,15 +135,14 @@ export async function ingestDevicePunches(
         }
       }
 
-      await storage.upsertAttendance(userId, date, {
-        clockIn,
-        clockOut,
-        status,
-        workingHours,
-        overtimeHours,
-      });
+      const row = { clockIn, clockOut, status, workingHours, overtimeHours };
+      if (staffMemberId != null) {
+        await storage.upsertAttendanceForStaffMember(staffMemberId, date, row);
+      } else {
+        await storage.upsertAttendance(userId!, date, row);
+      }
       result.imported++;
-      result.affected.push({ userId, date });
+      result.affected.push({ staffMemberId, userId, date });
     }
   } catch (e: any) {
     result.status = "failed";

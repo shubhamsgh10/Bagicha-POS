@@ -92,6 +92,9 @@ export interface RestaurantSettings {
   printSettings: PrintConfigSettings;
   managerAllowedPages: string[] | null; // null = all pages allowed
   staffAllowedPages: string[] | null;   // null = all pages allowed
+  // Per-person page visibility for staff-tier people. Key "sm:<id>" (staff member) / "u:<id>" (staff
+  // account) → allowed page hrefs. Absent key falls back to the person's role default (shared/pageAccess).
+  staffPageAccess: Record<string, string[]>;
   cartPermissions: CartPermissions;
   billCounter: number;
   kotCounter: number;
@@ -151,6 +154,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   printSettings: DEFAULT_PRINT_SETTINGS,
   managerAllowedPages: null,
   staffAllowedPages: null,
+  staffPageAccess: {},
   cartPermissions: DEFAULT_CART_PERMISSIONS,
   billCounter: 0,
   kotCounter: 0,

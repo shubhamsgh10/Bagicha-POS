@@ -4,6 +4,7 @@ import { LayoutGrid, History, CreditCard, Monitor } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { toPosRole } from "@/hooks/useRole";
+import { useAllowedPages } from "@/hooks/useAllowedPages";
 
 const NAV_ITEMS = [
   { href: "/tables",      icon: LayoutGrid, label: "Tables"      },
@@ -26,10 +27,11 @@ export function BottomNav() {
     staleTime: 30_000,
   });
 
+  const allowedPages = useAllowedPages(); // per-person set for staff tier, null for admin/manager
   const visibleItems = NAV_ITEMS.filter(item => {
     const posRole = toPosRole(activeRole);
-    if (posRole === "staff" && settings?.staffAllowedPages != null) {
-      return (settings.staffAllowedPages as string[]).includes(item.href);
+    if (posRole === "staff") {
+      return allowedPages ? allowedPages.has(item.href) : false;
     }
     if (posRole === "manager" && settings?.managerAllowedPages != null) {
       return (settings.managerAllowedPages as string[]).includes(item.href);

@@ -13,6 +13,23 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
+import { personPageKey } from "@shared/pageAccess";
+
+// An attendance row resolved to whoever it belongs to — a system account (`user`)
+// OR a staff member (`staffMember`). `displayName` is the unified label for either.
+export type AttendanceWho = Attendance & { user?: User; staffMember?: StaffMember; displayName: string };
+
+// A payroll-eligible person, pulled from EITHER a system account (`user`, role manager/staff —
+// admins/owner excluded) OR a `staffMember`. Names are owned by the Admin page; the HR fields
+// (role/biometricId/monthlySalary) are annotated on the Staff page and stored per-kind.
+export type PayrollPerson = {
+  kind: "user" | "staff";
+  id: number;
+  name: string;
+  role: string | null;          // job designation (Manager/Cook/…)
+  biometricId: string | null;
+  monthlySalary: string;
+};
 
 export interface IStorage {
   // Users
@@ -120,9 +137,10 @@ export interface IStorage {
   getStaffProfiles(): Promise<(StaffProfile & { user: User })[]>;
   getStaffProfile(userId: number): Promise<StaffProfile | null>;
   upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile>;
-  getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]>;
-  getTodayAttendance(): Promise<(Attendance & { user: User })[]>;
+  getAttendance(filters: { userId?: number; staffMemberId?: number; date?: string; month?: string }): Promise<AttendanceWho[]>;
+  getTodayAttendance(): Promise<AttendanceWho[]>;
   upsertAttendance(userId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
+  upsertAttendanceForStaffMember(staffMemberId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
   updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance>;
   getAttendanceReport(month: string): Promise<any[]>;
   getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]>;
@@ -134,7 +152,10 @@ export interface IStorage {
   getRoster(week: string): Promise<any[]>;
   upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
   deleteShiftAssignment(id: number): Promise<void>;
+  getPayrollPeople(): Promise<PayrollPerson[]>;
   getPayrollReport(month: string): Promise<any[]>;
+  getAttendanceRange(filters: { from?: string; to?: string; key?: string }): Promise<any[]>;
+  getAttendanceSummary(filters: { from?: string; to?: string }): Promise<any[]>;
   // Staff Members (separate from system users)
   getStaffMembers(): Promise<StaffMember[]>;
   getStaffMember(id: number): Promise<StaffMember | undefined>;
@@ -780,20 +801,29 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getAttendance(filters: { userId?: number; date?: string; month?: string }): Promise<(Attendance & { user: User })[]> {
+  async getAttendance(filters: { userId?: number; staffMemberId?: number; date?: string; month?: string }): Promise<AttendanceWho[]> {
     const conditions: any[] = [];
-    if (filters.userId) conditions.push(eq(attendance.userId, filters.userId));
-    if (filters.date)   conditions.push(eq(attendance.date, filters.date));
-    if (filters.month)  conditions.push(sql`${attendance.date} LIKE ${filters.month + '-%'}`);
+    if (filters.userId)        conditions.push(eq(attendance.userId, filters.userId));
+    if (filters.staffMemberId) conditions.push(eq(attendance.staffMemberId, filters.staffMemberId));
+    if (filters.date)          conditions.push(eq(attendance.date, filters.date));
+    if (filters.month)         conditions.push(sql`${attendance.date} LIKE ${filters.month + '-%'}`);
     const rows = conditions.length
       ? await db.select().from(attendance).where(and(...conditions)).orderBy(desc(attendance.date))
       : await db.select().from(attendance).orderBy(desc(attendance.date));
     const allUsers = await db.select().from(users);
     const userMap = new Map(allUsers.map(u => [u.id, u]));
-    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+    const allStaff = await db.select().from(staffMembers);
+    const staffMap = new Map(allStaff.map(s => [s.id, s]));
+    return rows
+      .map(r => {
+        const user = r.userId != null ? userMap.get(r.userId) : undefined;
+        const staffMember = r.staffMemberId != null ? staffMap.get(r.staffMemberId) : undefined;
+        return { ...r, user, staffMember, displayName: user?.username ?? staffMember?.name ?? "Unknown" };
+      })
+      .filter(r => r.user || r.staffMember);
   }
 
-  async getTodayAttendance(): Promise<(Attendance & { user: User })[]> {
+  async getTodayAttendance(): Promise<AttendanceWho[]> {
     const today = new Date().toISOString().split('T')[0];
     return this.getAttendance({ date: today });
   }
@@ -806,6 +836,17 @@ export class DatabaseStorage implements IStorage {
       return updated;
     }
     const [created] = await db.insert(attendance).values({ userId, date, status: "present", ...data }).returning();
+    return created;
+  }
+
+  async upsertAttendanceForStaffMember(staffMemberId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance> {
+    const [existing] = await db.select().from(attendance)
+      .where(and(eq(attendance.staffMemberId, staffMemberId), eq(attendance.date, date)));
+    if (existing) {
+      const [updated] = await db.update(attendance).set(data).where(eq(attendance.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(attendance).values({ staffMemberId, date, status: "present", ...data }).returning();
     return created;
   }
 
@@ -911,6 +952,34 @@ export class DatabaseStorage implements IStorage {
     await db.delete(shiftAssignments).where(eq(shiftAssignments.id, id));
   }
 
+  // The payroll-eligible roster, pulled from BOTH systems and created in Admin:
+  //  • `users` with role manager/staff (admins + owner excluded), HR fields from `staffProfiles`
+  //  • `staffMembers` (PIN cards + attendance-only), skipping `excludeFromPayroll`
+  async getPayrollPeople(): Promise<PayrollPerson[]> {
+    const allUsers = await db.select().from(users);
+    const profiles = await db.select().from(staffProfiles);
+    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    const userPeople: PayrollPerson[] = allUsers
+      .filter(u => u.role === 'manager' || u.role === 'staff')
+      .map(u => {
+        const p = profileMap.get(u.id);
+        return {
+          kind: 'user', id: u.id, name: u.username,
+          role: p?.designation ?? null, biometricId: p?.biometricId ?? null,
+          monthlySalary: p?.monthlySalary ?? '0',
+        };
+      });
+    const members = await db.select().from(staffMembers);
+    const memberPeople: PayrollPerson[] = members
+      .filter(m => !m.excludeFromPayroll)
+      .map(m => ({
+        kind: 'staff', id: m.id, name: m.name,
+        role: m.designation ?? null, biometricId: m.biometricId ?? null,
+        monthlySalary: m.monthlySalary ?? '0',
+      }));
+    return [...userPeople, ...memberPeople];
+  }
+
   async getPayrollReport(month: string): Promise<any[]> {
     const [year, mon] = month.split('-').map(Number);
     const daysInMonth = new Date(year, mon, 0).getDate();
@@ -919,20 +988,17 @@ export class DatabaseStorage implements IStorage {
       if (new Date(year, mon - 1, d).getDay() === 0) sundays++;
     }
     const workingDays = daysInMonth - sundays;
-    const allUsers = await db.select().from(users);
-    const profiles = await db.select().from(staffProfiles);
-    const profileMap = new Map(profiles.map(p => [p.userId, p]));
+    const people = await this.getPayrollPeople();
     const monthAttendance = await db.select().from(attendance)
       .where(sql`${attendance.date} LIKE ${month + '-%'}`);
-    const monthLeaves = await db.select().from(leaves)
-      .where(and(sql`${leaves.startDate} LIKE ${month + '-%'}`, eq(leaves.status, 'approved')));
-    return allUsers.map(u => {
-      const profile = profileMap.get(u.id);
-      const salary = parseFloat(profile?.monthlySalary ?? '0');
-      const records = monthAttendance.filter(a => a.userId === u.id);
+    return people.map(person => {
+      const salary = parseFloat(person.monthlySalary ?? '0');
+      const records = person.kind === 'user'
+        ? monthAttendance.filter(a => a.userId === person.id)
+        : monthAttendance.filter(a => a.staffMemberId === person.id);
       const daysPresent = records.filter(a => a.status === 'present').length;
       const halfDays = records.filter(a => a.status === 'half-day').length;
-      const approvedLeaves = monthLeaves.filter(l => l.userId === u.id).reduce((s, l) => s + l.totalDays, 0);
+      const approvedLeaves = 0; // leave is modelled per-user only; not counted in the unified roster yet
       const paidDays = daysPresent + (halfDays * 0.5) + approvedLeaves;
       const absentDays = Math.max(0, workingDays - paidDays);
       const dailyRate = workingDays > 0 ? salary / workingDays : 0;
@@ -941,13 +1007,69 @@ export class DatabaseStorage implements IStorage {
       const overtimePay = overtimeHours * (dailyRate / 8);
       const netSalary = salary - deductions + overtimePay;
       return {
-        userId: u.id, username: u.username, role: u.role,
+        kind: person.kind,
+        userId: person.kind === 'user' ? person.id : undefined,
+        staffMemberId: person.kind === 'staff' ? person.id : undefined,
+        name: person.name, designation: person.role,
+        // `username`/`role` kept for the existing payroll UI's column rendering.
+        username: person.name, role: person.role ?? 'staff',
         monthlySalary: salary, workingDays, daysPresent, halfDays,
         approvedLeaves, absentDays: Math.round(absentDays * 10) / 10,
         deductions: Math.round(deductions * 100) / 100,
         overtimeHours: Math.round(overtimeHours * 10) / 10,
         overtimePay: Math.round(overtimePay * 100) / 100,
         netSalary: Math.round(netSalary * 100) / 100,
+      };
+    });
+  }
+
+  // Device attendance rows in a date range, resolved to the unified roster (owner/admins excluded).
+  async getAttendanceRange(filters: { from?: string; to?: string; key?: string }): Promise<any[]> {
+    const people = await this.getPayrollPeople();
+    const byUser = new Map<number, PayrollPerson>();
+    const byStaff = new Map<number, PayrollPerson>();
+    for (const p of people) (p.kind === 'user' ? byUser : byStaff).set(p.id, p);
+    const conds: any[] = [];
+    if (filters.from) conds.push(gte(attendance.date, filters.from));
+    if (filters.to)   conds.push(lte(attendance.date, filters.to));
+    const rows = conds.length
+      ? await db.select().from(attendance).where(and(...conds)).orderBy(desc(attendance.date))
+      : await db.select().from(attendance).orderBy(desc(attendance.date));
+    const out = rows
+      .map(r => {
+        const p = r.userId != null ? byUser.get(r.userId) : (r.staffMemberId != null ? byStaff.get(r.staffMemberId) : undefined);
+        if (!p) return null;
+        // Field names mirror the existing Attendance-tab UI (employeeName/punchIn/punchOut/hoursWorked).
+        return {
+          date: r.date, key: personPageKey(p.kind, p.id),
+          employeeName: p.name, employeeCode: p.role ?? null, role: p.role,
+          punchIn: r.clockIn, punchOut: r.clockOut, status: r.status,
+          hoursWorked: r.workingHours,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    return filters.key ? out.filter(r => r.key === filters.key) : out;
+  }
+
+  // Per-person attendance summary over the unified roster for a date range.
+  async getAttendanceSummary(filters: { from?: string; to?: string }): Promise<any[]> {
+    const people = await this.getPayrollPeople();
+    const conds: any[] = [];
+    if (filters.from) conds.push(gte(attendance.date, filters.from));
+    if (filters.to)   conds.push(lte(attendance.date, filters.to));
+    const rows = conds.length
+      ? await db.select().from(attendance).where(and(...conds))
+      : await db.select().from(attendance);
+    return people.map(p => {
+      const recs = rows.filter(r => p.kind === 'user' ? r.userId === p.id : r.staffMemberId === p.id);
+      const totalHours = recs.reduce((s, r) => s + parseFloat(r.workingHours ?? '0'), 0);
+      return {
+        key: personPageKey(p.kind, p.id), name: p.name, role: p.role,
+        present: recs.filter(r => r.status === 'present').length,
+        halfDay: recs.filter(r => r.status === 'half-day').length,
+        absent:  recs.filter(r => r.status === 'absent').length,
+        late: 0, // device attendance has no "late" status; kept for the existing Summary UI
+        totalHours: Math.round(totalHours * 10) / 10,
       };
     });
   }
@@ -968,6 +1090,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateStaffMember(id: number, data: Partial<InsertStaffMember>): Promise<StaffMember> {
+    if (Object.keys(data).length === 0) return this.getStaffMember(id) as Promise<StaffMember>; // no-op: avoid Drizzle "No values to set"
     const [sm] = await db.update(staffMembers).set(data).where(eq(staffMembers.id, id)).returning();
     return sm;
   }
