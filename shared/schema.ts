@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -92,6 +92,7 @@ export const orderItems = pgTable("order_items", {
   specialInstructions: text("special_instructions"),
   size: text("size"),
   serviceMode: text("service_mode"), // "dinein" | "pickup" | "delivery" — null treated as "dinein"
+  parcelLeftover: boolean("parcel_leftover").default(false), // dine-in leftover packed as takeaway → flat container charge
 });
 
 export const kotTickets = pgTable("kot_tickets", {
@@ -275,30 +276,79 @@ export const automationRules = pgTable("automation_rules", {
  * automation_jobs — job queue tracking pending / executed sends.
  */
 export const automationJobs = pgTable("automation_jobs", {
-  id:          serial("id").primaryKey(),
-  customerId:  uuid("customer_id").notNull(),
-  ruleId:      integer("rule_id"),               // nullable — manual sends have no rule
-  triggerType: text("trigger_type").notNull(),
-  status:      text("status").notNull().default("pending"), // pending | sent | failed | skipped
-  message:     text("message"),
-  scheduledAt: timestamp("scheduled_at").notNull().defaultNow(),
-  executedAt:  timestamp("executed_at"),
-  error:       text("error"),
+  id:            serial("id").primaryKey(),
+  customerId:    uuid("customer_id").notNull(),
+  ruleId:        integer("rule_id"),               // nullable — manual sends have no rule
+  triggerType:   text("trigger_type").notNull(),
+  status:        text("status").notNull().default("pending"), // pending | sending | sent | failed | skipped
+  message:       text("message"),
+  phone:         text("phone"),                    // denormalized for the outbound queue worker
+  attempts:      integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at"),     // retry backoff gate
+  scheduledAt:   timestamp("scheduled_at").notNull().defaultNow(),
+  executedAt:    timestamp("executed_at"),
+  error:         text("error"),
 });
 
 /**
  * customer_messages — omnichannel message log (WhatsApp / email / SMS).
  */
 export const customerMessages = pgTable("customer_messages", {
-  id:         serial("id").primaryKey(),
-  customerId: uuid("customer_id").notNull(),
-  channel:    text("channel").notNull().default("whatsapp"), // whatsapp | email | sms
-  message:    text("message").notNull(),
-  status:     text("status").notNull().default("pending"),   // pending | sent | failed | delivered
-  trigger:    text("trigger"),
-  sentAt:     timestamp("sent_at"),
-  createdAt:  timestamp("created_at").notNull().defaultNow(),
+  id:          serial("id").primaryKey(),
+  customerId:  uuid("customer_id").notNull(),
+  channel:     text("channel").notNull().default("whatsapp"), // whatsapp | email | sms
+  message:     text("message").notNull(),
+  status:      text("status").notNull().default("pending"),   // pending | sent | delivered | read | failed
+  trigger:     text("trigger"),
+  waMessageId: text("wa_message_id"),                          // driver message id — delivery receipt lookup
+  sentAt:      timestamp("sent_at"),
+  deliveredAt: timestamp("delivered_at"),
+  readAt:      timestamp("read_at"),
+  createdAt:   timestamp("created_at").notNull().defaultNow(),
 });
+
+/**
+ * conversations — one WhatsApp chat thread per phone number.
+ * customerId is a best-effort link to customers_master (nullable — unknown numbers
+ * can message the restaurant). The normalized phone is the source of truth.
+ */
+export const conversations = pgTable("conversations", {
+  id:                 serial("id").primaryKey(),
+  phone:              text("phone").notNull().unique(),     // normalized 91XXXXXXXXXX
+  customerId:         uuid("customer_id"),                  // nullable — unknown numbers
+  displayName:        text("display_name"),                 // WhatsApp pushName fallback
+  botActive:          boolean("bot_active").notNull().default(true),
+  humanTakeoverAt:    timestamp("human_takeover_at"),
+  lastAgentReplyAt:   timestamp("last_agent_reply_at"),     // idle-return timer base
+  assignedAgent:      text("assigned_agent"),               // username of agent who took over
+  unreadCount:        integer("unread_count").notNull().default(0),
+  lastMessageAt:      timestamp("last_message_at"),
+  lastMessagePreview: text("last_message_preview"),
+  optedOut:           boolean("opted_out").notNull().default(false),
+  createdAt:          timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * conversation_messages — every message in a WhatsApp thread (both directions).
+ * Outbound automation sends are also logged to customer_messages (campaign History);
+ * the shared waMessageId lets one delivery receipt update both tables.
+ */
+export const conversationMessages = pgTable("conversation_messages", {
+  id:             serial("id").primaryKey(),
+  conversationId: integer("conversation_id").notNull(),
+  direction:      text("direction").notNull(),              // in | out
+  sender:         text("sender").notNull(),                 // customer | bot | agent | automation
+  senderName:     text("sender_name"),                      // agent username when sender = agent
+  body:           text("body").notNull(),
+  waMessageId:    text("wa_message_id"),
+  status:         text("status").notNull().default("pending"), // pending | sent | delivered | read | failed
+  error:          text("error"),
+  trigger:        text("trigger"),                          // automation trigger type when sender = automation
+  createdAt:      timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_conv_msgs_conversation").on(t.conversationId),
+  index("idx_conv_msgs_wa_id").on(t.waMessageId),
+]);
 
 // ── CRM Relations ─────────────────────────────────────────────────────────────
 
@@ -331,6 +381,15 @@ export const customerMessagesRelations = relations(customerMessages, ({ one }) =
   customer: one(customersMaster, { fields: [customerMessages.customerId], references: [customersMaster.id] }),
 }));
 
+export const conversationsRelations = relations(conversations, ({ one, many }) => ({
+  customer: one(customersMaster, { fields: [conversations.customerId], references: [customersMaster.id] }),
+  messages: many(conversationMessages),
+}));
+
+export const conversationMessagesRelations = relations(conversationMessages, ({ one }) => ({
+  conversation: one(conversations, { fields: [conversationMessages.conversationId], references: [conversations.id] }),
+}));
+
 // ── CRM Insert Schemas ────────────────────────────────────────────────────────
 
 export const insertCustomerMasterSchema  = createInsertSchema(customersMaster).omit({ id: true, createdAt: true });
@@ -340,6 +399,8 @@ export const insertCustomerSegmentSchema = createInsertSchema(customerSegments).
 export const insertAutomationRuleSchema  = createInsertSchema(automationRules).omit({ id: true, createdAt: true });
 export const insertAutomationJobSchema   = createInsertSchema(automationJobs).omit({ id: true });
 export const insertCustomerMessageSchema = createInsertSchema(customerMessages).omit({ id: true, createdAt: true });
+export const insertConversationSchema = createInsertSchema(conversations).omit({ id: true, createdAt: true });
+export const insertConversationMessageSchema = createInsertSchema(conversationMessages).omit({ id: true, createdAt: true });
 
 // ── CRM Types ─────────────────────────────────────────────────────────────────
 
@@ -357,6 +418,10 @@ export type AutomationJob        = typeof automationJobs.$inferSelect;
 export type InsertAutomationJob  = z.infer<typeof insertAutomationJobSchema>;
 export type CustomerMessage      = typeof customerMessages.$inferSelect;
 export type InsertCustomerMessage = z.infer<typeof insertCustomerMessageSchema>;
+export type Conversation         = typeof conversations.$inferSelect;
+export type InsertConversation   = z.infer<typeof insertConversationSchema>;
+export type ConversationMessage  = typeof conversationMessages.$inferSelect;
+export type InsertConversationMessage = z.infer<typeof insertConversationMessageSchema>;
 
 // ── CRM Event type constants ──────────────────────────────────────────────────
 

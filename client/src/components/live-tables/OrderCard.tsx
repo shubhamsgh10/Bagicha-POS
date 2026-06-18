@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, forwardRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, Phone, ChevronDown, ChevronUp } from "lucide-react";
+import { User, Phone, ChevronDown, ChevronUp, ConciergeBell } from "lucide-react";
 import { useLocation } from "wouter";
 import { serialNum } from "@/lib/orderDisplay";
 
@@ -28,6 +28,7 @@ export interface UnifiedOrder {
   tableName?: string;
   section?: string;
   tableStatus?: string;
+  servedByName?: string | null;   // staff assigned to the table (order creator)
 
   // Delivery / Pickup
   customerName?: string | null;
@@ -270,10 +271,20 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
             )}
             {/* Staff / customer row */}
             {order.type === "dine-in" ? (
-              <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                <User className="w-3 h-3" />
-                <span>Not Assigned</span>
-              </div>
+              <>
+                <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                  <ConciergeBell className="w-3 h-3 text-blue-400" />
+                  <span className="text-gray-300">Staff:</span>
+                  <span className="text-gray-500 font-medium">{order.servedByName?.trim() || "Unassigned"}</span>
+                </div>
+                {order.customerName?.trim() && (
+                  <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                    <User className="w-3 h-3 text-emerald-400" />
+                    <span className="text-gray-300">Guest:</span>
+                    <span className="text-gray-500 font-medium">{order.customerName}</span>
+                  </div>
+                )}
+              </>
             ) : order.customerPhone ? (
               <div className="flex items-center gap-1 text-[10px] text-gray-400">
                 <Phone className="w-3 h-3" />

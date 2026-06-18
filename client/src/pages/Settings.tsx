@@ -31,6 +31,7 @@ interface RestaurantSettings {
   email: string;
   gstNumber: string;
   taxRate: number;
+  containerCharge: number;
   currency: string;
   currencySymbol: string;
   footerNote: string;
@@ -388,6 +389,24 @@ function RestaurantConfigPanel({
                 className={inputCls}
               />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-gray-500 mb-1">
+                Container Charge ({formData.currencySymbol || "₹"} per item)
+              </Label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={formData.containerCharge}
+                onChange={(e) => set("containerCharge", parseFloat(e.target.value) || 0)}
+                placeholder="15"
+                className={inputCls}
+              />
+              <p className="text-[10px] text-gray-400 mt-1">Applied per pickup/delivery item and per dine-in leftover parcel.</p>
+            </div>
+            <div />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -881,6 +900,7 @@ export default function Settings() {
     email: "",
     gstNumber: "",
     taxRate: 5,
+    containerCharge: 15,
     currency: "INR",
     currencySymbol: "₹",
     footerNote: "Thank you for dining with us!",

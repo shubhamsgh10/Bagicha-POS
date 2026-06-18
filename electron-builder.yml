@@ -16,11 +16,16 @@ directories:
   buildResources: desktop/icons
 files:
   - dist/public/**/*
+  - dist/index.js          # bundled Express server — used by the embedded host build
   - desktop/dist/**/*
   - desktop/icons/icon.png
   - desktop/icons/icon.ico
   - shared/print/scripts/**/*
   - package.json
+# asar packs the app. The embedded host build overrides this to false at the CLI
+# (pack:win:host → electron-builder -c.asar=false) so the spawned Node server can
+# resolve dist/index.js + node_modules from the real filesystem (asar isn't
+# readable by a plain ELECTRON_RUN_AS_NODE child process).
 asar: true
 extraMetadata:
   main: desktop/dist/main.mjs

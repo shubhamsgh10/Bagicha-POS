@@ -31,7 +31,9 @@ export function kotLines(params: {
   if (params.isReprint) { lines.push(_center('** DUPLICATE **', W), _div('=', W)); }
   lines.push(_center('KITCHEN ORDER', W), _div('=', W));
 
-  const ref = (params.kotNumber ?? params.orderRef ?? '------').slice(-6);
+  const ref = params.kotNumber
+    ? String(params.kotNumber).padStart(3, '0')
+    : (params.orderRef ?? '------');
   lines.push(_two(params.tableNumber ? `Table: ${params.tableNumber}` : 'Takeaway', `KOT: ${ref}`, W));
 
   const now = new Date();

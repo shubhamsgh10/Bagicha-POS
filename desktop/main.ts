@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, ipcMain, session, dialog } from "electron";
+import { spawn, type ChildProcess } from "child_process";
+import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -41,9 +43,122 @@ const API_BASE_ENV = process.env.VITE_API_BASE_URL || process.env.API_BASE_URL |
 
 let mainWindow: BrowserWindow | null = null;
 
+// ── Embedded backend (host build) ─────────────────────────────────────────────
+// A dedicated host build (BAGICHA_EMBEDDED=1, injected at package time) spawns the
+// bundled Express server + Baileys locally, so this desktop becomes the always-on
+// WhatsApp host. The window then loads from http://localhost:<port> so the
+// renderer + WebSocket target the local server. Normal builds are unchanged.
+// Baileys is a singleton — only ONE machine may run a host build.
+const IS_EMBEDDED = process.env.BAGICHA_EMBEDDED === "1";
+const EMBEDDED_PORT = process.env.BAGICHA_PORT || "5179";
+const EMBEDDED_URL = `http://localhost:${EMBEDDED_PORT}`;
+
+let serverProc: ChildProcess | null = null;
+let serverStopping = false;
+let serverRestarts = 0;
+let embeddedReady = false;
+
+/** DB creds: userData/host-config.json (admin-editable) overrides build-injected values. */
+function resolveHostConfig(): { DATABASE_URL?: string; SESSION_SECRET?: string } {
+  const fromBuild = {
+    DATABASE_URL: process.env.DATABASE_URL || undefined,
+    SESSION_SECRET: process.env.SESSION_SECRET || undefined,
+  };
+  try {
+    const p = path.join(app.getPath("userData"), "host-config.json");
+    if (fs.existsSync(p)) {
+      const file = JSON.parse(fs.readFileSync(p, "utf-8"));
+      return { ...fromBuild, ...file };
+    }
+  } catch (e) {
+    console.warn("[electron] host-config.json read failed:", e);
+  }
+  return fromBuild;
+}
+
+function waitForServer(maxMs = 120_000): Promise<void> {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const req = http.get(
+        { hostname: "localhost", port: Number(EMBEDDED_PORT), path: "/api/auth/context", timeout: 3000 },
+        (res) => { res.resume(); resolve(); },
+      );
+      req.on("error", () => {
+        if (Date.now() - start > maxMs) reject(new Error("Embedded server did not start in time"));
+        else setTimeout(attempt, 500);
+      });
+      req.on("timeout", () => {
+        req.destroy();
+        if (Date.now() - start > maxMs) reject(new Error("Embedded server timed out"));
+        else setTimeout(attempt, 500);
+      });
+    };
+    attempt();
+  });
+}
+
+function spawnServer(cfg: { DATABASE_URL?: string; SESSION_SECRET?: string }): void {
+  // Run the bundled server with Electron's own Node (ELECTRON_RUN_AS_NODE).
+  const serverEntry = path.join(app.getAppPath(), "dist", "index.js");
+  serverProc = spawn(process.execPath, [serverEntry], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      NODE_ENV: "production",
+      PORT: EMBEDDED_PORT,
+      BAGICHA_DATA_DIR: app.getPath("userData"),
+      ...(cfg.DATABASE_URL ? { DATABASE_URL: cfg.DATABASE_URL } : {}),
+      ...(cfg.SESSION_SECRET ? { SESSION_SECRET: cfg.SESSION_SECRET } : {}),
+    },
+  });
+  serverProc.on("exit", (code) => {
+    console.warn(`[electron] embedded server exited (${code})`);
+    serverProc = null;
+    if (!serverStopping && serverRestarts < 5) {
+      serverRestarts++;
+      console.log(`[electron] restarting embedded server (#${serverRestarts})…`);
+      spawnServer(cfg);
+    }
+  });
+  serverProc.on("error", (err) => console.error("[electron] embedded server spawn error:", err));
+}
+
+async function startEmbeddedServer(): Promise<boolean> {
+  const cfg = resolveHostConfig();
+  if (!cfg.DATABASE_URL) {
+    dialog.showErrorBox(
+      "Database not configured",
+      "This host build has no DATABASE_URL. Set it at package time, or create a host-config.json " +
+        `({ "DATABASE_URL": "…" }) in:\n${app.getPath("userData")}`,
+    );
+    return false;
+  }
+  console.log(`[electron] starting embedded server on ${EMBEDDED_URL}…`);
+  spawnServer(cfg);
+  try {
+    await waitForServer();
+    console.log("[electron] embedded server ready");
+    return true;
+  } catch (e: any) {
+    dialog.showErrorBox("Server failed to start", e?.message ?? String(e));
+    return false;
+  }
+}
+
+function stopEmbeddedServer(): void {
+  serverStopping = true;
+  if (serverProc && !serverProc.killed) {
+    try { serverProc.kill(); } catch { /* ignore */ }
+  }
+  serverProc = null;
+}
+
 /** Where to load printer settings (session cookies must match this origin). */
 function resolveApiBase(): string {
   if (isDev) return new URL(DEV_URL).origin;
+  if (IS_EMBEDDED) return EMBEDDED_URL;
   if (API_BASE_ENV) return API_BASE_ENV.replace(/\/$/, "");
   const loaded = mainWindow?.webContents.getURL();
   if (loaded?.startsWith("http")) return new URL(loaded).origin;
@@ -168,11 +283,12 @@ function createWindow() {
     revealWindow();
   });
 
-  if (isDev) {
+  const remoteUrl = isDev ? DEV_URL : IS_EMBEDDED && embeddedReady ? EMBEDDED_URL : null;
+  if (remoteUrl) {
     mainWindow
-      .loadURL(DEV_URL)
+      .loadURL(remoteUrl)
       .then(() => {
-        console.log("[electron] Loaded", DEV_URL);
+        console.log("[electron] Loaded", remoteUrl);
         if (openDevTools) mainWindow?.webContents.openDevTools({ mode: "right" });
       })
       .catch((err) => {
@@ -216,11 +332,14 @@ if (!gotLock) {
     else createWindow();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (process.platform === "win32") {
       app.setAppUserModelId("com.bagicha.pos");
     }
     console.log("[electron] App ready");
+    if (IS_EMBEDDED) {
+      embeddedReady = await startEmbeddedServer();
+    }
     createWindow();
     initUpdater();
     // Pre-warm printer cache and PowerShell session (non-blocking)
@@ -260,6 +379,7 @@ if (!gotLock) {
 }
 
 app.on("will-quit", () => {
+  stopEmbeddedServer();
   closePrinterSession();
   void attendanceAgent?.stop();
 });

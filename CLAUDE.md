@@ -28,11 +28,16 @@ This is a monorepo restaurant POS system. All dependencies live in the root `pac
 - `storage.ts` — `IStorage` interface + `DatabaseStorage` implementation. All DB access goes through this abstraction (repository pattern). Drizzle queries live here, not in routes.
 - `settingsStore.ts` — Restaurant settings persisted to `restaurant-settings.json` (not DB). Includes `posRoleTimeout` (minutes before elevated POS role auto-reverts).
 - `db.ts` — Neon serverless PostgreSQL connection via `DATABASE_URL` env var.
+- `dataDir.ts` — `dataDir()`/`dataPath(name)` resolve the writable base for server-managed files (`restaurant-settings.json`, `automation-config.json`, `baileys-auth/`, …). Returns `process.env.BAGICHA_DATA_DIR || process.cwd()`. **Any new cwd-relative file write must go through `dataPath()`**, or it breaks in the packaged Electron host build (read-only cwd). `settingsStore.ts`, `automationStore.ts`, `baileysDriver.ts` use it.
+- `whatsappRoutes.ts` — WhatsApp driver control, agent-inbox endpoints (`/api/whatsapp/*`), and the public Meta webhook.
+- `services/whatsapp/` — WhatsApp automation subsystem (see "WhatsApp Automation" below).
 
 ### `client/src/`
 - `App.tsx` — Wouter router with auth guard. POS is full-screen (no TopNav). All other pages use TopNav + sidebar layout.
 - `pages/` — One file per route. `POS.tsx` is the most complex page (order management, role switching, PIN gates).
+- **Live tables** (`pages/LiveTablesDashboard.tsx` + `components/live-tables/OrderCard.tsx`): dine-in cards source data from `useLiveTableOperations.ts` (fetches `/api/tables` + full `/api/orders/:id` per running table; WS `NEW_ORDER`/`ORDER_UPDATE` diff). "Assigned staff" = `orders.createdByName` (set at order create, exposed by `getTables()` as `servedByName`, same value the "Staff on Floor" panel in `Tables.tsx` uses); the card also shows `customerName`. There is no separate table→waiter assignment field.
 - `components/ui/` — shadcn/ui components (do not edit these manually).
+- **Horizontal-scroll tab rows** (e.g. Customers page tabs in `CustomerDashboard.tsx`): use `shrink-0 sm:flex-1` on the buttons, never `flex-1 min-w-0` — `min-w-0` lets nowrap labels collapse below content width and visually overlap on mobile instead of scrolling.
 - `hooks/` — Custom hooks:
   - `useAuth` — Auth session state via React Query (`/api/auth/me`)
   - `useRole` — Reads login role from auth session (`admin | manager | staff`)
@@ -55,6 +60,31 @@ PIN verification endpoint: `POST /api/auth/verify-pin` accepts `{ pin, requiredR
 
 The `RoleSwitcher` component in the POS top bar lets any logged-in user temporarily elevate their role via PIN. Switching to a higher role than the current **active** role (not login role) triggers a PIN prompt.
 
+## WhatsApp Automation
+
+`server/services/whatsapp/` implements automated outbound sending, an inbound FAQ chatbot, and the agent inbox (Customers → Conversations tab):
+
+- **Driver layer** — `types.ts` defines the `WhatsAppDriver` interface; `baileysDriver.ts` (unofficial, QR-paired via `@whiskeysockets/baileys`, version pinned **exactly** — never add a caret; all Baileys imports stay in this one file) and `metaDriver.ts` (official Cloud API, inbound fed by the webhook). `driverManager.ts` owns the singleton; **only `server/index.ts` may init it** (never a serverless entry). Active driver chosen by `whatsappDriver` in `automation-config.json` (`baileys | meta | none`).
+- **Outbound** — `outboundQueue.ts` drains the `automation_jobs` table through the driver with `sendDelayMs` + jitter pacing, retries, and a `maxPerDay` cap. `customerAutomationService` enqueues when `whatsappAutoSend=true` (off = legacy manual wa.me flow). `messagingService` sends driver-first for the whatsapp channel. Opt-out is re-checked at send time.
+- **Inbound** — `inboundService.ts` upserts `conversations` (per-phone threads; `customerId` is a best-effort last-10-digit match into `customers_master`), persists to `conversation_messages`, and runs `botService.ts` (pure keyword FAQ matcher — answers from `settingsStore` + config; STOP opts out via a *targeted* `doNotSendUpdate` update — never `upsertCustomerProfile`, which nulls the whole profile row). Human takeover silences the bot; it returns after `botReturnMinutes` idle. `detectIntent` uses whole-word regex with an **optional trailing `s` for keywords ≥4 chars** so plurals match ("hour"→"hours") while short words stay strict ("hi"≠"his").
+- **Delivery tracking** — `deliveryService.ts` applies receipts to both `conversation_messages` and `customer_messages` by shared `waMessageId`, with a status-rank guard (pending<sent<delivered<read; failed terminal).
+- **Realtime** — services publish `WA_MESSAGE | WA_STATUS | WA_CONVERSATION_UPDATE | WA_CONNECTION` via `publishRealtime()`. Client: `useConversations.ts` + `components/conversations/`. Local WS now connects in production LAN builds too (Pusher-only when `VITE_PUSHER_KEY` is set).
+- **Footguns** — Baileys session lives in `baileys-auth/` (gitignored; wiped automatically on loggedOut). Ban avoidance: keep `sendDelayMs ≥ 3000`, low `maxPerDay`, warm up fresh numbers. **Benign log noise (not bugs):** `Bad MAC` / "Failed to decrypt message with any known session" come from `libsignal` trying to decrypt WhatsApp **Status updates** (`status@broadcast`) and messages from stale pre-restart sessions — undecryptable and irrelevant; can't be silenced without patching `node_modules`. `baileysDriver.ts` skips non-`@s.whatsapp.net` JIDs (groups/broadcasts/newsletters) silently.
+
+### Settlement-time messaging
+
+Customer-facing messages fire at **bill settlement** (`POST /api/orders/:id/payment`), **not** at order-save. Order-save (`POST /api/orders`) only records the visit (`logOrderPlaced` + segmentation) — no message. Dispatchers live in `automationRuleEngine.ts`:
+- `triggerSettlementMessage(key,name,phone)` — paid branch. New customer (`totalVisits ≤ 1`) → WELCOME (gated by `settlementWelcomeEnabled`); returning → per `settlementReturningMode` (`off | auto | vip_reward | favorite_item | thank_you`). `auto` = VIP→VIP_REWARD, Regular+fav→FAVORITE_ITEM, else thank-you (`settlementReturningText`).
+- `triggerDueBillMessage(orderId,name,phone)` — `else` (due/unpaid) branch. Sends an itemized reminder built from `storage.getOrderItems` + amounts; `dueMessageTemplate` wraps it with `{name} {restaurant} {due} {bill}` tokens (`{bill}` = item list).
+- Both: one message per customer per day (`hasJobToday` guard on `automation_jobs`), then `dispatchSettlement` → `enqueueWhatsApp` when `whatsappAutoSend` + driver, else legacy `sendMessage`. Blank templates fall back to defaults in `automationStore` / `automationRuleEngine`.
+- Per-customer snapshot: `buildSnapshotForKey` (exported from `customerAutomationService.ts`). Admin UI: "Checkout messages" card in `AutomationPanel.tsx` SetupTab (5 config fields, persisted via `/api/automation/config`).
+- **Ownership split (avoid duplicates):** settlement owns WELCOME / VIP_REWARD / FAVORITE_ITEM / THANK_YOU / due-reminder. The background engines do **lapsed re-engagement only** — `evaluateTrigger` (`customerAutomationService.ts`, hourly) and `evaluateDefaultTriggers` (`automationRuleEngine.ts`, daily) emit only WIN_BACK / AT_RISK / INACTIVITY_*. Do not re-add welcome/VIP/favourite to either engine.
+- **Same-day dedup = resolved `customerId` on `automation_jobs`** (never the phone-vs-name `key`). Every send path resolves via `resolveCustomerId` then checks `automation_jobs` for today: settlement `hasJobToday`, daily engine's `recentJob`, and `enqueueWhatsApp` (which also blocks a same-day **sent** job for the same `customerId+trigger`, not just pending/sending).
+
+### Customer identity
+
+`resolveCustomerId(key,name,phone)` (`customerIdService.ts`) matches by `key` first, then **falls back to last-10-digit phone match** before inserting — prevents duplicate `customers_master` rows when a person was created by name then later referenced by phone (or vice-versa). The CSV import route applies the same phone dedup. `key` = `phone || name`.
+
 ## Path Aliases
 
 | Alias | Resolves to |
@@ -68,11 +98,10 @@ The `RoleSwitcher` component in the POS top bar lets any logged-in user temporar
 - PostgreSQL via Neon serverless (connection string in `.env` as `DATABASE_URL`)
 - Schema changes: edit `shared/schema.ts`, then run `npm run db:push`
 - Drizzle config: `drizzle.config.ts`; migrations output to `./migrations/`
-- **⚠️ Do NOT `npm run db:push` from this `ui-redesign` worktree.** The shared DB is **ahead** of this
-  branch (it carries the `whatsapp-automation` tables: `sessions`, `conversations`,
-  `conversation_messages`, extra `customer_messages`/`automation_jobs` columns) which this branch's
-  `schema.ts` doesn't define — so a full push proposes to **DROP them**. Apply additive changes with a
-  targeted `ALTER TABLE` script instead (see `scripts/migrate-staff-hr.mjs`).
+- **⚠️ Before `npm run db:push`, review the proposed diff.** The shared Neon DB carries columns applied
+  outside Drizzle migrations (staff-HR + `show_on_mobile`, applied via the `scripts/migrate-*.mjs` ALTER
+  scripts). If `schema.ts` ever drifts behind the live DB, a blind push can propose destructive **DROP**s —
+  prefer a targeted `ALTER TABLE` script (see `scripts/migrate-staff-hr.mjs`) for additive changes.
 
 ## Staff, Attendance & Payroll
 
@@ -121,3 +150,11 @@ per-tier `managerAllowedPages`/`staffAllowedPages` is replaced **for the staff t
 - **Admin → Role Permissions**: Admin card removed; **Manager** card left (tier-wide); **Staff** = per-person
   `StaffPageAccessCard` (pick by name → toggle pages → Save / "Apply to all <role>").
 - Smoke test: `scripts/verify-page-access.ts`.
+
+## Deployment modes
+
+The same app ships three ways. **Baileys (and the outbound worker + schedulers) only run inside a persistent process — never serverless.** The driver/worker start *only* in `server/index.ts`'s `server.listen` callback.
+
+- **Vercel (web + API):** `vercel.json` → `api/index.ts` → `dist/app-bundle.js` (built from `server-fn.ts`). This is a stateless request handler — it does **not** call `server.listen`/`initWhatsAppDriver`/`startOutboundWorker`. So Vercel has **no Baileys, no inbound bot, no queue draining** (Meta Cloud API would work there — it's stateless HTTPS + webhook).
+- **Persistent process (`npm run dev`/`npm start` = `server/index.ts`):** full stack incl. Baileys. This is the only place auto-send works.
+- **Electron host build (`pack:win:host`, flag `BAGICHA_EMBEDDED=1`):** `desktop/main.ts` spawns the bundled server (`dist/index.js`) as an `ELECTRON_RUN_AS_NODE` child with `BAGICHA_DATA_DIR=app.getPath("userData")` + baked `DATABASE_URL` (override via `userData/host-config.json`), waits for `/api/auth/context`, then loads the window from `http://localhost:5179` (renderer/WS auto-target localhost). Makes the admin desktop the always-on WhatsApp host **while the app is open**. Uses `asar:false` (so the child Node resolves `dist/index.js` + node_modules from disk). **Baileys is a singleton — only ONE host build per number.** Normal Electron builds (`pack:win`) stay thin clients → remote API.

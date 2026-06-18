@@ -75,6 +75,7 @@ interface CartItem {
   quantity: number;
   size?: string;
   serviceMode: ItemServiceMode;
+  parcelLeftover?: boolean; // dine-in leftover packed as takeaway → flat container charge
 }
 interface ModalState {
   item: any;
@@ -180,6 +181,14 @@ export default function POS() {
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
+  // Mobile: collapse the cart order-summary (totals + action buttons) to browse more items
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  const prevHasItemsRef = useRef(false);
+  useEffect(() => {
+    // Auto-open the summary when the cart goes from empty → has items
+    if (cartItems.length > 0 && !prevHasItemsRef.current) setSummaryOpen(true);
+    prevHasItemsRef.current = cartItems.length > 0;
+  }, [cartItems.length]);
   // Mobile customer autocomplete dropdown
   const [showMobileCustomerDropdown, setShowMobileCustomerDropdown] = useState(false);
   // Discount input ref (for re-focus after PIN unlock)
@@ -341,7 +350,7 @@ export default function POS() {
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
-  const showKOTPreview = (order: any) => {
+  const showKOTPreview = (order: any, kotNumber?: string) => {
     // Delta: compare current cart against what was in the order before this KOT action.
     // preKOTItemsRef is captured at button-click time so it always has the pre-mutation state,
     // regardless of whether lastKotSnapshot was ever updated (it only updates on successful print).
@@ -360,6 +369,7 @@ export default function POS() {
       ? deltaItems
       : cartItems.map(i => ({ name: i.name, quantity: i.quantity, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode }));
     const lines = kotLines({
+      kotNumber,
       orderRef: order.orderNumber ?? String(order.id),
       tableNumber: order.tableNumber ?? null,
       items,
@@ -407,7 +417,7 @@ export default function POS() {
           description: data?.message ?? 'Printer error — showing preview instead.',
           variant: 'destructive',
         });
-        if (order) showKOTPreview(order);
+        if (order) showKOTPreview(order, data?.kotNumber);
         return;
       }
       const { handlePrintResponse } = await import('@/lib/printGateway');
@@ -437,13 +447,14 @@ export default function POS() {
               ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
               : 'Use Print in the preview panel.'),
         });
+        if (order) showKOTPreview(order, data?.kotNumber);
       } else if (outcome === 'noop' && data.printJob) {
         toast({
           title: 'Print job ready',
           description: 'Use the Electron app for thermal printing.',
           variant: 'destructive',
         });
-        if (order) showKOTPreview(order);
+        if (order) showKOTPreview(order, data?.kotNumber);
       }
     } catch {
       if (order) showKOTPreview(order);
@@ -562,6 +573,7 @@ export default function POS() {
         size: item.size || undefined,
         quantity: item.quantity,
         serviceMode: sm,
+        parcelLeftover: !!item.parcelLeftover,
       };
     });
     setCartItems(loadedItems);
@@ -848,6 +860,8 @@ export default function POS() {
     if (qty <= 0) { removeFromCart(cartKey); return; }
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
   };
+  const toggleParcel = (cartKey: string) =>
+    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, parcelLeftover: !c.parcelLeftover } : c));
 
   // ── Filter ───────────────────────────────────────────────────────────────────
 
@@ -872,7 +886,13 @@ export default function POS() {
   const containerQty = isTableSession
     ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
     : (isDeliveryOrPickup ? totalItemQty : 0);
-  const appliedContainerCharge = containerQty * 15;
+  // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty).
+  // Never applied to pickup/delivery orders — those already charge a container per item.
+  const containerRate = Number(settings?.containerCharge ?? 15);
+  const parcelCount = isDeliveryOrPickup ? 0 : cartItems.filter(
+    i => i.parcelLeftover && i.serviceMode !== "pickup" && i.serviceMode !== "delivery"
+  ).length;
+  const appliedContainerCharge = containerQty * containerRate + parcelCount * containerRate;
   const grandTotal = total + appliedContainerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
@@ -900,6 +920,7 @@ export default function POS() {
       size: c.size || null,
       addons: c.addons,
       serviceMode: c.serviceMode ?? "dinein",
+      parcelLeftover: c.parcelLeftover ?? false,
     }));
 
     if (activeOrderId) {
@@ -2005,7 +2026,7 @@ export default function POS() {
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-12 text-right">Amt</span>
             </div>
           )}
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             {(() => {
               const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
               const renderCartRow = (item: CartItem) => (
@@ -2023,6 +2044,9 @@ export default function POS() {
                       ))}
                       {item.notes && (
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
+                      )}
+                      {item.parcelLeftover && (
+                        <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel (+{fmt(containerRate)})</div>
                       )}
                     </div>
                     <div className="flex items-center gap-0.5 w-16 justify-center">
@@ -2051,6 +2075,17 @@ export default function POS() {
                       <Trash2 className="w-2.5 h-2.5" />Remove
                       {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
+                    {/* Parcel toggle only for dine-in items — pickup/delivery already add a container charge per item */}
+                    {!isDeliveryOrPickup && (item.serviceMode ?? "dinein") === "dinein" && (
+                      <button
+                        onClick={() => toggleParcel(item.cartKey)}
+                        className={`text-[10px] flex items-center gap-0.5 transition-colors ${
+                          item.parcelLeftover ? "text-amber-600 font-semibold" : "text-amber-400 hover:text-amber-600"
+                        }`}
+                      >
+                        🥡 {item.parcelLeftover ? "Parcel ✓" : "Parcel"}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -2100,8 +2135,38 @@ export default function POS() {
             })()}
           </ScrollArea>
 
+          {/* ── Collapsible order-summary handle (mobile only) ── */}
+          {hasItems && (
+            <button
+              type="button"
+              onClick={() => setSummaryOpen((o) => !o)}
+              aria-expanded={summaryOpen}
+              aria-controls="cart-summary-body"
+              aria-label={summaryOpen ? "Hide order summary" : "Show order summary"}
+              className="md:hidden shrink-0 flex items-center justify-between gap-3 px-3 h-11 border-t active:bg-black/[0.03] transition-colors"
+              style={{
+                background: "var(--paper-50)",
+                boxShadow: summaryOpen ? "none" : "0 -6px 16px rgba(20,34,27,0.08)",
+              }}
+            >
+              <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-medium text-gray-500">Total</span>
+                <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
+              </span>
+            </button>
+          )}
+
+          {/* Collapsible body: totals + actions. Grid-rows 1fr↔0fr animates height and frees space for the list. */}
+          <div
+            id="cart-summary-body"
+            className="grid shrink-0 transition-[grid-template-rows] duration-300 ease-out md:!grid-rows-[1fr]"
+            style={{ gridTemplateRows: summaryOpen ? "1fr" : "0fr" }}
+          >
+           <div className="overflow-hidden">
           {/* Totals */}
-          <div className="border-t px-3 py-2 space-y-1 shrink-0" style={{ background: "var(--paper-50)" }}>
+          <div className="md:border-t px-3 py-2 space-y-1" style={{ background: "var(--paper-50)" }}>
             <div className="flex justify-between text-xs text-gray-500">
               <span>Subtotal</span>
               <span className="font-medium text-gray-700">{fmt(subtotal)}</span>
@@ -2140,10 +2205,10 @@ export default function POS() {
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
 
-            {/* Container Charge — delivery & pickup items only */}
+            {/* Container Charge — pickup/delivery items + dine-in leftover parcels */}
             {appliedContainerCharge > 0 && (
               <div className="flex justify-between text-xs text-gray-500">
-                <span>Container Charge <span className="text-gray-400">(₹15 × {containerQty})</span></span>
+                <span>Container Charge <span className="text-gray-400">({fmt(containerRate)} × {containerQty + parcelCount})</span></span>
                 <span className="font-medium text-gray-700">{fmt(appliedContainerCharge)}</span>
               </div>
             )}
@@ -2238,6 +2303,8 @@ export default function POS() {
                 {isOff("settleOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>
+          </div>
+           </div>
           </div>
         </div>
       </div>

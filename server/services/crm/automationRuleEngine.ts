@@ -15,9 +15,11 @@
  */
 
 import { db } from "../../db";
-import { eq, and, desc, isNull, sql, count, or } from "drizzle-orm";
+import { eq, and, desc, isNull, sql, or, inArray } from "drizzle-orm";
 import {
   orders,
+  orderItems,
+  menuItems,
   automationRules,
   automationJobs,
   customersMaster,
@@ -28,8 +30,11 @@ import {
 } from "../../../shared/schema";
 import { resolveCustomerId } from "./customerIdService";
 import { sendMessage, type MessagingConfig } from "./messagingService";
-import { getAutomationConfig, type TriggerType as AITrigger } from "../automationStore";
+import { getAutomationConfig, type AutomationConfig, type TriggerType as AITrigger } from "../automationStore";
 import { generateMessage, type CustomerSnapshot as AISnapshot } from "../aiMessageService";
+import { buildSnapshotForKey } from "../customerAutomationService";
+import { enqueueWhatsApp } from "../whatsapp/outboundQueue";
+import { getDriver } from "../whatsapp/driverManager";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -174,10 +179,10 @@ async function getMessageText(
 // ── Trigger evaluation ────────────────────────────────────────────────────────
 
 function evaluateDefaultTriggers(c: CustomerSnapshot): ServerTriggerType | null {
+  // Lapsed re-engagement only. WELCOME / VIP_REWARD are sent at bill settlement
+  // (triggerSettlementMessage) — emitting them here too would double-message.
   if (c.daysSinceLastVisit >= 30) return "WIN_BACK";
   if (c.segment === "At Risk" && c.daysSinceLastVisit >= 7) return "AT_RISK";
-  if (c.segment === "VIP") return "VIP_REWARD";
-  if (c.segment === "New" && c.totalVisits === 1) return "WELCOME";
   if (c.daysSinceLastVisit >= 14) return "INACTIVITY_14";
   if (c.daysSinceLastVisit >= 7)  return "INACTIVITY_7";
   return null;
@@ -316,16 +321,20 @@ export async function runAutomationServerSide(
 
       if (!customer.phone) { stats.skipped++; continue; }
 
-      // Check if messaged today (DB-side)
+      // Resolve the UUID first so the same-day dedup is keyed on the canonical
+      // customer (not the fragile phone-vs-name `key`) and coordinates with the
+      // settlement + outbound-queue paths.
+      const customerId = await resolveCustomerId(customer.key, customer.name, customer.phone);
+
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
       const recentJob = await db
         .select({ id: automationJobs.id })
         .from(automationJobs)
         .where(
           and(
-            sql`${automationJobs.customerId} IN (SELECT id FROM customers_master WHERE key = ${customer.key})`,
+            eq(automationJobs.customerId, customerId),
             sql`${automationJobs.scheduledAt} >= ${todayStart}`,
-            eq(automationJobs.status, "sent")
+            inArray(automationJobs.status, ["pending", "sending", "sent"]),
           )
         )
         .limit(1);
@@ -355,9 +364,7 @@ export async function runAutomationServerSide(
         message = await getMessageText(customer, defaultTrigger, config.restaurantName || RESTAURANT, config.anthropicApiKey);
       }
 
-      // Resolve customer UUID and create a pending job
-      const customerId = await resolveCustomerId(customer.key, customer.name, customer.phone);
-
+      // Create a pending job (customerId resolved above for the dedup check)
       const [job] = await db
         .insert(automationJobs)
         .values({
@@ -455,81 +462,191 @@ export async function seedDefaultRules(): Promise<void> {
   }
 }
 
-// ── Immediate first-order welcome trigger ─────────────────────────────────────
+// ── Settlement-time messaging (welcome / returning / due reminder) ─────────────
+//
+// Fired from the payment route when a bill is settled. The PAID branch sends a
+// relationship message (welcome for new, an admin-chosen template for returning);
+// the DUE branch sends an itemized outstanding-bill reminder. All go through the
+// outbound queue (auto-send) with a once-per-day idempotency guard.
 
-/**
- * Called immediately after a brand-new customer places their first order.
- * Sends a WELCOME message if:
- *   - server automation is enabled
- *   - customer has a phone number
- *   - no WELCOME job has already been sent/pending for this customer today
- *
- * Fire-and-forget — caller should .catch() and swallow errors.
- */
-export async function triggerWelcomeIfEligible(
-  key:   string,
-  name:  string,
-  phone: string | null | undefined
-): Promise<void> {
-  const config = getAutomationConfig();
-  if (!config.enabled) return;
-  if (!phone) return;
+type SettlementTrigger = "WELCOME" | "VIP_REWARD" | "FAVORITE_ITEM" | "THANK_YOU";
+const RELATIONSHIP_TRIGGERS = ["WELCOME", "VIP_REWARD", "FAVORITE_ITEM", "THANK_YOU"];
 
-  // Only fire on the customer's very first order
-  const [{ orderCount }] = await db
-    .select({ orderCount: count() })
-    .from(orders)
-    .where(
-      or(
-        eq(orders.customerPhone, phone),
-        eq(orders.customerName, name)
-      )
-    );
-  if ((orderCount ?? 0) > 1) return;
+// Fallbacks used when the admin leaves a template blank (mirrors automationStore defaults).
+const DEFAULT_RETURNING_TEXT =
+  "Hi {name}! 🙏 Thank you for dining with us at *{restaurant}* again — we always love having you. See you next time! 🌿";
+const DEFAULT_DUE_TEMPLATE =
+  "Hi {name}! 🙏 Thank you for visiting *{restaurant}*. Here are your bill details:\n\n{bill}\n\n" +
+  "*Amount due: ₹{due}*\n\nPlease settle it at your convenience. Thank you! 🌿";
 
-  // Idempotency check — skip if already welcomed today
+/** True if a same-day job already exists for this customer + any of these triggers. */
+async function hasJobToday(customerId: string, triggers: string[]): Promise<boolean> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-
-  const customerId = await resolveCustomerId(key, name, phone);
-
-  const existing = await db
+  const rows = await db
     .select({ id: automationJobs.id })
     .from(automationJobs)
     .where(
       and(
         eq(automationJobs.customerId, customerId),
-        eq(automationJobs.triggerType, "WELCOME"),
-        sql`${automationJobs.scheduledAt} >= ${todayStart}`
-      )
+        inArray(automationJobs.triggerType, triggers),
+        sql`${automationJobs.scheduledAt} >= ${todayStart}`,
+      ),
     )
     .limit(1);
+  return rows.length > 0;
+}
 
-  if (existing.length > 0) return;
+/** Replace {name} {restaurant} {visits} {favItem} {due} {bill} tokens. */
+function applyTokens(
+  tpl: string,
+  v: { name?: string | null; restaurant: string; visits?: number; favItem?: string | null; due?: string; bill?: string },
+): string {
+  const first = (v.name ?? "there").split(" ")[0];
+  return tpl
+    .replace(/\{name\}/g, first)
+    .replace(/\{restaurant\}/g, v.restaurant)
+    .replace(/\{visits\}/g, String(v.visits ?? ""))
+    .replace(/\{favItem\}/g, v.favItem ?? "our food")
+    .replace(/\{due\}/g, v.due ?? "")
+    .replace(/\{bill\}/g, v.bill ?? "");
+}
 
-  const first   = name.split(" ")[0];
+/** Build the relationship message text for a settlement trigger. */
+function settlementMessageText(snap: AISnapshot, trigger: SettlementTrigger, config: AutomationConfig): string {
   const restaurant = config.restaurantName || RESTAURANT;
-  const message = `Hi ${first}! 🎉 Welcome to the *${restaurant}* family! We're so glad you dined with us. ` +
-    `As a welcome gift, enjoy *5% off* your next visit — show this message to claim it. 🌿`;
+  const first = snap.name.split(" ")[0];
+  if (trigger === "THANK_YOU") {
+    return applyTokens(config.settlementReturningText?.trim() || DEFAULT_RETURNING_TEXT, {
+      name: snap.name, restaurant, visits: snap.totalVisits, favItem: snap.favoriteItem,
+    });
+  }
+  if (trigger === "FAVORITE_ITEM") {
+    return `Hi ${first}! 😋 We know you love *${snap.favoriteItem ?? "our food"}* at *${restaurant}*! ` +
+      `Come back soon and enjoy your favourite again — show this message for a *special discount*. 🍽️`;
+  }
+  // WELCOME / VIP_REWARD via the server template bank
+  const local: CustomerSnapshot = {
+    key: snap.key, name: snap.name, phone: snap.phone, totalVisits: snap.totalVisits,
+    totalSpend: snap.totalSpend, avgOrderValue: snap.avgOrderValue,
+    daysSinceLastVisit: snap.daysSinceLastVisit, segment: snap.tag,
+  };
+  return buildMessage(local, trigger);
+}
 
+/** Send a settlement message — auto-send via the driver queue, else legacy direct send. */
+async function dispatchSettlement(args: {
+  customerId: string; key: string; name: string; phone: string; trigger: string; message: string;
+}): Promise<void> {
+  const config = getAutomationConfig();
+  if (config.whatsappAutoSend && getDriver()) {
+    await enqueueWhatsApp({
+      customerId: args.customerId, phone: args.phone, message: args.message, trigger: args.trigger,
+    });
+    return;
+  }
+  // Fallback: create a job row + send immediately through the messaging service.
   const [job] = await db
     .insert(automationJobs)
-    .values({ customerId, triggerType: "WELCOME", status: "pending", message, scheduledAt: new Date() })
+    .values({ customerId: args.customerId, triggerType: args.trigger, status: "pending", message: args.message, scheduledAt: new Date() })
     .returning();
-
   const msgConfig: MessagingConfig = {
-    watiApiKey:    config.watiApiKey,
-    watiEndpoint:  config.watiEndpoint,
-    msg91AuthKey:  config.msg91AuthKey,
-    msg91SenderId: config.msg91SenderId,
+    watiApiKey: config.watiApiKey, watiEndpoint: config.watiEndpoint,
+    msg91AuthKey: config.msg91AuthKey, msg91SenderId: config.msg91SenderId,
   };
-
-  const result = await sendMessage(key, name, { channel: "whatsapp", to: phone, message, trigger: "WELCOME" }, msgConfig);
-
+  const result = await sendMessage(args.key, args.name, { channel: "whatsapp", to: args.phone, message: args.message, trigger: args.trigger }, msgConfig);
   await db
     .update(automationJobs)
     .set({ status: result.success ? "sent" : "failed", executedAt: new Date(), error: result.error ?? null })
     .where(eq(automationJobs.id, job.id));
+}
 
-  console.log(`[CRM] Welcome ${result.success ? "✓" : "✗"} ${name} → ${result.mode ?? (result.success ? "sent" : "failed")}`);
+/**
+ * Relationship message at a PAID settlement: welcome for a first-time customer,
+ * or the admin-chosen template for a returning one.
+ */
+export async function triggerSettlementMessage(
+  key: string,
+  name: string,
+  phone: string | null | undefined,
+): Promise<void> {
+  const config = getAutomationConfig();
+  if (!config.enabled || !phone) return;
+
+  const snap = await buildSnapshotForKey(key, name, phone);
+  if (!snap) return;
+
+  let trigger: SettlementTrigger | null = null;
+  if (snap.totalVisits <= 1) {
+    if (!config.settlementWelcomeEnabled) return;
+    trigger = "WELCOME";
+  } else {
+    switch (config.settlementReturningMode) {
+      case "off":           return;
+      case "vip_reward":    trigger = "VIP_REWARD"; break;
+      case "favorite_item": trigger = "FAVORITE_ITEM"; break;
+      case "thank_you":     trigger = "THANK_YOU"; break;
+      case "auto":
+      default:
+        if (snap.tag === "VIP") trigger = "VIP_REWARD";
+        else if (snap.favoriteItem && snap.tag === "Regular") trigger = "FAVORITE_ITEM";
+        else trigger = "THANK_YOU";
+    }
+  }
+  if (!trigger) return;
+
+  const customerId = await resolveCustomerId(key, name, phone);
+  if (await hasJobToday(customerId, RELATIONSHIP_TRIGGERS)) return;
+
+  const message = settlementMessageText(snap, trigger, config);
+  await dispatchSettlement({ customerId, key, name, phone, trigger, message });
+  console.log(`[CRM] Settlement message queued — ${name} (${trigger})`);
+}
+
+/**
+ * Itemized reminder when a bill is left unpaid (due). Lists the order's items +
+ * the outstanding amount, wrapped in the admin-editable due template.
+ */
+export async function triggerDueBillMessage(
+  orderId: number,
+  name: string,
+  phone: string | null | undefined,
+): Promise<void> {
+  const config = getAutomationConfig();
+  if (!config.enabled || !config.dueMessageEnabled || !phone) return;
+
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) return;
+
+  const key = order.customerPhone?.trim() || order.customerName?.trim() || phone;
+  const custName = order.customerName ?? name;
+  const customerId = await resolveCustomerId(key, custName, order.customerPhone ?? phone);
+  if (await hasJobToday(customerId, ["DUE_REMINDER"])) return;
+
+  // Itemized block
+  const rawItems = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const allMenu = await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems);
+  const menuName: Record<number, string> = {};
+  for (const m of allMenu) menuName[m.id] = m.name;
+
+  const total = parseFloat(String(order.totalAmount ?? "0"));
+  const paid  = parseFloat(String(order.paidAmount ?? "0"));
+  const due   = Math.max(0, total - paid);
+
+  const itemLines = rawItems.map(it => {
+    const nm  = menuName[it.menuItemId] ?? "Item";
+    const amt = Math.round(Number(it.quantity) * parseFloat(String(it.price ?? "0")));
+    return `• ${nm} x${it.quantity} — ₹${amt}`;
+  });
+  const header = `Order ${order.orderNumber}` + (order.tableNumber ? ` · Table ${order.tableNumber}` : "");
+  const bill =
+    `${header}\n${itemLines.join("\n")}\nTotal: ₹${Math.round(total)}` +
+    (paid > 0 ? `\nPaid: ₹${Math.round(paid)}` : "");
+
+  const message = applyTokens(config.dueMessageTemplate?.trim() || DEFAULT_DUE_TEMPLATE, {
+    name: custName, restaurant: config.restaurantName || RESTAURANT, due: String(Math.round(due)), bill,
+  });
+
+  await dispatchSettlement({ customerId, key, name: custName, phone: order.customerPhone ?? phone, trigger: "DUE_REMINDER", message });
+  console.log(`[CRM] Due reminder queued — ${custName} (₹${Math.round(due)} due)`);
 }

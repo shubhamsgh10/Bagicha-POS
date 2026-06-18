@@ -11,3 +11,7 @@ code-review-graph/
 .env.*.local
 .vercel
 .worktrees/
+bagicha-design-system/
+.playwright-mcp/
+tables-page.jpeg
+baileys-auth/

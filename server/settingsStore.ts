@@ -1,11 +1,11 @@
 import fs from "fs";
-import path from "path";
 import { randomBytes } from "crypto";
 import { eq, max } from "drizzle-orm";
 import { db } from "./db";
 import { restaurantSettings, orders } from "@shared/schema";
+import { dataPath } from "./dataDir";
 
-const SETTINGS_FILE = path.join(process.cwd(), "restaurant-settings.json");
+const SETTINGS_FILE = dataPath("restaurant-settings.json");
 
 // ── Print types (shared with client/Electron) ─────────────────────────────────
 
@@ -85,6 +85,7 @@ export interface RestaurantSettings {
   email: string;
   gstNumber: string;
   taxRate: number;
+  containerCharge: number; // flat per-container charge for pickup/delivery items & dine-in leftover parcels
   currency: string;
   currencySymbol: string;
   footerNote: string;
@@ -147,6 +148,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   email: "",
   gstNumber: "",
   taxRate: 18,
+  containerCharge: 15,
   currency: "INR",
   currencySymbol: "₹",
   footerNote: "Thank you for dining with us!",

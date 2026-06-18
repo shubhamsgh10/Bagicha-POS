@@ -23,11 +23,13 @@ export interface WhatsAppConfig {
 export interface SendResult {
   success: boolean;
   mode: "meta" | "wati" | "dry_run";
+  /** Meta wamid — used for delivery-receipt matching via the webhook. */
+  waMessageId?: string;
   error?: string;
 }
 
 /** Normalize Indian phone number to 91XXXXXXXXXX format (E.164 without +) */
-function normalizePhone(phone: string): string {
+export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return "";
   return digits.startsWith("91") ? digits : `91${digits}`;
@@ -52,7 +54,7 @@ export function delay(ms: number): Promise<void> {
 // This service sends free-form text. Ensure your customers have messaged you
 // recently, or use template messages for cold outreach.
 
-async function sendViaMeta(
+export async function sendViaMeta(
   phone: string,
   message: string,
   config: Pick<WhatsAppConfig, "metaPhoneNumberId" | "metaAccessToken">
@@ -96,7 +98,8 @@ async function sendViaMeta(
     }
 
     // Successful response: { messages: [{ id: "wamid.xxx" }] }
-    return { success: true, mode: "meta" };
+    const data = await response.json().catch(() => null) as any;
+    return { success: true, mode: "meta", waMessageId: data?.messages?.[0]?.id };
   } catch (err: any) {
     return {
       success: false,
