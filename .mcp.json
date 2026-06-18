@@ -1,15 +1,3 @@
 {
-  "mcpServers": {
-    "code-review-graph": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "E:/Claude Code/BagichaOrderMaster/BagichaOrderMaster/code-review-graph",
-        "run",
-        "code-review-graph",
-        "serve"
-      ],
-      "type": "stdio"
-    }
-  }
+  "mcpServers": {}
 }

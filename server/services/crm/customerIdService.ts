@@ -11,7 +11,7 @@
  */
 
 import { db } from "../../db";
-import { eq, and, or, isNull, sql } from "drizzle-orm";
+import { eq, and, or, isNull, asc, sql } from "drizzle-orm";
 import {
   customersMaster,
   customerProfiles,
@@ -67,7 +67,22 @@ export async function resolveCustomerId(
     return existing[0].id;
   }
 
-  // 2. Insert new master record
+  // 2. Phone fallback — the SAME person may already exist under a different
+  //    key (commonly: created by name before a phone was linked, now looked
+  //    up by phone, or vice-versa). Matching on the last 10 digits prevents a
+  //    duplicate master record. Pick the oldest match as the canonical row.
+  const last10 = (phone ?? "").replace(/\D/g, "").slice(-10);
+  if (last10.length === 10) {
+    const byPhone = await db
+      .select({ id: customersMaster.id })
+      .from(customersMaster)
+      .where(sql`right(regexp_replace(coalesce(${customersMaster.phone}, ''), '\\D', '', 'g'), 10) = ${last10}`)
+      .orderBy(asc(customersMaster.createdAt))
+      .limit(1);
+    if (byPhone.length > 0) return byPhone[0].id;
+  }
+
+  // 3. Insert new master record
   const inserted = await db
     .insert(customersMaster)
     .values({ key, name, phone: phone ?? null })
