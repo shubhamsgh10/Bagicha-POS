@@ -117,7 +117,7 @@ function DateRangePicker({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-2 z-50 w-64 rounded-2xl
+            className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 z-50 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl
                        bg-[var(--paper-0)] border border-[var(--line)]
                        shadow-xl shadow-black/10 p-2 overflow-hidden"
           >
@@ -318,6 +318,62 @@ export default function Reports() {
     },
   ];
 
+  // Export the currently-active tab's data as a CSV for the selected date range.
+  function handleExport() {
+    const range = `${dateRange.start}_to_${dateRange.end}`;
+    let filename = "report";
+    let header: string[] = [];
+    let rows: (string | number)[][] = [];
+
+    if (activeTab === "items") {
+      filename = `top-items_${range}`;
+      header = ["Item", "Qty Sold", "Revenue"];
+      rows = topItems.map((t: any) => [t.name, t.sold ?? 0, t.revenue ?? 0]);
+    } else if (activeTab === "payments") {
+      filename = `payments_${range}`;
+      header = ["Method", "Count", "Amount"];
+      rows = ["cash", "card", "upi", "online", "other"].map((k) => {
+        const d = paymentSummary?.breakdown?.[k] || { count: 0, amount: 0 };
+        return [k, d.count ?? 0, d.amount ?? 0];
+      });
+    } else if (activeTab === "staff") {
+      filename = `staff-tables_${range}`;
+      header = ["Date", "Staff", "Tables", "Orders", "Revenue"];
+      rows = staffTableReport.map((s) => [s.date, s.staff, (s.tables ?? []).join(" "), s.orderCount ?? 0, s.revenue ?? 0]);
+    } else if (activeTab === "sales") {
+      filename = `sales-chart_${range}`;
+      header = ["Period", "Sales", "Orders"];
+      rows = salesData.map((d: any) => [d.name, d.sales ?? 0, d.orders ?? 0]);
+    } else {
+      filename = `orders_${range}`;
+      header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Amount"];
+      rows = (salesReport?.orders ?? []).map((o: any) => [
+        serialNum(o.id),
+        new Date(o.createdAt).toLocaleString("en-IN"),
+        o.customerName || "Walk-in",
+        o.customerPhone || "",
+        o.orderType || "",
+        o.paymentMethod || "",
+        parseFloat(o.totalAmount || 0).toFixed(2),
+      ]);
+    }
+
+    if (rows.length === 0) { alert("No data to export for this period."); return; }
+
+    const esc = (v: string | number) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv = [header, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");
+    // BOM so Excel reads UTF-8 (₹ etc.) correctly.
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header title="Reports" description="Analytics and insights for your restaurant performance" />
@@ -333,6 +389,7 @@ export default function Reports() {
             <DateRangePicker value={dateRange} onChange={setDateRange} />
             <motion.button
               whileTap={{ scale: 0.95 }}
+              onClick={handleExport}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
                          bg-[var(--paper-0)] border border-[var(--line)] text-gray-600
                          hover:bg-[var(--paper-0)] transition-all"
