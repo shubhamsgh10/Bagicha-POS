@@ -91,11 +91,11 @@ const leaveStatusColors: Record<string, string> = {
 // ── types ─────────────────────────────────────────────────────────────────────
 
 interface AttendanceRecord {
-  id: number; employeeName: string; employeeCode: string | null;
+  key: string; employeeName: string; employeeCode: string | null; role: string | null;
   date: string; punchIn: string | null; punchOut: string | null;
-  hoursWorked: string | null; status: string; source: string; syncedAt: string;
+  hoursWorked: string | null; status: string;
 }
-interface AttendanceSummary { name: string; present: number; absent: number; late: number; halfDay: number; totalHours: number; }
+interface AttendanceSummary { key: string; name: string; role: string | null; present: number; absent: number; late: number; halfDay: number; totalHours: number; }
 interface StaffPerformance { staffId: number | null; staffName: string; totalOrders: number; totalRevenue: number; avgBill: number; }
 interface AttendanceSettings { sheetUrl: string; columnMapping: Record<string, string> | null; autoSyncHour: number; }
 interface SheetPreview { headers: string[]; rows: Array<Record<string, string>>; error?: string; }
@@ -792,7 +792,7 @@ export default function Staff() {
                     const [c1, c2] = getAvatarColors(rec.employeeName);
                     const sm = statusMeta[rec.status] ?? { bg: "rgba(0,0,0,0.06)", text: "#374151", dot: "#9ca3af" };
                     return (
-                      <motion.div key={rec.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i * 0.025, 0.4) }}
+                      <motion.div key={`${rec.key}-${rec.date}`} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i * 0.025, 0.4) }}
                         style={{ borderBottom: i < attendance.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.28)" }}
                       >
                         {/* Desktop row */}
