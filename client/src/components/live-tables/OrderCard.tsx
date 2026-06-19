@@ -103,6 +103,11 @@ const TYPE_CONFIG = {
   },
 };
 
+function sectionLabel(s?: string) {
+  if (!s) return null;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ── Next action button resolver ───────────────────────────────────────────────
 
 function getNextAction(type: "delivery" | "pickup", status: string) {
@@ -156,6 +161,7 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
     const title = order.type === "dine-in"
       ? (order.tableName ?? "—")
       : (order.customerName ?? "Walk-in");
+    const sectionTag = order.type === "dine-in" ? sectionLabel(order.section) : null;
 
     const itemSummary = order.items.length === 0
       ? "No items"
@@ -181,7 +187,9 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
               <span className="text-base leading-none shrink-0">{cfg.iconEmoji}</span>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-gray-800 truncate leading-tight">{title}</p>
-                <p className={`text-[9px] font-semibold ${cfg.labelColor}`}>{cfg.label}</p>
+                <p className={`text-[9px] font-semibold ${cfg.labelColor}`}>
+                  {cfg.label}{sectionTag ? ` · ${sectionTag}` : ""}
+                </p>
               </div>
             </div>
             <div className="flex flex-col items-end gap-0.5 shrink-0">
@@ -327,7 +335,9 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
                 <p className="text-xs font-bold text-gray-800 leading-tight">
                   TABLE : {order.tableName ?? "—"}
                 </p>
-                <p className={`text-[10px] font-bold ${cfg.labelColor}`}>{cfg.label}</p>
+                <p className={`text-[10px] font-bold ${cfg.labelColor}`}>
+                  {cfg.label}{sectionLabel(order.section) ? ` · ${sectionLabel(order.section)}` : ""}
+                </p>
                 {order.tableStatus && (
                   <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
                     order.tableStatus === "billed" ? "bg-yellow-100 text-yellow-700" : "bg-emerald-100 text-emerald-700"
