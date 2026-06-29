@@ -46,7 +46,7 @@
 | Live tables (local WS) | Dev only (UI served with `npm run dev`) | Dev only |
 | Thermal auto-KOT | Browser print / blocked popups | Native print |
 | USB / network printer | WebUSB scan or server local dev | Main process `usb` + TCP |
-| Print API on Vercel | Returns `printJob` (base64 ESC/POS) | Executes job + optional `/api/print/ack` |
+| Print API on Vercel | Returns `printJob` + broadcasts `PRINT_JOB` for a remote desktop to print | Executes job locally (direct or via `PRINT_JOB` broadcast) + `/api/print/ack` |
 
 ## App icon
 
@@ -170,14 +170,42 @@ Preload exposes `window.electronAPI`: `{ isElectron, print, printTest, getVersio
 
 Main process loads printer registry from `GET /api/settings` using session cookies. API origin is `VITE_API_BASE_URL` / `API_BASE_URL`, or in dev the same origin as `VITE_DEV_SERVER_URL` (default `http://localhost:5000`).
 
-## Print flow (Vercel)
+## Print flow (Vercel) — phone-to-desktop printer bridge
 
-1. Client calls `POST /api/print/kot` or `/api/print/bill`.
-2. API builds ESC/POS buffer, returns `{ printJob: { printerId, encoding, data } }` (no TCP/USB on Vercel).
-3. Electron `window.electronAPI.print(printJob)` sends bytes locally.
-4. Client calls `POST /api/print/ack` to commit KOT snapshot / bill count after success (renderer HTTP, not IPC).
+Any device whose request can't execute the print locally (Vercel, **or** any deployment where the
+configured printer is `type: "usb"`) gets a `printJob` in the HTTP response **and** the server persists
+a `print_jobs` row + broadcasts a `PRINT_JOB` realtime event (`server/realtime/publisher.ts`, same Pusher
+channel already used for `NEW_ORDER`/`KOT_UPDATE`). This is how a phone on the Vercel UI gets its KOT/bill
+to print on the thermal printer wired to the desktop Electron host — the desktop is also a Pusher
+subscriber and executes the job locally regardless of which device initiated the request.
 
-Browser clients use `browserPrint: true` when no printer is configured, or when not using Electron.
+1. Client (phone or desktop) calls `POST /api/print/kot` or `/api/print/bill`.
+2. API builds the ESC/POS buffer. If it can't print directly, it inserts a `print_jobs` row
+   (`status: 'pending'`) and calls `publishRealtime({ type: 'PRINT_JOB', jobId, orderId, jobType, printerId, payload })`,
+   then returns `{ printJob: { printerId, encoding, data, jobId }, dispatched: true }` in the HTTP response.
+3. **Direct path** (the requesting tab *is* the Electron host): `printGateway.ts`'s `handlePrintResponse`
+   calls `POST /api/print/jobs/:id/claim` before `window.electronAPI.print(printJob)`, so it can't double-print
+   against step 4.
+4. **Broadcast path** (any other Electron host subscribed to the channel, e.g. the requesting device was a
+   phone): `usePrintJobBridge.ts` (mounted once in `App.tsx`, no-ops outside `window.electronAPI?.isElectron`)
+   receives the `PRINT_JOB` realtime message, claims it the same way, and prints.
+5. `POST /api/print/jobs/:id/claim` is an atomic `UPDATE print_jobs SET status='claimed' WHERE status='pending'`
+   — whichever of steps 3/4 claims first wins; the loser sees `claimed: false` and skips printing. This is the
+   only thing preventing a double print when both paths race for the same job.
+6. After a successful print, the existing Electron `PrintQueue` (`desktop/print/printQueue.ts`) auto-calls
+   `POST /api/print/ack` (now also passing `jobId`) — this both commits the KOT snapshot / bill count
+   **and** flips the `print_jobs` row to `'printed'`. Neither `printGateway.ts` nor `usePrintJobBridge.ts`
+   ack separately.
+7. **Catch-up / durability backstop**: if the desktop host was offline when a job was broadcast,
+   `usePrintJobBridge.ts` also polls `GET /api/print/jobs/pending` on mount and whenever the realtime
+   connection (re)opens, claiming and printing any backlog exactly once via the same claim mechanism.
+
+Expected latency on the hot path is ~1-2s, dominated by Pusher delivery (~100-500ms) + the claim round-trip
+(~100-300ms) — the `pending` poll is a recovery path only, it never runs during a normal print.
+
+Browser/phone clients with no `window.electronAPI` silently ignore the `PRINT_JOB` broadcast and just show a
+"Sent to kitchen printer!" toast (`outcome === 'dispatched'` in `printGateway.ts`) instead of a dead-end
+browser print dialog.
 
 ## Vercel `vercel.json`
 

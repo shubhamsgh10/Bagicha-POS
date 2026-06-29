@@ -291,6 +291,26 @@ export const automationJobs = pgTable("automation_jobs", {
 });
 
 /**
+ * print_jobs — durable record of a print job dispatched to a remote (Electron) printer
+ * via the realtime PRINT_JOB broadcast, so a desktop host that's offline at broadcast time
+ * can catch up via GET /api/print/jobs/pending, and so claim semantics prevent double-printing.
+ */
+export const printJobs = pgTable("print_jobs", {
+  id:         serial("id").primaryKey(),
+  orderId:    integer("order_id").notNull(),
+  jobType:    text("job_type").notNull(), // 'kot' | 'bill'
+  printerId:  text("printer_id").notNull(),
+  payload:    text("payload").notNull(), // base64 ESC/POS buffer
+  status:     text("status").notNull().default("pending"), // pending | claimed | printed | failed
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+  printedAt:  timestamp("printed_at"),
+});
+
+export const insertPrintJobSchema = createInsertSchema(printJobs).omit({ id: true, createdAt: true, printedAt: true });
+export type PrintJobRecord = typeof printJobs.$inferSelect;
+export type InsertPrintJob = z.infer<typeof insertPrintJobSchema>;
+
+/**
  * customer_messages — omnichannel message log (WhatsApp / email / SMS).
  */
 export const customerMessages = pgTable("customer_messages", {

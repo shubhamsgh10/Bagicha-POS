@@ -16,4 +16,5 @@ export interface PrintJob {
   data: string;
   orderId?: number;
   ackType?: "kot" | "bill";
+  jobId?: number;
 }

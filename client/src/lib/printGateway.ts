@@ -7,6 +7,7 @@ export type PrintHandleResult =
   | "browser"
   | "skipped"
   | "noop"
+  | "dispatched"
   | "failed";
 
 export interface PrintHandleOptions {
@@ -26,6 +27,22 @@ async function ackPrint(orderId: number, type: "kot" | "bill"): Promise<void> {
     credentials: "include",
     body: JSON.stringify({ orderId, type }),
   });
+}
+
+/** Atomically claims a print_jobs row so only one consumer (this tab's direct path,
+ *  or the PRINT_JOB broadcast listener) ever executes a given job. */
+export async function claimPrintJob(jobId: number): Promise<boolean> {
+  try {
+    const res = await fetch(apiUrl(`/api/print/jobs/${jobId}/claim`), {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { claimed: boolean };
+    return data.claimed;
+  } catch {
+    return false;
+  }
 }
 
 /** Route a /api/print/* JSON response to Electron, server-printed, or browser fallback. */
@@ -56,6 +73,13 @@ export async function handlePrintResponse(
   }
 
   if (data.printJob && window.electronAPI?.isElectron) {
+    if (data.printJob.jobId) {
+      const claimed = await claimPrintJob(data.printJob.jobId);
+      if (!claimed) {
+        // Already claimed (printed or in-flight) by the PRINT_JOB broadcast listener — don't print twice.
+        return "dispatched";
+      }
+    }
     const result = await window.electronAPI.print(data.printJob);
     if (!result.ok) {
       // Electron queue enqueue failed — fall back to browser print
@@ -80,6 +104,11 @@ export async function handlePrintResponse(
   }
 
   if (data.printJob && !window.electronAPI?.print) {
+    // No local Electron printer — the server already broadcast this job (PRINT_JOB)
+    // for a remote desktop host to pick up and print. Nothing to do here.
+    if (data.dispatched || data.printJob.jobId) {
+      return "dispatched";
+    }
     if (data.pendingAck) {
       return "noop";
     }

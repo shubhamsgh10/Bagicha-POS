@@ -313,8 +313,8 @@ export function generateBillBuffer(params: {
 export function toPrintJob(
   printerId: string,
   buffer: Buffer,
-  meta?: { orderId?: number; ackType?: "kot" | "bill" },
-): { printerId: string; encoding: "escpos-base64"; data: string; orderId?: number; ackType?: "kot" | "bill" } {
+  meta?: { orderId?: number; ackType?: "kot" | "bill"; jobId?: number },
+): { printerId: string; encoding: "escpos-base64"; data: string; orderId?: number; ackType?: "kot" | "bill"; jobId?: number } {
   return {
     printerId,
     encoding: "escpos-base64" as const,

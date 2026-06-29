@@ -34,6 +34,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { ActiveRoleProvider } from "@/context/ActiveRoleContext";
 import { NavigationProvider, useNavigation, NavDirection } from "@/context/NavigationContext";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
+import { usePrintJobBridge } from "@/hooks/usePrintJobBridge";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
@@ -214,6 +215,8 @@ function Router() {
 
 function App() {
   const { toast } = useToast();
+
+  usePrintJobBridge();
 
   useEffect(() => {
     const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
