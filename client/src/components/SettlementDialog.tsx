@@ -28,7 +28,6 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   grandTotal: number;
   onSettle: (data: SettlementData) => void;
-  onPrintBill: () => void;
   isLoading?: boolean;
 }
 
@@ -40,7 +39,7 @@ const METHODS: { key: "cash" | "upi" | "card"; label: string; icon: string }[] =
 
 interface CustomerSuggestion { name: string; phone: string | null; }
 
-export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onPrintBill, isLoading }: Props) {
+export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, isLoading }: Props) {
   const [cash,  setCash]  = useState(0);
   const [upi,   setUpi]   = useState(0);
   const [card,  setCard]  = useState(0);
@@ -298,14 +297,6 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, onP
 
           {/* Action buttons */}
           <div className="flex gap-2 pt-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onPrintBill}
-              className="flex-1 text-xs"
-            >
-              🖨 Print Bill
-            </Button>
             <Button
               variant="outline"
               size="sm"

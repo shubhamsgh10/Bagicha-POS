@@ -31,11 +31,12 @@ This is a monorepo restaurant POS system. All dependencies live in the root `pac
 - `dataDir.ts` — `dataDir()`/`dataPath(name)` resolve the writable base for server-managed files (`restaurant-settings.json`, `automation-config.json`, `baileys-auth/`, …). Returns `process.env.BAGICHA_DATA_DIR || process.cwd()`. **Any new cwd-relative file write must go through `dataPath()`**, or it breaks in the packaged Electron host build (read-only cwd). `settingsStore.ts`, `automationStore.ts`, `baileysDriver.ts` use it.
 - `whatsappRoutes.ts` — WhatsApp driver control, agent-inbox endpoints (`/api/whatsapp/*`), and the public Meta webhook.
 - `services/whatsapp/` — WhatsApp automation subsystem (see "WhatsApp Automation" below).
+- `printRoutes.ts` / `printService.ts` — KOT/bill printing endpoints (see "Printing (KOT/Bill)" below).
 
 ### `client/src/`
 - `App.tsx` — Wouter router with auth guard. POS is full-screen (no TopNav). All other pages use TopNav + sidebar layout.
 - `pages/` — One file per route. `POS.tsx` is the most complex page (order management, role switching, PIN gates).
-- **Live tables** (`pages/LiveTablesDashboard.tsx` + `components/live-tables/OrderCard.tsx`): dine-in cards source data from `useLiveTableOperations.ts` (fetches `/api/tables` + full `/api/orders/:id` per running table; WS `NEW_ORDER`/`ORDER_UPDATE` diff). "Assigned staff" = `orders.createdByName` (set at order create, exposed by `getTables()` as `servedByName`, same value the "Staff on Floor" panel in `Tables.tsx` uses); the card also shows `customerName`. There is no separate table→waiter assignment field.
+- **Live tables** (`pages/LiveTablesDashboard.tsx` + `components/live-tables/OrderCard.tsx`): dine-in cards source data from `useLiveTableOperations.ts` (fetches `/api/tables` + full `/api/orders/:id` per running table; WS `NEW_ORDER`/`ORDER_UPDATE` diff). "Assigned staff" = `orders.createdByName` (set at order create, exposed by `getTables()` as `servedByName`, same value the "Staff on Floor" panel in `Tables.tsx` uses); the card also shows `customerName`. There is no separate table→waiter assignment field. **Never re-set `createdByName` outside order creation** — `PUT /api/orders/:id/items` used to stamp it to the *current* actor on every item edit, so a long-running table edited the next day by a different logged-in user would silently flip "served by" to them (fixed; see [routes.ts](server/routes.ts) `items` route).
 - `components/ui/` — shadcn/ui components (do not edit these manually).
 - **Horizontal-scroll tab rows** (e.g. Customers page tabs in `CustomerDashboard.tsx`): use `shrink-0 sm:flex-1` on the buttons, never `flex-1 min-w-0` — `min-w-0` lets nowrap labels collapse below content width and visually overlap on mobile instead of scrolling.
 - `hooks/` — Custom hooks:
@@ -84,6 +85,22 @@ Customer-facing messages fire at **bill settlement** (`POST /api/orders/:id/paym
 ### Customer identity
 
 `resolveCustomerId(key,name,phone)` (`customerIdService.ts`) matches by `key` first, then **falls back to last-10-digit phone match** before inserting — prevents duplicate `customers_master` rows when a person was created by name then later referenced by phone (or vice-versa). The CSV import route applies the same phone dedup. `key` = `phone || name`.
+
+## Printing (KOT/Bill)
+
+Two **parallel implementations** render the same KOT/bill text — keep them in sync when changing format:
+- `shared/print/generators.ts` (`generateKOTBuffer`/`generateBillBuffer`) — builds the real ESC/POS byte buffer sent to the hardware printer via `/api/print/kot` and `/api/print/bill` (`server/printRoutes.ts`, re-exported through `server/printService.ts`).
+- `server/printRoutes.ts` (`kotTextLines`/`billTextLines`) — plain-text lines for the `/api/print/preview` JSON endpoint only.
+
+**Time:** always format via `formatISTDateTime()` (`shared/print/formatDate.ts`, `Intl.DateTimeFormat` pinned to `Asia/Kolkata`) — never read `.getHours()`/`.getDate()` off a raw `Date` for printed output. The server process's ambient timezone is not guaranteed to be IST even though the restaurant is; the client-side HTML bill (`client/src/lib/printBill.ts`) gets this right via the browser's local clock, the server paths didn't until fixed.
+
+**Cashier name:** bill print's `cashierName` prefers `order.createdByName` (who actually created/served the order — same field as the live-tables "served by", see above), falling back to the printing user's username only for legacy orders without it. Don't pass `req.user.username` alone — that's whoever happens to click print, not who served the table.
+
+**Customer name:** when `billSettings.showNameField` is on, print `order.customerName` if present; only fall back to the blank `Name:____` line when no name was captured on the order.
+
+**Header centering (`generateBillBuffer` only):** native ESC/POS `E.ALIGN_CENTER` is active for the whole restaurant-header block — print lines with plain `E.line(str)`, never `E.centered(str, W)` underneath an active `ALIGN_CENTER`. `E.centered` manually left-pads using the *assumed* printer width `W`, and centering that padded string again via the native command double-centers it, drifting away from lines (like the restaurant name) that rely on native centering alone. `generateKOTBuffer` has no `E.centered` calls and isn't affected; `printRoutes.ts`'s plain-text preview uses one consistent manual-centering function throughout (no native commands), so it isn't affected either.
+
+**Settlement vs. printing are separate actions, by design.** The intended flow: staff prints the bill first (main "Print Bill" button, before any payment method is chosen) → customer decides how to pay → staff opens the settlement dialog (`SettlementDialog.tsx`), enters the matching amount, and hits "Settle Now". `SettlementDialog` has no print button of its own (removed — it was redundant with this flow and tempted staff into settling before the customer had actually decided). `order.paymentMethod` stays `null` until "Settle Now" — printing a bill on an unsettled order correctly omits the payment-method line.
 
 ## Path Aliases
 

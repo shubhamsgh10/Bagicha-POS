@@ -1,4 +1,5 @@
 import * as E from "./escpos";
+import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, KOTPrintSettings } from "./types";
 
 export interface KOTItem {
@@ -61,13 +62,8 @@ export function generateKOTBuffer(params: {
 
   if (params.kotSettings.kotNumbering !== false) {
     const kotNum = String(params.kotNumber ?? 1).padStart(3, "0");
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, "0");
-    const mo = String(now.getMonth() + 1).padStart(2, "0");
-    const yy = String(now.getFullYear()).slice(-2);
-    const hh = String(now.getHours()).padStart(2, "0");
-    const mi = String(now.getMinutes()).padStart(2, "0");
-    parts.push(bodyLine(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
+    const { dateStr, timeStr } = formatISTDateTime(new Date());
+    parts.push(bodyLine(`KOT#: ${kotNum}   ${dateStr}   ${timeStr}`));
   }
   parts.push(E.divider("-", W));
 
@@ -178,39 +174,36 @@ export function generateBillBuffer(params: {
   parts.push(E.BOLD_ON, E.line(restaurant.restaurantName), E.BOLD_OFF);
 
   if (restaurant.businessName) {
-    parts.push(E.centered(restaurant.businessName, W));
+    parts.push(E.line(restaurant.businessName));
   }
   if (restaurant.gstNumber) {
-    parts.push(E.centered(`GST -${restaurant.gstNumber}`, W));
+    parts.push(E.line(`GST -${restaurant.gstNumber}`));
   }
   if (restaurant.phone) {
-    parts.push(E.centered(`M - ${restaurant.phone}`, W));
+    parts.push(E.line(`M - ${restaurant.phone}`));
   }
   if (restaurant.address) {
     for (const seg of restaurant.address.split(",").map((s) => s.trim()).filter(Boolean)) {
-      parts.push(E.centered(seg.substring(0, W), W));
+      parts.push(E.line(seg.substring(0, W)));
     }
   }
   if (billSettings.showFssai && restaurant.fssaiNumber) {
-    parts.push(E.centered(`FSSAI: ${restaurant.fssaiNumber}`, W));
+    parts.push(E.line(`FSSAI: ${restaurant.fssaiNumber}`));
   }
 
   parts.push(E.divider("=", W));
   parts.push(E.ALIGN_LEFT);
 
   if (billSettings.showNameField) {
-    parts.push(bodyLine(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`));
+    if (order.customerName?.trim()) {
+      parts.push(bodyLine(`Name: ${order.customerName.trim()}`));
+    } else {
+      parts.push(bodyLine(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`));
+    }
     parts.push(E.LF);
   }
 
-  const created = new Date(order.createdAt);
-  const dd = String(created.getDate()).padStart(2, "0");
-  const mo = String(created.getMonth() + 1).padStart(2, "0");
-  const yy = String(created.getFullYear()).slice(-2);
-  const hh = String(created.getHours()).padStart(2, "0");
-  const mi = String(created.getMinutes()).padStart(2, "0");
-  const dateStr = `${dd}/${mo}/${yy}`;
-  const timeStr = `${hh}:${mi}`;
+  const { dateStr, timeStr } = formatISTDateTime(order.createdAt);
   const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
 
   const datePrefix = `Date: ${dateStr}   `;
@@ -309,7 +302,7 @@ export function generateBillBuffer(params: {
   parts.push(E.divider("=", W));
 
   if (restaurant.footerNote) {
-    parts.push(E.ALIGN_CENTER, E.centered(restaurant.footerNote.substring(0, W), W));
+    parts.push(E.ALIGN_CENTER, E.line(restaurant.footerNote.substring(0, W)));
   }
   parts.push(E.feed(3));
   parts.push(E.CUT);

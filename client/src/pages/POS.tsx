@@ -2223,7 +2223,6 @@ export default function POS() {
             onOpenChange={setShowSettleDialog}
             grandTotal={grandTotal}
             isLoading={settleMutation.isPending}
-            onPrintBill={() => activeOrderId && triggerBillPrint(activeOrderId, existingOrder, true)}
             onSettle={(data) => {
               settlementDataRef.current = data;
               setShowSettleDialog(false);

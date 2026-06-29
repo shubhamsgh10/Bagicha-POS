@@ -1689,14 +1689,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, 0);
       const total = taxable + tax + containerCharge;
 
-      const actor = req.user as any;
       const order = await storage.updateOrder(id, {
         totalAmount: total.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: discount.toFixed(2),
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
-        ...(actor?.username ? { createdByName: actor.username } : {}),
       } as any);
 
       // Delta KOT — only print items newly added to this order
