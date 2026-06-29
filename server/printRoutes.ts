@@ -11,6 +11,7 @@ import {
   canExecutePrintOnServer,
 } from "./printService";
 import { toPrintJob } from "@shared/print/generators";
+import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import * as E from "./escpos";
 
@@ -58,13 +59,8 @@ function kotTextLines(params: {
 
   if (params.kotSettings.kotNumbering !== false) {
     const kotNum = String(params.kotNumber ?? 1).padStart(3, "0");
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, "0");
-    const mo = String(now.getMonth() + 1).padStart(2, "0");
-    const yy = String(now.getFullYear()).slice(-2);
-    const hh = String(now.getHours()).padStart(2, "0");
-    const mi = String(now.getMinutes()).padStart(2, "0");
-    lines.push(body(`KOT#: ${kotNum}   ${dd}/${mo}/${yy}   ${hh}:${mi}`));
+    const { dateStr, timeStr } = formatISTDateTime(new Date());
+    lines.push(body(`KOT#: ${kotNum}   ${dateStr}   ${timeStr}`));
   }
   lines.push(div("-"));
 
@@ -155,17 +151,19 @@ function billTextLines(params: {
   if (billSettings.showFssai && restaurant.fssaiNumber) lines.push(center(`FSSAI: ${restaurant.fssaiNumber}`));
   lines.push(div("="));
 
-  if (billSettings.showNameField) { lines.push(body(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`)); lines.push(""); }
+  if (billSettings.showNameField) {
+    if (order.customerName?.trim()) {
+      lines.push(body(`Name: ${order.customerName.trim()}`));
+    } else {
+      lines.push(body(`Name:${"_".repeat(Math.max(10, W - 2 * M - 5))}`));
+    }
+    lines.push("");
+  }
 
-  const created = new Date(order.createdAt);
-  const dd = String(created.getDate()).padStart(2, "0");
-  const mo = String(created.getMonth() + 1).padStart(2, "0");
-  const yy = String(created.getFullYear()).slice(-2);
-  const hh = String(created.getHours()).padStart(2, "0");
-  const mi = String(created.getMinutes()).padStart(2, "0");
+  const { dateStr, timeStr } = formatISTDateTime(order.createdAt);
   const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
-  lines.push(two(`Date: ${dd}/${mo}/${yy}`, orderTypeLabel));
-  lines.push(body(`${hh}:${mi}`));
+  lines.push(two(`Date: ${dateStr}`, orderTypeLabel));
+  lines.push(body(timeStr));
   lines.push(two(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   lines.push(div("-"));
 
@@ -479,7 +477,7 @@ export function registerPrintRoutes(app: Express): void {
         })),
         restaurant: settings,
         billSettings,
-        cashierName: (req.user as any)?.username ?? "Admin",
+        cashierName: order.createdByName ?? (req.user as any)?.username ?? "Admin",
         width: printer.width ?? 48,
       });
 
@@ -698,7 +696,7 @@ export function registerPrintRoutes(app: Express): void {
         })),
         restaurant: settings,
         billSettings,
-        cashierName: (req.user as any)?.username ?? "Admin",
+        cashierName: order.createdByName ?? (req.user as any)?.username ?? "Admin",
         width: W,
       });
       return res.json({ lines, width: W });
