@@ -38,6 +38,13 @@ jobs:
           ELECTRON_BUILD: '1'
           # Bake your production API URL into the desktop build
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          # Pusher realtime — lets the installed desktop app receive PRINT_JOB
+          # broadcasts so a phone (on Vercel) can print on this machine's thermal
+          # printer. These are the PUBLIC client keys (the key ships in the browser
+          # bundle anyway), so they are safe to inline here.
+          VITE_PUSHER_KEY: ce1d9880618a84677492
+          VITE_PUSHER_CLUSTER: ap2
+          VITE_PUSHER_CHANNEL: bagicha-pos
 
       - name: Publish to GitHub Releases
         run: npx electron-builder --win --publish always --config electron-builder.yml
