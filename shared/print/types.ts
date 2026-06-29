@@ -60,6 +60,8 @@ export interface PrintJob {
   /** Present when the Electron queue should ack after successful print. */
   orderId?: number;
   ackType?: "kot" | "bill";
+  /** Present when this job was also persisted as a print_jobs row for remote (PRINT_JOB broadcast) dispatch. */
+  jobId?: number;
 }
 
 export interface PrintApiResponse {
@@ -73,4 +75,6 @@ export interface PrintApiResponse {
   tableNumber?: string | null;
   items?: Array<{ name: string; quantity: number; size?: string | null }>;
   message?: string;
+  /** True when the job was broadcast via PRINT_JOB for remote desktop printing (no local electronAPI). */
+  dispatched?: boolean;
 }

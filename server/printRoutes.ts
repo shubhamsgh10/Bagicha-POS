@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { db } from "./db";
-import { orders, orderItems, menuItems, kotTickets } from "@shared/schema";
-import { eq, asc } from "drizzle-orm";
+import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
+import { eq, asc, and, gt } from "drizzle-orm";
 import { getSettings } from "./settingsStore";
 import { computeDelta, type SnapshotItem, type KotSnapshot } from "./kotDelta";
 import {
@@ -13,7 +13,30 @@ import {
 import { toPrintJob } from "@shared/print/generators";
 import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
+import { publishRealtime } from "./realtime/publisher";
 import * as E from "./escpos";
+
+/** Persists a print_jobs row and broadcasts PRINT_JOB so a remote Electron host can claim+print it. */
+async function dispatchRemotePrintJob(params: {
+  orderId: number;
+  jobType: "kot" | "bill";
+  printerId: string;
+  payload: string;
+}): Promise<number> {
+  const [row] = await db
+    .insert(printJobs)
+    .values({ orderId: params.orderId, jobType: params.jobType, printerId: params.printerId, payload: params.payload })
+    .returning();
+  await publishRealtime({
+    type: "PRINT_JOB",
+    jobId: row.id,
+    orderId: params.orderId,
+    jobType: params.jobType,
+    printerId: params.printerId,
+    payload: params.payload,
+  });
+  return row.id;
+}
 
 function requireAuth(req: any, res: any, next: any) {
   if (req.isAuthenticated()) return next();
@@ -402,9 +425,20 @@ export function registerPrintRoutes(app: Express): void {
         });
       }
 
+      let jobId: number | undefined;
+      if (escPosOk) {
+        jobId = await dispatchRemotePrintJob({
+          orderId,
+          jobType: "kot",
+          printerId: printer.id,
+          payload: buffer.toString("base64"),
+        });
+      }
+
       return res.json({
         printed: false,
-        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "kot" }) : undefined,
+        dispatched: escPosOk,
+        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "kot", jobId }) : undefined,
         browserPrint: !escPosOk,
         message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
         pendingAck: escPosOk && !reprint,
@@ -505,9 +539,20 @@ export function registerPrintRoutes(app: Express): void {
         });
       }
 
+      let billJobId: number | undefined;
+      if (escPosOk) {
+        billJobId = await dispatchRemotePrintJob({
+          orderId,
+          jobType: "bill",
+          printerId: printer.id,
+          payload: buffer.toString("base64"),
+        });
+      }
+
       return res.json({
         printed: false,
-        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "bill" }) : undefined,
+        dispatched: escPosOk,
+        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "bill", jobId: billJobId }) : undefined,
         browserPrint: !escPosOk,
         message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
         pendingAck: escPosOk,
@@ -519,10 +564,68 @@ export function registerPrintRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/print/jobs/:id/claim", requireAuth, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      if (!jobId) return res.status(400).json({ message: "Invalid job id" });
+
+      const [claimed] = await db
+        .update(printJobs)
+        .set({ status: "claimed" })
+        .where(and(eq(printJobs.id, jobId), eq(printJobs.status, "pending")))
+        .returning();
+
+      if (!claimed) return res.json({ claimed: false });
+      return res.json({
+        claimed: true,
+        job: {
+          jobId: claimed.id,
+          orderId: claimed.orderId,
+          jobType: claimed.jobType,
+          printerId: claimed.printerId,
+          payload: claimed.payload,
+        },
+      });
+    } catch (err: any) {
+      console.error("[Print/JobClaim]", err);
+      res.status(500).json({ message: err.message || "Claim failed" });
+    }
+  });
+
+  app.get("/api/print/jobs/pending", requireAuth, async (_req, res) => {
+    try {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const rows = await db
+        .select()
+        .from(printJobs)
+        .where(and(eq(printJobs.status, "pending"), gt(printJobs.createdAt, cutoff)))
+        .orderBy(asc(printJobs.id));
+      return res.json({
+        jobs: rows.map((r) => ({
+          jobId: r.id,
+          orderId: r.orderId,
+          jobType: r.jobType,
+          printerId: r.printerId,
+          payload: r.payload,
+        })),
+      });
+    } catch (err: any) {
+      console.error("[Print/JobsPending]", err);
+      res.status(500).json({ message: err.message || "Failed to list pending jobs" });
+    }
+  });
+
   app.post("/api/print/ack", requireAuth, async (req, res) => {
     try {
-      const { orderId, type } = req.body as { orderId: number; type: "kot" | "bill" };
+      const { orderId, type, jobId } = req.body as { orderId: number; type: "kot" | "bill"; jobId?: number };
       if (!orderId || !type) return res.status(400).json({ message: "orderId and type are required" });
+
+      if (jobId) {
+        await db
+          .update(printJobs)
+          .set({ status: "printed", printedAt: new Date() })
+          .where(eq(printJobs.id, jobId));
+      }
 
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Order not found" });

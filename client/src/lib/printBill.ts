@@ -1,11 +1,51 @@
 import bagichaLogoImg from "@assets/Bagicha Logo.png";
 
 /**
+ * Render an HTML document to the printer.
+ * Primary path: a popup window (desktop — gives a real print dialog).
+ * Fallback: a hidden same-document iframe, used when the popup is blocked
+ * (mobile browsers block window.open that runs after an await, since the
+ * user-gesture context is lost). Returns true if printing was initiated.
+ */
+function openPrintDocument(html: string, delayMs: number): boolean {
+  const win = window.open("", "_blank", "width=310,height=600");
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, delayMs);
+    return true;
+  }
+
+  // Popup blocked (typical on mobile) — fall back to a hidden iframe.
+  try {
+    const iframe = document.createElement("iframe");
+    Object.assign(iframe.style, {
+      position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0",
+    });
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (!doc) { document.body.removeChild(iframe); return false; }
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch { /* ignore */ }
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch { /* ignore */ } }, 1500);
+    }, delayMs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * KOT slip printer — matches the reference image:
  * centred KOT header, order# + datetime, customer, table, numbered item table,
  * total items. No prices, no logo, no address — kitchen-only info.
+ * Returns true if a print was initiated (popup or iframe), false if blocked entirely.
  */
-export function printKOT(order: any, items: any[]): void {
+export function printKOT(order: any, items: any[]): boolean {
   const orderDate = new Date(order.createdAt || Date.now());
   const dateStr   = orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
   const timeStr   = orderDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
@@ -19,10 +59,7 @@ export function printKOT(order: any, items: any[]): void {
         </tr>`).join("")
     : `<tr><td colspan="3" class="empty">No items</td></tr>`;
 
-  const win = window.open("", "_blank", "width=310,height=500");
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>KOT - ${order.orderNumber || ""}</title>
 <style>
   @page { size: 76mm auto; margin: 3mm 4mm; }
@@ -107,15 +144,14 @@ ${order.tableNumber  ? `<div class="info-line">Table No. : &nbsp;<span>${order.t
   <span class="val">${items.length}</span>
 </div>
 
-</body></html>`);
+</body></html>`;
 
-  win.document.close();
-  win.focus();
-  setTimeout(() => { win.print(); win.close(); }, 600);
+  return openPrintDocument(html, 600);
 }
 
-/** Shared retail-invoice bill printer used by Tables and POS. */
-export async function printOrderBill(order: any, items: any[], settings: any): Promise<void> {
+/** Shared retail-invoice bill printer used by Tables and POS.
+ *  Returns true if a print was initiated (popup or iframe), false if blocked entirely. */
+export async function printOrderBill(order: any, items: any[], settings: any): Promise<boolean> {
   const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
   const address        = settings?.address        || "";
   const phone          = settings?.phone          || "";
@@ -193,10 +229,7 @@ export async function printOrderBill(order: any, items: any[], settings: any): P
   ].filter(Boolean).join("<br>");
 
   // 76mm thermal/KOT roll paper — window width matches usable print area
-  const win = window.open("", "_blank", "width=310,height=600");
-  if (!win) return;
-
-  win.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Bill - ${order.orderNumber}</title>
 <style>
   /* ── 76 mm thermal roll paper ── */
@@ -291,11 +324,9 @@ ${upiQrHtml}
 
 <div class="footer">${footerNote}<br>Please visit again</div>
 
-</body></html>`);
+</body></html>`;
 
-  win.document.close();
-  win.focus();
   // 1 s — gives the thermal driver time to receive the page size before the dialog opens,
   // and allows the base64 logo + QR image (if any) to fully render.
-  setTimeout(() => { win.print(); win.close(); }, 1000);
+  return openPrintDocument(html, 1000);
 }

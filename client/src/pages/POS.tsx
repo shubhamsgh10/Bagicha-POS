@@ -448,6 +448,8 @@ export default function POS() {
               : 'Use Print in the preview panel.'),
         });
         if (order) showKOTPreview(order, data?.kotNumber);
+      } else if (outcome === 'dispatched') {
+        toast({ title: 'Sent to kitchen printer!' });
       } else if (outcome === 'noop' && data.printJob) {
         toast({
           title: 'Print job ready',
@@ -484,7 +486,9 @@ export default function POS() {
             fetch(apiUrl(`/api/orders/${orderId}`), { credentials: 'include' }).then((r) => r.json()),
             fetch(apiUrl('/api/settings'), { credentials: 'include' }).then((r) => r.json()),
           ]);
-          await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
+          const printed = await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
+          // Popup + iframe both blocked (rare) — show the in-page preview so the user isn't stuck.
+          if (!printed) showBillPreview(freshOrder ?? order);
           if (!skipKOT) {
             const kotSettings = freshSettings?.printSettings?.kot;
             if (kotSettings?.printOnBill) {
@@ -493,11 +497,11 @@ export default function POS() {
           }
         },
       });
-      if (outcome === 'hardware' || outcome === 'browser') {
+      if (outcome === 'hardware' || outcome === 'browser' || outcome === 'dispatched') {
         toast({ title: 'Bill sent to printer!' });
         if (!skipKOT) {
           const kotSettings = (settings as any)?.printSettings?.kot;
-          if (kotSettings?.printOnBill && outcome === 'hardware') {
+          if (kotSettings?.printOnBill && (outcome === 'hardware' || outcome === 'dispatched')) {
             triggerKOTPrint(orderId, order);
           }
         }

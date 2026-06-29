@@ -49,6 +49,7 @@ export function useRealtime(_url?: string) {
       "WA_STATUS",
       "WA_CONVERSATION_UPDATE",
       "WA_CONNECTION",
+      "PRINT_JOB",
     ];
 
     (async () => {

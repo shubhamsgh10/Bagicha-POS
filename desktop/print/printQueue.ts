@@ -134,7 +134,7 @@ export class PrintQueue {
       await executePrintJob(job.printJob, printers);
       // Ack if needed
       if (job.orderId && job.ackType) {
-        await this.ack(job.orderId, job.ackType).catch((e) =>
+        await this.ack(job.orderId, job.ackType, job.printJob.jobId).catch((e) =>
           console.warn(`[printQueue] ack failed for job ${job.id}:`, e),
         );
       }
@@ -188,7 +188,7 @@ export class PrintQueue {
     if (hasMore) setImmediate(() => this.processNext());
   }
 
-  private async ack(orderId: number, type: "kot" | "bill"): Promise<void> {
+  private async ack(orderId: number, type: "kot" | "bill", jobId?: number): Promise<void> {
     const base = this.getApiBase();
     const cookieHeader = await this.getCookieHeader();
     const res = await fetch(`${base}/api/print/ack`, {
@@ -197,7 +197,7 @@ export class PrintQueue {
         "Content-Type": "application/json",
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       },
-      body: JSON.stringify({ orderId, type }),
+      body: JSON.stringify({ orderId, type, jobId }),
     });
     if (!res.ok) throw new Error(`Ack failed: ${res.status}`);
   }
