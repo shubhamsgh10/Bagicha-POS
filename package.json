@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Bagicha POS — restaurant order, KOT, and billing system",
   "type": "module",
   "license": "MIT",
