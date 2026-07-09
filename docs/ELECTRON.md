@@ -88,7 +88,7 @@ This runs `ELECTRON_BUILD=1 vite build` (relative `./` asset paths for `file://`
 | Command | Output |
 |---------|--------|
 | `npm run pack:win` | `release/Bagicha POS Setup x.x.x.exe` (NSIS) |
-| `npm run pack:mac` | `release/Bagicha POS-x.x.x.dmg` (build on macOS) |
+| `npm run pack:mac` | `release/Bagicha POS-x.x.x.dmg` + `.zip` (must run on macOS — see below, or use the `release-mac` CI job) |
 | `npm run pack:linux` | `release/*.AppImage`, `*.deb` |
 | `npm run dist:electron` | All platforms supported on the current OS |
 
@@ -104,6 +104,12 @@ npm run pack:win
 ```
 
 **First-time note:** `electron-builder` downloads Electron binaries (~150MB). Code signing is optional; unsigned builds show SmartScreen warnings until users trust the app.
+
+### macOS: no Mac needed to build
+
+`npm run pack:mac` only works when run *on* macOS (electron-builder needs the real OS to produce a `.dmg` and to rebuild native modules like `better-sqlite3`/`usb` for macOS). Since the dev machine here is Windows, macOS builds run in CI instead: `.github/workflows/release.yml` has a `release-mac` job on `macos-latest` that builds both Intel (`x64`) and Apple Silicon (`arm64`) in one run and publishes the `.dmg`/`.zip` to the same GitHub Release as the Windows installer — triggered by the same `git tag vX.Y.Z && git push --tags`.
+
+The build is **unsigned** (no Apple Developer ID cert). electron-builder still applies an ad-hoc signature automatically (required for the app to even launch on Apple Silicon), but macOS Gatekeeper will show "*Bagicha POS* can't be opened because it is from an unidentified developer" on first launch. Staff/owner workaround: right-click the app → **Open** → **Open** in the confirmation dialog (only needed once). To remove this prompt entirely, enroll in the Apple Developer Program ($99/year), add a Developer ID Application certificate as a `CSC_LINK`/`CSC_KEY_PASSWORD` secret, and set `notarize` in `electron-builder.yml`.
 
 ### Windows: `Cannot create symbolic link` (winCodeSign)
 
@@ -191,7 +197,11 @@ subscriber and executes the job locally regardless of which device initiated the
    receives the `PRINT_JOB` realtime message, claims it the same way, and prints.
 5. `POST /api/print/jobs/:id/claim` is an atomic `UPDATE print_jobs SET status='claimed' WHERE status='pending'`
    — whichever of steps 3/4 claims first wins; the loser sees `claimed: false` and skips printing. This is the
-   only thing preventing a double print when both paths race for the same job.
+   only thing preventing a double print when both paths race for the same job. A claim older than 2 minutes
+   (`claimedAt` column) is treated as abandoned and becomes reclaimable — protects against a station crashing
+   mid-print. `POST /api/print/jobs/:id/release` (called by `desktop/print/printQueue.ts` on permanent failure,
+   and by the web print station on a RawBT handoff error) returns a claimed-but-unprintable job to `pending`
+   immediately instead of waiting out the 2-minute window.
 6. After a successful print, the existing Electron `PrintQueue` (`desktop/print/printQueue.ts`) auto-calls
    `POST /api/print/ack` (now also passing `jobId`) — this both commits the KOT snapshot / bill count
    **and** flips the `print_jobs` row to `'printed'`. Neither `printGateway.ts` nor `usePrintJobBridge.ts`
@@ -206,6 +216,49 @@ Expected latency on the hot path is ~1-2s, dominated by Pusher delivery (~100-50
 Browser/phone clients with no `window.electronAPI` silently ignore the `PRINT_JOB` broadcast and just show a
 "Sent to kitchen printer!" toast (`outcome === 'dispatched'` in `printGateway.ts`) instead of a dead-end
 browser print dialog.
+
+## Multi-station printing (category routing + quick-POS sections)
+
+The bridge above assumed one printer, one station. For a restaurant with more than one kitchen/counter
+(e.g. an outdoor South Indian section printing on a separate Bluetooth HOIN H58 via a tablet instead of
+the main indoor Electron host), two additive layers sit on top of it — everything below is a no-op when
+unconfigured (empty `categoryPrinterOverrides` / `posSections`), so a single-printer install behaves
+identically.
+
+**Category → printer routing.** Admin → Settings → Print Settings → KOT Print → "Category Routing" maps
+individual menu categories to a specific printer (`KOTPrintSettings.categoryPrinterOverrides`, categoryId →
+printerId; unmapped categories fall back to the default KOT printer). `POST /api/print/kot`
+(`server/printRoutes.ts`) resolves each delta item's target printer, groups items by printer, and generates
+**one ESC/POS ticket per printer** — all tickets share the same KOT number. `kotPrintCount` /
+`lastKotSnapshot` commit **once per tap, at dispatch** (not per-ticket-ack) — this is a correctness fix as
+much as a multi-station requirement: with a single ticket, ack-time commit and dispatch-time commit were
+equivalent, but multiple tickets acking independently would otherwise double-increment the count. `/api/print/bill`
+resolves a per-order bill printer the same way when every item in the order belongs to one `posSections`
+section that has a `billPrinterId` set (see below); otherwise it uses the global bill printer.
+
+**Printer ownership (station scoping).** A station (an Electron host, or a browser tab running as a
+"print station" — see below) can be scoped to only the printers physically wired to it via
+`printStationCore.ts`'s `localStorage`-backed `ownedPrinterIds`. Empty = owns everything (today's
+single-station default, unchanged). `GET /api/print/jobs/pending` accepts `?printerId=a,b` to filter
+server-side; the client also filters `PRINT_JOB` broadcasts before claiming, so an unconfigured or
+misconfigured host never claims a job it can't physically print.
+
+**Web print station (`/print-station`).** For a device with no Windows/Electron host — e.g. an Android
+tablet at an outdoor counter — `client/src/pages/PrintStation.tsx` turns a plain browser tab into a
+station: it subscribes to the same `useRealtime()`/`PRINT_JOB` channel, claims jobs for its selected
+printers, and hands the ESC/POS payload to the **RawBT** Android app (`rawbt:`/`intent://` URI — RawBT
+handles the actual Bluetooth/USB-OTG transmission). Because RawBT gives no print-success callback, the
+station acks on handoff (not on confirmed paper-out); the page's "Recent jobs" list lets staff manually
+retap a job if it silently failed. A Screen Wake Lock keeps the tablet awake while station mode is on, and
+the same claim → catch-up-poll pattern as the Electron bridge recovers any jobs broadcast while offline.
+
+**Quick-POS sections (Tables page).** A `posSections` entry (`{id, name, categoryIds, billPrinterId}`,
+configured in the same Print Settings → Sections tab) also renders a dedicated card on the Tables page
+(next to the INNER/OUTER table groups) that opens `/pos?section=<id>` — a POS view filtered to only that
+section's categories, with no table picker, primary "Print Bill" action, and Settle immediately after
+(`client/src/pages/POS.tsx`, `isSectionMode`). This is how the South Indian counter is meant to be staffed:
+one tap opens the filtered menu, print routes its KOT to the H58 via category routing above, and the bill
+routes to the same printer via `billPrinterId` on the section.
 
 ## Vercel `vercel.json`
 
