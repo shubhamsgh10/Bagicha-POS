@@ -1,8 +1,13 @@
 {
   "name": "rest-express",
   "version": "1.0.11",
+  "description": "Bagicha POS — restaurant order, KOT, and billing system",
   "type": "module",
   "license": "MIT",
+  "author": {
+    "name": "Shubham Singh",
+    "email": "shubhamsgh10@gmail.com"
+  },
   "main": "desktop/dist/main.mjs",
   "scripts": {
     "dev": "tsx -r dotenv/config server/index.ts",
@@ -147,8 +152,5 @@
     "tsx": "^4.19.1",
     "typescript": "5.6.3",
     "vite": "^5.4.19"
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.8"
   }
 }
