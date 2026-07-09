@@ -53,8 +53,18 @@ mac:
   icon: desktop/icons/icon.png
   category: public.app-category.business
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  # Unsigned build (no Apple Developer ID yet) — electron-builder still applies an
+  # ad-hoc signature automatically (required for the app to launch on Apple Silicon).
+  # Users see a Gatekeeper "unidentified developer" prompt on first launch; right-click
+  # the app → Open once to bypass it. Revisit once a Developer ID cert is available.
   hardenedRuntime: true
   gatekeeperAssess: false
 
