@@ -20,6 +20,8 @@ export interface LiveOrder {
   customerName: string | null;
   customerPhone: string | null;
   orderType: "delivery" | "pickup";
+  /** Quick-POS section that created this order (e.g. South Indian counter); null = generic order. */
+  posSectionId: string | null;
   status: string;
   totalAmount: number;
   createdAt: string;
@@ -37,16 +39,6 @@ async function apiFetch<T>(url: string): Promise<T> {
   return res.json();
 }
 
-function isToday(dateStr: string): boolean {
-  const d   = new Date(dateStr);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth()    === now.getMonth()    &&
-    d.getDate()     === now.getDate()
-  );
-}
-
 function rawToOrder(raw: any): LiveOrder | null {
   const ot = normalizeOrderType(raw.orderType, false);
   if (ot !== "delivery" && ot !== "pickup") return null;
@@ -56,6 +48,7 @@ function rawToOrder(raw: any): LiveOrder | null {
     customerName: raw.customerName ?? null,
     customerPhone: raw.customerPhone ?? null,
     orderType:    ot,
+    posSectionId: raw.posSectionId ?? null,
     status:       raw.status ?? "pending",
     totalAmount:  parseFloat(String(raw.totalAmount ?? "0")),
     createdAt:    raw.createdAt,
@@ -95,15 +88,14 @@ export function useLiveOrders() {
     try {
       const rawList = await apiFetch<any[]>("/api/orders");
 
-      // Delivery / pickup orders: keep every OPEN (unsettled) order regardless of age so nothing
-      // unfinished ever hides; completed (served) orders are shown for today only, then roll off.
+      // Delivery / pickup / section-counter orders: keep every OPEN (unsettled) order regardless
+      // of age so nothing unfinished ever hides. Settled ("served") orders leave immediately —
+      // they remain visible on the Orders/Billing pages. Cancelled orders never show.
       // (Settling an order sets status = "served"; see POST /api/orders/:id/payment.)
       const candidates = rawList.filter((o: any) => {
         const ot = normalizeOrderType(o.orderType, false);
         if (ot !== "delivery" && ot !== "pickup") return false;
-        if (o.status === "cancelled") return false;
-        const isOpen = o.status !== "served";
-        return isOpen || isToday(o.createdAt);
+        return o.status !== "cancelled" && o.status !== "served";
       });
 
       // Fetch full detail (includes items array)
@@ -192,6 +184,11 @@ export function useLiveOrders() {
         try {
           const full = await apiFetch<any>(`/api/orders/${order.id}`);
           if (!mountedRef.current) return;
+          // Settled/cancelled orders leave the live surfaces immediately
+          if (full.status === "served" || full.status === "cancelled") {
+            setOrders(prev => prev.filter(o => o.id !== full.id));
+            return;
+          }
           const updated = rawToOrder(full);
           if (!updated) return;
           updated.hasNewItems = true;
@@ -203,14 +200,24 @@ export function useLiveOrders() {
   }, [lastMessage, loadAll]);
 
   // ── Derived slices ────────────────────────────────────────────────────────
+  // Section-counter orders (posSectionId set) get their own surface at the section
+  // card on the Tables page — they never appear in the generic pickup/delivery rail.
   const deliveryOrders = useMemo(
-    () => orders.filter(o => o.orderType === "delivery"),
+    () => orders.filter(o => o.orderType === "delivery" && !o.posSectionId),
     [orders]
   );
   const pickupOrders = useMemo(
-    () => orders.filter(o => o.orderType === "pickup"),
+    () => orders.filter(o => o.orderType === "pickup" && !o.posSectionId),
     [orders]
   );
+  const sectionOrders = useMemo(() => {
+    const grouped: Record<string, LiveOrder[]> = {};
+    for (const o of orders) {
+      if (!o.posSectionId) continue;
+      (grouped[o.posSectionId] ??= []).push(o);
+    }
+    return grouped;
+  }, [orders]);
 
-  return { deliveryOrders, pickupOrders, isLoading, connectionStatus, refresh: loadAll };
+  return { deliveryOrders, pickupOrders, sectionOrders, isLoading, connectionStatus, refresh: loadAll };
 }

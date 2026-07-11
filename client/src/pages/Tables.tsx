@@ -11,13 +11,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer, UserRound,
+  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer, UserRound, UtensilsCrossed,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useLiveOrders } from "@/hooks/useLiveOrders";
 import { LiveOrdersPanel, LiveOrdersStrip } from "@/components/live-tables/LiveOrdersPanel";
+import { SectionOrdersFlyout } from "@/components/live-tables/SectionOrdersFlyout";
 
 interface Table {
   id: number;
@@ -116,7 +117,7 @@ function sectionLabel(s: string) {
 export default function Tables() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
-  const { deliveryOrders, pickupOrders } = useLiveOrders();
+  const { deliveryOrders, pickupOrders, sectionOrders } = useLiveOrders();
 
   const printTableBill = async (orderId: number) => {
     try {
@@ -159,6 +160,11 @@ export default function Tables() {
     refetchOnMount: "always",
     refetchInterval: 5000,
   });
+
+  // Quick-POS sections (e.g. South Indian counter) — configured in Print Settings → Sections
+  const { data: appSettings } = useQuery<any>({ queryKey: ["/api/settings"] });
+  const posSections: Array<{ id: string; name: string; categoryIds: number[] }> =
+    appSettings?.posSections ?? [];
 
   const { data: liveStatus } = useQuery<{
     runningTables: number;
@@ -575,6 +581,43 @@ export default function Tables() {
             </div>
           ))
         )}
+
+        {/* ── Quick-POS sections (e.g. South Indian counter) ─────────────────── */}
+        {posSections.map(section => {
+          const openOrders = sectionOrders[section.id] ?? [];
+          return (
+            <div key={section.id}>
+              <div className="flex items-center gap-3 mb-3">
+                <h2 className="text-xs font-bold text-foreground uppercase tracking-[0.1em]">
+                  {section.name}
+                </h2>
+                <div className="flex-1 h-px" style={{ background: "var(--paper-0)", boxShadow: "0 1px 0 rgba(0,0,0,0.06)" }} />
+                <span className="text-xs text-muted-foreground font-medium">
+                  {openOrders.length} open
+                </span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 gap-3">
+                {/* Open orders float in a hover/tap flyout in front of the card */}
+                <SectionOrdersFlyout
+                  sectionId={section.id}
+                  sectionName={section.name}
+                  orders={openOrders}
+                  onNewOrder={() => navigate(`/pos?section=${encodeURIComponent(section.id)}&sectionName=${encodeURIComponent(section.name)}`)}
+                >
+                  <div className="h-full rounded-xl cursor-pointer select-none border-2 border-amber-400 bg-amber-50 hover:bg-amber-100 transition-colors">
+                    <div className="p-2.5 min-h-[72px] h-full flex flex-col items-center justify-center gap-1">
+                      <UtensilsCrossed className="w-5 h-5 text-amber-600" />
+                      <p className="text-sm font-bold leading-tight text-amber-700 text-center truncate w-full">
+                        {section.name}
+                      </p>
+                      <p className="text-[10px] text-amber-500 font-medium">Tap to order</p>
+                    </div>
+                  </div>
+                </SectionOrdersFlyout>
+              </div>
+            </div>
+          );
+        })}
       </main>
 
       {/* ── Add / Edit Table Dialog ────────────────────────────────────────────── */}

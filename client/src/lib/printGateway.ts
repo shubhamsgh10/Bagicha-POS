@@ -1,6 +1,9 @@
-import type { PrintApiResponse } from "@shared/print/types";
+import type { PrintApiResponse, PrintJob } from "@shared/print/types";
 import { apiUrl } from "@/lib/api";
 import { printKOT, printOrderBill } from "@/lib/printBill";
+import { claimPrintJob, releasePrintJob, ownsPrinter } from "@/lib/printStationCore";
+
+export { claimPrintJob } from "@/lib/printStationCore";
 
 export type PrintHandleResult =
   | "hardware"
@@ -29,22 +32,6 @@ async function ackPrint(orderId: number, type: "kot" | "bill"): Promise<void> {
   });
 }
 
-/** Atomically claims a print_jobs row so only one consumer (this tab's direct path,
- *  or the PRINT_JOB broadcast listener) ever executes a given job. */
-export async function claimPrintJob(jobId: number): Promise<boolean> {
-  try {
-    const res = await fetch(apiUrl(`/api/print/jobs/${jobId}/claim`), {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { claimed: boolean };
-    return data.claimed;
-  } catch {
-    return false;
-  }
-}
-
 /** Route a /api/print/* JSON response to Electron, server-printed, or browser fallback. */
 export async function handlePrintResponse(
   data: PrintApiResponse & { orderId?: number; pendingAck?: boolean },
@@ -68,54 +55,73 @@ export async function handlePrintResponse(
     return "browser";
   }
 
-  if (data.printed === true && !data.printJob) {
-    return "hardware";
+  // One tap may produce multiple routed jobs (one per section printer).
+  const jobList: PrintJob[] = data.printJobs ?? (data.printJob ? [data.printJob] : []);
+
+  if (jobList.length === 0) {
+    if (data.printed === true) return "hardware";
+    if (data.printed === false && !data.browserPrint) return "skipped";
+    return "noop";
   }
 
-  if (data.printJob && window.electronAPI?.isElectron) {
-    if (data.printJob.jobId) {
-      const claimed = await claimPrintJob(data.printJob.jobId);
-      if (!claimed) {
-        // Already claimed (printed or in-flight) by the PRINT_JOB broadcast listener — don't print twice.
-        return "dispatched";
+  if (window.electronAPI?.isElectron) {
+    let executed = 0;
+    let dispatched = 0;
+    let lastError: string | undefined;
+
+    for (const pj of jobList) {
+      // Jobs for printers this station doesn't own were already broadcast — leave
+      // them for the owning station (outdoor tablet, other host) to claim.
+      if (pj.jobId && !ownsPrinter(pj.printerId)) {
+        dispatched++;
+        continue;
+      }
+      if (pj.jobId) {
+        const claimed = await claimPrintJob(pj.jobId);
+        if (!claimed) {
+          // Already claimed (printed or in-flight) by the broadcast listener — don't print twice.
+          dispatched++;
+          continue;
+        }
+      }
+      const result = await window.electronAPI.print(pj);
+      if (result.ok) {
+        // Ack is handled by the Electron print queue internally — do not double-ack here.
+        executed++;
+      } else {
+        lastError = result.error;
+        if (pj.jobId) await releasePrintJob(pj.jobId, result.error);
       }
     }
-    const result = await window.electronAPI.print(data.printJob);
-    if (!result.ok) {
-      // Electron queue enqueue failed — fall back to browser print
-      console.warn("[print] Electron print failed, falling back to browser:", result.error);
-      if (options.onBrowserBill) {
-        await options.onBrowserBill();
-        return "browser";
-      } else if (options.onBrowserKOT) {
-        options.onBrowserKOT(data);
-        return "browser";
-      } else if (data.orderNumber && data.items) {
-        printKOT(
-          { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
-          data.items,
-        );
-        return "browser";
-      }
-      return "failed";
+
+    if (executed > 0) return "hardware";
+    if (dispatched > 0) return "dispatched";
+
+    // Every job failed to enqueue — fall back to browser print.
+    console.warn("[print] Electron print failed, falling back to browser:", lastError);
+    if (options.onBrowserBill) {
+      await options.onBrowserBill();
+      return "browser";
+    } else if (options.onBrowserKOT) {
+      options.onBrowserKOT(data);
+      return "browser";
+    } else if (data.orderNumber && data.items) {
+      printKOT(
+        { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
+        data.items,
+      );
+      return "browser";
     }
-    // Ack is handled by the Electron print queue internally — do not double-ack here
-    return "hardware";
+    return "failed";
   }
 
-  if (data.printJob && !window.electronAPI?.print) {
-    // No local Electron printer — the server already broadcast this job (PRINT_JOB)
-    // for a remote desktop host to pick up and print. Nothing to do here.
-    if (data.dispatched || data.printJob.jobId) {
-      return "dispatched";
-    }
-    if (data.pendingAck) {
-      return "noop";
-    }
+  // No local Electron printer — the server already broadcast these jobs (PRINT_JOB)
+  // for the owning stations to pick up and print. Nothing to do here.
+  if (data.dispatched || jobList.some((j) => j.jobId)) {
+    return "dispatched";
   }
-
-  if (data.printed === false && !data.browserPrint && !data.printJob) {
-    return "skipped";
+  if (data.pendingAck) {
+    return "noop";
   }
 
   return "noop";

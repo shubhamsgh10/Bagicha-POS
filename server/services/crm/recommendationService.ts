@@ -102,6 +102,7 @@ export async function getRecommendations(key: string): Promise<RecommendationRes
 
     for (const item of rawItems) {
       const id = item.menuItemId;
+      if (id < 0) continue; // open item (no menu row) — never recommend it back
       if (!itemFreq[id]) {
         itemFreq[id] = { name: item.menuItemName ?? "Item", count: 0, price: parseFloat(item.price) };
       }

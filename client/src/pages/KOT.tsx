@@ -70,6 +70,8 @@ export default function KOT() {
       });
       if (outcome === 'hardware' || outcome === 'browser') {
         toast({ title: 'KOT sent to printer!' });
+      } else if (outcome === 'dispatched') {
+        toast({ title: 'Sent to kitchen printer!' });
       } else if (outcome === 'noop') {
         showKOTPreview(ticket);
       }
