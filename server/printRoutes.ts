@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { db } from "./db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
-import { eq, asc, and, gt } from "drizzle-orm";
+import { eq, asc, and, gt, or, lt, inArray, isNull, sql } from "drizzle-orm";
+import type { PrinterConfig } from "@shared/print/types";
 import { getSettings } from "./settingsStore";
 import { computeDelta, type SnapshotItem, type KotSnapshot } from "./kotDelta";
 import {
@@ -15,6 +16,9 @@ import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { publishRealtime } from "./realtime/publisher";
 import * as E from "./escpos";
+
+/** Claims older than this are considered abandoned (station crashed mid-print) and become reclaimable. */
+const STALE_CLAIM_MS = 2 * 60 * 1000;
 
 /** Persists a print_jobs row and broadcasts PRINT_JOB so a remote Electron host can claim+print it. */
 async function dispatchRemotePrintJob(params: {
@@ -266,14 +270,15 @@ export function registerPrintRoutes(app: Express): void {
       const rawItems = await db
         .select({
           menuItemId: orderItems.menuItemId,
-          name: menuItems.name,
+          categoryId: menuItems.categoryId,
+          name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
           quantity: orderItems.quantity,
           size: orderItems.size,
           specialInstructions: orderItems.specialInstructions,
           serviceMode: orderItems.serviceMode,
         })
         .from(orderItems)
-        .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+        .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
         .where(eq(orderItems.orderId, orderId));
 
       const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
@@ -371,18 +376,46 @@ export function registerPrintRoutes(app: Express): void {
         ? (reprint ? orderKotTickets[0].kotNumber : orderKotTickets[orderKotTickets.length - 1].kotNumber)
         : String((order.kotPrintCount ?? 0) + 1);
 
-      const buffer = generateKOTBuffer({
-        orderNumber: order.orderNumber,
-        tableNumber: order.tableNumber,
-        kotNumber: kotNumStr,
-        isReprint: reprint,
-        isDelta,
-        newItems,
-        modifiedItems,
-        cancelledItems,
-        kotSettings,
-        width: printer.width ?? 48,
-      });
+      // ── Category → printer routing (multi-section KOT split) ────────────────
+      const overrides = kotSettings.categoryPrinterOverrides ?? {};
+      const catByItemId = new Map<number, number | null>(
+        rawItems.map((i) => [i.menuItemId, i.categoryId ?? null]),
+      );
+      const routedItemIds = [...newItems, ...modifiedItems, ...cancelledItems].map((i) => i.itemId);
+      const missingCatIds = Array.from(new Set(routedItemIds.filter((id) => !catByItemId.has(id))));
+      if (missingCatIds.length > 0) {
+        // Cancelled items may no longer be in the order — resolve their categories directly.
+        const rows = await db
+          .select({ id: menuItems.id, categoryId: menuItems.categoryId })
+          .from(menuItems)
+          .where(inArray(menuItems.id, missingCatIds));
+        for (const r of rows) catByItemId.set(r.id, r.categoryId ?? null);
+      }
+      const resolveKotPrinter = (itemId: number): PrinterConfig => {
+        const catId = catByItemId.get(itemId);
+        const overrideId = catId != null ? overrides[String(catId)] : null;
+        return (overrideId ? printers.find((p) => p.id === overrideId) : undefined) ?? printer;
+      };
+
+      type RoutedGroup = {
+        printer: PrinterConfig;
+        newItems: typeof newItems;
+        modifiedItems: typeof modifiedItems;
+        cancelledItems: typeof cancelledItems;
+      };
+      const groups = new Map<string, RoutedGroup>();
+      const groupFor = (p: PrinterConfig): RoutedGroup => {
+        let g = groups.get(p.id);
+        if (!g) {
+          g = { printer: p, newItems: [], modifiedItems: [], cancelledItems: [] };
+          groups.set(p.id, g);
+        }
+        return g;
+      };
+      for (const it of newItems) groupFor(resolveKotPrinter(it.itemId)).newItems.push(it);
+      for (const it of modifiedItems) groupFor(resolveKotPrinter(it.itemId)).modifiedItems.push(it);
+      for (const it of cancelledItems) groupFor(resolveKotPrinter(it.itemId)).cancelledItems.push(it);
+      if (groups.size === 0) groupFor(printer);
 
       const commitKotState = async () => {
         if (!reprint) {
@@ -402,46 +435,61 @@ export function registerPrintRoutes(app: Express): void {
         size: i.size,
         serviceMode: (i as any).serviceMode ?? null,
       }));
-      const escPosOk = supportsRawEscPos(printer);
 
-      if (canExecutePrintOnServer() && escPosOk && printer.type !== "usb") {
-        await sendToPrinter(printer, buffer);
-        await commitKotState();
+      // One ticket per routed printer — same KOT number on every ticket.
+      const kotJobs = Array.from(groups.values()).map((g) => ({
+        printer: g.printer,
+        escPosOk: supportsRawEscPos(g.printer),
+        buffer: generateKOTBuffer({
+          orderNumber: order.orderNumber,
+          tableNumber: order.tableNumber,
+          kotNumber: kotNumStr,
+          isReprint: reprint,
+          isDelta,
+          newItems: g.newItems,
+          modifiedItems: g.modifiedItems,
+          cancelledItems: g.cancelledItems,
+          kotSettings,
+          width: g.printer.width ?? 48,
+        }),
+      }));
+
+      const directJobs = kotJobs.filter((j) => canExecutePrintOnServer() && j.escPosOk && j.printer.type !== "usb");
+      const remoteJobs = kotJobs.filter((j) => j.escPosOk && !(canExecutePrintOnServer() && j.printer.type !== "usb"));
+      const nonEscPosJobs = kotJobs.filter((j) => !j.escPosOk);
+
+      // Direct hardware sends first — fail fast before any durable side effects.
+      for (const j of directJobs) await sendToPrinter(j.printer, j.buffer);
+
+      const dispatchedJobs = [] as ReturnType<typeof toPrintJob>[];
+      for (const j of remoteJobs) {
+        const jobId = await dispatchRemotePrintJob({
+          orderId,
+          jobType: "kot",
+          printerId: j.printer.id,
+          payload: j.buffer.toString("base64"),
+        });
+        dispatchedJobs.push(toPrintJob(j.printer.id, j.buffer, { orderId, ackType: "kot", jobId }));
+      }
+
+      // Commit once per tap — payloads are frozen in print_jobs, so late printing stays
+      // correct and acks only flip job rows (no double-increment across multiple tickets).
+      await commitKotState();
+
+      if (dispatchedJobs.length === 0 && nonEscPosJobs.length === 0) {
         return res.json({ printed: true, isDelta, reprint });
       }
 
-      if (canExecutePrintOnServer() && !escPosOk && printer.type !== "usb") {
-        return res.json({
-          printed: false,
-          browserPrint: true,
-          reason: "non_escpos_printer",
-          message: nonEscPosPrinterMessage(printer),
-          isDelta,
-          reprint,
-          orderNumber: order.orderNumber,
-          tableNumber: order.tableNumber,
-          items: browserItems,
-          orderId,
-        });
-      }
-
-      let jobId: number | undefined;
-      if (escPosOk) {
-        jobId = await dispatchRemotePrintJob({
-          orderId,
-          jobType: "kot",
-          printerId: printer.id,
-          payload: buffer.toString("base64"),
-        });
-      }
-
+      const allNonEscPos = nonEscPosJobs.length === kotJobs.length;
       return res.json({
         printed: false,
-        dispatched: escPosOk,
-        printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "kot", jobId }) : undefined,
-        browserPrint: !escPosOk,
-        message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
-        pendingAck: escPosOk && !reprint,
+        dispatched: dispatchedJobs.length > 0,
+        printJob: dispatchedJobs[0],
+        printJobs: dispatchedJobs.length > 0 ? dispatchedJobs : undefined,
+        browserPrint: allNonEscPos,
+        reason: allNonEscPos ? "non_escpos_printer" : undefined,
+        message: nonEscPosJobs.length > 0 ? nonEscPosPrinterMessage(nonEscPosJobs[0].printer) : undefined,
+        pendingAck: dispatchedJobs.length > 0 && !reprint,
         orderId,
         isDelta,
         reprint,
@@ -466,7 +514,37 @@ export function registerPrintRoutes(app: Express): void {
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Order not found" });
 
-      const printer = printers.find((p) => p.id === billSettings.billPrinterId);
+      const rawItems = await db
+        .select({
+          name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
+          quantity: orderItems.quantity,
+          price: orderItems.price,
+          size: orderItems.size,
+          specialInstructions: orderItems.specialInstructions,
+          categoryId: menuItems.categoryId,
+        })
+        .from(orderItems)
+        .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+        .where(eq(orderItems.orderId, orderId));
+
+      // Per-section bill routing. Prefer the explicit marker stamped at creation
+      // (orders.posSectionId, set by the quick-POS); fall back to the all-items-in-one-
+      // section categories rule for legacy/untagged orders.
+      const sections = settings.posSections ?? [];
+      const taggedSection = order.posSectionId
+        ? sections.find((s) => s.id === order.posSectionId && s.billPrinterId)
+        : undefined;
+      const itemCatIds = rawItems.map((i) => i.categoryId).filter((c): c is number => c != null);
+      const inferredSection = itemCatIds.length > 0
+        ? sections.find(
+            (s) => s.billPrinterId && itemCatIds.every((c) => s.categoryIds.includes(c)),
+          )
+        : undefined;
+      const billSection = taggedSection ?? inferredSection;
+      const printer =
+        (billSection?.billPrinterId
+          ? printers.find((p) => p.id === billSection.billPrinterId)
+          : undefined) ?? printers.find((p) => p.id === billSettings.billPrinterId);
 
       if (!printer) {
         await db
@@ -475,18 +553,6 @@ export function registerPrintRoutes(app: Express): void {
           .where(eq(orders.id, orderId));
         return res.json({ browserPrint: true });
       }
-
-      const rawItems = await db
-        .select({
-          name: menuItems.name,
-          quantity: orderItems.quantity,
-          price: orderItems.price,
-          size: orderItems.size,
-          specialInstructions: orderItems.specialInstructions,
-        })
-        .from(orderItems)
-        .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-        .where(eq(orderItems.orderId, orderId));
 
       const buffer = generateBillBuffer({
         order: {
@@ -547,6 +613,8 @@ export function registerPrintRoutes(app: Express): void {
           printerId: printer.id,
           payload: buffer.toString("base64"),
         });
+        // Commit at dispatch — the ack (jobId) only flips the job row.
+        await commitBillState();
       }
 
       return res.json({
@@ -569,10 +637,23 @@ export function registerPrintRoutes(app: Express): void {
       const jobId = Number(req.params.id);
       if (!jobId) return res.status(400).json({ message: "Invalid job id" });
 
+      const staleCutoff = new Date(Date.now() - STALE_CLAIM_MS);
       const [claimed] = await db
         .update(printJobs)
-        .set({ status: "claimed" })
-        .where(and(eq(printJobs.id, jobId), eq(printJobs.status, "pending")))
+        .set({ status: "claimed", claimedAt: new Date() })
+        .where(
+          and(
+            eq(printJobs.id, jobId),
+            or(
+              eq(printJobs.status, "pending"),
+              // Stale claim: the claiming station crashed before printing — reclaimable.
+              and(
+                eq(printJobs.status, "claimed"),
+                or(isNull(printJobs.claimedAt), lt(printJobs.claimedAt, staleCutoff)),
+              ),
+            ),
+          ),
+        )
         .returning();
 
       if (!claimed) return res.json({ claimed: false });
@@ -592,13 +673,34 @@ export function registerPrintRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/print/jobs/pending", requireAuth, async (_req, res) => {
+  app.get("/api/print/jobs/pending", requireAuth, async (req, res) => {
     try {
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const staleCutoff = new Date(Date.now() - STALE_CLAIM_MS);
+      const printerFilter = String(req.query.printerId ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const base = and(
+        gt(printJobs.createdAt, cutoff),
+        or(
+          eq(printJobs.status, "pending"),
+          // Include stale claims so a healthy station can rescue a crashed one's jobs.
+          and(
+            eq(printJobs.status, "claimed"),
+            or(isNull(printJobs.claimedAt), lt(printJobs.claimedAt, staleCutoff)),
+          ),
+        ),
+      );
+      const whereClause = printerFilter.length > 0
+        ? and(base, inArray(printJobs.printerId, printerFilter))
+        : base;
+
       const rows = await db
         .select()
         .from(printJobs)
-        .where(and(eq(printJobs.status, "pending"), gt(printJobs.createdAt, cutoff)))
+        .where(whereClause)
         .orderBy(asc(printJobs.id));
       return res.json({
         jobs: rows.map((r) => ({
@@ -615,16 +717,38 @@ export function registerPrintRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/print/jobs/:id/release", requireAuth, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      if (!jobId) return res.status(400).json({ message: "Invalid job id" });
+      const { error } = (req.body ?? {}) as { error?: string };
+
+      const [released] = await db
+        .update(printJobs)
+        .set({ status: "pending", claimedAt: null, error: error ? String(error).slice(0, 500) : null })
+        .where(and(eq(printJobs.id, jobId), eq(printJobs.status, "claimed")))
+        .returning();
+
+      return res.json({ released: !!released });
+    } catch (err: any) {
+      console.error("[Print/JobRelease]", err);
+      res.status(500).json({ message: err.message || "Release failed" });
+    }
+  });
+
   app.post("/api/print/ack", requireAuth, async (req, res) => {
     try {
       const { orderId, type, jobId } = req.body as { orderId: number; type: "kot" | "bill"; jobId?: number };
       if (!orderId || !type) return res.status(400).json({ message: "orderId and type are required" });
 
       if (jobId) {
+        // Order state (KOT snapshot / print counts) was already committed at dispatch —
+        // a jobId ack only records that this specific ticket physically printed.
         await db
           .update(printJobs)
           .set({ status: "printed", printedAt: new Date() })
           .where(eq(printJobs.id, jobId));
+        return res.json({ ok: true, type, jobId });
       }
 
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
@@ -641,13 +765,13 @@ export function registerPrintRoutes(app: Express): void {
       const rawItems = await db
         .select({
           menuItemId: orderItems.menuItemId,
-          name: menuItems.name,
+          name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
           quantity: orderItems.quantity,
           size: orderItems.size,
           serviceMode: orderItems.serviceMode,
         })
         .from(orderItems)
-        .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+        .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
         .where(eq(orderItems.orderId, orderId));
 
       const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
@@ -693,14 +817,14 @@ export function registerPrintRoutes(app: Express): void {
         const rawItems = await db
           .select({
             menuItemId: orderItems.menuItemId,
-            name: menuItems.name,
+            name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
             quantity: orderItems.quantity,
             size: orderItems.size,
             specialInstructions: orderItems.specialInstructions,
             serviceMode: orderItems.serviceMode,
           })
           .from(orderItems)
-          .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+          .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
           .where(eq(orderItems.orderId, orderId));
 
         const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
@@ -766,14 +890,14 @@ export function registerPrintRoutes(app: Express): void {
       const { bill: billSettings } = settings.printSettings;
       const rawItems = await db
         .select({
-          name: menuItems.name,
+          name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
           quantity: orderItems.quantity,
           price: orderItems.price,
           size: orderItems.size,
           specialInstructions: orderItems.specialInstructions,
         })
         .from(orderItems)
-        .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+        .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
         .where(eq(orderItems.orderId, orderId));
 
       const lines = billTextLines({

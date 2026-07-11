@@ -23,6 +23,7 @@ import Billing from "@/pages/Billing";
 import Staff from "@/pages/Staff";
 import MyAttendance from "@/pages/MyAttendance";
 import KOT from "@/pages/KOT";
+import PrintStation from "@/pages/PrintStation";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import { UpdateNotification } from "@/components/UpdateNotification";
@@ -198,6 +199,7 @@ function Router() {
                       <Route path="/live-tables"    component={LiveTablesDashboard} />
                       <Route path="/customers"      component={CustomerDashboard} />
                       <Route path="/kot"            component={KOT} />
+                      <Route path="/print-station"  component={PrintStation} />
                       <Route component={NotFound} />
                     </Switch>
                   </motion.div>

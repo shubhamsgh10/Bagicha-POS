@@ -228,16 +228,18 @@ export class DatabaseStorage implements IStorage {
 
   // Menu Items
   async getMenuItems(): Promise<MenuItem[]> {
-    return await db.select().from(menuItems).where(eq(menuItems.isAvailable, true));
+    return await db.select().from(menuItems).where(
+      and(eq(menuItems.isAvailable, true), eq(menuItems.isDeleted, false))
+    );
   }
 
   async getAllMenuItems(): Promise<MenuItem[]> {
-    return await db.select().from(menuItems);
+    return await db.select().from(menuItems).where(eq(menuItems.isDeleted, false));
   }
 
   async getMenuItemsByCategory(categoryId: number): Promise<MenuItem[]> {
     return await db.select().from(menuItems).where(
-      and(eq(menuItems.categoryId, categoryId), eq(menuItems.isAvailable, true))
+      and(eq(menuItems.categoryId, categoryId), eq(menuItems.isAvailable, true), eq(menuItems.isDeleted, false))
     );
   }
 
@@ -263,11 +265,11 @@ export class DatabaseStorage implements IStorage {
 
   async bulkDeleteMenuItems(ids: number[]): Promise<void> {
     if (ids.length === 0) return;
-    await db.update(menuItems).set({ isAvailable: false }).where(inArray(menuItems.id, ids));
+    await db.update(menuItems).set({ isDeleted: true }).where(inArray(menuItems.id, ids));
   }
 
   async deleteMenuItem(id: number): Promise<void> {
-    await db.update(menuItems).set({ isAvailable: false }).where(eq(menuItems.id, id));
+    await db.update(menuItems).set({ isDeleted: true }).where(eq(menuItems.id, id));
   }
 
   async deductInventoryForOrder(orderItems: Array<{ menuItemId: number; quantity: number }>): Promise<void> {
@@ -609,14 +611,14 @@ export class DatabaseStorage implements IStorage {
 
     const topItemRows = await db
       .select({
-        name: menuItems.name,
+        name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         qty: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
       })
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
-      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
-      .groupBy(menuItems.id, menuItems.name)
+      .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(1);
 
@@ -719,14 +721,14 @@ export class DatabaseStorage implements IStorage {
 
     const result = await db
       .select({
-        name: menuItems.name,
+        name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         qty: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
       })
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
-      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
-      .groupBy(menuItems.id, menuItems.name)
+      .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(limit);
 
@@ -744,15 +746,15 @@ export class DatabaseStorage implements IStorage {
 
     const result = await db
       .select({
-        name: menuItems.name,
+        name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         totalSold: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
         revenue: sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * ${orderItems.price}) as numeric)`,
       })
       .from(orderItems)
-      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .where(conditions.length ? and(...conditions) : undefined)
-      .groupBy(menuItems.id, menuItems.name)
+      .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(limit);
 

@@ -1437,6 +1437,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (updates.isAvailable !== undefined) allowed.isAvailable = Boolean(updates.isAvailable);
       if (updates.categoryId !== undefined) allowed.categoryId = Number(updates.categoryId);
       if (updates.price !== undefined) allowed.price = String(updates.price);
+      if (updates.addonsEnabled !== undefined) allowed.addonsEnabled = Boolean(updates.addonsEnabled);
+      if (Array.isArray(updates.addons)) {
+        allowed.addons = updates.addons
+          .filter((a: any) => a && typeof a.name === "string" && a.name.trim() && !isNaN(Number(a.price)))
+          .map((a: any) => ({ name: String(a.name).trim(), price: Number(a.price) }));
+      }
       await storage.bulkUpdateMenuItems(ids.map(Number), allowed);
       queryClient_invalidate: await Promise.resolve();
       res.json({ success: true, updated: ids.length });
@@ -1564,7 +1570,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const items = rawItems.map((item: any) => ({
         ...item,
-        name: menuNameMap[item.menuItemId] || "Deleted Item",
+        name: item.name || menuNameMap[item.menuItemId] || "Deleted Item",
       }));
       res.json({ ...order, items });
     } catch (error) {
@@ -1577,7 +1583,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { items, ...orderInfo } = req.body;
       const orderNumber = `ORD${String(incrementBillCounter()).padStart(4, "0")}`;
       const actor = req.user as any;
-      const order = await storage.createOrder({ ...orderInfo, orderNumber, createdBy: actor?.id ?? null, createdByName: actor?.username ?? null });
+      const isStaffMemberActor = !!actor?._isStaffMember;
+      const order = await storage.createOrder({
+        ...orderInfo, orderNumber,
+        createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
+        createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
+        createdByName: actor?.username ?? null,
+      });
 
       // Create order items
       if (items && items.length > 0) {
@@ -1664,6 +1676,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.createOrderItem({
           orderId: id,
           menuItemId: Number(item.menuItemId),
+          name: item.name ?? null,
           quantity: Number(item.quantity),
           price: String(item.price),
           specialInstructions: item.specialInstructions || "",
@@ -1992,9 +2005,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const [movedOrder] = await db.select().from(orders).where(eq(orders.id, id));
               if (!movedOrder) return;
               const rawItems = await db
-                .select({ menuItemId: orderItems.menuItemId, name: menuItems.name, quantity: orderItems.quantity, size: orderItems.size, specialInstructions: orderItems.specialInstructions })
+                .select({ menuItemId: orderItems.menuItemId, name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`, quantity: orderItems.quantity, size: orderItems.size, specialInstructions: orderItems.specialInstructions })
                 .from(orderItems)
-                .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+                .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
                 .where(eq(orderItems.orderId, id));
               const buf = generateKOTBuffer({
                 orderNumber: movedOrder.orderNumber,

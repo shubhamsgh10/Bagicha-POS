@@ -14,6 +14,9 @@ const statements = [
     created_at timestamp NOT NULL DEFAULT now(),
     printed_at timestamp
   )`,
+  // Multi-station claim hardening (stale-claim reclaim + failure reason)
+  `ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS claimed_at timestamp`,
+  `ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS error text`,
 ];
 try {
   for (const s of statements) { await pool.query(s); console.log('  OK:', s); }

@@ -584,6 +584,7 @@ const CART_ACTION_LIST: { key: CartAction; label: string }[] = [
   { key: "printBill",     label: "Print Bill" },
   { key: "saveOrder",     label: "Save Order" },
   { key: "settleOrder",   label: "Settle / Checkout" },
+  { key: "openItem",      label: "Add Open Item" },
 ];
 
 const PERM_OPTIONS: { value: CartActionPermission; label: string; cls: string }[] = [
@@ -822,7 +823,7 @@ export default function Admin() {
 
       <Tabs defaultValue={isAdmin ? "accounts" : "profile"}>
         <div className="overflow-x-auto">
-        <TabsList className={`flex min-w-full justify-start rounded-xl p-1`}
+        <TabsList className={`flex w-max min-w-full justify-start rounded-xl p-1`}
           style={{
             background: "var(--paper-0)",
             backdropFilter: "blur(16px) saturate(1.8)",

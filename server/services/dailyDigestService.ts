@@ -76,15 +76,15 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   // Top items today
   const topItems = await db
     .select({
-      name:     menuItems.name,
+      name:     sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
       qty:      sql<number>`cast(sum(${orderItems.quantity}) as int)`,
       revenue:  sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) as numeric)`,
     })
     .from(orderItems)
     .innerJoin(orders,    eq(orderItems.orderId, orders.id))
-    .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+    .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
     .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
-    .groupBy(menuItems.id, menuItems.name)
+    .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
     .orderBy(sql`sum(${orderItems.quantity}) desc`)
     .limit(5);
 

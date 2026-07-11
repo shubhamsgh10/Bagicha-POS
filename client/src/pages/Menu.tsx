@@ -14,6 +14,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface Category { id: number; name: string; description?: string; }
@@ -23,7 +25,11 @@ interface MenuItem {
   isVegetarian?: boolean; isSpicy?: boolean; allergens?: string;
   sizes?: Array<{ size: string; price: number }>;
   inventoryLinks?: Array<{ inventoryId: number; quantity: number }>;
+  addonsEnabled?: boolean;
+  addons?: Array<{ name: string; price: number }>;
 }
+
+interface AddonEntry { name: string; price: string; }
 
 type TabKey = "items" | "categories";
 
@@ -54,6 +60,8 @@ export default function Menu() {
   const [bulkCategoryId, setBulkCategoryId] = useState<string>("");
   const [bulkPriceMode, setBulkPriceMode] = useState<"fixed" | "percent">("fixed");
   const [bulkPriceValue, setBulkPriceValue] = useState("");
+  const [showBulkAddonsDialog, setShowBulkAddonsDialog] = useState(false);
+  const [bulkAddonsList, setBulkAddonsList] = useState<AddonEntry[]>([{ name: "", price: "" }]);
 
   const { data: rawItems = [], isLoading } = useQuery<MenuItem[]>({
     queryKey: ["/api/menu?all=true"],
@@ -208,6 +216,52 @@ export default function Menu() {
     if (window.confirm(`Delete ${selectedIds.size} item(s)? This action cannot be undone.`)) {
       bulkDeleteMutation.mutate(Array.from(selectedIds));
     }
+  };
+
+  // ── Bulk add-ons ──────────────────────────────────────────────────────────────
+  // Merges (upserts by name) into each selected item's own addons list, rather than
+  // overwriting it — items in a bulk selection can already carry different addons.
+  const addBulkAddonRow = () => setBulkAddonsList((prev) => [...prev, { name: "", price: "" }]);
+  const removeBulkAddonRow = (idx: number) =>
+    setBulkAddonsList((prev) => prev.filter((_, i) => i !== idx));
+  const updateBulkAddonRow = (idx: number, field: keyof AddonEntry, value: string) =>
+    setBulkAddonsList((prev) => prev.map((a, i) => (i === idx ? { ...a, [field]: value } : a)));
+
+  const bulkAddonsValid = bulkAddonsList.some(
+    (a) => a.name.trim().length > 0 && a.price.trim().length > 0 && !isNaN(parseFloat(a.price))
+  );
+
+  const handleBulkAddons = () => {
+    const newAddons = bulkAddonsList
+      .filter((a) => a.name.trim() && !isNaN(parseFloat(a.price)))
+      .map((a) => ({ name: a.name.trim(), price: parseFloat(a.price) }));
+    if (newAddons.length === 0) return;
+
+    const ids = Array.from(selectedIds);
+    const itemsToUpdate = rawItems.filter((i) => ids.includes(i.id));
+
+    Promise.all(
+      itemsToUpdate.map((item) => {
+        const merged = Array.isArray(item.addons) ? [...item.addons] : [];
+        for (const na of newAddons) {
+          const idx = merged.findIndex((e) => e.name.trim().toLowerCase() === na.name.toLowerCase());
+          if (idx >= 0) merged[idx] = { ...merged[idx], price: na.price };
+          else merged.push(na);
+        }
+        return apiRequest("POST", "/api/menu/bulk-update", {
+          ids: [item.id],
+          updates: { addonsEnabled: true, addons: merged },
+        });
+      })
+    )
+      .then(() => {
+        toast({ title: `Added add-ons to ${ids.length} item(s)` });
+        queryClient.invalidateQueries({ queryKey: ["/api/menu?all=true"] });
+        setSelectedIds(new Set());
+        setShowBulkAddonsDialog(false);
+        setBulkAddonsList([{ name: "", price: "" }]);
+      })
+      .catch(() => toast({ title: "Bulk add-ons update failed", variant: "destructive" }));
   };
 
   return (
@@ -474,6 +528,14 @@ export default function Menu() {
                           </button>
                         </div>
 
+                        {/* Add-ons */}
+                        <button
+                          onClick={() => setShowBulkAddonsDialog(true)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors"
+                        >
+                          Add-ons
+                        </button>
+
                         {/* Delete */}
                         <button
                           onClick={handleBulkDelete}
@@ -625,6 +687,63 @@ export default function Menu() {
       </main>
 
       <AddMenuItemModal isOpen={showAddModal} onClose={handleCloseModal} editItem={editingItem || undefined} />
+
+      <Dialog open={showBulkAddonsDialog} onOpenChange={setShowBulkAddonsDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add-ons for {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""}</DialogTitle>
+            <DialogDescription>
+              These add-ons are merged into each selected item's existing list (updated if the name already exists, added otherwise) — nothing else on the item changes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {bulkAddonsList.map((addon, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <Input
+                  placeholder="Addon name (e.g. Extra Cheese)"
+                  value={addon.name}
+                  onChange={(e) => updateBulkAddonRow(idx, "name", e.target.value)}
+                  className="flex-1"
+                />
+                <div className="flex items-center gap-1 w-28">
+                  <span className="text-sm text-muted-foreground">₹</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0"
+                    value={addon.price}
+                    onChange={(e) => updateBulkAddonRow(idx, "price", e.target.value)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => removeBulkAddonRow(idx)}
+                  disabled={bulkAddonsList.length === 1}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+
+            <Button type="button" variant="outline" size="sm" onClick={addBulkAddonRow}>
+              <Plus className="w-4 h-4 mr-1" />
+              Add Another
+            </Button>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowBulkAddonsDialog(false)}>Cancel</Button>
+            <Button onClick={handleBulkAddons} disabled={!bulkAddonsValid}>
+              Apply to {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
