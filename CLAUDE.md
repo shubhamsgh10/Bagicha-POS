@@ -61,6 +61,22 @@ PIN verification endpoint: `POST /api/auth/verify-pin` accepts `{ pin, requiredR
 
 The `RoleSwitcher` component in the POS top bar lets any logged-in user temporarily elevate their role via PIN. Switching to a higher role than the current **active** role (not login role) triggers a PIN prompt.
 
+## Security & data-integrity invariants (server-enforced — do not regress)
+
+Client-side PIN gates are UX only; the server enforces the following independently. Full rationale in `SECURITY-REMEDIATION.md` (owner steps) and the audit plan.
+
+- **Privileged-action elevation** (`server/elevation.ts`, pure + unit-tested via `scripts/verify-elevation.ts`): `POST /api/auth/verify-pin` stamps a 90s session grant (`grantElevation`); privileged endpoints call `requireElevation("manager")` / check `hasElevation`. Gated: `/orders/:id/cancel`, `/move-table`, `merge`, `/split`, and **applying a discount** on `POST /api/orders` + `PUT /api/orders/:id/items`. A bare staff session (or curl) can't hit these. Re-exported from `routes.ts` for back-compat.
+- **Server recomputes all money** (`shared/orderPricing.ts` pure core + `server/services/orderPricing.ts` DB wrapper; `scripts/verify-order-pricing.ts`). Never trust client totals. `priceOrder` validates each line's client price against a DB **floor** (matched size price, else base `menuItems.price`; add-ons/variants only add), then recomputes subtotal/tax/discount(clamped to `[0,subtotal]`)/container/total using `getSettings().taxRate`. `POST /api/orders` + `PUT /items` store the recomputed values + validated unit prices. Merge/split use `computeTotalsFromLines` (configured tax) — **no more hardcoded `0.18`**.
+- **Payment** (`POST /api/orders/:id/payment`): paid amount is derived from the entered breakdown (not client `totalPaid`), change is recomputed server-side, and a non-due settle must cover the bill (₹1 tolerance). Settlement is guarded by `storage.settleOrderIfUnpaid` (conditional `WHERE paymentStatus='pending'`) so a concurrent double-settle is a no-op and loyalty/message/feedback fire **once**.
+- **Atomic order creation**: `storage.createOrderWithItems` wraps order + items + KOT in one `db.transaction` (the only transactional path; inventory/table status stay best-effort outside).
+- **Bill/KOT counters** (`settingsStore.ts`): `incrementBillCounter`/`incrementKotCounter` are now **async, serialized through a promise-chain mutex, and awaited** (was sync read-modify-write + fire-and-forget) so concurrent orders can't collide on the `orderNumber`/`kotNumber` UNIQUE constraints. All call sites `await`.
+- **Auth gates**: `/api/automation/config` GET+POST are `requireAdmin` (mask now also hides `metaAppSecret` + `metaWebhookVerifyToken`); `/api/staff` + `/api/staff/performance` are `requireManagerOrAdmin` (salary/biometric).
+- **Realtime is authenticated**: the `/ws` upgrade is checked against the session cookie (sessionMiddleware threaded into `registerRoutes` from both `server/index.ts` and `server-fn.ts`); Pusher uses a **private channel** (`private-bagicha-pos` default) authorized by `POST /api/pusher/auth` (`requireAuth`) — client `useRealtime.ts` wires a `channelAuthorization.customHandler`. Server `PUSHER_CHANNEL` and client `VITE_PUSHER_CHANNEL` must match.
+- **Delivery webhook** (`POST /api/delivery/webhook/:platform`): now fail-closed — requires `x-webhook-secret` == `DELIVERY_WEBHOOK_SECRET` and a known platform.
+- **Hardening**: `helmet()` on both entries; session cookie `secure` in prod + `sameSite:"lax"`; `SESSION_SECRET` **required in production** (`server/sessionSecret.ts` throws on boot if unset — no more hardcoded fallback; `.session-secret` file deleted). Multer capped at 5MB + spreadsheet/CSV `fileFilter` before `XLSX.read`. Config file writes (`automationStore.writeJson`) are atomic (temp+rename). `process.on('unhandledRejection'|'uncaughtException')` guards in `server/index.ts`.
+- **CI** (`.github/workflows/ci.yml`): `npm run check` + `npm run test:pure` on every push/PR. `test:pure` runs the two DB-free verify scripts; the DB/settings-touching `verify-*.ts` stay manual.
+- **PINs are still plaintext** (known residual, not in this pass) — hashing them is a tracked follow-up.
+
 ## WhatsApp Automation
 
 `server/services/whatsapp/` implements automated outbound sending, an inbound FAQ chatbot, and the agent inbox (Customers → Conversations tab):

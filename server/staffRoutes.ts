@@ -7,7 +7,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { orders, users } from "../shared/schema";
 import { gte, lte, and, sql, count } from "drizzle-orm";
-import { requireAuth } from "./routes";
+import { requireAuth, requireManagerOrAdmin } from "./routes";
 import { storage } from "./storage";
 
 export function registerStaffRoutes(app: Express) {
@@ -18,7 +18,7 @@ export function registerStaffRoutes(app: Express) {
   // PLUS flat id/username/role mirrors so every consumer works regardless of which it reads.
   // (Both this and routes.ts register /api/staff; this one wins by registration order, so it
   // must carry the full shape the Payroll editor and attendance board depend on.)
-  app.get("/api/staff", requireAuth, async (_req, res) => {
+  app.get("/api/staff", requireManagerOrAdmin, async (_req, res) => {
     try {
       const profiles = await storage.getStaffProfiles();
       res.json(profiles.map((p) => ({
@@ -34,7 +34,7 @@ export function registerStaffRoutes(app: Express) {
 
   // ── Per-staff performance report ────────────────────────────────────────────
 
-  app.get("/api/staff/performance", requireAuth, async (req, res) => {
+  app.get("/api/staff/performance", requireManagerOrAdmin, async (req, res) => {
     try {
       const { from, to } = req.query as { from?: string; to?: string };
       const conditions = [];
