@@ -92,7 +92,13 @@ export interface IStorage {
   getOpenTabsByCustomer(): Promise<OpenTabCustomer[]>;
   settleCustomerTabs(key: string, paymentMethod?: string): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
+  createOrderWithItems(
+    order: InsertOrder,
+    items: Array<Omit<InsertOrderItem, "orderId">>,
+    kot: Omit<InsertKotTicket, "orderId">,
+  ): Promise<Order>;
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
+  settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   deleteOrder(id: number): Promise<void>;
 
   // Order Items
@@ -472,11 +478,46 @@ export class DatabaseStorage implements IStorage {
     return newOrder;
   }
 
+  // Atomic order creation: the order row, its items, and the KOT ticket are all
+  // inserted in one transaction so a failure can't leave an orphan order with
+  // missing items or a missing KOT. Inventory deduction / table status stay
+  // outside (best-effort, independently recoverable).
+  async createOrderWithItems(
+    order: InsertOrder,
+    items: Array<Omit<InsertOrderItem, "orderId">>,
+    kot: Omit<InsertKotTicket, "orderId">,
+  ): Promise<Order> {
+    return await db.transaction(async (tx) => {
+      const [newOrder] = await tx.insert(orders).values({
+        ...(order as any),
+        updatedAt: new Date(),
+      }).returning();
+      for (const it of items) {
+        await tx.insert(orderItems).values({ ...(it as any), orderId: newOrder.id });
+      }
+      const kotItems = Array.isArray(kot.items) ? kot.items : undefined;
+      await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id });
+      return newOrder;
+    });
+  }
+
   async updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order> {
     const [updated] = await db.update(orders).set({
       ...(order as any),
       updatedAt: new Date()
     }).where(eq(orders.id, id)).returning();
+    return updated;
+  }
+
+  // Conditional settle: only flips an order that is still payment_status='pending'.
+  // Returns the updated row when THIS call performed the transition, or undefined
+  // if it was already settled — so a concurrent second settlement is a no-op and
+  // the caller's one-time side effects (loyalty, messages, feedback) don't double-fire.
+  async settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined> {
+    const [updated] = await db.update(orders).set({
+      ...(order as any),
+      updatedAt: new Date(),
+    }).where(and(eq(orders.id, id), eq(orders.paymentStatus, "pending"))).returning();
     return updated;
   }
 

@@ -237,34 +237,38 @@ export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
 }
 
-// Sync — increments in-memory counter immediately, persists to DB async (fire-and-forget)
-export function incrementBillCounter(): number {
+// Counter issuance is serialized through a promise chain so two concurrent
+// requests in this process can never read the same value (which would collide on
+// the orderNumber/kotNumber UNIQUE constraint), and the DB write is AWAITED so the
+// increment is durable before the number is used. A failed write doesn't poison
+// the chain — the next issuance still proceeds.
+let counterChain: Promise<unknown> = Promise.resolve();
+
+async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number> {
   const current = getSettings();
-  const next = (current.billCounter ?? 0) + 1;
-  settingsCache = { ...current, billCounter: next };
-  db.insert(restaurantSettings)
+  const next = (current[field] ?? 0) + 1;
+  settingsCache = { ...current, [field]: next };
+  await db.insert(restaurantSettings)
     .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: restaurantSettings.id,
       set: { settings: settingsCache as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error("[settings] Bill counter save failed:", err));
+    });
   return next;
 }
 
-// Sync — increments in-memory KOT counter immediately, persists to DB async (fire-and-forget)
-export function incrementKotCounter(): number {
-  const current = getSettings();
-  const next = (current.kotCounter ?? 0) + 1;
-  settingsCache = { ...current, kotCounter: next };
-  db.insert(restaurantSettings)
-    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: settingsCache as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error("[settings] KOT counter save failed:", err));
-  return next;
+function nextCounter(field: "billCounter" | "kotCounter"): Promise<number> {
+  const result = counterChain.then(() => issueCounter(field));
+  counterChain = result.catch(() => {}); // keep the mutex alive across failures
+  return result;
+}
+
+export function incrementBillCounter(): Promise<number> {
+  return nextCounter("billCounter");
+}
+
+export function incrementKotCounter(): Promise<number> {
+  return nextCounter("kotCounter");
 }
 
 // Async — updates cache immediately, then awaits DB write before resolving

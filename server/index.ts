@@ -1,10 +1,12 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
+import helmet from "helmet";
 import MemoryStore from "memorystore";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
 import { initSettings } from "./settingsStore";
+import { resolveSessionSecret } from "./sessionSecret";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
@@ -17,6 +19,26 @@ import { applyCors } from "./cors";
 const MemoryStoreSession = MemoryStore(session);
 
 const app = express();
+
+const isProduction = process.env.NODE_ENV === "production";
+
+// Fail fast if the session secret is missing in production (before any work).
+resolveSessionSecret();
+
+// Log-and-survive guards so a stray rejection can't silently take the process down.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[unhandledRejection]", reason);
+  if (process.env.SENTRY_DSN) Sentry.captureException(reason);
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("[uncaughtException]", err);
+  if (process.env.SENTRY_DSN) Sentry.captureException(err);
+});
+
+// Security headers. CSP is left disabled here because the Vite dev integration
+// and inline bootstrap would need a tailored policy; the other helmet defaults
+// (X-Content-Type-Options, frameguard, HSTS in prod, etc.) apply.
+app.use(helmet({ contentSecurityPolicy: false }));
 
 applyCors(app);
 
@@ -42,8 +64,8 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || "bagicha-secret-key-2024",
+const sessionMiddleware = session({
+  secret: resolveSessionSecret(),
   resave: false,
   saveUninitialized: false,
   store: new MemoryStoreSession({
@@ -52,9 +74,11 @@ app.use(session({
   cookie: {
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     httpOnly: true,
-    secure: false,
+    secure: isProduction,
+    sameSite: "lax",
   },
-}));
+});
+app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -91,7 +115,7 @@ app.use((req, res, next) => {
 
 (async () => {
   await initSettings();
-  const server = await registerRoutes(app);
+  const server = await registerRoutes(app, sessionMiddleware);
 
   // Sentry v8+ error handler must be registered after routes
   if (process.env.SENTRY_DSN) {
