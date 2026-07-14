@@ -67,7 +67,7 @@ import { registerStaffRoutes } from "./staffRoutes";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
-import { ingestDevicePunches } from "./services/deviceAttendanceService";
+import { ingestDevicePunches, recomputeShiftSessions } from "./services/deviceAttendanceService";
 import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
@@ -2939,22 +2939,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/leaves — ?status=&month=&userId=
+  // GET /api/leaves — ?status=&month=&userId=&staffMemberId=
   app.get("/api/leaves", requireAuth, async (req, res) => {
     try {
-      const { userId, month, status } = req.query as Record<string, string>;
+      const { userId, staffMemberId, month, status } = req.query as Record<string, string>;
       res.json(await storage.getLeaves({
         userId: userId ? parseInt(userId) : undefined,
+        staffMemberId: staffMemberId ? parseInt(staffMemberId) : undefined,
         month: month || undefined,
         status: status || undefined,
       }));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/leaves
+  // POST /api/leaves — body { kind:"user"|"staff", id, leaveType, startDate, endDate, reason, totalDays }
+  // (legacy { userId } still accepted). Stamps exactly one of userId/staffMemberId per the person kind.
   app.post("/api/leaves", requireAuth, async (req, res) => {
     try {
-      res.json(await storage.createLeave(req.body));
+      const { kind, id, userId, ...rest } = req.body;
+      const person = kind && id != null ? { kind, id: Number(id) } : { kind: "user" as const, id: Number(userId) };
+      res.json(await storage.createLeave({
+        ...rest,
+        userId: person.kind === "user" ? person.id : null,
+        staffMemberId: person.kind === "staff" ? person.id : null,
+      }));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -3002,19 +3010,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/shifts/roster — assign shift to staff on a date
+  // POST /api/shifts/roster — manually assign a shift to a person (user OR staff member) on a date.
+  // Body { kind:"user"|"staff", id, date, shiftId } (legacy { userId } still accepted).
   app.post("/api/shifts/roster", requireAuth, async (req, res) => {
     try {
-      const { userId, date, shiftId } = req.body;
-      res.json(await storage.upsertShiftAssignment(userId, date, shiftId, (req.user as any)?.id));
+      const { kind, id, userId, date, shiftId } = req.body;
+      const person = kind && id != null
+        ? { kind, id: Number(id) }
+        : { kind: "user" as const, id: Number(userId) };
+      res.json(await storage.upsertShiftAssignment(person, date, Number(shiftId), (req.user as any)?.id));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // DELETE /api/shifts/roster/:id
+  // DELETE /api/shifts/roster/:id — removes a MANUAL assignment (auto rows re-derive from punches).
   app.delete("/api/shifts/roster/:id", requireAuth, async (req, res) => {
     try {
       await storage.deleteShiftAssignment(parseInt(req.params.id));
       res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/recompute-shifts — admin backfill: re-derive shift sessions + hours for a
+  // month from stored punch endpoints. Body { month?: "YYYY-MM" } (defaults to current month).
+  app.post("/api/attendance/recompute-shifts", requireAdmin, async (req, res) => {
+    try {
+      const month = (req.body?.month as string) || new Date().toISOString().slice(0, 7);
+      res.json(await recomputeShiftSessions(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -3025,14 +3046,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/staff/accounts — login accounts with role manager/staff (owner/admins excluded).
-  // For account-keyed tabs (Shifts roster, Leaves apply) that don't yet support staff members.
-  app.get("/api/staff/accounts", requireManagerOrAdmin, async (_req, res) => {
-    try {
-      const all = await storage.getUsers();
-      res.json(all.filter(u => u.role === "manager" || u.role === "staff").map(u => ({ id: u.id, username: u.username, role: u.role })));
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
-  });
 
   // GET /api/payroll/report/:month — YYYY-MM
   app.get("/api/payroll/report/:month", requireManagerOrAdmin, async (req, res) => {

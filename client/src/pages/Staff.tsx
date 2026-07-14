@@ -118,10 +118,11 @@ function ShiftsPanel() {
 
   const createShiftMutation = useMutation({
     mutationFn: async (data: any) => {
-      const [sh, sm] = data.startTime.split(":").map(Number);
-      const [eh, em] = data.endTime.split(":").map(Number);
-      const duration = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-      return apiRequest("POST", "/api/shifts", { ...data, durationHours: Math.max(0, duration).toFixed(2) });
+      // Server recomputes durationHours authoritatively (with midnight-wrap); this is optimistic only.
+      const start = data.startTime.split(":").reduce((h: number, m: number, i: number) => i ? h + Number(m) : Number(h) * 60, 0);
+      let end = data.endTime.split(":").reduce((h: number, m: number, i: number) => i ? h + Number(m) : Number(h) * 60, 0);
+      if (end <= start) end += 1440; // wrap past midnight (e.g. 16:00–00:00)
+      return apiRequest("POST", "/api/shifts", { ...data, durationHours: ((end - start) / 60).toFixed(2) });
     },
     onSuccess: () => {
       toast({ title: "Shift created" });
@@ -141,6 +142,15 @@ function ShiftsPanel() {
   const removeMutation = useMutation({
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/shifts/roster/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/shifts/roster?week=${currentWeek}`] }),
+  });
+
+  const recomputeMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/attendance/recompute-shifts", {}),
+    onSuccess: (res: any) => {
+      toast({ title: "Shifts recomputed", description: `${res?.rows ?? 0} attendance day(s) updated from punches.` });
+      queryClient.invalidateQueries({ queryKey: [`/api/shifts/roster?week=${currentWeek}`] });
+    },
+    onError: (err: any) => toast({ title: "Recompute failed", description: err.message, variant: "destructive" }),
   });
 
   const navigateWeek = (delta: number) => {
@@ -194,8 +204,20 @@ function ShiftsPanel() {
 
       {/* Weekly roster */}
       <div className="rounded-2xl overflow-hidden" style={glassCard}>
-        <div className="flex items-center justify-between p-4 pb-2">
-          <p className="text-sm font-semibold text-gray-700">Weekly Roster</p>
+        <div className="flex items-center justify-between p-4 pb-2 gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-gray-700">Weekly Roster</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={recomputeMutation.isPending}
+              onClick={() => recomputeMutation.mutate()}
+              title="Re-derive worked shifts + hours from biometric punches for the current month. Fixes data going forward; days recorded before this feature keep only their first/last punch."
+            >
+              {recomputeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><RefreshCw className="w-3.5 h-3.5 mr-1" />Recompute</>}
+            </Button>
+          </div>
           <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" onClick={() => navigateWeek(-1)}><ChevronLeft className="w-4 h-4" /></Button>
             <span className="text-xs font-medium px-2">Week {currentWeek}</span>
@@ -216,30 +238,41 @@ function ShiftsPanel() {
               </tr>
             </thead>
             <tbody>
-              {roster.filter((row: any) => row.role === "manager" || row.role === "staff").map((row: any) => (
-                <tr key={row.userId} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
+              {roster.map((row: any) => (
+                <tr key={row.key ?? row.userId} className="border-b border-[var(--line)] hover:bg-[var(--paper-100)]">
                   <td className="p-3">
                     <div className="font-medium">{row.username}</div>
                     <span className={`text-[10px] px-1 rounded ${roleColors[row.role] || roleColors.staff}`}>{row.role}</span>
                   </td>
                   {dates.map((d: string) => {
-                    const cell = row.assignments?.[d];
-                    const colorIdx = shiftDefs.findIndex((s: any) => s.id === cell?.shift?.id);
+                    const cells: any[] = row.assignments?.[d] ?? [];
                     return (
-                      <td key={d} className="p-2 text-center">
-                        {cell ? (
-                          <div className="space-y-0.5">
-                            <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${shiftColors[colorIdx >= 0 ? colorIdx % shiftColors.length : 0]}`}>{cell.shift?.name}</div>
-                            <button onClick={() => removeMutation.mutate(cell.assignmentId)} className="text-[9px] text-red-500 hover:underline">remove</button>
-                          </div>
-                        ) : (
-                          <Select onValueChange={sid => assignMutation.mutate({ userId: row.userId, date: d, shiftId: parseInt(sid) })}>
-                            <SelectTrigger className="h-6 text-[10px] border-dashed border-gray-300"><SelectValue placeholder="—" /></SelectTrigger>
+                      <td key={d} className="p-2 text-center align-top">
+                        <div className="space-y-1">
+                          {cells.map((cell: any) => {
+                            const colorIdx = shiftDefs.findIndex((s: any) => s.id === cell.shift?.id);
+                            const isAuto = cell.source === "auto";
+                            return (
+                              <div key={cell.assignmentId} className="space-y-0.5">
+                                <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full flex items-center justify-center gap-1 ${shiftColors[colorIdx >= 0 ? colorIdx % shiftColors.length : 0]}`}>
+                                  {isAuto && <Clock className="w-2.5 h-2.5" />}
+                                  <span>{cell.shift?.name}</span>
+                                  {cell.workingHours != null && <span className="opacity-70">· {cell.workingHours}h</span>}
+                                </div>
+                                {isAuto
+                                  ? <div className="text-[8px] text-gray-400">auto</div>
+                                  : <button onClick={() => removeMutation.mutate(cell.assignmentId)} className="text-[9px] text-red-500 hover:underline">remove</button>}
+                              </div>
+                            );
+                          })}
+                          {/* Always allow adding a manual shift, even alongside auto-detected ones. */}
+                          <Select value="" onValueChange={sid => assignMutation.mutate({ kind: row.kind, id: row.id, date: d, shiftId: parseInt(sid) })}>
+                            <SelectTrigger className="h-6 text-[10px] border-dashed border-gray-300"><SelectValue placeholder={cells.length ? "+ add" : "—"} /></SelectTrigger>
                             <SelectContent>
                               {shiftDefs.map((s: any) => <SelectItem key={s.id} value={String(s.id)} className="text-xs">{s.name}</SelectItem>)}
                             </SelectContent>
                           </Select>
-                        )}
+                        </div>
                       </td>
                     );
                   })}
@@ -261,24 +294,29 @@ function LeavesPanel() {
   const [filterStatus, setFilterStatus] = useState("pending");
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
   const [showApply, setShowApply] = useState(false);
-  const [leaveForm, setLeaveForm] = useState({ userId: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
+  const [leaveForm, setLeaveForm] = useState({ personKey: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
-  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/staff/accounts"] });
+  // Union of both identity systems (users manager/staff + staffMembers) — same roster payroll uses,
+  // so PIN/biometric-only staff members show up here too, not just login accounts.
+  const { data: staffList = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
   const leavesKey = `/api/leaves?status=${filterStatus}&month=${filterMonth}`;
   const { data: leavesData = [], isLoading } = useQuery<any[]>({ queryKey: [leavesKey] });
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
+      const [kind, idStr] = data.personKey.split(":"); // "user:4" | "staff:9" — ids collide across tables
       const start = new Date(data.startDate), end = new Date(data.endDate);
       const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
-      return apiRequest("POST", "/api/leaves", { ...data, userId: parseInt(data.userId), totalDays });
+      return apiRequest("POST", "/api/leaves", {
+        kind, id: Number(idStr), leaveType: data.leaveType, startDate: data.startDate, endDate: data.endDate, reason: data.reason, totalDays,
+      });
     },
     onSuccess: () => {
       toast({ title: "Leave submitted" });
       queryClient.invalidateQueries({ queryKey: [leavesKey] });
       setShowApply(false);
-      setLeaveForm({ userId: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
+      setLeaveForm({ personKey: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
     },
     onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
   });
@@ -313,9 +351,9 @@ function LeavesPanel() {
           <div className="space-y-3">
             <div className="space-y-1">
               <Label>Staff</Label>
-              <Select value={leaveForm.userId} onValueChange={v => setLeaveForm(f => ({ ...f, userId: v }))}>
+              <Select value={leaveForm.personKey} onValueChange={v => setLeaveForm(f => ({ ...f, personKey: v }))}>
                 <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
-                <SelectContent>{staffList.map((s: any, i: number) => <SelectItem key={s.id ?? i} value={String(s.id)}>{s.username}</SelectItem>)}</SelectContent>
+                <SelectContent>{staffList.map((s: any) => <SelectItem key={`${s.kind}:${s.id}`} value={`${s.kind}:${s.id}`}>{s.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
@@ -332,7 +370,7 @@ function LeavesPanel() {
             <div className="space-y-1"><Label>Reason</Label><Textarea value={leaveForm.reason} onChange={e => setLeaveForm(f => ({ ...f, reason: e.target.value }))} rows={2} /></div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowApply(false)}>Cancel</Button>
-              <Button disabled={createMutation.isPending || !leaveForm.userId || !leaveForm.startDate || !leaveForm.endDate}
+              <Button disabled={createMutation.isPending || !leaveForm.personKey || !leaveForm.startDate || !leaveForm.endDate}
                 onClick={() => createMutation.mutate(leaveForm)}>
                 {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Submit"}
               </Button>
@@ -351,7 +389,7 @@ function LeavesPanel() {
             <div key={leaf.id} className="rounded-xl p-4 space-y-2" style={glassCard}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm">{leaf.user?.username}</p>
+                  <p className="font-semibold text-sm">{leaf.displayName}</p>
                   <p className="text-xs text-gray-500">{leaf.startDate} to {leaf.endDate} ({leaf.totalDays} day{leaf.totalDays !== 1 ? "s" : ""})</p>
                   {leaf.reason && <p className="text-xs text-gray-600 mt-1 italic truncate">"{leaf.reason}"</p>}
                 </div>

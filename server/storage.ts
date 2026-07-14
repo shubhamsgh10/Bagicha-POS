@@ -14,6 +14,10 @@ import {
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
+import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
+
+/** A person key for roster/attendance writes — a system account or a staff member. */
+export type PersonRef = { kind: "user" | "staff"; id: number };
 
 // An attendance row resolved to whoever it belongs to — a system account (`user`)
 // OR a staff member (`staffMember`). `displayName` is the unified label for either.
@@ -143,15 +147,17 @@ export interface IStorage {
   upsertAttendanceForStaffMember(staffMemberId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
   updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance>;
   getAttendanceReport(month: string): Promise<any[]>;
-  getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]>;
+  getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: User; staffMember?: StaffMember; displayName: string })[]>;
   createLeave(data: InsertLeave): Promise<Leave>;
   updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave>;
   getShifts(): Promise<Shift[]>;
   createShift(data: InsertShift): Promise<Shift>;
   updateShift(id: number, data: Partial<InsertShift>): Promise<Shift>;
   getRoster(week: string): Promise<any[]>;
-  upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
+  upsertShiftAssignment(person: PersonRef, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment>;
   deleteShiftAssignment(id: number): Promise<void>;
+  replaceAutoShiftSessions(person: PersonRef, date: string, sessions: DetectedSession[]): Promise<void>;
+  getAutoShiftSessions(person: PersonRef, date: string): Promise<ShiftAssignment[]>;
   getPayrollPeople(): Promise<PayrollPerson[]>;
   getPayrollReport(month: string): Promise<any[]>;
   getAttendanceRange(filters: { from?: string; to?: string; key?: string }): Promise<any[]>;
@@ -870,9 +876,12 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getLeaves(filters: { userId?: number; month?: string; status?: string }): Promise<(Leave & { user: User })[]> {
+  // Resolves against BOTH identity systems (users + staffMembers), like getAttendance — a PIN/
+  // biometric-only staff member's leave requests used to vanish here (userId-only lookup).
+  async getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: User; staffMember?: StaffMember; displayName: string })[]> {
     const conditions: any[] = [];
-    if (filters.userId) conditions.push(eq(leaves.userId, filters.userId));
+    if (filters.userId)        conditions.push(eq(leaves.userId, filters.userId));
+    if (filters.staffMemberId) conditions.push(eq(leaves.staffMemberId, filters.staffMemberId));
     if (filters.status && filters.status !== '') conditions.push(eq(leaves.status, filters.status));
     if (filters.month)  conditions.push(sql`${leaves.startDate} LIKE ${filters.month + '-%'}`);
     const rows = conditions.length
@@ -880,7 +889,15 @@ export class DatabaseStorage implements IStorage {
       : await db.select().from(leaves).orderBy(desc(leaves.createdAt));
     const allUsers = await db.select().from(users);
     const userMap = new Map(allUsers.map(u => [u.id, u]));
-    return rows.map(r => ({ ...r, user: userMap.get(r.userId)! })).filter(r => r.user);
+    const allStaff = await db.select().from(staffMembers);
+    const staffMap = new Map(allStaff.map(s => [s.id, s]));
+    return rows
+      .map(r => {
+        const user = r.userId != null ? userMap.get(r.userId) : undefined;
+        const staffMember = r.staffMemberId != null ? staffMap.get(r.staffMemberId) : undefined;
+        return { ...r, user, staffMember, displayName: user?.username ?? staffMember?.name ?? "Unknown" };
+      })
+      .filter(r => r.user || r.staffMember);
   }
 
   async createLeave(data: InsertLeave): Promise<Leave> {
@@ -898,12 +915,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createShift(data: InsertShift): Promise<Shift> {
-    const [created] = await db.insert(shifts).values(data).returning();
+    // Compute durationHours server-side (single source of truth) with midnight-wrap — never trust the client.
+    const durationHours = shiftWindow(data.startTime, data.endTime).hours.toFixed(2);
+    const [created] = await db.insert(shifts).values({ ...data, durationHours }).returning();
     return created;
   }
 
   async updateShift(id: number, data: Partial<InsertShift>): Promise<Shift> {
-    const [updated] = await db.update(shifts).set(data).where(eq(shifts.id, id)).returning();
+    const patch: Partial<InsertShift> = { ...data };
+    if (data.startTime && data.endTime) {
+      patch.durationHours = shiftWindow(data.startTime, data.endTime).hours.toFixed(2);
+    }
+    const [updated] = await db.update(shifts).set(patch).where(eq(shifts.id, id)).returning();
     return updated;
   }
 
@@ -919,37 +942,88 @@ export class DatabaseStorage implements IStorage {
       d.setDate(weekStart.getDate() + i);
       dates.push(d.toISOString().split('T')[0]);
     }
-    const allUsers = await db.select().from(users);
+    // Union of BOTH identity systems (users manager/staff + staffMembers), like payroll —
+    // so PIN/biometric-only staff appear in the roster, not just login accounts.
+    const people = await this.getPayrollPeople();
     const assignments = await db.select().from(shiftAssignments)
       .where(sql`${shiftAssignments.date} = ANY(ARRAY[${sql.join(dates.map(d => sql`${d}`), sql`, `)}])`);
     const allShifts = await db.select().from(shifts);
     const shiftMap = new Map(allShifts.map(s => [s.id, s]));
-    return allUsers.map(u => {
-      const userAssignments: Record<string, any> = {};
+    return people.map(p => {
+      const dateMap: Record<string, any[]> = {};
       dates.forEach(d => {
-        const a = assignments.find(x => x.userId === u.id && x.date === d);
-        userAssignments[d] = a ? { assignmentId: a.id, shift: shiftMap.get(a.shiftId) } : null;
+        const rows = assignments.filter(x =>
+          x.date === d && (p.kind === "user" ? x.userId === p.id : x.staffMemberId === p.id));
+        dateMap[d] = rows.map(a => ({
+          assignmentId: a.id,
+          shift: shiftMap.get(a.shiftId),
+          source: a.source,
+          clockIn: a.clockIn,
+          clockOut: a.clockOut,
+          workingHours: a.workingHours,
+        }));
       });
-      return { userId: u.id, username: u.username, role: u.role, dates, assignments: userAssignments };
+      return {
+        key: personPageKey(p.kind, p.id),
+        kind: p.kind,
+        id: p.id,
+        username: p.name,
+        role: p.role ?? "staff",
+        dates,
+        assignments: dateMap,
+      };
     });
   }
 
-  async upsertShiftAssignment(userId: number, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment> {
+  // Manual roster assignment. Inserts a 'manual' row (guards against a duplicate same-shift on that
+  // person+date); never touches 'auto' rows so a manual add coexists with detected shifts.
+  async upsertShiftAssignment(person: PersonRef, date: string, shiftId: number, createdBy: number): Promise<ShiftAssignment> {
+    const personCond = person.kind === "user"
+      ? eq(shiftAssignments.userId, person.id)
+      : eq(shiftAssignments.staffMemberId, person.id);
     const [existing] = await db.select().from(shiftAssignments)
-      .where(and(eq(shiftAssignments.userId, userId), eq(shiftAssignments.date, date)));
-    if (existing) {
-      const [updated] = await db.update(shiftAssignments)
-        .set({ shiftId, createdBy })
-        .where(eq(shiftAssignments.id, existing.id))
-        .returning();
-      return updated;
-    }
-    const [created] = await db.insert(shiftAssignments).values({ userId, date, shiftId, createdBy }).returning();
+      .where(and(personCond, eq(shiftAssignments.date, date), eq(shiftAssignments.shiftId, shiftId), eq(shiftAssignments.source, "manual")));
+    if (existing) return existing;
+    const [created] = await db.insert(shiftAssignments).values({
+      userId: person.kind === "user" ? person.id : null,
+      staffMemberId: person.kind === "staff" ? person.id : null,
+      shiftId, date, source: "manual", createdBy,
+    }).returning();
     return created;
   }
 
   async deleteShiftAssignment(id: number): Promise<void> {
-    await db.delete(shiftAssignments).where(eq(shiftAssignments.id, id));
+    // Only manual rows are removable from the UI; auto rows re-derive from punches.
+    await db.delete(shiftAssignments).where(and(eq(shiftAssignments.id, id), eq(shiftAssignments.source, "manual")));
+  }
+
+  async getAutoShiftSessions(person: PersonRef, date: string): Promise<ShiftAssignment[]> {
+    const personCond = person.kind === "user"
+      ? eq(shiftAssignments.userId, person.id)
+      : eq(shiftAssignments.staffMemberId, person.id);
+    return db.select().from(shiftAssignments)
+      .where(and(personCond, eq(shiftAssignments.date, date), eq(shiftAssignments.source, "auto")));
+  }
+
+  // Idempotently rewrite a person's AUTO sessions for a date (manual rows untouched).
+  async replaceAutoShiftSessions(person: PersonRef, date: string, sessions: DetectedSession[]): Promise<void> {
+    const personCond = person.kind === "user"
+      ? eq(shiftAssignments.userId, person.id)
+      : eq(shiftAssignments.staffMemberId, person.id);
+    await db.delete(shiftAssignments)
+      .where(and(personCond, eq(shiftAssignments.date, date), eq(shiftAssignments.source, "auto")));
+    if (sessions.length === 0) return;
+    await db.insert(shiftAssignments).values(sessions.map(s => ({
+      userId: person.kind === "user" ? person.id : null,
+      staffMemberId: person.kind === "staff" ? person.id : null,
+      shiftId: s.shiftId,
+      date,
+      source: "auto",
+      clockIn: s.clockIn,
+      clockOut: s.clockOut ?? null,
+      workingHours: s.workingHours.toFixed(2),
+      createdBy: null,
+    })));
   }
 
   // The payroll-eligible roster, pulled from BOTH systems and created in Admin:
@@ -982,12 +1056,8 @@ export class DatabaseStorage implements IStorage {
 
   async getPayrollReport(month: string): Promise<any[]> {
     const [year, mon] = month.split('-').map(Number);
-    const daysInMonth = new Date(year, mon, 0).getDate();
-    let sundays = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      if (new Date(year, mon - 1, d).getDay() === 0) sundays++;
-    }
-    const workingDays = daysInMonth - sundays;
+    // The restaurant operates every day of the week — Sunday is a normal working day, not a weekly off.
+    const workingDays = new Date(year, mon, 0).getDate();
     const people = await this.getPayrollPeople();
     const monthAttendance = await db.select().from(attendance)
       .where(sql`${attendance.date} LIKE ${month + '-%'}`);

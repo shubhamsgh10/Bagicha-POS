@@ -135,7 +135,7 @@ Two identity systems (see `docs/superpowers/specs/2026-05-21-unified-role-user-m
 
 **⚠️ Id-collision gotcha:** `users` and `staffMembers` share the integer id space, and a staff-member session is `{ id: sm.id, _isStaffMember: true }`. Any "self" endpoint that keys on `req.user.id` MUST disambiguate by `_isStaffMember` (→ `staffMemberId` vs `userId`) or it's a cross-table IDOR. Already guarded: `/api/attendance/me`, `/api/payroll/me/:month`.
 
-**Authorization:** payroll/roster reads expose salaries → gated by **`requireManagerOrAdmin`** (`/api/payroll/people`, `/api/payroll/report/:month`, `/api/staff/accounts`) so staff-tier (PIN) sessions can't read them; managers keep Staff-page access. Admin-only config (`GET/POST /api/settings/staff-page-access` + `apply-role`) is `requireAdmin`. Self-service `/api/*/me` stays `requireAuth`.
+**Authorization:** payroll/roster reads expose salaries → gated by **`requireManagerOrAdmin`** (`/api/payroll/people`, `/api/payroll/report/:month`) so staff-tier (PIN) sessions can't read them; managers keep Staff-page access. Admin-only config (`GET/POST /api/settings/staff-page-access` + `apply-role`) is `requireAdmin`. Self-service `/api/*/me` stays `requireAuth`.
 
 **Payroll + biometric run on a UNION of both** (`storage.getPayrollPeople()`):
 - `users` with role ∈ {manager, staff} (admins/owner excluded) via `staffProfiles`, **plus** `staffMembers` (skip `excludeFromPayroll`). Each person is `{ kind:'user'|'staff', id, name, role, biometricId, monthlySalary }`.
@@ -147,9 +147,21 @@ Two identity systems (see `docs/superpowers/specs/2026-05-21-unified-role-user-m
   `employeeName/punchIn/punchOut/hoursWorked`) and `getAttendanceSummary({from,to})`
   (`GET /api/attendance/summary`). The **Google-Sheet importer is gone** (staffRoutes gsheet endpoints +
   `attendanceService.ts` deleted; `attendanceRecords` table left dormant). The **Today** board + EMPLOYEE
-  filter use `GET /api/payroll/people`. **Shifts/Leaves** stay account-keyed and list `GET /api/staff/accounts`
-  (manager/staff users; owner/admins excluded). Biometric/salary **`StaffBiometricSetup`** lives in the
-  **Device** tab now (not Payroll). Smoke test: `scripts/verify-attendance-tabs.ts`.
+  filter use `GET /api/payroll/people`. **Shifts** and **Leaves** are both union-based now (see "Shifts &
+  auto-detection" and the leaves note below — the old manager/staff-users-only `/api/staff/accounts`
+  endpoint they used is gone). Biometric/salary **`StaffBiometricSetup`** lives in the **Device** tab now
+  (not Payroll). Smoke test: `scripts/verify-attendance-tabs.ts`.
+
+### Shifts & auto-detection (Staff → Shifts tab)
+The Weekly Roster shows **actual worked shifts auto-detected from biometric punches**, alongside optional manual assignment. Key pieces:
+- **`shift_assignments`** (`shared/schema.ts`) is the source of truth for *which shifts + their hours*. `userId` is now **nullable** with a parallel **`staffMemberId`** (exactly one set — same dual-key pattern as `attendance`), plus `source` (`'manual'|'auto'`), `clockIn`, `clockOut`, `workingHours`. **Multiple rows per person/date are allowed** (Morning + Evening on one day). Migration: `scripts/migrate-shift-detection.mjs`.
+- **`getRoster`** (`storage.ts`) builds people from **`getPayrollPeople()`** (union of `users` manager/staff + `staffMembers`, owner/admin excluded) — this fixed the bug where only login accounts appeared. It returns `assignments[date]` as an **array** of `{assignmentId, shift, source, clockIn, clockOut, workingHours}`. `POST /api/shifts/roster` takes `{kind,id,date,shiftId}` and inserts a `source:'manual'` row; `deleteShiftAssignment` only removes **manual** rows (auto re-derive from punches).
+- **Auto-detection** lives in `deviceAttendanceService.ts` via `shared/shiftTime.ts` (`shiftWindow` with **midnight-wrap**, `matchShift`, `detectSessions`). On each punch batch it pools this batch's times **+ the in/out of existing `source:'auto'` sessions** (each auto row keeps BOTH endpoints, so interior shift boundaries survive across sync batches — the single `attendance` row only keeps global first/last), sorts, pairs sequentially `[in,out]…`, matches each pair to a shift window, and rewrites the person/date auto rows via `storage.replaceAutoShiftSessions` (manual rows untouched). The `attendance` day row stays one-per-day but its `workingHours` = **Σ session spans** (excludes midday gaps), `status` half-day if <4h.
+- **Midnight-crossing shifts** (e.g. Evening 16:00–00:00) compute correctly now: `durationHours` is computed **server-side** in `storage.createShift`/`updateShift` via `shiftWindow(...).hours` (wraps `end += 24h` when `end<=start`) — the old client-only `Math.max(0, end-start)` clamped it to 0.00h. Don't trust a client-sent `durationHours`.
+- **`POST /api/attendance/recompute-shifts`** (`requireAdmin`, "Recompute" button on the Shifts tab) backfills a month via `recomputeShiftSessions`. **Limitation:** days that collapsed to a single first→last span *before* this feature lost their interior punches, so they can only resolve to one session — going forward, live punches split correctly.
+
+### Leaves (Staff → Leaves tab)
+Same union fix as Shifts: `leaves.userId` is now **nullable** with a parallel **`staffMemberId`** (`scripts/migrate-leaves-staffmember.mjs`) — before this, PIN/biometric-only staff members couldn't appear in or apply for leave at all (`getLeaves` joined `users` only). The "Apply Leave" dropdown now sources from **`GET /api/payroll/people`** (not the legacy `/api/staff/accounts`), encoding the selection as `"user:<id>"` / `"staff:<id>"` since ids collide across the two tables. `POST /api/leaves` takes `{kind,id,...}` and stamps exactly one of `userId`/`staffMemberId`; `getLeaves` resolves against both tables and returns a unified `displayName` (mirrors `getAttendance`'s `AttendanceWho` pattern) — the leave list renders `leaf.displayName`, not `leaf.user?.username`.
 
 **UI split (the user's chosen model):**
 - **Admin → Accounts** = the *only* create/edit/delete place. The **Add Staff Member** dialog sets name + **Role** (`STAFF_ROLE_OPTIONS`: Service/Cook/Cleaning/Cashier/Other — Manager is the separate tier) + optional PIN; role → `designation` → payroll.
