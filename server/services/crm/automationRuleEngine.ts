@@ -623,7 +623,29 @@ export async function triggerDueBillMessage(
   const customerId = await resolveCustomerId(key, custName, order.customerPhone ?? phone);
   if (await hasJobToday(customerId, ["DUE_REMINDER"])) return;
 
-  // Itemized block
+  const block = await buildOrderBillBlock(orderId);
+  if (!block) return;
+
+  const message = applyTokens(config.dueMessageTemplate?.trim() || DEFAULT_DUE_TEMPLATE, {
+    name: custName, restaurant: config.restaurantName || RESTAURANT,
+    due: String(Math.round(block.due)), bill: block.bill,
+  });
+
+  await dispatchSettlement({ customerId, key, name: custName, phone: order.customerPhone ?? phone, trigger: "DUE_REMINDER", message });
+  console.log(`[CRM] Due reminder queued — ${custName} (₹${Math.round(block.due)} due)`);
+}
+
+/**
+ * Build one order's itemized bill block for a WhatsApp message.
+ * Open-item safe: prefers the stored `orderItems.name` snapshot, falling back to the
+ * joined menu name (per CLAUDE.md — open items have a negative menuItemId with no menu row).
+ */
+export async function buildOrderBillBlock(
+  orderId: number,
+): Promise<{ header: string; itemLines: string[]; bill: string; total: number; paid: number; due: number } | null> {
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!order) return null;
+
   const rawItems = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
   const allMenu = await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems);
   const menuName: Record<number, string> = {};
@@ -643,10 +665,33 @@ export async function triggerDueBillMessage(
     `${header}\n${itemLines.join("\n")}\nTotal: ₹${Math.round(total)}` +
     (paid > 0 ? `\nPaid: ₹${Math.round(paid)}` : "");
 
-  const message = applyTokens(config.dueMessageTemplate?.trim() || DEFAULT_DUE_TEMPLATE, {
-    name: custName, restaurant: config.restaurantName || RESTAURANT, due: String(Math.round(due)), bill,
-  });
+  return { header, itemLines, bill, total, paid, due };
+}
 
-  await dispatchSettlement({ customerId, key, name: custName, phone: order.customerPhone ?? phone, trigger: "DUE_REMINDER", message });
-  console.log(`[CRM] Due reminder queued — ${custName} (₹${Math.round(due)} due)`);
+/**
+ * Send ONE consolidated WhatsApp e-bill covering ALL of a customer's open tabs
+ * (served + unpaid orders), itemized per order, with a grand outstanding total.
+ * Owner-driven (Reports → Dues), unlike the per-order due reminder above.
+ * Returns the resolved recipient + built message so the caller can offer a wa.me fallback.
+ */
+export async function sendConsolidatedEbill(args: {
+  name: string; phone: string; orderIds: number[]; totalDue: number;
+}): Promise<{ ok: boolean; mode: "driver" | "queued"; message: string }> {
+  const config = getAutomationConfig();
+  const blocks: string[] = [];
+  for (const id of args.orderIds) {
+    const b = await buildOrderBillBlock(id);
+    if (b) blocks.push(b.bill);
+  }
+  const bill = blocks.join("\n\n") + `\n\n*Total outstanding: ₹${Math.round(args.totalDue)}*`;
+  const key = args.phone.trim() || args.name.trim();
+  const customerId = await resolveCustomerId(key, args.name, args.phone);
+  const message = applyTokens(config.dueMessageTemplate?.trim() || DEFAULT_DUE_TEMPLATE, {
+    name: args.name, restaurant: config.restaurantName || RESTAURANT,
+    due: String(Math.round(args.totalDue)), bill,
+  });
+  const mode: "driver" | "queued" = (config.whatsappAutoSend && getDriver()) ? "driver" : "queued";
+  await dispatchSettlement({ customerId, key, name: args.name, phone: args.phone, trigger: "DUE_EBILL", message });
+  console.log(`[CRM] Consolidated e-bill queued — ${args.name} (₹${Math.round(args.totalDue)} across ${args.orderIds.length} orders)`);
+  return { ok: true, mode, message };
 }

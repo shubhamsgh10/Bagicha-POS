@@ -48,7 +48,7 @@ import {
 } from "./services/crm/segmentationService";
 import { getRecommendations } from "./services/crm/recommendationService";
 import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
-import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage } from "./services/crm/automationRuleEngine";
+import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -1842,6 +1842,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(dueOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch due orders" });
+    }
+  });
+
+  // ── Dues / Pay-Later: open tabs grouped by customer (not date-bound) ─────────
+  app.get("/api/reports/tabs", requireAuth, async (_req, res) => {
+    try {
+      const customers = await storage.getOpenTabsByCustomer();
+      const totalOutstanding = customers.reduce((s, c) => s + c.totalDue, 0);
+      const orderCount = customers.reduce((s, c) => s + c.orderCount, 0);
+      res.json({ customers, totalOutstanding, customerCount: customers.length, orderCount });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch tabs" });
+    }
+  });
+
+  // Send ONE consolidated WhatsApp e-bill for a customer's open tabs (driver auto; wa.me fallback).
+  app.post("/api/dues/send-ebill", requireAuth, async (req, res) => {
+    try {
+      const { key } = req.body as { key?: string };
+      if (!key) return res.status(400).json({ error: "key required" });
+      const customers = await storage.getOpenTabsByCustomer();
+      const cust = customers.find(c => c.key === key);
+      if (!cust) return res.status(404).json({ error: "No open tabs for this customer" });
+      if (!cust.phone) return res.status(400).json({ error: "Customer has no phone number on file" });
+
+      const result = await sendConsolidatedEbill({
+        name: cust.name, phone: cust.phone, orderIds: cust.orders.map(o => o.id), totalDue: cust.totalDue,
+      });
+      const digits = cust.phone.replace(/\D/g, "");
+      const waPhone = digits.length === 10 ? `91${digits}` : digits;
+      const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(result.message)}`;
+      res.json({ ok: true, mode: result.mode, waUrl });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to send e-bill" });
+    }
+  });
+
+  // Mark ALL of a customer's open tabs paid (weekly/bulk settle).
+  app.post("/api/dues/settle-customer", requireAuth, async (req, res) => {
+    try {
+      const { key, paymentMethod } = req.body as { key?: string; paymentMethod?: string };
+      if (!key) return res.status(400).json({ error: "key required" });
+      const settled = await storage.settleCustomerTabs(key, paymentMethod);
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ ok: true, settled });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to settle tabs" });
     }
   });
 

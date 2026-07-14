@@ -1,6 +1,6 @@
 import { apiUrl } from '@/lib/api';
 import { useState, useRef, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/Header";
 import {
@@ -9,9 +9,11 @@ import {
 import {
   DollarSign, TrendingUp, ShoppingCart, Users, Download, Calendar,
   Banknote, CreditCard, Smartphone, Clock, AlertCircle, Wifi,
-  ChevronDown, Check, X,
+  ChevronDown, Check, X, Send, CheckCircle2, Wallet,
 } from "lucide-react";
 import { serialNum } from "@/lib/orderDisplay";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -222,6 +224,78 @@ function buildParams(range: DateRange) {
   return `?startDate=${range.start}&endDate=${range.end}`;
 }
 
+// ── Dues: one customer's open tabs (expandable), with e-bill + settle-all actions ──
+function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }: {
+  c: any;
+  onEbill: (key: string) => void;
+  onSettle: (key: string) => void;
+  ebillPending: boolean;
+  settlePending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const inr = (n: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(n);
+  return (
+    <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between gap-3 p-4">
+        <button onClick={() => setOpen(o => !o)} className="flex items-center gap-3 min-w-0 text-left flex-1">
+          <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-sm font-bold text-red-600 shrink-0">
+            {(c.name || "?").charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-sm text-gray-800 truncate">{c.name || "Walk-in"}</p>
+            <p className="text-xs text-gray-500">{c.phone || "no phone"} · {c.orderCount} order{c.orderCount !== 1 ? "s" : ""}</p>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+        <div className="text-right shrink-0">
+          <p className="font-bold text-red-600">{inr(c.totalDue)}</p>
+          <span className="text-[10px] text-red-400">outstanding</span>
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-4 pb-3 space-y-2 border-t border-[var(--line)] pt-3">
+          {c.orders.map((o: any) => (
+            <div key={o.id} className="rounded-xl bg-red-50/40 border border-red-200/40 p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-gray-700">{serialNum(o.id)} · {o.orderNumber}</span>
+                <span className="text-xs font-bold text-red-600">{inr(o.total)}</span>
+              </div>
+              <p className="text-[11px] text-gray-400 mb-1">{new Date(o.createdAt).toLocaleString("en-IN")}</p>
+              <div className="space-y-0.5">
+                {o.items.map((it: any, i: number) => (
+                  <div key={i} className="flex justify-between text-[11px] text-gray-600">
+                    <span>{it.name} × {it.quantity}</span>
+                    <span>{inr(it.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 px-4 pb-4">
+        <button
+          onClick={() => onEbill(c.key)}
+          disabled={!c.phone || ebillPending}
+          title={c.phone ? "Send a consolidated bill via WhatsApp" : "No phone number on file"}
+          className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <Send className="w-3.5 h-3.5" /> Send e-bill
+        </button>
+        <button
+          onClick={() => { if (window.confirm(`Mark all ${c.orderCount} order(s) for ${c.name || "this customer"} as PAID?`)) onSettle(c.key); }}
+          disabled={settlePending}
+          className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-xs font-semibold bg-[var(--paper-0)] border border-[var(--line)] text-gray-700 hover:bg-[var(--paper-100)] disabled:opacity-40 transition-colors"
+        >
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Mark all paid
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function Reports() {
@@ -262,6 +336,34 @@ export default function Reports() {
     queryFn: () => fetch(apiUrl(`/api/reports/staff-tables${params}`), { credentials: "include" }).then(r => r.json()),
   });
 
+  const { toast } = useToast();
+  // Outstanding tabs are "current," not date-bound — no date params.
+  const { data: dues } = useQuery<any>({
+    queryKey: ["/api/reports/tabs"],
+    queryFn: () => fetch(apiUrl(`/api/reports/tabs`), { credentials: "include" }).then(r => r.json()),
+  });
+
+  const invalidateDues = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/reports/tabs"] });
+    queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] ?? "").startsWith("/api/reports/payment-summary") });
+  };
+
+  const ebillMutation = useMutation({
+    mutationFn: async (key: string) => apiRequest("POST", "/api/dues/send-ebill", { key }),
+    onSuccess: async (res: any) => {
+      const data = await res.json().catch(() => ({}));
+      if (data?.mode === "driver") toast({ title: "E-bill sent via WhatsApp" });
+      else { if (data?.waUrl) window.open(data.waUrl, "_blank"); toast({ title: "Opening WhatsApp…" }); }
+    },
+    onError: (err: any) => toast({ title: "Failed to send e-bill", description: err.message, variant: "destructive" }),
+  });
+
+  const settleCustomerMutation = useMutation({
+    mutationFn: async (key: string) => apiRequest("POST", "/api/dues/settle-customer", { key }),
+    onSuccess: (_res, _key) => { toast({ title: "Tabs marked paid" }); invalidateDues(); },
+    onError: (err: any) => toast({ title: "Failed to settle", description: err.message, variant: "destructive" }),
+  });
+
   const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales, orders: d.orders ?? 0 }));
   const topItems  = topItemsData.map((d: any) => ({ name: d.name, sold: d.totalSold, revenue: d.revenue }));
 
@@ -271,6 +373,7 @@ export default function Reports() {
     { id: "orders",   label: "Order Details" },
     { id: "payments", label: "Payments" },
     { id: "staff",    label: "Staff & Tables" },
+    { id: "dues",     label: "Dues / Pay-Later" },
   ];
 
   if (isLoading) {
@@ -736,6 +839,63 @@ export default function Reports() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+
+        {/* ── Dues / Pay-Later ── */}
+        {activeTab === "dues" && (
+          <motion.div
+            key="dues"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl bg-red-50/60 border border-red-200/40 p-4">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center text-white mb-2">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <p className="text-xs text-gray-500">Total Outstanding</p>
+                <p className="text-xl font-bold text-red-600">{formatCurrency(dues?.totalOutstanding || 0)}</p>
+              </div>
+              <div className="rounded-xl bg-amber-50/60 border border-amber-200/40 p-4">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white mb-2">
+                  <ShoppingCart className="w-5 h-5" />
+                </div>
+                <p className="text-xs text-gray-500">Open Tabs (orders)</p>
+                <p className="text-xl font-bold text-amber-700">{dues?.orderCount || 0}</p>
+              </div>
+              <div className="rounded-xl bg-blue-50/60 border border-blue-200/40 p-4">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white mb-2">
+                  <Users className="w-5 h-5" />
+                </div>
+                <p className="text-xs text-gray-500">Customers with Dues</p>
+                <p className="text-xl font-bold text-blue-700">{dues?.customerCount || 0}</p>
+              </div>
+            </div>
+
+            {(dues?.customers?.length > 0) ? (
+              <div className="space-y-3">
+                {dues.customers.map((c: any) => (
+                  <DuesCustomerCard
+                    key={c.key}
+                    c={c}
+                    onEbill={(key) => ebillMutation.mutate(key)}
+                    onSettle={(key) => settleCustomerMutation.mutate(key)}
+                    ebillPending={ebillMutation.isPending}
+                    settlePending={settleCustomerMutation.isPending}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-8 text-center">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                </div>
+                <p className="text-gray-600 font-medium">No open tabs</p>
+                <p className="text-sm text-gray-400">Everyone's settled up</p>
+              </div>
+            )}
           </motion.div>
         )}
       </main>
