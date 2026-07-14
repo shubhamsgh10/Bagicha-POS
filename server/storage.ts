@@ -19,6 +19,19 @@ import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
 
+/** A customer with open "tabs" (served + unpaid orders), aggregated for the Dues report. */
+export type OpenTabCustomer = {
+  key: string;                 // customerPhone || customerName (grouping key)
+  name: string;
+  phone: string | null;
+  orderCount: number;
+  totalDue: number;
+  orders: Array<{
+    id: number; orderNumber: string; createdAt: Date; total: number;
+    items: Array<{ name: string; quantity: number; amount: number }>;
+  }>;
+};
+
 // An attendance row resolved to whoever it belongs to — a system account (`user`)
 // OR a staff member (`staffMember`). `displayName` is the unified label for either.
 export type AttendanceWho = Attendance & { user?: User; staffMember?: StaffMember; displayName: string };
@@ -76,6 +89,8 @@ export interface IStorage {
   getOrderById(id: number): Promise<Order | undefined>;
   getOrdersByStatus(status: string): Promise<Order[]>;
   getOrdersByDateRange(startDate: Date, endDate: Date): Promise<Order[]>;
+  getOpenTabsByCustomer(): Promise<OpenTabCustomer[]>;
+  settleCustomerTabs(key: string, paymentMethod?: string): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   deleteOrder(id: number): Promise<void>;
@@ -340,6 +355,67 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders).where(
       and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate))
     ).orderBy(desc(orders.createdAt));
+  }
+
+  // Customers with open "tabs" = served + unpaid orders (paymentStatus pending), grouped by
+  // customerPhone||customerName. Powers the Dues / Pay-Later report + consolidated e-bills.
+  async getOpenTabsByCustomer(): Promise<OpenTabCustomer[]> {
+    const dueOrders = await db.select().from(orders)
+      .where(and(eq(orders.paymentStatus, "pending"), eq(orders.status, "served")))
+      .orderBy(desc(orders.createdAt));
+    if (dueOrders.length === 0) return [];
+
+    // All items for these orders in one pass — open-item safe (prefer orderItems.name, else menu name).
+    const orderIds = dueOrders.map(o => o.id);
+    const itemRows = await db
+      .select({
+        orderId: orderItems.orderId,
+        name: sql<string>`coalesce(${menuItems.name}, 'Item')`,
+        quantity: orderItems.quantity,
+        price: orderItems.price,
+      })
+      .from(orderItems)
+      .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .where(inArray(orderItems.orderId, orderIds));
+    const itemsByOrder = new Map<number, Array<{ name: string; quantity: number; amount: number }>>();
+    for (const r of itemRows) {
+      const list = itemsByOrder.get(r.orderId) ?? [];
+      list.push({ name: r.name, quantity: Number(r.quantity), amount: Math.round(Number(r.quantity) * parseFloat(String(r.price ?? "0"))) });
+      itemsByOrder.set(r.orderId, list);
+    }
+
+    const groups = new Map<string, OpenTabCustomer>();
+    for (const o of dueOrders) {
+      const key = o.customerPhone?.trim() || o.customerName?.trim() || `order-${o.id}`;
+      const total = parseFloat(String(o.totalAmount ?? "0"));
+      const paid = parseFloat(String(o.paidAmount ?? "0"));
+      const due = Math.max(0, total - paid);
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, name: o.customerName?.trim() || "Walk-in", phone: o.customerPhone?.trim() || null, orderCount: 0, totalDue: 0, orders: [] };
+        groups.set(key, g);
+      }
+      if (!g.phone && o.customerPhone?.trim()) g.phone = o.customerPhone.trim();
+      g.orderCount += 1;
+      g.totalDue += due;
+      g.orders.push({ id: o.id, orderNumber: o.orderNumber, createdAt: o.createdAt, total: due, items: itemsByOrder.get(o.id) ?? [] });
+    }
+    return Array.from(groups.values()).sort((a, b) => b.totalDue - a.totalDue);
+  }
+
+  // Mark ALL of a customer's open tabs paid (weekly/bulk settle). Returns the count settled.
+  async settleCustomerTabs(key: string, paymentMethod = "cash"): Promise<number> {
+    const dueOrders = await db.select().from(orders)
+      .where(and(eq(orders.paymentStatus, "pending"), eq(orders.status, "served")));
+    const mine = dueOrders.filter(o => (o.customerPhone?.trim() || o.customerName?.trim() || `order-${o.id}`) === key);
+    for (const o of mine) {
+      await db.update(orders).set({
+        paymentStatus: "paid",
+        paymentMethod: o.paymentMethod ?? paymentMethod,
+        paidAmount: String(o.totalAmount ?? "0"),
+      }).where(eq(orders.id, o.id));
+    }
+    return mine.length;
   }
 
   async getStaffTableReport(startDate: Date, endDate: Date): Promise<Array<{

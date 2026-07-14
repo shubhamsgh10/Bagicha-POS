@@ -91,6 +91,20 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
+// Long-press (touch/mouse) + right-click handlers that fire `onLongPress` after ~500ms hold.
+function longPressHandlers(onLongPress: () => void) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const start = () => { timer = setTimeout(onLongPress, 500); };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  return {
+    onPointerDown: start,
+    onPointerUp: cancel,
+    onPointerLeave: cancel,
+    onPointerMove: cancel,
+    onContextMenu: (e: { preventDefault: () => void }) => { e.preventDefault(); onLongPress(); },
+  };
+}
+
 
 function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetWindow?: Window | null) {
   const phone = order.customerPhone?.replace(/\D/g, "");
@@ -2004,6 +2018,17 @@ export default function POS() {
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-3.5 h-3.5 text-[var(--text-2)]" />
               <span className="text-xs font-bold text-[var(--text-1)] uppercase tracking-wide">Order</span>
+              {activeOrderId && (
+                <button
+                  type="button"
+                  {...longPressHandlers(() => hasItems && setShowSettleDialog(true))}
+                  onClick={() => hasItems && setShowSettleDialog(true)}
+                  title="Tap or long-press for full details, settle, or Pay Later"
+                  className="text-[11px] font-bold text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5 select-none active:scale-95 transition-transform"
+                >
+                  {serialNum(activeOrderId)}
+                </button>
+              )}
               {hasItems && (
                 <span className="text-[10px] bg-[var(--green-700)] text-white rounded-full px-1.5 py-0.5 font-bold">{cartItems.length}</span>
               )}
@@ -2227,6 +2252,13 @@ export default function POS() {
             onOpenChange={setShowSettleDialog}
             grandTotal={grandTotal}
             isLoading={settleMutation.isPending}
+            items={cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size, serviceMode: i.serviceMode }))}
+            subtotal={subtotal}
+            taxAmount={tax}
+            discountAmount={discountAmt}
+            orderLabel={activeOrderId ? serialNum(activeOrderId) : undefined}
+            initialCustomerName={form.watch("customerName") || ""}
+            initialCustomerPhone={form.watch("customerPhone") || ""}
             onSettle={(data) => {
               settlementDataRef.current = data;
               setShowSettleDialog(false);
