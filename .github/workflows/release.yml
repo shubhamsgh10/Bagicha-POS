@@ -51,7 +51,9 @@ jobs:
           # bundle anyway), so they are safe to inline here.
           VITE_PUSHER_KEY: ce1d9880618a84677492
           VITE_PUSHER_CLUSTER: ap2
-          VITE_PUSHER_CHANNEL: bagicha-pos
+          # Private channel — subscribers must be authorized via /api/pusher/auth.
+          # The host server's PUSHER_CHANNEL must match this exactly.
+          VITE_PUSHER_CHANNEL: private-bagicha-pos
 
       - name: Publish to GitHub Releases
         run: npx electron-builder --win --publish always --config electron-builder.yml
@@ -96,7 +98,9 @@ jobs:
           # bundle anyway), so they are safe to inline here.
           VITE_PUSHER_KEY: ce1d9880618a84677492
           VITE_PUSHER_CLUSTER: ap2
-          VITE_PUSHER_CHANNEL: bagicha-pos
+          # Private channel — subscribers must be authorized via /api/pusher/auth.
+          # The host server's PUSHER_CHANNEL must match this exactly.
+          VITE_PUSHER_CHANNEL: private-bagicha-pos
 
       - name: Publish to GitHub Releases
         run: npx electron-builder --mac --publish always --config electron-builder.yml
