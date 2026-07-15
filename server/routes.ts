@@ -1637,7 +1637,19 @@ export async function registerRoutes(
       const lineItems = Array.isArray(items) ? items : [];
 
       // Recompute all money server-side from DB prices — never trust client totals.
-      const priced = await priceOrder(lineItems, orderInfo.discountAmount);
+      // This is the ONLY genuine "invalid order data" case (unknown item / bad qty);
+      // it reports the real reason instead of a blanket message. Everything below is
+      // a server fault and must surface as 5xx — mislabelling DB/counter failures as
+      // 400 "Invalid order data" is what hid the orderNumber collision bug.
+      let priced;
+      try {
+        priced = await priceOrder(lineItems, orderInfo.discountAmount);
+      } catch (pricingErr) {
+        console.warn("[order] rejected invalid line items:", pricingErr);
+        return res.status(400).json({
+          error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
+        });
+      }
 
       // Applying a discount is a privileged action; a bare staff session may not.
       if (priced.discount > 0 && !hasElevation(req, "manager")) {
@@ -1724,7 +1736,7 @@ export async function registerRoutes(
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
-      res.status(400).json({ error: "Invalid order data" });
+      res.status(500).json({ error: "Failed to create order" });
     }
   });
 
