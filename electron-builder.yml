@@ -52,6 +52,8 @@ nsis:
 mac:
   icon: desktop/icons/icon.png
   category: public.app-category.business
+  # zip is REQUIRED alongside dmg: electron-updater uses the zip (+ latest-mac.yml)
+  # to apply macOS updates. Dropping it silently kills auto-update.
   target:
     - target: dmg
       arch:
@@ -61,11 +63,19 @@ mac:
       arch:
         - x64
         - arm64
-  # Unsigned build (no Apple Developer ID yet) — electron-builder still applies an
-  # ad-hoc signature automatically (required for the app to launch on Apple Silicon).
-  # Users see a Gatekeeper "unidentified developer" prompt on first launch; right-click
-  # the app → Open once to bypass it. Revisit once a Developer ID cert is available.
-  hardenedRuntime: true
+  # Signed with a SELF-SIGNED cert (no paid Apple Developer ID). This buys a *stable*
+  # code signature across builds, which is what Squirrel.Mac compares an update against
+  # before applying it. Ad-hoc signatures are hash-derived and differ on every build, so
+  # they can never match — that permanently breaks macOS auto-update, and no setting of
+  # ours can disable that check (it lives in Apple's framework).
+  # It does NOT satisfy Gatekeeper: a browser-downloaded dmg is quarantined and rejected
+  # as "damaged", so the first install must arrive by USB. See docs/MAC-SIGNING.md.
+  # The CN is prefixed "Developer ID Application:" deliberately — electron-builder only
+  # matches identities against known Apple type names and skips anything else.
+  identity: "Developer ID Application: Bagicha POS (SELFSIGNED)"
+  # Hardened runtime only pays off with notarization, which needs the paid cert we don't
+  # have. Leaving it on adds Gatekeeper strictness and can block native modules (usb).
+  hardenedRuntime: false
   gatekeeperAssess: false
 
 linux:
