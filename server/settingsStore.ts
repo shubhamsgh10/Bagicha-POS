@@ -1,6 +1,6 @@
 import fs from "fs";
 import { randomBytes } from "crypto";
-import { eq, max } from "drizzle-orm";
+import { eq, max, sql } from "drizzle-orm";
 import { db } from "./db";
 import { restaurantSettings, orders } from "@shared/schema";
 import { dataPath } from "./dataDir";
@@ -237,30 +237,46 @@ export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
 }
 
-// Counter issuance is serialized through a promise chain so two concurrent
-// requests in this process can never read the same value (which would collide on
-// the orderNumber/kotNumber UNIQUE constraint), and the DB write is AWAITED so the
-// increment is durable before the number is used. A failed write doesn't poison
-// the chain — the next issuance still proceeds.
-let counterChain: Promise<unknown> = Promise.resolve();
-
+// Counter issuance is allocated by the DATABASE, not from the in-memory cache.
+//
+// The number must be unique across every process that can create an order, and
+// `settingsCache` is per-process: on Vercel each serverless instance holds its own
+// cache + its own mutex, so a JS-side read-modify-write ("next = cache + 1") let two
+// instances hand out the SAME orderNumber — the loser blew up on the
+// orderNumber/kotNumber UNIQUE constraint and surfaced as a generic 400 that
+// succeeded on retry. A warm instance also drifts permanently behind once another
+// instance issues numbers, since the cache is never re-read after initSettings().
+//
+// This single UPDATE increments the counter inside the settings JSON and RETURNs
+// the new value. Postgres takes a row lock on id=1, so concurrent callers queue and
+// each re-reads the committed value before incrementing — unique numbers across all
+// instances, no app-level mutex needed. It also only touches the counter key, so an
+// order can no longer clobber unrelated settings with a stale cached blob.
 async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number> {
-  const current = getSettings();
-  const next = (current[field] ?? 0) + 1;
-  settingsCache = { ...current, [field]: next };
-  await db.insert(restaurantSettings)
-    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: settingsCache as any, updatedAt: new Date() },
-    });
+  const result: any = await db.execute(sql`
+    UPDATE restaurant_settings
+    SET settings = jsonb_set(
+          settings::jsonb,
+          ARRAY[${field}]::text[],
+          to_jsonb(COALESCE((settings ->> ${field})::int, 0) + 1)
+        )::json,
+        updated_at = NOW()
+    WHERE id = 1
+    RETURNING (settings ->> ${field})::int AS value
+  `);
+  const next = Number(result?.rows?.[0]?.value);
+  if (!Number.isFinite(next)) {
+    // id=1 is seeded by initSettings(); a miss means the settings row is gone.
+    throw new Error(`Counter '${field}' could not be issued (settings row missing?)`);
+  }
+  // Keep the local cache roughly warm for getSettings() readers. The DB is the
+  // source of truth for issuance — this value is only cosmetic.
+  settingsCache = { ...getSettings(), [field]: next };
   return next;
 }
 
 function nextCounter(field: "billCounter" | "kotCounter"): Promise<number> {
-  const result = counterChain.then(() => issueCounter(field));
-  counterChain = result.catch(() => {}); // keep the mutex alive across failures
-  return result;
+  return issueCounter(field);
 }
 
 export function incrementBillCounter(): Promise<number> {
