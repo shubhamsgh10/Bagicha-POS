@@ -109,7 +109,13 @@ jobs:
           VITE_PUSHER_CHANNEL: private-bagicha-pos
 
       - name: Publish to GitHub Releases
-        run: npx electron-builder --mac --publish always --config electron-builder.yml
+        # electron-builder.yml's mac.identity is Phase 0 prep for the self-signed-cert
+        # auto-update spike in docs/MAC-SIGNING.md (run by hand on the physical Mac,
+        # using ITS local keychain) — CI has no matching certificate (Phase 1, wiring
+        # CSC_LINK/CSC_KEY_PASSWORD secrets in, hasn't happened yet), so override the
+        # identity to null here to keep shipping ad-hoc-signed CI builds. Remove this
+        # override once Phase 1 lands and CI supplies its own copy of the cert.
+        run: npx electron-builder --mac --publish always --config electron-builder.yml -c.mac.identity=null
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'  # skip code-signing (no cert) — ad-hoc signed instead
