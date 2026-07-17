@@ -1,8 +1,8 @@
 import fs from "fs";
 import { randomBytes } from "crypto";
-import { eq, max } from "drizzle-orm";
+import { eq, max, sql } from "drizzle-orm";
 import { db } from "./db";
-import { restaurantSettings, orders } from "@shared/schema";
+import { restaurantSettings, orders, kotTickets } from "@shared/schema";
 import { dataPath } from "./dataDir";
 
 const SETTINGS_FILE = dataPath("restaurant-settings.json");
@@ -201,6 +201,33 @@ function loadFromFile(): RestaurantSettings {
   return { ...DEFAULT_SETTINGS };
 }
 
+// Ensures a counter is never behind the actual max number already used in its
+// table — guards against counter reset, data import, or any out-of-sync scenario.
+// Necessary even with the atomic issueCounter() above: that only prevents the
+// PERSISTED counter from drifting further behind going forward — it can't repair
+// a counter that's already behind (e.g. left there by the old per-instance-cache
+// issuance, which could overwrite the DB value backward when a stale instance's
+// lower cached value raced a fresher one). A behind counter means the very next
+// atomic increment collides with a row that already exists.
+async function syncCounterFromMax(
+  field: "billCounter" | "kotCounter",
+  maxValueRaw: string | null,
+): Promise<void> {
+  if (!maxValueRaw) return;
+  const dbMax = parseInt(maxValueRaw.replace(/\D/g, ""), 10) || 0;
+  const cached = settingsCache![field] ?? 0;
+  if (dbMax <= cached) return;
+  settingsCache = { ...settingsCache!, [field]: dbMax };
+  await db.insert(restaurantSettings)
+    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: restaurantSettings.id,
+      set: { settings: settingsCache as any, updatedAt: new Date() },
+    })
+    .catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
+  console.log(`[settings] ${field} synced from DB max: ${dbMax}`);
+}
+
 // Call once at server startup — seeds in-memory cache from DB (falls back to file)
 export async function initSettings(): Promise<void> {
   try {
@@ -213,26 +240,12 @@ export async function initSettings(): Promise<void> {
       settingsCache = fileSettings;
       await db.insert(restaurantSettings).values({ id: 1, settings: fileSettings as any });
     }
-    // Ensure billCounter is never behind the actual max order number in the DB
-    // (guards against counter reset, data import, or any out-of-sync scenario)
-    const [{ maxOrdNum }] = await db
-      .select({ maxOrdNum: max(orders.orderNumber) })
-      .from(orders);
-    if (maxOrdNum) {
-      const dbMax = parseInt(maxOrdNum.replace(/\D/g, ""), 10) || 0;
-      const cached = settingsCache!.billCounter ?? 0;
-      if (dbMax > cached) {
-        settingsCache = { ...settingsCache!, billCounter: dbMax };
-        db.insert(restaurantSettings)
-          .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
-          .onConflictDoUpdate({
-            target: restaurantSettings.id,
-            set: { settings: settingsCache as any, updatedAt: new Date() },
-          })
-          .catch((err: unknown) => console.error("[settings] Counter sync save failed:", err));
-        console.log(`[settings] billCounter synced from DB max: ${dbMax}`);
-      }
-    }
+    const [[{ maxOrdNum }], [{ maxKotNum }]] = await Promise.all([
+      db.select({ maxOrdNum: max(orders.orderNumber) }).from(orders),
+      db.select({ maxKotNum: max(kotTickets.kotNumber) }).from(kotTickets),
+    ]);
+    await syncCounterFromMax("billCounter", maxOrdNum);
+    await syncCounterFromMax("kotCounter", maxKotNum);
   } catch (e) {
     console.error("[settings] DB init failed, using file fallback:", e);
     settingsCache = loadFromFile();
@@ -244,34 +257,54 @@ export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
 }
 
-// Sync — increments in-memory counter immediately, persists to DB async (fire-and-forget)
-export function incrementBillCounter(): number {
-  const current = getSettings();
-  const next = (current.billCounter ?? 0) + 1;
-  settingsCache = { ...current, billCounter: next };
-  db.insert(restaurantSettings)
-    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: settingsCache as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error("[settings] Bill counter save failed:", err));
+// Counter issuance is allocated by the DATABASE, not from the in-memory cache.
+//
+// The number must be unique across every process that can create an order, and
+// `settingsCache` is per-process: on Vercel each serverless instance holds its own
+// cache + its own mutex, so a JS-side read-modify-write ("next = cache + 1") let two
+// instances hand out the SAME orderNumber — the loser blew up on the
+// orderNumber/kotNumber UNIQUE constraint and surfaced as a generic 400 that
+// succeeded on retry. A warm instance also drifts permanently behind once another
+// instance issues numbers, since the cache is never re-read after initSettings().
+//
+// This single UPDATE increments the counter inside the settings JSON and RETURNs
+// the new value. Postgres takes a row lock on id=1, so concurrent callers queue and
+// each re-reads the committed value before incrementing — unique numbers across all
+// instances, no app-level mutex needed. It also only touches the counter key, so an
+// order can no longer clobber unrelated settings with a stale cached blob.
+async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number> {
+  const result: any = await db.execute(sql`
+    UPDATE restaurant_settings
+    SET settings = jsonb_set(
+          settings::jsonb,
+          ARRAY[${field}]::text[],
+          to_jsonb(COALESCE((settings ->> ${field})::int, 0) + 1)
+        )::json,
+        updated_at = NOW()
+    WHERE id = 1
+    RETURNING (settings ->> ${field})::int AS value
+  `);
+  const next = Number(result?.rows?.[0]?.value);
+  if (!Number.isFinite(next)) {
+    // id=1 is seeded by initSettings(); a miss means the settings row is gone.
+    throw new Error(`Counter '${field}' could not be issued (settings row missing?)`);
+  }
+  // Keep the local cache roughly warm for getSettings() readers. The DB is the
+  // source of truth for issuance — this value is only cosmetic.
+  settingsCache = { ...getSettings(), [field]: next };
   return next;
 }
 
-// Sync — increments in-memory KOT counter immediately, persists to DB async (fire-and-forget)
-export function incrementKotCounter(): number {
-  const current = getSettings();
-  const next = (current.kotCounter ?? 0) + 1;
-  settingsCache = { ...current, kotCounter: next };
-  db.insert(restaurantSettings)
-    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: settingsCache as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error("[settings] KOT counter save failed:", err));
-  return next;
+function nextCounter(field: "billCounter" | "kotCounter"): Promise<number> {
+  return issueCounter(field);
+}
+
+export function incrementBillCounter(): Promise<number> {
+  return nextCounter("billCounter");
+}
+
+export function incrementKotCounter(): Promise<number> {
+  return nextCounter("kotCounter");
 }
 
 // Async — updates cache immediately, then awaits DB write before resolving

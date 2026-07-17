@@ -207,7 +207,11 @@ function readJson<T>(filePath: string, fallback: T): T {
 }
 
 function writeJson(filePath: string, data: unknown): void {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  // Atomic write: serialize to a temp file then rename, so a crash mid-write can't
+  // truncate the config/opt-out file (which readJson would silently reset to defaults).
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, filePath);
 }
 
 // ── Config ─────────────────────────────────────────────────────────────────────

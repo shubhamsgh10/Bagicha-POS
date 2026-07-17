@@ -48,7 +48,7 @@ import {
 } from "./services/crm/segmentationService";
 import { getRecommendations } from "./services/crm/recommendationService";
 import { sendMessage, getCustomerMessages } from "./services/crm/messagingService";
-import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage } from "./services/crm/automationRuleEngine";
+import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -57,6 +57,7 @@ import {
   createRealtimePublisher,
   publishRealtime,
   setRealtimePublisher,
+  authorizePusherChannel,
 } from "./realtime/publisher";
 import { eq, desc, or, ilike, isNotNull, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
@@ -64,14 +65,28 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
+import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
+import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
-import { ingestDevicePunches } from "./services/deviceAttendanceService";
+import { ingestDevicePunches, recomputeShiftSessions } from "./services/deviceAttendanceService";
 import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
 
-const upload = multer({ storage: multer.memoryStorage() });
+// Cap upload size and restrict to spreadsheet/CSV types before the buffer ever
+// reaches XLSX.read (SheetJS has a history of prototype-pollution / ReDoS on
+// crafted workbooks; an unbounded in-memory parse is also a DoS vector).
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname) ||
+      /spreadsheet|excel|csv|ms-excel/i.test(file.mimetype);
+    if (ok) return cb(null, true);
+    cb(new Error("Only .xlsx/.xls/.csv files are allowed"));
+  },
+});
 
 // Password hashing helpers using Node's built-in crypto
 function hashPassword(password: string): Promise<string> {
@@ -165,18 +180,52 @@ export function requireManagerOrAdmin(req: any, res: any, next: any) {
   next();
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
+// Privileged-action elevation helpers live in ./elevation (pure, unit-tested).
+// Re-exported so existing importers of these names via ./routes keep working.
+export { ROLE_LEVEL, grantElevation, hasElevation, requireElevation };
+
+export async function registerRoutes(
+  app: Express,
+  sessionMiddleware?: import("express").RequestHandler,
+): Promise<Server> {
   const httpServer = createServer(app);
 
   // WebSocket server for real-time updates.
   // Use noServer mode + manual upgrade routing so the ws library does NOT destroy
   // upgrade requests for other paths (e.g. Vite HMR /?token=...).
   const wss = new WebSocketServer({ noServer: true });
+
+  // Authenticate the WS handshake against the express-session cookie. Without
+  // this, any client on the network could open /ws and passively receive live
+  // orders, customer phone numbers, and WhatsApp message bodies with no creds.
+  const authorizeUpgrade = (request: any, done: (ok: boolean) => void) => {
+    if (!sessionMiddleware) return done(true); // no middleware wired → skip (dev/test only)
+    const fakeRes: any = {
+      setHeader() {}, getHeader() {}, writeHead() {}, end() {},
+      on() {}, once() {}, emit() {}, removeListener() {},
+    };
+    try {
+      sessionMiddleware(request, fakeRes, () => {
+        const userId = request.session?.passport?.user;
+        done(userId != null);
+      });
+    } catch {
+      done(false);
+    }
+  };
+
   httpServer.on('upgrade', (request, socket, head) => {
     const pathname = request.url?.split('?')[0] ?? '';
     if (pathname === '/ws') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
+      authorizeUpgrade(request, (ok) => {
+        if (!ok) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit('connection', ws, request);
+        });
       });
     }
     // All other upgrade paths (Vite HMR, etc.) fall through untouched.
@@ -196,6 +245,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const broadcast = (data: any) => {
     void publishRealtime(data);
   };
+
+  // Pusher private-channel auth — only an authenticated session may subscribe to
+  // the realtime channel (which carries orders, customer phones, WhatsApp bodies).
+  app.post("/api/pusher/auth", requireAuth, (req, res) => {
+    const socketId = req.body?.socket_id;
+    const channel = req.body?.channel_name;
+    if (!socketId || !channel) return res.status(400).json({ message: "socket_id and channel_name required" });
+    const auth = authorizePusherChannel(String(socketId), String(channel));
+    if (!auth) return res.status(503).json({ message: "Realtime auth unavailable" });
+    res.json(auth);
+  });
 
   // Ensure admin user exists on startup
   try {
@@ -523,13 +583,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Switching to "admin"   → only admin PIN accepted
       // Switching to "manager" → manager OR admin PIN accepted
       // Any other role         → that role's PIN OR any higher role's PIN accepted
-      const ROLE_LEVEL: Record<string, number> = {
-        staff: 0, cashier: 0, manager: 1, admin: 2,
-      };
       const targetLevel = ROLE_LEVEL[requiredRole] ?? 1;
       const match = allUsers.find(
         (u) => (ROLE_LEVEL[u.role] ?? 0) >= targetLevel && u.pin === String(pin)
       );
+      // Back the client PIN dialog with a short-lived server-side elevation grant.
+      if (match) grantElevation(req, ROLE_LEVEL[match.role] ?? targetLevel);
       res.json({ valid: !!match });
     } catch (err) {
       console.error("Verify PIN error:", err);
@@ -1116,7 +1175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       enabled: true,
       key,
       cluster: process.env.PUSHER_CLUSTER || "ap2",
-      channel: process.env.PUSHER_CHANNEL || "bagicha-pos",
+      channel: process.env.PUSHER_CHANNEL || "private-bagicha-pos",
     });
   });
 
@@ -1581,32 +1640,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
       const { items, ...orderInfo } = req.body;
-      const orderNumber = `ORD${String(incrementBillCounter()).padStart(4, "0")}`;
-      const actor = req.user as any;
-      const isStaffMemberActor = !!actor?._isStaffMember;
-      const order = await storage.createOrder({
-        ...orderInfo, orderNumber,
-        createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
-        createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
-        createdByName: actor?.username ?? null,
-      });
+      const lineItems = Array.isArray(items) ? items : [];
 
-      // Create order items
-      if (items && items.length > 0) {
-        for (const item of items) {
-          const orderItemData = insertOrderItemSchema.parse({
-            ...item,
-            orderId: order.id,
-          });
-          await storage.createOrderItem(orderItemData);
-          console.log(`[order] saved orderItem menuItemId=${orderItemData.menuItemId} qty=${orderItemData.quantity}`);
-        }
+      // Recompute all money server-side from DB prices — never trust client totals.
+      // This is the ONLY genuine "invalid order data" case (unknown item / bad qty);
+      // it reports the real reason instead of a blanket message. Everything below is
+      // a server fault and must surface as 5xx — mislabelling DB/counter failures as
+      // 400 "Invalid order data" is what hid the orderNumber collision bug.
+      let priced;
+      try {
+        priced = await priceOrder(lineItems, orderInfo.discountAmount);
+      } catch (pricingErr) {
+        console.warn("[order] rejected invalid line items:", pricingErr);
+        return res.status(400).json({
+          error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
+        });
       }
 
-      // Create KOT ticket
-      const next = incrementKotCounter();
-      const kotNumber = String(next).padStart(3, "0");
-      const kotItems = (items || []).map((item: any) => {
+      // Applying a discount is a privileged action; a bare staff session may not.
+      if (priced.discount > 0 && !hasElevation(req, "manager")) {
+        return res.status(403).json({ error: "Manager approval required to apply a discount" });
+      }
+
+      const orderNumber = `ORD${String(await incrementBillCounter()).padStart(4, "0")}`;
+      const actor = req.user as any;
+      // Staff-member sessions ({ id, _isStaffMember }) share the integer id space with
+      // users, so attribute to the right column (see CLAUDE.md id-collision gotcha).
+      const isStaffMemberActor = !!actor?._isStaffMember;
+
+      // Order items with server-validated unit prices.
+      const itemsToInsert = lineItems.map((item: any, idx: number) => ({
+        menuItemId: Number(item.menuItemId),
+        quantity: Number(item.quantity),
+        price: String(priced.lines[idx].unitPrice),
+        specialInstructions: item.specialInstructions || "",
+        size: item.size || null,
+        serviceMode: item.serviceMode || null,
+        parcelLeftover: item.parcelLeftover ?? false,
+      }));
+
+      // KOT ticket lines.
+      const kotNumber = String(await incrementKotCounter()).padStart(3, "0");
+      const kotItems = lineItems.map((item: any) => {
         const addonLines = Array.isArray(item.addons) && item.addons.length > 0
           ? item.addons.map((a: any) => `+ ${a.name}`).join(", ")
           : "";
@@ -1618,7 +1693,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
-      await storage.createKotTicket({ orderId: order.id, kotNumber, items: kotItems });
+      // Order + items + KOT are created atomically (see storage.createOrderWithItems).
+      const order = await storage.createOrderWithItems(
+        {
+          ...orderInfo,
+          orderNumber,
+          totalAmount: priced.total.toFixed(2),
+          taxAmount: priced.tax.toFixed(2),
+          discountAmount: priced.discount.toFixed(2),
+          createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
+          createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
+          createdByName: actor?.username ?? null,
+        },
+        itemsToInsert,
+        { kotNumber, items: kotItems as any },
+      );
 
       // Deduct inventory based on inventoryLinks for each menu item
       if (items && items.length > 0) {
@@ -1657,7 +1746,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
-      res.status(400).json({ error: "Invalid order data" });
+      res.status(500).json({ error: "Failed to create order" });
     }
   });
 
@@ -1665,20 +1754,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const { items, discountAmount, customerName, customerPhone } = req.body;
+      const lineItems = Array.isArray(items) ? items : [];
+
+      // Recompute all money server-side from DB prices — never trust client totals.
+      const priced = await priceOrder(lineItems, discountAmount);
+
+      // Applying a discount is a privileged action; a bare staff session may not.
+      if (priced.discount > 0 && !hasElevation(req, "manager")) {
+        return res.status(403).json({ error: "Manager approval required to apply a discount" });
+      }
 
       // Snapshot existing items BEFORE replacing (for delta KOT)
       const existingItems = await storage.getOrderItems(id);
       const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
 
-      // Replace all order items
+      // Replace all order items with server-validated unit prices
       await storage.deleteOrderItemsByOrderId(id);
-      for (const item of items) {
+      for (let idx = 0; idx < lineItems.length; idx++) {
+        const item = lineItems[idx];
         await storage.createOrderItem({
           orderId: id,
           menuItemId: Number(item.menuItemId),
           name: item.name ?? null,
           quantity: Number(item.quantity),
-          price: String(item.price),
+          price: String(priced.lines[idx].unitPrice),
           specialInstructions: item.specialInstructions || "",
           size: item.size || null,
           serviceMode: item.serviceMode || null,
@@ -1686,26 +1785,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Recalculate totals (include container charge for pickup/delivery items)
-      const settings = getSettings();
-      const taxRate = ((settings as any)?.taxRate ?? 18) / 100;
-      const subtotal = items.reduce((s: number, i: any) => s + parseFloat(i.price) * Number(i.quantity), 0);
-      const discount = parseFloat(discountAmount || "0");
-      const taxable = subtotal - discount;
-      const tax = taxable * taxRate;
-      const containerRate = Number((settings as any)?.containerCharge ?? 15);
-      const containerCharge = items.reduce((s: number, i: any) => {
-        const sm = i.serviceMode ?? null;
-        if (sm === 'pickup' || sm === 'delivery') return s + Number(i.quantity) * containerRate;
-        if (i.parcelLeftover) return s + containerRate; // dine-in leftover parcel → flat container charge per item
-        return s;
-      }, 0);
-      const total = taxable + tax + containerCharge;
-
       const order = await storage.updateOrder(id, {
-        totalAmount: total.toFixed(2),
-        taxAmount: tax.toFixed(2),
-        discountAmount: discount.toFixed(2),
+        totalAmount: priced.total.toFixed(2),
+        taxAmount: priced.tax.toFixed(2),
+        discountAmount: priced.discount.toFixed(2),
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);
@@ -1713,7 +1796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Delta KOT — only print items newly added to this order
       const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
       if (newItems.length > 0) {
-        const next = incrementKotCounter();
+        const next = await incrementKotCounter();
         const kotNumber = String(next).padStart(3, "0");
         const kotItems = newItems.map((item: any) => ({
           name: item.name,
@@ -1752,8 +1835,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const {
         paymentMethod,
         payments,
-        totalPaid,
-        changeAmount: changeAmt,
         notes,
         isDue: explicitDue,
         customerName,
@@ -1762,28 +1843,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const isDue = explicitDue || paymentMethod === "due";
 
+      const existingOrder = await storage.getOrderById(id);
+      if (!existingOrder) return res.status(404).json({ error: "Order not found" });
+      const orderTotal = parseFloat(String((existingOrder as any).totalAmount ?? 0));
+
       let breakdown: Record<string, number> = {};
       let primaryMethod = "cash";
-      let paidAmt = 0;
-      let changeDue = 0;
 
       if (payments && Array.isArray(payments)) {
-        // Rich split-payment path
+        // Rich split-payment path — amounts come from the entered breakdown.
         for (const p of payments) {
           if (Number(p.amount) > 0) {
             breakdown[p.method] = (breakdown[p.method] || 0) + Number(p.amount);
           }
         }
-        paidAmt = totalPaid != null ? Number(totalPaid) : Object.values(breakdown).reduce((a, b) => a + b, 0);
-        changeDue = changeAmt != null ? Number(changeAmt) : 0;
         const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
         primaryMethod = sorted[0]?.[0] ?? "cash";
       } else {
-        // Legacy single-method path (backward-compatible)
+        // Legacy single-method path — a paid settle covers the full bill.
         primaryMethod = paymentMethod || "cash";
-        const existingOrder = await storage.getOrderById(id);
-        paidAmt = parseFloat(String((existingOrder as any)?.totalAmount ?? 0));
-        breakdown = { [primaryMethod]: paidAmt };
+        if (!isDue) breakdown = { [primaryMethod]: orderTotal };
+      }
+
+      // Paid amount and change are derived server-side — never trusted from the client.
+      const paidAmt = Object.values(breakdown).reduce((a, b) => a + b, 0);
+      const changeDue = isDue ? 0 : Math.max(0, paidAmt - orderTotal);
+
+      // A non-due settlement must actually cover the bill (₹1 tolerance for rounding).
+      if (!isDue && paidAmt < orderTotal - 1) {
+        return res.status(400).json({ error: "Amount paid is less than the bill total" });
       }
 
       const updateData: any = {
@@ -1798,7 +1886,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (customerName) updateData.customerName = customerName;
       if (customerPhone) updateData.customerPhone = customerPhone;
 
-      const order = await storage.updateOrder(id, updateData);
+      // Conditional settle guards against a concurrent double-settlement: if another
+      // request already flipped this order out of 'pending', this is a no-op and the
+      // one-time side effects below are skipped.
+      const order = await storage.settleOrderIfUnpaid(id, updateData);
+      if (!order) {
+        return res.json(existingOrder);
+      }
 
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
@@ -1855,6 +1949,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(dueOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch due orders" });
+    }
+  });
+
+  // ── Dues / Pay-Later: open tabs grouped by customer (not date-bound) ─────────
+  app.get("/api/reports/tabs", requireAuth, async (_req, res) => {
+    try {
+      const customers = await storage.getOpenTabsByCustomer();
+      const totalOutstanding = customers.reduce((s, c) => s + c.totalDue, 0);
+      const orderCount = customers.reduce((s, c) => s + c.orderCount, 0);
+      res.json({ customers, totalOutstanding, customerCount: customers.length, orderCount });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch tabs" });
+    }
+  });
+
+  // Send ONE consolidated WhatsApp e-bill for a customer's open tabs (driver auto; wa.me fallback).
+  app.post("/api/dues/send-ebill", requireAuth, async (req, res) => {
+    try {
+      const { key } = req.body as { key?: string };
+      if (!key) return res.status(400).json({ error: "key required" });
+      const customers = await storage.getOpenTabsByCustomer();
+      const cust = customers.find(c => c.key === key);
+      if (!cust) return res.status(404).json({ error: "No open tabs for this customer" });
+      if (!cust.phone) return res.status(400).json({ error: "Customer has no phone number on file" });
+
+      const result = await sendConsolidatedEbill({
+        name: cust.name, phone: cust.phone, orderIds: cust.orders.map(o => o.id), totalDue: cust.totalDue,
+      });
+      const digits = cust.phone.replace(/\D/g, "");
+      const waPhone = digits.length === 10 ? `91${digits}` : digits;
+      const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(result.message)}`;
+      res.json({ ok: true, mode: result.mode, waUrl });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to send e-bill" });
+    }
+  });
+
+  // Mark ALL of a customer's open tabs paid (weekly/bulk settle).
+  app.post("/api/dues/settle-customer", requireAuth, async (req, res) => {
+    try {
+      const { key, paymentMethod } = req.body as { key?: string; paymentMethod?: string };
+      if (!key) return res.status(400).json({ error: "key required" });
+      const settled = await storage.settleCustomerTabs(key, paymentMethod);
+      broadcast({ type: "ORDER_UPDATE" });
+      res.json({ ok: true, settled });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to settle tabs" });
     }
   });
 
@@ -1953,7 +2094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Table Action: Cancel Order ────────────────────────────────────────────────
-  app.put("/api/orders/:id/cancel", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/cancel", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -1976,7 +2117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Table Action: Move Table ──────────────────────────────────────────────────
-  app.put("/api/orders/:id/move-table", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/move-table", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { newTableId, newTableName } = req.body;
@@ -2034,7 +2175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── Table Action: Merge Tables ────────────────────────────────────────────────
   // Merges sourceOrderId items INTO targetOrderId, frees source table
-  app.post("/api/orders/merge", requireAuth, async (req, res) => {
+  app.post("/api/orders/merge", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const { targetOrderId, sourceOrderId } = req.body;
       if (!targetOrderId || !sourceOrderId) return res.status(400).json({ error: "targetOrderId and sourceOrderId required" });
@@ -2053,15 +2194,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           size: item.size,
         } as any);
       }
-      // Recalculate target order totals (18% tax fallback)
+      // Recalculate target order totals using the configured tax rate
       const allItems = await storage.getOrderItems(targetOrderId);
-      const subtotal = allItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
-      const discount = parseFloat((targetOrder as any).discountAmount || "0");
-      const taxable = subtotal - discount;
-      const tax = taxable * 0.18;
+      const merged = computeTotalsFromLines(
+        allItems.map((i) => parseFloat(i.price as any) * i.quantity),
+        (targetOrder as any).discountAmount,
+      );
       await storage.updateOrder(targetOrderId, {
-        totalAmount: (taxable + tax).toFixed(2),
-        taxAmount: tax.toFixed(2),
+        totalAmount: merged.total.toFixed(2),
+        taxAmount: merged.tax.toFixed(2),
       } as any);
       // Free source table and delete source order
       if ((sourceOrder as any).tableId) {
@@ -2080,7 +2221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── Table Action: Split Bill ──────────────────────────────────────────────────
   // Splits selected item IDs from an order into a new standalone order
-  app.post("/api/orders/:id/split", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/split", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { itemIds } = req.body; // array of orderItem IDs to split out
@@ -2090,17 +2231,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allItems = await storage.getOrderItems(id);
       const splitItems = allItems.filter((i) => itemIds.includes(i.id));
       if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
-      // Calculate new order total
-      const subtotal = splitItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
-      const tax = subtotal * 0.18;
-      const total = subtotal + tax;
+      // Calculate new order total using the configured tax rate
+      const splitTotals = computeTotalsFromLines(
+        splitItems.map((i) => parseFloat(i.price as any) * i.quantity),
+        "0",
+      );
       // Create new split order (takeaway, no table)
       const newOrder = await storage.createOrder({
-        orderNumber: `ORD${String(incrementBillCounter()).padStart(4, "0")}`,
+        orderNumber: `ORD${String(await incrementBillCounter()).padStart(4, "0")}`,
         orderType: "dine-in",
         status: "pending",
-        totalAmount: total.toFixed(2),
-        taxAmount: tax.toFixed(2),
+        totalAmount: splitTotals.total.toFixed(2),
+        taxAmount: splitTotals.tax.toFixed(2),
         discountAmount: "0",
         paymentStatus: "pending",
         customerName: (sourceOrder as any).customerName || null,
@@ -2119,15 +2261,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } as any);
         await storage.deleteOrderItem(item.id);
       }
-      // Recalculate source order total
+      // Recalculate source order total using the configured tax rate
       const remaining = await storage.getOrderItems(id);
-      const srcSubtotal = remaining.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
-      const srcDiscount = parseFloat((sourceOrder as any).discountAmount || "0");
-      const srcTaxable = srcSubtotal - srcDiscount;
-      const srcTax = srcTaxable * 0.18;
+      const srcTotals = computeTotalsFromLines(
+        remaining.map((i) => parseFloat(i.price as any) * i.quantity),
+        (sourceOrder as any).discountAmount,
+      );
       await storage.updateOrder(id, {
-        totalAmount: (srcTaxable + srcTax).toFixed(2),
-        taxAmount: srcTax.toFixed(2),
+        totalAmount: srcTotals.total.toFixed(2),
+        taxAmount: srcTotals.tax.toFixed(2),
       } as any);
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true, newOrderId: newOrder.id });
@@ -2189,9 +2331,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── Delivery Platform Integration ─────────────────────────────────────────────
 
+  const DELIVERY_PLATFORMS = new Set(["zomato", "swiggy", "ubereats", "magicpin", "test"]);
+
   app.post("/api/delivery/webhook/:platform", async (req, res) => {
     try {
       const platform = req.params.platform;
+
+      // Fail closed: a shared secret must be configured AND presented, and the
+      // platform must be known. Without this, anyone could POST forged "paid"
+      // orders that pollute sales/reports and drive KOT/printers.
+      const secret = process.env.DELIVERY_WEBHOOK_SECRET;
+      const provided = req.headers["x-webhook-secret"] as string | undefined;
+      if (!secret || !provided || !safeEqual(provided, secret)) {
+        return res.status(401).json({ error: "Invalid webhook signature" });
+      }
+      if (!DELIVERY_PLATFORMS.has(platform)) {
+        return res.status(400).json({ error: "Unknown delivery platform" });
+      }
+
       const webhookData = req.body;
       console.log(`Received webhook from ${platform}:`, webhookData);
 
@@ -2324,27 +2481,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Automation API ────────────────────────────────────────────────────────────
 
   /** GET /api/automation/config — get current automation config */
-  app.get("/api/automation/config", requireAuth, (_req, res) => {
+  app.get("/api/automation/config", requireAdmin, (_req, res) => {
     const config = getAutomationConfig();
-    // Never expose API keys in full — mask them
+    // Never expose secrets in full — mask them
     res.json({
       ...config,
       anthropicApiKey:        config.anthropicApiKey        ? "***configured***" : "",
       watiApiKey:             config.watiApiKey             ? "***configured***" : "",
       metaAccessToken:        config.metaAccessToken        ? "***configured***" : "",
+      metaAppSecret:          config.metaAppSecret          ? "***configured***" : "",
+      metaWebhookVerifyToken: config.metaWebhookVerifyToken ? "***configured***" : "",
       razorpayKeySecret:      config.razorpayKeySecret      ? "***configured***" : "",
       razorpayWebhookSecret:  config.razorpayWebhookSecret  ? "***configured***" : "",
     });
   });
 
   /** POST /api/automation/config — update automation config */
-  app.post("/api/automation/config", requireAuth, (req, res) => {
+  app.post("/api/automation/config", requireAdmin, (req, res) => {
     try {
       const patch = req.body as Record<string, unknown>;
-      // Don't overwrite keys with masked placeholder
+      // Don't overwrite secrets with the masked placeholder
       if (patch.anthropicApiKey       === "***configured***") delete patch.anthropicApiKey;
       if (patch.watiApiKey            === "***configured***") delete patch.watiApiKey;
       if (patch.metaAccessToken       === "***configured***") delete patch.metaAccessToken;
+      if (patch.metaAppSecret         === "***configured***") delete patch.metaAppSecret;
+      if (patch.metaWebhookVerifyToken === "***configured***") delete patch.metaWebhookVerifyToken;
       if (patch.razorpayKeySecret     === "***configured***") delete patch.razorpayKeySecret;
       if (patch.razorpayWebhookSecret === "***configured***") delete patch.razorpayWebhookSecret;
 
@@ -2952,22 +3113,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/leaves — ?status=&month=&userId=
+  // GET /api/leaves — ?status=&month=&userId=&staffMemberId=
   app.get("/api/leaves", requireAuth, async (req, res) => {
     try {
-      const { userId, month, status } = req.query as Record<string, string>;
+      const { userId, staffMemberId, month, status } = req.query as Record<string, string>;
       res.json(await storage.getLeaves({
         userId: userId ? parseInt(userId) : undefined,
+        staffMemberId: staffMemberId ? parseInt(staffMemberId) : undefined,
         month: month || undefined,
         status: status || undefined,
       }));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/leaves
+  // POST /api/leaves — body { kind:"user"|"staff", id, leaveType, startDate, endDate, reason, totalDays }
+  // (legacy { userId } still accepted). Stamps exactly one of userId/staffMemberId per the person kind.
   app.post("/api/leaves", requireAuth, async (req, res) => {
     try {
-      res.json(await storage.createLeave(req.body));
+      const { kind, id, userId, ...rest } = req.body;
+      const person = kind && id != null ? { kind, id: Number(id) } : { kind: "user" as const, id: Number(userId) };
+      res.json(await storage.createLeave({
+        ...rest,
+        userId: person.kind === "user" ? person.id : null,
+        staffMemberId: person.kind === "staff" ? person.id : null,
+      }));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -3015,19 +3184,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/shifts/roster — assign shift to staff on a date
+  // POST /api/shifts/roster — manually assign a shift to a person (user OR staff member) on a date.
+  // Body { kind:"user"|"staff", id, date, shiftId } (legacy { userId } still accepted).
   app.post("/api/shifts/roster", requireAuth, async (req, res) => {
     try {
-      const { userId, date, shiftId } = req.body;
-      res.json(await storage.upsertShiftAssignment(userId, date, shiftId, (req.user as any)?.id));
+      const { kind, id, userId, date, shiftId } = req.body;
+      const person = kind && id != null
+        ? { kind, id: Number(id) }
+        : { kind: "user" as const, id: Number(userId) };
+      res.json(await storage.upsertShiftAssignment(person, date, Number(shiftId), (req.user as any)?.id));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // DELETE /api/shifts/roster/:id
+  // DELETE /api/shifts/roster/:id — removes a MANUAL assignment (auto rows re-derive from punches).
   app.delete("/api/shifts/roster/:id", requireAuth, async (req, res) => {
     try {
       await storage.deleteShiftAssignment(parseInt(req.params.id));
       res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // POST /api/attendance/recompute-shifts — admin backfill: re-derive shift sessions + hours for a
+  // month from stored punch endpoints. Body { month?: "YYYY-MM" } (defaults to current month).
+  app.post("/api/attendance/recompute-shifts", requireAdmin, async (req, res) => {
+    try {
+      const month = (req.body?.month as string) || new Date().toISOString().slice(0, 7);
+      res.json(await recomputeShiftSessions(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -3038,14 +3220,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // GET /api/staff/accounts — login accounts with role manager/staff (owner/admins excluded).
-  // For account-keyed tabs (Shifts roster, Leaves apply) that don't yet support staff members.
-  app.get("/api/staff/accounts", requireManagerOrAdmin, async (_req, res) => {
-    try {
-      const all = await storage.getUsers();
-      res.json(all.filter(u => u.role === "manager" || u.role === "staff").map(u => ({ id: u.id, username: u.username, role: u.role })));
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
-  });
 
   // GET /api/payroll/report/:month — YYYY-MM
   app.get("/api/payroll/report/:month", requireManagerOrAdmin, async (req, res) => {

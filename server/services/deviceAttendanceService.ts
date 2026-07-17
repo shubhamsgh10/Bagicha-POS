@@ -12,9 +12,10 @@
  */
 
 import { db } from "../db";
-import { storage } from "../storage";
+import { storage, type PersonRef } from "../storage";
 import { attendanceSyncLog } from "../../shared/schema";
 import { getSettings } from "../settingsStore";
+import { detectSessions } from "@shared/shiftTime";
 
 export interface InboundPunch {
   biometricId: string | number;
@@ -63,6 +64,7 @@ export async function ingestDevicePunches(
   if (!Array.isArray(punches) || punches.length === 0) return result;
 
   const standardHours = getSettings().attendanceDevice?.standardHours ?? 8;
+  const activeShifts = await storage.getShifts(); // for punch→shift bucketing
 
   // biometricId (device user-ID) -> employee. Staff members are the primary employee
   // record; system-account profiles remain a fallback for any legacy biometric setup.
@@ -112,27 +114,46 @@ export async function ingestDevicePunches(
         continue;
       }
 
-      const all = [...times];
-      if (existing?.clockIn) all.push(existing.clockIn.slice(0, 5));
-      if (existing?.clockOut) all.push(existing.clockOut.slice(0, 5));
-      const valid = all
-        .filter((t) => /^\d{2}:\d{2}$/.test(t))
+      const person: PersonRef = staffMemberId != null
+        ? { kind: "staff", id: staffMemberId }
+        : { kind: "user", id: userId! };
+
+      // Pool = this batch's punches + the in/out of already-detected AUTO sessions for the day.
+      // Pulling from the auto sessions (each stores BOTH endpoints) preserves interior shift
+      // boundaries across sync batches — the single attendance row only keeps global first/last.
+      const priorSessions = await storage.getAutoShiftSessions(person, date);
+      const pool: string[] = [...times];
+      for (const s of priorSessions) {
+        if (s.clockIn) pool.push(s.clockIn.slice(0, 5));
+        if (s.clockOut) pool.push(s.clockOut.slice(0, 5));
+      }
+      // Legacy single-span rows (pre-feature) may still carry endpoints on the attendance row.
+      if (priorSessions.length === 0) {
+        if (existing?.clockIn) pool.push(existing.clockIn.slice(0, 5));
+        if (existing?.clockOut) pool.push(existing.clockOut.slice(0, 5));
+      }
+      const valid = Array.from(new Set(pool.filter((t) => /^\d{1,2}:\d{2}/.test(t)).map((t) => t.slice(0, 5))))
         .sort((a, b) => minutesOf(a) - minutesOf(b));
       if (valid.length === 0) continue;
 
+      // Bucket punches into shift sessions (Morning / Evening / …). Empty if no shifts defined.
+      const sessions = detectSessions(valid, activeShifts);
+      await storage.replaceAutoShiftSessions(person, date, sessions);
+
+      // Attendance day row: first/last for display, hours = Σ session spans (excludes midday gaps).
       const clockIn = valid[0];
       const clockOut = valid.length > 1 ? valid[valid.length - 1] : undefined;
-
       let workingHours: string | undefined;
       let overtimeHours = "0";
       let status = "present";
-      if (clockIn && clockOut) {
-        const h = Math.round(((minutesOf(clockOut) - minutesOf(clockIn)) / 60) * 100) / 100;
-        if (h > 0) {
-          workingHours = h.toFixed(2);
-          if (h < 4) status = "half-day";
-          overtimeHours = Math.max(0, h - standardHours).toFixed(2);
-        }
+      const totalHours = sessions.length > 0
+        ? sessions.reduce((sum, s) => sum + s.workingHours, 0)
+        // No shifts defined → fall back to raw first→last span.
+        : (clockIn && clockOut ? Math.round(((minutesOf(clockOut) - minutesOf(clockIn)) / 60) * 100) / 100 : 0);
+      if (totalHours > 0) {
+        workingHours = totalHours.toFixed(2);
+        if (totalHours < 4) status = "half-day";
+        overtimeHours = Math.max(0, totalHours - standardHours).toFixed(2);
       }
 
       const row = { clockIn, clockOut, status, workingHours, overtimeHours };
@@ -162,4 +183,62 @@ export async function ingestDevicePunches(
   }).catch(() => {});
 
   return result;
+}
+
+/**
+ * Re-derive shift sessions + corrected day-hours for every attendance row in a month, from the
+ * punch endpoints already stored (each auto session keeps its own in/out; plus the row's first/last
+ * for legacy pre-feature rows). Admin "Recompute" backfill.
+ * LIMITATION: a day that collapsed to a single first→last span BEFORE this feature lost its interior
+ * punches, so it can only resolve to one session — going forward, live punches split correctly.
+ */
+export async function recomputeShiftSessions(month: string): Promise<{ rows: number }> {
+  const standardHours = getSettings().attendanceDevice?.standardHours ?? 8;
+  const activeShifts = await storage.getShifts();
+  const rows = await storage.getAttendance({ month });
+  let touched = 0;
+
+  for (const r of rows) {
+    if (r.markedBy != null) continue; // don't clobber manual admin overrides
+    const person: PersonRef = r.staffMemberId != null
+      ? { kind: "staff", id: r.staffMemberId }
+      : r.userId != null ? { kind: "user", id: r.userId } : (undefined as any);
+    if (!person) continue;
+
+    const priorSessions = await storage.getAutoShiftSessions(person, r.date);
+    const pool: string[] = [];
+    for (const s of priorSessions) {
+      if (s.clockIn) pool.push(s.clockIn.slice(0, 5));
+      if (s.clockOut) pool.push(s.clockOut.slice(0, 5));
+    }
+    if (priorSessions.length === 0) {
+      if (r.clockIn) pool.push(r.clockIn.slice(0, 5));
+      if (r.clockOut) pool.push(r.clockOut.slice(0, 5));
+    }
+    const valid = Array.from(new Set(pool.filter((t) => /^\d{1,2}:\d{2}/.test(t)).map((t) => t.slice(0, 5))))
+      .sort((a, b) => minutesOf(a) - minutesOf(b));
+    if (valid.length === 0) continue;
+
+    const sessions = detectSessions(valid, activeShifts);
+    await storage.replaceAutoShiftSessions(person, r.date, sessions);
+
+    const clockIn = valid[0];
+    const clockOut = valid.length > 1 ? valid[valid.length - 1] : undefined;
+    const totalHours = sessions.length > 0
+      ? sessions.reduce((sum, s) => sum + s.workingHours, 0)
+      : (clockIn && clockOut ? Math.round(((minutesOf(clockOut) - minutesOf(clockIn)) / 60) * 100) / 100 : 0);
+    let workingHours: string | undefined;
+    let overtimeHours = "0";
+    let status = "present";
+    if (totalHours > 0) {
+      workingHours = totalHours.toFixed(2);
+      if (totalHours < 4) status = "half-day";
+      overtimeHours = Math.max(0, totalHours - standardHours).toFixed(2);
+    }
+    const row = { clockIn, clockOut, status, workingHours, overtimeHours };
+    if (person.kind === "staff") await storage.upsertAttendanceForStaffMember(person.id, r.date, row);
+    else await storage.upsertAttendance(person.id, r.date, row);
+    touched++;
+  }
+  return { rows: touched };
 }
