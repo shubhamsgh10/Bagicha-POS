@@ -1,16 +1,20 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import passport from "passport";
+import helmet from "helmet";
 import connectPgSimple from "connect-pg-simple";
 import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
 import { initSettings } from "./server/settingsStore";
+import { resolveSessionSecret } from "./server/sessionSecret";
 
 const PgSession = connectPgSimple(session);
 const app = express();
 
 app.set("trust proxy", 1);
+
+app.use(helmet({ contentSecurityPolicy: false }));
 
 applyCors(app);
 
@@ -21,31 +25,30 @@ const isProduction = process.env.NODE_ENV === "production";
 const crossOriginClients =
   !!process.env.VERCEL || !!process.env.ALLOWED_ORIGINS?.trim();
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "bagicha-secret-key-2024",
-    resave: false,
-    saveUninitialized: false,
-    store: new PgSession({
-      pool,
-      tableName: "sessions",
-      createTableIfMissing: true,
-    }),
-    cookie: {
-      maxAge: 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: crossOriginClients && isProduction ? "none" : "lax",
-    },
+const sessionMiddleware = session({
+  secret: resolveSessionSecret(),
+  resave: false,
+  saveUninitialized: false,
+  store: new PgSession({
+    pool,
+    tableName: "sessions",
+    createTableIfMissing: true,
   }),
-);
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: crossOriginClients && isProduction ? "none" : "lax",
+  },
+});
+app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
 
 const ready = (async () => {
   await initSettings();
-  await registerRoutes(app);
+  await registerRoutes(app, sessionMiddleware);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

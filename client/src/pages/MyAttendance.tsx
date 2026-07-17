@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   addMonths, startOfMonth, endOfMonth, eachDayOfInterval,
-  format, getDay, isToday, isSunday, isAfter, startOfDay,
+  format, getDay, isToday, isAfter, startOfDay,
 } from "date-fns";
 import {
   ChevronLeft, ChevronRight, Wallet, CalendarClock, Clock,
@@ -206,15 +206,14 @@ export default function MyAttendance() {
               const key = format(d, "yyyy-MM-dd");
               const rec = byDate.get(key);
               const future = isAfter(startOfDay(d), todayStart);
-              const sunday = isSunday(d);
               const today = isToday(d);
               const st = rec ? STATUS[rec.status] : undefined;
 
-              const cellBg = st ? st.bg : sunday ? "rgba(148,163,184,0.08)" : "rgba(255,255,255,0.5)";
+              const cellBg = st ? st.bg : "rgba(255,255,255,0.5)";
               const border = today ? "2px solid #0d9488" : "1px solid rgba(0,0,0,0.05)";
 
               return (
-                <div key={key} title={rec ? `${st?.label}${rec.clockIn ? ` · ${rec.clockIn}${rec.clockOut ? `–${rec.clockOut}` : ""}` : ""}` : sunday ? "Weekly off" : ""}
+                <div key={key} title={rec ? `${st?.label}${rec.clockIn ? ` · ${rec.clockIn}${rec.clockOut ? `–${rec.clockOut}` : ""}` : ""}` : ""}
                   style={{
                     minHeight: 60, borderRadius: 11, padding: "6px 7px", background: cellBg, border,
                     opacity: future ? 0.45 : 1, display: "flex", flexDirection: "column", justifyContent: "space-between",
@@ -233,8 +232,8 @@ export default function MyAttendance() {
                       <div style={{ fontSize: 9, fontWeight: 700, color: st?.color, opacity: 0.85 }}>{st?.label}</div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 9, color: sunday ? "#94a3b8" : "#cbd5e1", fontWeight: 600 }}>
-                      {sunday ? "Off" : future ? "" : "—"}
+                    <div style={{ fontSize: 9, color: "#cbd5e1", fontWeight: 600 }}>
+                      {future ? "" : "—"}
                     </div>
                   )}
                 </div>

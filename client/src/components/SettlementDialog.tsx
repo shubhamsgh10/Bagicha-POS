@@ -23,12 +23,29 @@ export interface SettlementData {
   customerPhone?: string;
 }
 
+export interface SettlementItem {
+  name: string;
+  quantity: number;
+  price: number;       // per-unit
+  size?: string | null;
+  serviceMode?: string | null;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   grandTotal: number;
   onSettle: (data: SettlementData) => void;
   isLoading?: boolean;
+  // Optional order context — when provided, the dialog shows a full order summary
+  // (customer + itemized list + totals) so it doubles as the "comprehensive pay-later" view.
+  items?: SettlementItem[];
+  subtotal?: number;
+  taxAmount?: number;
+  discountAmount?: number;
+  orderLabel?: string;             // e.g. "#110"
+  initialCustomerName?: string;
+  initialCustomerPhone?: string;
 }
 
 const METHODS: { key: "cash" | "upi" | "card"; label: string; icon: string }[] = [
@@ -39,13 +56,27 @@ const METHODS: { key: "cash" | "upi" | "card"; label: string; icon: string }[] =
 
 interface CustomerSuggestion { name: string; phone: string | null; }
 
-export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, isLoading }: Props) {
+export function SettlementDialog({
+  open, onOpenChange, grandTotal, onSettle, isLoading,
+  items, subtotal, taxAmount, discountAmount, orderLabel,
+  initialCustomerName, initialCustomerPhone,
+}: Props) {
   const [cash,  setCash]  = useState(0);
   const [upi,   setUpi]   = useState(0);
   const [card,  setCard]  = useState(0);
   const [isDue, setIsDue] = useState(false);
   const [customerName,  setCustomerName]  = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+
+  const inr = (n: number) => `₹${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`;
+
+  // Prefill customer fields from the order each time the dialog opens.
+  useEffect(() => {
+    if (open) {
+      setCustomerName(initialCustomerName ?? "");
+      setCustomerPhone(initialCustomerPhone ?? "");
+    }
+  }, [open, initialCustomerName, initialCustomerPhone]);
 
   // Customer autocomplete (phone-first)
   const [suggestions, setSuggestions]     = useState<CustomerSuggestion[]>([]);
@@ -175,12 +206,53 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, isL
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md" aria-describedby={undefined}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Collect Payment · ₹{grandTotal % 1 === 0 ? grandTotal.toFixed(0) : grandTotal.toFixed(2)}</DialogTitle>
+          <DialogTitle>
+            Collect Payment{orderLabel ? ` · ${orderLabel}` : ""} · {inr(grandTotal)}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Order summary — customer + itemized list + totals (shown when order context is passed) */}
+          {items && items.length > 0 && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--paper-100)] p-3 space-y-2">
+              {(initialCustomerName || initialCustomerPhone) && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-gray-700">{initialCustomerName || "Walk-in"}</span>
+                  {initialCustomerPhone && <span className="text-gray-500">{initialCustomerPhone}</span>}
+                </div>
+              )}
+              <div className="max-h-40 overflow-y-auto divide-y divide-[var(--line)]">
+                {items.map((it, i) => (
+                  <div key={i} className="flex items-start justify-between py-1 text-xs">
+                    <span className="text-gray-700 pr-2">
+                      {it.name}
+                      {it.size ? <span className="text-gray-400"> ({it.size})</span> : null}
+                      <span className="text-gray-400"> × {it.quantity}</span>
+                      {it.serviceMode && it.serviceMode !== "dinein" && (
+                        <span className="text-[10px] text-amber-600"> · {it.serviceMode === "pickup" ? "Parcel" : it.serviceMode}</span>
+                      )}
+                    </span>
+                    <span className="text-gray-700 font-medium whitespace-nowrap">{inr(it.price * it.quantity)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="pt-1 border-t border-[var(--line)] space-y-0.5 text-xs">
+                {subtotal != null && (
+                  <div className="flex justify-between text-gray-500"><span>Subtotal</span><span>{inr(subtotal)}</span></div>
+                )}
+                {discountAmount != null && discountAmount > 0 && (
+                  <div className="flex justify-between text-gray-500"><span>Discount</span><span className="text-red-500">-{inr(discountAmount)}</span></div>
+                )}
+                {taxAmount != null && taxAmount > 0 && (
+                  <div className="flex justify-between text-gray-500"><span>Tax</span><span>{inr(taxAmount)}</span></div>
+                )}
+                <div className="flex justify-between font-bold text-gray-800 pt-0.5"><span>Total due</span><span>{inr(grandTotal)}</span></div>
+              </div>
+            </div>
+          )}
+
           {/* Payment table */}
           <table className="w-full text-sm">
             <thead>
@@ -242,7 +314,7 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, isL
               className="accent-amber-500 w-4 h-4"
             />
             <span className="text-sm font-medium text-amber-700">
-              Mark as Due (customer pays later)
+              Pay Later — add to customer's tab
             </span>
           </label>
 
@@ -252,6 +324,9 @@ export function SettlementDialog({ open, onOpenChange, grandTotal, onSettle, isL
               <p className="text-xs text-amber-700 font-medium">
                 Customer details for due tracking:
               </p>
+              {!customerPhone.trim() && (
+                <p className="text-[11px] text-amber-600/80">Add a phone to send payment reminders later.</p>
+              )}
 
               {/* Phone with autocomplete dropdown */}
               <div className="relative" ref={phoneRef}>

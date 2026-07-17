@@ -505,7 +505,8 @@ export const attendance = pgTable("attendance", {
 
 export const leaves = pgTable("leaves", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id"),                 // system-account leave request. Nullable…
+  staffMemberId: integer("staff_member_id"),  // …exactly one of userId / staffMemberId is set (mirrors attendance)
   leaveType: text("leave_type").notNull().default("casual"), // sick|casual|earned|unpaid
   startDate: text("start_date").notNull(),  // "YYYY-MM-DD"
   endDate: text("end_date").notNull(),      // "YYYY-MM-DD"
@@ -529,10 +530,15 @@ export const shifts = pgTable("shifts", {
 
 export const shiftAssignments = pgTable("shift_assignments", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id"),                 // system-account roster. Nullable…
+  staffMemberId: integer("staff_member_id"),  // …exactly one of userId / staffMemberId is set (mirrors attendance)
   shiftId: integer("shift_id").notNull(),
   date: text("date").notNull(),  // "YYYY-MM-DD"
-  createdBy: integer("created_by").notNull(),
+  source: text("source").notNull().default("manual"), // 'manual' (dropdown) | 'auto' (biometric detection)
+  clockIn: text("clock_in"),      // auto sessions: this session's punch-in "HH:MM" (null for manual)
+  clockOut: text("clock_out"),    // auto sessions: this session's punch-out; null while still open
+  workingHours: decimal("working_hours", { precision: 4, scale: 2 }), // auto sessions: span hours
+  createdBy: integer("created_by"), // null for auto (biometric); userId for manual
 });
 
 // -- Staff Insert Schemas
