@@ -49,7 +49,10 @@ jobs:
           # broadcasts so a phone (on Vercel) can print on this machine's thermal
           # printer. These are the PUBLIC client keys (the key ships in the browser
           # bundle anyway), so they are safe to inline here.
-          VITE_PUSHER_KEY: ce1d9880618a84677492
+          # This key was rotated on 2026-07-15 (old key ce1d9880... is stale/dead —
+          # do NOT restore it). If you rotate again, this literal must be updated too;
+          # nothing here validates it against Vercel's PUSHER_KEY automatically.
+          VITE_PUSHER_KEY: 2ae00b4088c21f96fa75
           VITE_PUSHER_CLUSTER: ap2
           # Private channel — subscribers must be authorized via /api/pusher/auth.
           # The host server's PUSHER_CHANNEL must match this exactly.
@@ -96,7 +99,10 @@ jobs:
           # broadcasts so a phone (on Vercel) can print on this machine's thermal
           # printer. These are the PUBLIC client keys (the key ships in the browser
           # bundle anyway), so they are safe to inline here.
-          VITE_PUSHER_KEY: ce1d9880618a84677492
+          # This key was rotated on 2026-07-15 (old key ce1d9880... is stale/dead —
+          # do NOT restore it). If you rotate again, this literal must be updated too;
+          # nothing here validates it against Vercel's PUSHER_KEY automatically.
+          VITE_PUSHER_KEY: 2ae00b4088c21f96fa75
           VITE_PUSHER_CLUSTER: ap2
           # Private channel — subscribers must be authorized via /api/pusher/auth.
           # The host server's PUSHER_CHANNEL must match this exactly.
