@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/useAuth";
 
 export interface RealtimeMessage {
   type: string;
@@ -24,14 +25,22 @@ export function useRealtime(_url?: string) {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [lastMessage, setLastMessage] = useState<RealtimeMessage | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("Connecting");
+  const { isAuthenticated } = useAuth();
 
   const pusherKey = import.meta.env.VITE_PUSHER_KEY as string | undefined;
   const pusherCluster = (import.meta.env.VITE_PUSHER_CLUSTER as string | undefined) || "ap2";
-  const pusherChannel = (import.meta.env.VITE_PUSHER_CHANNEL as string | undefined) || "bagicha-pos";
+  const pusherChannel = (import.meta.env.VITE_PUSHER_CHANNEL as string | undefined) || "private-bagicha-pos";
 
   // Pusher (production / cross-origin clients)
   useEffect(() => {
-    if (!pusherKey) return;
+    // Private channels need a valid session for the auth handshake. useAuth() is
+    // driven by React Query — isAuthenticated flips to true reactively the instant
+    // login succeeds, which re-runs this effect (dependency below) and retries the
+    // subscription. Without this gate, a component mounted before login (e.g.
+    // usePrintJobBridge in App.tsx, mounted unconditionally at the root) attempts —
+    // and fails — its ONE subscription while logged out, and nothing ever retried
+    // it: only a full reload re-mounted everything after the cookie already existed.
+    if (!pusherKey || !isAuthenticated) return;
 
     let disposed = false;
     let pusher: any;
@@ -57,7 +66,37 @@ export function useRealtime(_url?: string) {
         const Pusher = (await import("pusher-js")).default;
         if (disposed) return;
         setConnectionStatus("Connecting");
-        pusher = new Pusher(pusherKey, { cluster: pusherCluster, forceTLS: true });
+        // Private/presence channels require a server-authorized handshake — the
+        // customHandler POSTs to /api/pusher/auth with the session cookie. Without
+        // this, pusher-js falls back to its own default auth endpoint/transport,
+        // which doesn't match this app's route and fails the subscription outright.
+        const isPrivate = pusherChannel.startsWith("private-") || pusherChannel.startsWith("presence-");
+        pusher = new Pusher(pusherKey, {
+          cluster: pusherCluster,
+          forceTLS: true,
+          ...(isPrivate
+            ? {
+                channelAuthorization: {
+                  transport: "ajax" as const,
+                  endpoint: "/api/pusher/auth",
+                  customHandler: async (
+                    params: { socketId: string; channelName: string },
+                    callback: (error: Error | null, authData: any) => void,
+                  ) => {
+                    try {
+                      const res = await apiRequest("POST", "/api/pusher/auth", {
+                        socket_id: params.socketId,
+                        channel_name: params.channelName,
+                      });
+                      callback(null, await res.json());
+                    } catch (e) {
+                      callback(e as Error, null);
+                    }
+                  },
+                },
+              }
+            : {}),
+        });
         channel = pusher.subscribe(pusherChannel);
 
         const handlers = events.map((eventName) => {
@@ -92,7 +131,7 @@ export function useRealtime(_url?: string) {
         /* ignore */
       }
     };
-  }, [pusherKey, pusherCluster, pusherChannel]);
+  }, [pusherKey, pusherCluster, pusherChannel, isAuthenticated]);
 
   // Local WebSocket (dev server co-located with Express)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
