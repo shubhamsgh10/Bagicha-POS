@@ -1,8 +1,7 @@
 import { apiUrl } from '@/lib/api';
 import { Switch, Route, useLocation, useSearch } from "wouter";
 import { AppWouterRouter } from "@/lib/appRouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopNav } from "@/components/TopNav";
@@ -69,6 +68,13 @@ function Router() {
   const [location, navigate] = useLocation();
   const search = useSearch(); // tracks window.location.search reactively
   const { direction, goBack, canGoBack } = useNavigation();
+  // Context-sourced client — NOT the module-level singleton import. Vite's dev
+  // server can serve lib/queryClient.ts under two different resolved URLs (one
+  // via its dependency-optimization graph, one via plain source resolution),
+  // which the browser treats as two separate ES module instances with separate
+  // caches. useQueryClient() always returns whichever instance was actually
+  // passed to <QueryClientProvider> in main.tsx, so it's immune to that.
+  const queryClient = useQueryClient();
 
   // Swipe-back gesture — only when authenticated and there's history
   useSwipeBack(goBack, isAuthenticated && canGoBack);
@@ -217,13 +223,14 @@ function Router() {
 
 function App() {
   const { toast } = useToast();
+  const queryClient = useQueryClient(); // see Router()'s comment on why this isn't the module import
 
   usePrintJobBridge();
 
   useEffect(() => {
     const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
     return () => clearInterval(id);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     return window.electronAPI?.onPrinterHealthWarning?.((p) => {
@@ -236,22 +243,20 @@ function App() {
   }, [toast]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <UpdateNotification />
-        <ActiveRoleProvider>
-          {/* NavigationProvider tracks history stack + direction for page transitions */}
-          <AppWouterRouter>
-            <NavigationProvider>
-              <AppLayout>
-                <Router />
-              </AppLayout>
-            </NavigationProvider>
-          </AppWouterRouter>
-        </ActiveRoleProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <TooltipProvider>
+      <Toaster />
+      <UpdateNotification />
+      <ActiveRoleProvider>
+        {/* NavigationProvider tracks history stack + direction for page transitions */}
+        <AppWouterRouter>
+          <NavigationProvider>
+            <AppLayout>
+              <Router />
+            </AppLayout>
+          </NavigationProvider>
+        </AppWouterRouter>
+      </ActiveRoleProvider>
+    </TooltipProvider>
   );
 }
 
