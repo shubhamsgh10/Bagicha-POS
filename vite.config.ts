@@ -45,6 +45,18 @@ export default defineConfig(async ({ mode }) => {
     },
   },
   root: path.resolve(import.meta.dirname, "client"),
+  optimizeDeps: {
+    // pusher-js is dynamically import()'d inside RealtimeProvider.tsx's effect
+    // (only runs post-login), so Vite's initial dependency scan can miss it and
+    // only discovers it mid-session when that import() actually executes. That
+    // triggers a disruptive re-optimization that can split first-party files
+    // adjacent to the dynamic import (e.g. RealtimeProvider.tsx itself) into two
+    // separately-versioned module instances — each with its own module-scope
+    // state (React Context objects included), so a Context.Provider from one
+    // copy is invisible to useContext() calls resolving to the other copy.
+    // Declaring it here up front avoids the whole class of bug.
+    include: ["pusher-js"],
+  },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
