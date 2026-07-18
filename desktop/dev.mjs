@@ -6,12 +6,26 @@ import { spawn } from "child_process";
 import { createRequire } from "module";
 import http from "http";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const require = createRequire(import.meta.url);
 const electronBin = require("electron");
+
+// Vite's dependency pre-bundle cache (node_modules/.vite) can go stale after a
+// structural import-graph change — e.g. moving where a shared module/context is
+// imported from, or adding a dynamically-import()'d dependency — leaving a
+// first-party file (and any module-scope state in it, like a React Context
+// object) served under two different resolved URLs, which the browser treats
+// as two separate module instances. Clearing on every dev:electron launch
+// costs a few seconds of re-bundling but eliminates that whole bug class.
+const viteCacheDir = path.join(root, "node_modules", ".vite");
+if (fs.existsSync(viteCacheDir)) {
+  console.log("[dev:electron] Clearing stale Vite dependency cache…");
+  fs.rmSync(viteCacheDir, { recursive: true, force: true });
+}
 
 const API_PORT = process.env.PORT || "5000";
 // Same as `npm run dev` — API + React on one port (not Vite :5173 alone)

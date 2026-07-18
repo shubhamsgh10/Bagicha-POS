@@ -2,7 +2,6 @@ import { apiUrl } from '@/lib/api';
 import { Switch, Route, useLocation, useSearch } from "wouter";
 import { AppWouterRouter } from "@/lib/appRouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopNav } from "@/components/TopNav";
@@ -234,22 +233,20 @@ function App() {
   }, [toast]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <UpdateNotification />
-        <ActiveRoleProvider>
-          {/* NavigationProvider tracks history stack + direction for page transitions */}
-          <AppWouterRouter>
-            <NavigationProvider>
-              <AppLayout>
-                <Router />
-              </AppLayout>
-            </NavigationProvider>
-          </AppWouterRouter>
-        </ActiveRoleProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <TooltipProvider>
+      <Toaster />
+      <UpdateNotification />
+      <ActiveRoleProvider>
+        {/* NavigationProvider tracks history stack + direction for page transitions */}
+        <AppWouterRouter>
+          <NavigationProvider>
+            <AppLayout>
+              <Router />
+            </AppLayout>
+          </NavigationProvider>
+        </AppWouterRouter>
+      </ActiveRoleProvider>
+    </TooltipProvider>
   );
 }
 

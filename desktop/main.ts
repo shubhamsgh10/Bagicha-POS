@@ -249,10 +249,27 @@ function revealWindow() {
   mainWindow.focus();
 }
 
-function createWindow() {
+async function createWindow() {
   const openDevTools = process.env.ELECTRON_DEVTOOLS === "1";
 
   console.log("[electron] Creating window…", isDev ? DEV_URL : "production build");
+
+  if (isDev) {
+    // Electron's default session persists its HTTP cache to disk in userData,
+    // independent of the Node process lifecycle — restarting `npm run
+    // dev:electron` (even killing it fully) does NOT clear it, only Vite's own
+    // server-side node_modules/.vite cache does. A stale disk-cached JS module
+    // response here can silently outlive many "full restarts", which is exactly
+    // what made an earlier bug look unfixable across several attempted fixes.
+    // A plain browser (e.g. Playwright/Chrome) never showed the same problem
+    // because it wasn't sharing this persistent, disk-backed cache at all.
+    try {
+      await session.defaultSession.clearCache();
+      console.log("[electron] Cleared session HTTP cache (dev mode)");
+    } catch (e) {
+      console.warn("[electron] Failed to clear session cache:", e);
+    }
+  }
 
   const windowIcon = ICON_PATH;
   mainWindow = new BrowserWindow({
