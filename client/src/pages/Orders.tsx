@@ -294,20 +294,20 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                 </div>
               </div>
 
+              {/* Reprint */}
+              <div className="flex justify-end">
+                <button
+                  onClick={reprintBill}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
+                >
+                  <Printer className="w-3 h-3" /> Reprint Bill
+                </button>
+              </div>
+
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-      {expanded && (
-        <div className="flex justify-end px-4 pb-3">
-          <button
-            onClick={reprintBill}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
-          >
-            <Printer className="w-3 h-3" /> Reprint Bill
-          </button>
-        </div>
-      )}
 
       {printPreview && (
         <PrintPreviewModal preview={printPreview} onClose={() => setPrintPreview(null)} />
@@ -431,7 +431,7 @@ const q = search.trim().toLowerCase();
       {/* ── Tabs + Orders ── */}
       <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-3 sm:px-6 pt-3 sm:pt-4 pb-6">
         <Tabs defaultValue="all" className="w-full">
-          <TabsList className="flex w-full overflow-x-auto rounded-xl p-1 mb-4 gap-0.5"
+          <TabsList className="flex w-full justify-start overflow-x-auto rounded-xl p-1 mb-4 gap-0.5"
             style={{
               background: "var(--paper-100)",
               border: "1px solid var(--line)",

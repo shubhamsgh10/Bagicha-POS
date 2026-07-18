@@ -50,7 +50,9 @@
       "Bash(powershell.exe -Command \"Expand-Archive -Path 'saas-workflow-orchestrator.zip' -DestinationPath './saas-workflow-orchestrator-extracted' -Force\")",
       "Bash(vercel --version)",
       "mcp__plugin_vercel_vercel__list_deployments",
-      "PowerShell(npm run check 2>&1)"
+      "PowerShell(npm run check 2>&1)",
+      "Bash(node scripts/migrate-print-jobs.mjs)",
+      "Bash(npm run *)"
     ]
   },
   "enabledMcpjsonServers": []

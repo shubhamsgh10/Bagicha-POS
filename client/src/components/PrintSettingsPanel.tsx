@@ -1,9 +1,10 @@
 import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X, ScanLine } from "lucide-react";
+import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X, ScanLine, Printer as PrinterIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,6 +37,21 @@ interface KOTPrintSettings {
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
   kotNumbering: boolean;
+  /** categoryId (stringified) -> printerId; absent = default KOT printer. */
+  categoryPrinterOverrides?: Record<string, string | null>;
+}
+
+interface PosSection {
+  id: string;
+  name: string;
+  categoryIds: number[];
+  billPrinterId?: string | null;
+}
+
+interface CategoryLite {
+  id: number;
+  name: string;
+  isActive: boolean;
 }
 
 interface BillPrintSettings {
@@ -69,6 +85,7 @@ const DEFAULT_KOT: KOTPrintSettings = {
   printOnTableMove: false, kotPrinterId: null,
   autoKOTPrint: false, autoKOTDebounceMs: 1500,
   kotNumbering: true,
+  categoryPrinterOverrides: {},
 };
 
 const DEFAULT_BILL: BillPrintSettings = {
@@ -241,12 +258,14 @@ function usbDeviceKey(d: USBDeviceInfo): string {
   return `name:${usbDeviceLabel(d)}`;
 }
 
-function PrinterSetupTab({ printers, onChange, onTest }: {
+function PrinterSetupTab({ printers, onChange, onTest, onClose }: {
   printers: PrinterConfig[];
   onChange: (printers: PrinterConfig[]) => void;
   onTest: (printerId: string) => void;
+  onClose: () => void;
 }) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<Partial<PrinterConfig>>({ type: 'network', port: 9100, width: 48 });
   const [detectedDevices, setDetectedDevices] = useState<USBDeviceInfo[]>([]);
@@ -401,6 +420,18 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
 
   return (
     <div className="space-y-4">
+      <button
+        type="button"
+        onClick={() => { onClose(); navigate("/print-station"); }}
+        className="w-full flex items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left hover:bg-blue-100 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-blue-700">
+          <PrinterIcon className="w-4 h-4" />
+          Print Station — choose which printers THIS device prints
+        </span>
+        <span className="text-xs text-blue-500">Open →</span>
+      </button>
+
       {printers.length === 0 && !adding && (
         <div className="text-center py-10 rounded-xl border-2 border-dashed border-gray-200">
           <p className="text-sm text-gray-400">No printers configured</p>
@@ -430,7 +461,9 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
               <p className="text-xs text-gray-400 truncate">
                 {p.type === 'network'
                   ? `${p.ip ?? '—'}:${p.port ?? 9100}`
-                  : `VID:0x${(p.vendorId ?? 0).toString(16).padStart(4,'0')} PID:0x${(p.productId ?? 0).toString(16).padStart(4,'0')}`}
+                  : p.windowsQueueName?.trim()
+                    ? `Windows queue: ${p.windowsQueueName}`
+                    : 'No local queue — printed by a remote print station'}
               </p>
             </div>
             <button
@@ -588,9 +621,28 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
                 />
               </div>
 
+              {/* Attached Windows queue — must be VISIBLE and clearable. The auto-scan can
+                  silently attach the wrong queue (e.g. the main printer) to a printer that
+                  isn't plugged into this computer, misrouting its tickets. */}
+              {form.windowsQueueName?.trim() && (
+                <div className="flex items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  <span className="text-blue-700 truncate">
+                    Prints via Windows queue: <b>{form.windowsQueueName}</b>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, windowsQueueName: undefined, vendorId: undefined, productId: undefined }))}
+                    className="shrink-0 text-blue-500 hover:text-red-500 font-medium"
+                    title="Remove — use this if the printer is NOT plugged into this computer (e.g. a Bluetooth printer driven by a tablet print station)"
+                  >
+                    ✕ clear
+                  </button>
+                </div>
+              )}
+
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
                 {isElectron
-                  ? 'Scan lists installed Windows printer queues (USB). Pick your receipt/thermal printer — not LaserJet or camera devices.'
+                  ? 'Scan lists installed Windows printer queues (USB). Pick your receipt/thermal printer — not LaserJet or camera devices. Adding a printer that is NOT plugged into this computer (e.g. a Bluetooth printer at another counter)? Skip the scan and clear any attached queue above.'
                   : webUsbSupported
                     ? 'Click "Scan" to auto-detect your USB printer VID/PID.'
                     : 'USB auto-detect requires Chrome, Edge, or the Bagicha desktop app. Enter VID/PID manually.'}
@@ -691,6 +743,156 @@ function PrinterSetupTab({ printers, onChange, onTest }: {
   );
 }
 
+// ── Category → KOT printer routing (multi-section kitchens) ──────────────────
+
+function CategoryRoutingSection({ overrides, printers, onChange }: {
+  overrides: Record<string, string | null>;
+  printers: PrinterConfig[];
+  onChange: (next: Record<string, string | null>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data: categories = [] } = useQuery<CategoryLite[]>({
+    queryKey: ["/api/categories"],
+    enabled: open,
+  });
+  const routedCount = Object.values(overrides).filter(Boolean).length;
+  const selectCls = "text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 focus:outline-none focus:border-emerald-400 focus:bg-white transition-colors max-w-[45%]";
+
+  return (
+    <div className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-600 font-medium bg-gray-50 hover:bg-gray-100 transition-colors"
+      >
+        <span>Category Routing{routedCount > 0 ? ` · ${routedCount} routed` : ''}</span>
+        <span>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="divide-y divide-gray-100">
+          <p className="px-3 py-2 text-[11px] text-gray-400 leading-relaxed">
+            Send KOTs of specific categories (e.g. South Indian) to a different kitchen printer.
+            Categories left on Default print on the KOT printer above. One order can print
+            tickets on several printers at once — each gets only its own items.
+          </p>
+          {categories.filter(c => c.isActive).map(c => (
+            <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-3">
+              <span className="text-sm text-gray-700 truncate">{c.name}</span>
+              <select
+                className={selectCls}
+                value={overrides[String(c.id)] ?? ''}
+                onChange={e => {
+                  const next = { ...overrides };
+                  if (e.target.value) next[String(c.id)] = e.target.value;
+                  else delete next[String(c.id)];
+                  onChange(next);
+                }}
+              >
+                <option value="">Default (KOT printer)</option>
+                {printers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          ))}
+          {categories.length === 0 && (
+            <p className="px-3 py-3 text-xs text-gray-400 text-center">No categories found</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Quick-POS sections (e.g. South Indian counter) ───────────────────────────
+
+function SectionsTab({ sections, printers, onChange }: {
+  sections: PosSection[];
+  printers: PrinterConfig[];
+  onChange: (next: PosSection[]) => void;
+}) {
+  const { data: categories = [] } = useQuery<CategoryLite[]>({ queryKey: ["/api/categories"] });
+  const activeCategories = categories.filter(c => c.isActive);
+  const inputCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 w-full bg-gray-50 focus:outline-none focus:border-emerald-400 focus:bg-white transition-colors";
+  const selectCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 focus:outline-none focus:border-emerald-400 focus:bg-white transition-colors";
+
+  const update = (id: string, patch: Partial<PosSection>) =>
+    onChange(sections.map(s => (s.id === id ? { ...s, ...patch } : s)));
+
+  return (
+    <div>
+      <p className="text-xs text-gray-400 leading-relaxed mb-4">
+        A section appears as its own card on the Tables screen and opens a simplified POS
+        showing only its categories — staff pick items, print the bill, and settle. Give the
+        section its own bill printer to print bills at that counter.
+      </p>
+      {sections.map(s => (
+        <div key={s.id} className="border border-gray-200 rounded-xl p-3 mb-3">
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              className={inputCls}
+              placeholder="Section name (e.g. South Indian)"
+              value={s.name}
+              onChange={e => update(s.id, { name: e.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(sections.filter(x => x.id !== s.id))}
+              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-red-400 hover:bg-red-50 transition-colors shrink-0"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Categories</p>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {activeCategories.map(c => {
+              const selected = s.categoryIds.includes(c.id);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => update(s.id, {
+                    categoryIds: selected
+                      ? s.categoryIds.filter(id => id !== c.id)
+                      : [...s.categoryIds, c.id],
+                  })}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    selected
+                      ? 'bg-emerald-500 border-emerald-500 text-white'
+                      : 'border-gray-200 text-gray-500 hover:border-emerald-300'
+                  }`}
+                >
+                  {c.name}
+                </button>
+              );
+            })}
+            {activeCategories.length === 0 && (
+              <span className="text-xs text-gray-400">No categories found</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-gray-500 shrink-0">Bill Printer:</label>
+            <select
+              className={selectCls}
+              value={s.billPrinterId ?? ''}
+              onChange={e => update(s.id, { billPrinterId: e.target.value || null })}
+            >
+              <option value="">Default (Bill printer)</option>
+              {printers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...sections, { id: Date.now().toString(), name: '', categoryIds: [], billPrinterId: null }])}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-gray-300 text-sm text-gray-500 hover:border-emerald-400 hover:text-emerald-600 transition-colors"
+      >
+        <Plus className="w-4 h-4" />
+        Add Section
+      </button>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function PrintSettingsPanel({
@@ -701,13 +903,14 @@ export function PrintSettingsPanel({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'kot' | 'bill' | 'printers'>('kot');
+  const [activeTab, setActiveTab] = useState<'kot' | 'bill' | 'printers' | 'sections'>('kot');
 
   const [ps, setPs] = useState<PrintConfigSettings>({
     printers: currentSettings?.printSettings?.printers ?? [],
     kot: { ...DEFAULT_KOT, ...(currentSettings?.printSettings?.kot ?? {}) },
     bill: { ...DEFAULT_BILL, ...(currentSettings?.printSettings?.bill ?? {}) },
   });
+  const [sections, setSections] = useState<PosSection[]>(currentSettings?.posSections ?? []);
 
   const setKot = (key: keyof KOTPrintSettings, val: any) =>
     setPs(p => ({ ...p, kot: { ...p.kot, [key]: val } }));
@@ -717,7 +920,11 @@ export function PrintSettingsPanel({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest('PUT', '/api/settings', { ...currentSettings, printSettings: ps });
+      const res = await apiRequest('PUT', '/api/settings', {
+        ...currentSettings,
+        printSettings: ps,
+        posSections: sections.filter(s => s.name.trim()),
+      });
       return res.json();
     },
     onSuccess: (data) => {
@@ -771,6 +978,7 @@ export function PrintSettingsPanel({
     { id: 'kot' as const,      label: 'KOT Print' },
     { id: 'bill' as const,     label: 'Bill Print' },
     { id: 'printers' as const, label: 'Printer Setup' },
+    { id: 'sections' as const, label: 'Sections' },
   ];
 
   return createPortal(
@@ -831,6 +1039,11 @@ export function PrintSettingsPanel({
                   {printerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
+              <CategoryRoutingSection
+                overrides={ps.kot.categoryPrinterOverrides ?? {}}
+                printers={ps.printers}
+                onChange={m => setKot('categoryPrinterOverrides', m)}
+              />
               <ToggleRow label="Enable KOT Printing" checked={ps.kot.enabled} onChange={v => setKot('enabled', v)} />
               <ToggleRow
                 label="Auto Print KOT on Item Add"
@@ -988,6 +1201,15 @@ export function PrintSettingsPanel({
               printers={ps.printers}
               onChange={printers => setPs(p => ({ ...p, printers }))}
               onTest={handleTest}
+              onClose={onClose}
+            />
+          )}
+
+          {activeTab === 'sections' && (
+            <SectionsTab
+              sections={sections}
+              printers={ps.printers}
+              onChange={setSections}
             />
           )}
         </div>

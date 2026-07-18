@@ -7,7 +7,8 @@ import { useManagerAuth } from "./useManagerAuth";
 export type CartAction =
   | "discount" | "complimentary" | "clearCart" | "cancelOrder"
   | "editItem" | "removeItem" | "splitBill" | "moveTable" | "mergeTable"
-  | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder";
+  | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder"
+  | "openItem";
 
 export type CartActionPermission = "off" | "pin" | "allowed";
 
@@ -20,6 +21,7 @@ const CART_ACTIONS: CartAction[] = [
   "discount", "complimentary", "clearCart", "cancelOrder",
   "editItem", "removeItem", "splitBill", "moveTable", "mergeTable",
   "holdOrder", "printKot", "printBill", "saveOrder", "settleOrder",
+  "openItem",
 ];
 
 export const DEFAULT_CART_PERMISSIONS: CartPermissions = {

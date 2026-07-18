@@ -30,6 +30,7 @@ export const menuItems = pgTable("menu_items", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   categoryId: integer("category_id").notNull(),
   isAvailable: boolean("is_available").notNull().default(true),
+  isDeleted: boolean("is_deleted").notNull().default(false), // soft delete; isAvailable stays a separate reversible Out-of-Stock toggle
   preparationTime: integer("preparation_time").notNull().default(15),
   ingredients: text("ingredients").array(),
   image: text("image"),
@@ -61,6 +62,9 @@ export const orders = pgTable("orders", {
   tableId: integer("table_id"),
   source: text("source").notNull().default("pos"),
   sourceOrderId: text("source_order_id"),
+  // Quick-POS section that created this order (posSections id, e.g. South Indian counter);
+  // null = normal table/pickup/delivery order. Separates section takeaways from generic pickup.
+  posSectionId: text("pos_section_id"),
   status: text("status").notNull().default("pending"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull(),
@@ -79,14 +83,16 @@ export const orders = pgTable("orders", {
     items: Array<{ itemId: number; name: string; quantity: number; size: string | null }>;
     printedAt: string;
   } | null>(),
-  createdBy: integer("created_by"),  // staff user id who created the order
+  createdBy: integer("created_by"),  // users.id who created the order — set only when the actor is a `users` login
+  createdByStaffMemberId: integer("created_by_staff_member_id"),  // staffMembers.id who created the order — set only for PIN name-card logins (users/staffMembers share an id space, so exactly one of these two is set per order, never both)
   createdByName: text("created_by_name"),  // display name — works for both users and PIN staff
 });
 
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(),
-  menuItemId: integer("menu_item_id").notNull(),
+  menuItemId: integer("menu_item_id").notNull(), // negative = open item (no menu row); no DB FK
+  name: text("name"), // snapshot at order time; required for open items, coalesced with menuItems.name on reads
   quantity: real("quantity").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   specialInstructions: text("special_instructions"),
@@ -303,7 +309,9 @@ export const printJobs = pgTable("print_jobs", {
   payload:    text("payload").notNull(), // base64 ESC/POS buffer
   status:     text("status").notNull().default("pending"), // pending | claimed | printed | failed
   createdAt:  timestamp("created_at").notNull().defaultNow(),
+  claimedAt:  timestamp("claimed_at"), // stale claims (>2 min) become reclaimable
   printedAt:  timestamp("printed_at"),
+  error:      text("error"), // last failure reason when a station releases a claim
 });
 
 export const insertPrintJobSchema = createInsertSchema(printJobs).omit({ id: true, createdAt: true, printedAt: true });

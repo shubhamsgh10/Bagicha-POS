@@ -14,15 +14,17 @@ export type {
   KOTPrintSettings,
   BillPrintSettings,
   PrintConfigSettings,
+  PosSection,
 } from "@shared/print/types";
-import type { PrintConfigSettings } from "@shared/print/types";
+import type { PrintConfigSettings, PosSection } from "@shared/print/types";
 
 // ── Cart-level permission types ───────────────────────────────────────────────
 
 export type CartAction =
   | "discount" | "complimentary" | "clearCart" | "cancelOrder"
   | "editItem" | "removeItem" | "splitBill" | "moveTable" | "mergeTable"
-  | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder";
+  | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder"
+  | "openItem";
 
 export type CartActionPermission = "off" | "pin" | "allowed";
 
@@ -35,6 +37,7 @@ const CART_ACTIONS: CartAction[] = [
   "discount", "complimentary", "clearCart", "cancelOrder",
   "editItem", "removeItem", "splitBill", "moveTable", "mergeTable",
   "holdOrder", "printKot", "printBill", "saveOrder", "settleOrder",
+  "openItem",
 ];
 
 export const DEFAULT_CART_PERMISSIONS: CartPermissions = {
@@ -100,6 +103,8 @@ export interface RestaurantSettings {
   billCounter: number;
   kotCounter: number;
   attendanceDevice: AttendanceDeviceSettings;
+  /** Quick-POS sections (e.g. South Indian counter) — filtered menu + optional dedicated bill printer. */
+  posSections: PosSection[];
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -119,6 +124,7 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     autoKOTPrint: false,
     autoKOTDebounceMs: 1500,
     kotNumbering: true,
+    categoryPrinterOverrides: {},
   },
   bill: {
     taxDisplay: 'none',
@@ -161,6 +167,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   billCounter: 0,
   kotCounter: 0,
   attendanceDevice: DEFAULT_ATTENDANCE_DEVICE,
+  posSections: [],
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
