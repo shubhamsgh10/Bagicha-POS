@@ -5,7 +5,7 @@
 
 import type { Express } from "express";
 import { db } from "./db";
-import { orders, users } from "../shared/schema";
+import { orders, users, staffMembers } from "../shared/schema";
 import { gte, lte, and, sql, count } from "drizzle-orm";
 import { requireAuth, requireManagerOrAdmin } from "./routes";
 import { storage } from "./storage";
@@ -41,29 +41,59 @@ export function registerStaffRoutes(app: Express) {
       if (from) conditions.push(gte(orders.createdAt, new Date(from)));
       if (to)   conditions.push(lte(orders.createdAt, new Date(to + "T23:59:59")));
 
-      // Orders grouped by createdBy
+      // Orders grouped by creator. `createdBy` (users.id) and `createdByStaffMemberId`
+      // (staffMembers.id) share an integer id space, so both columns are needed to
+      // disambiguate — see CLAUDE.md's id-collision note.
       const rows = await db
         .select({
-          createdBy:  orders.createdBy,
+          createdBy: orders.createdBy,
+          createdByStaffMemberId: orders.createdByStaffMemberId,
           totalOrders: count(orders.id),
           totalRevenue: sql<string>`COALESCE(SUM(${orders.totalAmount}::numeric), 0)`,
-          avgBill:      sql<string>`COALESCE(AVG(${orders.totalAmount}::numeric), 0)`,
         })
         .from(orders)
         .where(conditions.length ? and(...conditions) : undefined)
-        .groupBy(orders.createdBy);
+        .groupBy(orders.createdBy, orders.createdByStaffMemberId);
 
-      // Attach user names
-      const allUsers = await db.select({ id: users.id, username: users.username }).from(users);
-      const userMap = Object.fromEntries(allUsers.map(u => [u.id, u.username]));
+      const allUsers = await db.select({ id: users.id, username: users.username, role: users.role }).from(users);
+      const userMap = new Map(allUsers.map(u => [u.id, u]));
+      const allStaffMembers = await db.select({ id: staffMembers.id, name: staffMembers.name }).from(staffMembers);
+      const staffMap = new Map(allStaffMembers.map(s => [s.id, s.name]));
 
-      const result = rows.map(r => ({
-        staffId:     r.createdBy,
-        staffName:   (r.createdBy != null ? userMap[r.createdBy] : null) ?? "Unassigned",
-        totalOrders: Number(r.totalOrders),
-        totalRevenue: parseFloat(r.totalRevenue),
-        avgBill:      parseFloat(r.avgBill),
-      })).sort((a, b) => b.totalRevenue - a.totalRevenue);
+      // Merge everything unresolvable (or admin/owner, excluded by design) into one bucket.
+      const merged = new Map<string, { staffId: number | null; staffName: string; totalOrders: number; totalRevenue: number }>();
+      for (const r of rows) {
+        let staffId: number | null = null;
+        let staffName: string | null = null;
+
+        if (r.createdByStaffMemberId != null) {
+          staffId = r.createdByStaffMemberId;
+          staffName = staffMap.get(r.createdByStaffMemberId) ?? null;
+        } else if (r.createdBy != null) {
+          const u = userMap.get(r.createdBy);
+          if (u?.role === "admin") continue; // owner/admin excluded from staff performance
+          staffId = r.createdBy;
+          staffName = u?.username ?? null;
+        }
+
+        const key = staffName ? `${staffId}` : "unassigned";
+        const existing = merged.get(key);
+        if (existing) {
+          existing.totalOrders += Number(r.totalOrders);
+          existing.totalRevenue += parseFloat(r.totalRevenue);
+        } else {
+          merged.set(key, {
+            staffId: staffName ? staffId : null,
+            staffName: staffName ?? "Unassigned",
+            totalOrders: Number(r.totalOrders),
+            totalRevenue: parseFloat(r.totalRevenue),
+          });
+        }
+      }
+
+      const result = Array.from(merged.values())
+        .map(r => ({ ...r, avgBill: r.totalOrders > 0 ? r.totalRevenue / r.totalOrders : 0 }))
+        .sort((a, b) => b.totalRevenue - a.totalRevenue);
 
       res.json(result);
     } catch (e: any) {

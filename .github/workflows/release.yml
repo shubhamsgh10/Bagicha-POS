@@ -1,11 +1,18 @@
 # Bagicha POS — Electron release workflow
 #
 # Trigger: push a git tag matching v* (e.g. v1.0.2)
-# Result:  Windows installer uploaded to GitHub Releases + latest.yml published
-#          (electron-updater on POS machines will pick up the new version automatically)
+# Result:  Windows installer + macOS dmg/zip uploaded to GitHub Releases, each with its
+#          own latest.yml/latest-mac.yml (electron-updater on POS machines picks up the
+#          new version automatically, per-platform)
 #
 # Required secret: GH_TOKEN (GitHub personal access token with repo + write:packages scope)
 # Set it at: repo → Settings → Secrets and variables → Actions → New repository secret
+#
+# macOS build is UNSIGNED (no Apple Developer ID cert configured) — electron-builder still
+# ad-hoc signs automatically (required for Apple Silicon to launch the app at all), but users
+# see a Gatekeeper "unidentified developer" prompt on first launch: right-click the app → Open
+# once to bypass it. Add CSC_LINK/CSC_KEY_PASSWORD secrets + a Developer ID cert later to sign
+# properly and remove that prompt.
 
 name: Release
 
@@ -42,7 +49,10 @@ jobs:
           # broadcasts so a phone (on Vercel) can print on this machine's thermal
           # printer. These are the PUBLIC client keys (the key ships in the browser
           # bundle anyway), so they are safe to inline here.
-          VITE_PUSHER_KEY: ce1d9880618a84677492
+          # This key was rotated on 2026-07-15 (old key ce1d9880... is stale/dead —
+          # do NOT restore it). If you rotate again, this literal must be updated too;
+          # nothing here validates it against Vercel's PUSHER_KEY automatically.
+          VITE_PUSHER_KEY: 2ae00b4088c21f96fa75
           VITE_PUSHER_CLUSTER: ap2
           # Private channel — subscribers must be authorized via /api/pusher/auth.
           # The host server's PUSHER_CHANNEL must match this exactly.
@@ -53,3 +63,59 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'  # skip code-signing (no cert)
+
+  release-mac:
+    name: Build & publish macOS dmg/zip
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # macos-latest ships Python 3.12+, which removed the distutils module that
+      # this repo's node-gyp 9.x (used by @electron/rebuild to compile the native
+      # `usb` printer module) still imports. Pin 3.11, which has distutils.
+      - name: Setup Python 3.11 (node-gyp needs distutils)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron app
+        run: npm run build:electron
+        env:
+          ELECTRON_BUILD: '1'
+          # Bake your production API URL into the desktop build
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          # Pusher realtime — lets the installed desktop app receive PRINT_JOB
+          # broadcasts so a phone (on Vercel) can print on this machine's thermal
+          # printer. These are the PUBLIC client keys (the key ships in the browser
+          # bundle anyway), so they are safe to inline here.
+          # This key was rotated on 2026-07-15 (old key ce1d9880... is stale/dead —
+          # do NOT restore it). If you rotate again, this literal must be updated too;
+          # nothing here validates it against Vercel's PUSHER_KEY automatically.
+          VITE_PUSHER_KEY: 2ae00b4088c21f96fa75
+          VITE_PUSHER_CLUSTER: ap2
+          # Private channel — subscribers must be authorized via /api/pusher/auth.
+          # The host server's PUSHER_CHANNEL must match this exactly.
+          VITE_PUSHER_CHANNEL: private-bagicha-pos
+
+      - name: Publish to GitHub Releases
+        # electron-builder.yml's mac.identity is Phase 0 prep for the self-signed-cert
+        # auto-update spike in docs/MAC-SIGNING.md (run by hand on the physical Mac,
+        # using ITS local keychain) — CI has no matching certificate (Phase 1, wiring
+        # CSC_LINK/CSC_KEY_PASSWORD secrets in, hasn't happened yet), so override the
+        # identity to null here to keep shipping ad-hoc-signed CI builds. Remove this
+        # override once Phase 1 lands and CI supplies its own copy of the cert.
+        run: npx electron-builder --mac --publish always --config electron-builder.yml -c.mac.identity=null
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'  # skip code-signing (no cert) — ad-hoc signed instead

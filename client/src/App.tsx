@@ -1,7 +1,7 @@
 import { apiUrl } from '@/lib/api';
 import { Switch, Route, useLocation, useSearch } from "wouter";
 import { AppWouterRouter } from "@/lib/appRouter";
-import { queryClient } from "./lib/queryClient";
+import { useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopNav } from "@/components/TopNav";
@@ -22,6 +22,7 @@ import Billing from "@/pages/Billing";
 import Staff from "@/pages/Staff";
 import MyAttendance from "@/pages/MyAttendance";
 import KOT from "@/pages/KOT";
+import PrintStation from "@/pages/PrintStation";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import { UpdateNotification } from "@/components/UpdateNotification";
@@ -67,6 +68,13 @@ function Router() {
   const [location, navigate] = useLocation();
   const search = useSearch(); // tracks window.location.search reactively
   const { direction, goBack, canGoBack } = useNavigation();
+  // Context-sourced client — NOT the module-level singleton import. Vite's dev
+  // server can serve lib/queryClient.ts under two different resolved URLs (one
+  // via its dependency-optimization graph, one via plain source resolution),
+  // which the browser treats as two separate ES module instances with separate
+  // caches. useQueryClient() always returns whichever instance was actually
+  // passed to <QueryClientProvider> in main.tsx, so it's immune to that.
+  const queryClient = useQueryClient();
 
   // Swipe-back gesture — only when authenticated and there's history
   useSwipeBack(goBack, isAuthenticated && canGoBack);
@@ -197,6 +205,7 @@ function Router() {
                       <Route path="/live-tables"    component={LiveTablesDashboard} />
                       <Route path="/customers"      component={CustomerDashboard} />
                       <Route path="/kot"            component={KOT} />
+                      <Route path="/print-station"  component={PrintStation} />
                       <Route component={NotFound} />
                     </Switch>
                   </motion.div>
@@ -214,13 +223,14 @@ function Router() {
 
 function App() {
   const { toast } = useToast();
+  const queryClient = useQueryClient(); // see Router()'s comment on why this isn't the module import
 
   usePrintJobBridge();
 
   useEffect(() => {
     const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
     return () => clearInterval(id);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     return window.electronAPI?.onPrinterHealthWarning?.((p) => {

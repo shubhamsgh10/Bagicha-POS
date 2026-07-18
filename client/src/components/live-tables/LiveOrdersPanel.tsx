@@ -61,7 +61,7 @@ function OpenPOSButton({ onClick }: { onClick: () => void }) {
 
 // ── Individual order card inside the expanded rail panel ──────────────────────
 
-function OrderRailCard({ order, index }: { order: LiveOrder; index: number }) {
+export function OrderRailCard({ order, index, posUrl }: { order: LiveOrder; index: number; posUrl?: string }) {
   const [, navigate] = useLocation();
   const elapsed = getElapsed(order.createdAt);
   const itemCount = order.items.reduce((s, i) => s + i.quantity, 0);
@@ -107,7 +107,7 @@ function OrderRailCard({ order, index }: { order: LiveOrder; index: number }) {
           <span className="text-gray-200 shrink-0">·</span>
           <span className="shrink-0">{elapsed}</span>
         </div>
-        <OpenPOSButton onClick={() => navigate(`/pos?orderId=${order.id}&mode=${order.orderType}`)} />
+        <OpenPOSButton onClick={() => navigate(posUrl ?? `/pos?orderId=${order.id}&mode=${order.orderType}`)} />
       </div>
 
       {/* New items pulse — auto-clears after 6 s (managed by useLiveOrders) */}

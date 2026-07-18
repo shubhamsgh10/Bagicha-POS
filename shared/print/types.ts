@@ -26,6 +26,17 @@ export interface KOTPrintSettings {
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
   kotNumbering: boolean;
+  /** categoryId (stringified) -> printerId; absent/null = fall back to kotPrinterId. */
+  categoryPrinterOverrides?: Record<string, string | null>;
+}
+
+/** A quick-POS section (e.g. "South Indian"): filtered menu + optional dedicated bill printer. */
+export interface PosSection {
+  id: string;
+  name: string;
+  categoryIds: number[];
+  /** Bill printer for orders made entirely of this section's items; null/absent = global billPrinterId. */
+  billPrinterId?: string | null;
 }
 
 export interface BillPrintSettings {
@@ -67,6 +78,8 @@ export interface PrintJob {
 export interface PrintApiResponse {
   printed?: boolean;
   printJob?: PrintJob;
+  /** All jobs produced by this print (one per routed printer). `printJob` stays = first element for compat. */
+  printJobs?: PrintJob[];
   browserPrint?: boolean;
   reason?: string;
   isDelta?: boolean;

@@ -527,12 +527,12 @@ export default function Reports() {
         </div>
 
         {/* Tabs */}
-        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex gap-1 mb-5 w-fit">
+        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex gap-1 mb-5 w-fit max-w-full overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
                   ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
                   : "text-gray-600 hover:bg-[var(--paper-0)]"

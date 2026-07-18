@@ -20,6 +20,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
 import { SettlementDialog, type SettlementData } from "@/components/SettlementDialog";
+import { SectionParcelToggle } from "@/components/section-pos/SectionParcelToggle";
+import { SectionActionBar } from "@/components/section-pos/SectionActionBar";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
@@ -167,6 +169,10 @@ export default function POS() {
   const preselectedTableName = urlParams.get("tableName") ? decodeURIComponent(urlParams.get("tableName") || "") : null;
   const editOrderId = urlParams.get("orderId") ? Number(urlParams.get("orderId")) : null;
   const posMode = urlParams.get("mode") as "delivery" | "pickup" | null; // direct delivery/pickup mode
+  // Quick-POS section (e.g. South Indian counter): filtered menu, no table, print-bill-then-settle flow
+  const sectionId = urlParams.get("section");
+  const sectionName = urlParams.get("sectionName") ? decodeURIComponent(urlParams.get("sectionName") || "") : null;
+  const isSectionMode = !!sectionId;
 
   // ── Active order ID (starts from URL, updated after KOT creates a new order) ─
   const [activeOrderId, setActiveOrderId] = useState<number | null>(editOrderId);
@@ -191,7 +197,16 @@ export default function POS() {
   const autoKotReadyRef = useRef(false);
   // Short code input
   const [shortCode, setShortCode] = useState("");
-  // Active item mode — only relevant in table sessions; controls serviceMode of newly added items
+  // Open Item (off-menu, staff-typed name + price). Each line gets a unique NEGATIVE
+  // menuItemId — no menu row exists, and PUT /items' KOT delta keys on menuItemId.
+  const [showOpenItemDialog, setShowOpenItemDialog] = useState(false);
+  const [openItemName, setOpenItemName] = useState("");
+  const [openItemPrice, setOpenItemPrice] = useState("");
+  const openItemSeqRef = useRef(-(Date.now() % 1_000_000_000));
+  // Active item mode — only relevant in table sessions; controls serviceMode of newly added items.
+  // Section counters reuse it as the big Eating Here/Parcel toggle: "pickup" = parcel
+  // (container charge per item via the existing serviceMode computation), "dinein" = eating here.
+  // Items keep their own mode, so one order can mix both — same per-item logic as tables.
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
@@ -215,9 +230,9 @@ export default function POS() {
   const isAdmin = activeRole === "admin";
   const isStaff = activeRole === "staff";
 
-  // ── Route guard: POS requires a tableId OR an orderId OR a direct mode ───────
+  // ── Route guard: POS requires a tableId OR an orderId OR a direct mode OR a section ─
   useEffect(() => {
-    if (!preselectedTableId && !editOrderId && !posMode) {
+    if (!preselectedTableId && !editOrderId && !posMode && !sectionId) {
       navigate("/tables");
     }
   }, []);
@@ -535,7 +550,7 @@ export default function POS() {
   const form = useForm<OrderForm>({
     resolver: zodResolver(orderSchema),
     defaultValues: {
-      orderType: posMode === "delivery" ? "delivery" : posMode === "pickup" ? "takeaway" : "dine-in",
+      orderType: posMode === "delivery" ? "delivery" : posMode === "pickup" ? "takeaway" : sectionId ? "takeaway" : "dine-in",
       paymentMethod: "cash",
     },
   });
@@ -543,6 +558,14 @@ export default function POS() {
   const { data: categories } = useQuery<any[]>({ queryKey: ["/api/categories"] });
   const { data: menuItems } = useQuery<any[]>({ queryKey: ["/api/menu"] });
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
+
+  const activeSection = sectionId
+    ? (settings?.posSections ?? []).find((s: any) => s.id === sectionId)
+    : null;
+  const sectionCategoryIds: number[] = activeSection?.categoryIds ?? [];
+  const visibleCategories = isSectionMode
+    ? (categories ?? []).filter((c: any) => sectionCategoryIds.includes(c.id))
+    : categories;
 
   // Customer lookup — fetch past orders to build a unique name+phone list
   const { data: pastOrders = [] } = useQuery<any[]>({
@@ -576,7 +599,8 @@ export default function POS() {
     if (!activeOrderId || !existingOrder || !menuItems || cartLoaded) return;
     const loadedItems: CartItem[] = (existingOrder.items || []).map((item: any) => {
       const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
-      const name = menuItem?.name || "Unknown Item";
+      // Open items (negative menuItemId) and deleted menu items fall back to the name stored on the row
+      const name = menuItem?.name || item.name || "Unknown Item";
       const price = parseFloat(item.price);
       const sm = (item.serviceMode as ItemServiceMode) || "dinein";
       return {
@@ -596,6 +620,12 @@ export default function POS() {
     });
     setCartItems(loadedItems);
     setDiscountPercent(0);
+    // Section counter: point the add-mode toggle at the mode of the last saved item
+    // (staff usually keep adding more of the same kind); items keep their own modes.
+    if (isSectionMode && loadedItems.length > 0) {
+      const last = loadedItems[loadedItems.length - 1].serviceMode;
+      setActiveItemMode(last === "pickup" || last === "delivery" ? "pickup" : "dinein");
+    }
     // Pre-fill customer details — always sync with DB value
     form.setValue("customerName", existingOrder.customerName || "");
     form.setValue("customerPhone", existingOrder.customerPhone || "");
@@ -688,8 +718,14 @@ export default function POS() {
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
         triggerBillPrint(order.id, order);
-        setCartItems([]); setDiscountPercent(0);
-        navigate("/tables");
+        if (isSectionMode) {
+          // Stay on screen so Settle can follow the same print (print now, settle after).
+          setActiveOrderId(order.id);
+          setCartLoaded(false);
+        } else {
+          setCartItems([]); setDiscountPercent(0);
+          navigate("/tables");
+        }
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "WhatsApp bill sent" });
         setCartItems([]); setDiscountPercent(0);
@@ -704,6 +740,7 @@ export default function POS() {
     },
     onError: (error: any) => {
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
+      setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
     },
   });
 
@@ -735,8 +772,10 @@ export default function POS() {
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         triggerBillPrint(vars.orderId, order);
-        setCartItems([]); setDiscountPercent(0);
-        navigate("/tables");
+        if (!isSectionMode) {
+          setCartItems([]); setDiscountPercent(0);
+          navigate("/tables");
+        }
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
         setCartItems([]); setDiscountPercent(0);
@@ -751,6 +790,7 @@ export default function POS() {
     },
     onError: (error: any) => {
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
+      setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
     },
   });
 
@@ -881,12 +921,48 @@ export default function POS() {
   const toggleParcel = (cartKey: string) =>
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, parcelLeftover: !c.parcelLeftover } : c));
 
+  // Open item: off-menu line typed by staff. Always its own cart line (never merged),
+  // under a fresh negative id so the server's menuItemId-keyed KOT delta stays correct.
+  const openItemValid = openItemName.trim().length > 0 && parseFloat(openItemPrice) > 0;
+  const closeOpenItemDialog = () => { setShowOpenItemDialog(false); setOpenItemName(""); setOpenItemPrice(""); };
+  const addOpenItem = () => {
+    if (!openItemValid) return;
+    const price = parseFloat(openItemPrice);
+    openItemSeqRef.current -= 1;
+    const id = openItemSeqRef.current;
+    setCartItems(prev => [...prev, {
+      cartKey: `open-${id}-${activeItemMode}`,
+      id, name: openItemName.trim(), basePrice: price, addons: [], variants: {},
+      notes: "", totalPrice: price, quantity: 1, serviceMode: activeItemMode,
+    }]);
+    closeOpenItemDialog();
+  };
+
+  // Section counter: flip ONE cart line between Eating Here (dinein) and Parcel (pickup).
+  // cartKeys embed the mode (`${id}-${mode}`, `db-…-${mode}`) — rewrite the key and merge
+  // if a line with the target key already exists, so quantities don't split across dupes.
+  const flipItemMode = (cartKey: string) => {
+    setCartItems(prev => {
+      const item = prev.find(c => c.cartKey === cartKey);
+      if (!item) return prev;
+      const mode: ItemServiceMode = item.serviceMode === "pickup" ? "dinein" : "pickup";
+      const newKey = cartKey.replace(/dinein|pickup|delivery/g, mode);
+      const rest = prev.filter(c => c.cartKey !== cartKey);
+      const existing = rest.find(c => c.cartKey === newKey);
+      if (existing) {
+        return rest.map(c => c.cartKey === newKey ? { ...c, quantity: c.quantity + item.quantity } : c);
+      }
+      return prev.map(c => c.cartKey === cartKey ? { ...c, serviceMode: mode, cartKey: newKey } : c);
+    });
+  };
+
   // ── Filter ───────────────────────────────────────────────────────────────────
 
   const filteredItems = menuItems?.filter((item: any) => {
     const matchCat = selectedCategory === "all" || item.categoryId === selectedCategory;
     const matchSearch = !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCat && matchSearch;
+    const matchSection = !isSectionMode || sectionCategoryIds.includes(item.categoryId);
+    return matchCat && matchSearch && matchSection;
   });
 
   // ── Totals ───────────────────────────────────────────────────────────────────
@@ -899,8 +975,9 @@ export default function POS() {
   const currentOrderType = form.watch("orderType");
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
   const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
-  // In table sessions, container charge applies only to pickup/delivery items (not dine-in items)
-  const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId);
+  // In table sessions (and quick-POS sections), container charge applies only to
+  // pickup/delivery items (not dine-in items) — same per-item logic either way.
+  const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId || isSectionMode);
   const containerQty = isTableSession
     ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
     : (isDeliveryOrPickup ? totalItemQty : 0);
@@ -918,6 +995,7 @@ export default function POS() {
   const onSubmit = (data: OrderForm) => {
     if (cartItems.length === 0) {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
+      setSettlePhase("idle"); // a settle attempt on an unloaded/empty cart must not freeze the buttons
       return;
     }
 
@@ -956,6 +1034,8 @@ export default function POS() {
         taxAmount: tax.toFixed(2),
         discountAmount: discountAmt.toFixed(2),
         ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
+        // Section counter orders carry their section id — separates them from generic pickup
+        ...(isSectionMode ? { posSectionId: sectionId } : {}),
         items: itemsPayload,
       });
     }
@@ -1131,6 +1211,56 @@ export default function POS() {
         />
       )}
 
+
+      {/* ── Open Item Dialog (off-menu item: staff types name + price) ────────── */}
+      <Dialog open={showOpenItemDialog} onOpenChange={(o) => { if (!o) closeOpenItemDialog(); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Open Item</DialogTitle>
+            <DialogDescription>Add an item that's not on the menu.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div>
+              <label className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wide">Item Name *</label>
+              <Input
+                autoFocus
+                value={openItemName}
+                onChange={(e) => setOpenItemName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addOpenItem()}
+                placeholder="e.g. Veg Manchurian"
+                className={`mt-1 ${isSectionMode ? "h-12 text-base" : ""}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wide">Price *</label>
+              <div className="relative mt-1">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">₹</span>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="1"
+                  value={openItemPrice}
+                  onChange={(e) => setOpenItemPrice(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addOpenItem()}
+                  placeholder="0"
+                  className={`pl-7 ${isSectionMode ? "h-12 text-base" : ""}`}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" size={isSectionMode ? "default" : "sm"} onClick={closeOpenItemDialog}>Cancel</Button>
+              <Button
+                size={isSectionMode ? "default" : "sm"}
+                disabled={!openItemValid}
+                onClick={addOpenItem}
+                className="bg-[var(--green-700)] text-white hover:opacity-90"
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Move Table Dialog ────────────────────────────────────────────────── */}
       <Dialog open={showMoveDialog} onOpenChange={setShowMoveDialog}>
@@ -1365,6 +1495,15 @@ export default function POS() {
 
             {/* Active mode badge — dynamically reflects current orderType */}
             {(() => {
+              if (isSectionMode) return (
+                <div className="flex items-center gap-1.5 bg-amber-500 text-white px-2.5 py-1 rounded text-xs font-bold max-w-[160px] sm:max-w-none overflow-hidden">
+                  🍲
+                  {isEditMode && existingOrder?.createdAt && (
+                    <POSTimer startedAt={existingOrder.createdAt} />
+                  )}
+                  <span className="truncate">{sectionName ?? activeSection?.name ?? "Section"}</span>
+                </div>
+              );
               const ot = form.watch("orderType");
               if (ot === "delivery") return (
                 <div className="flex items-center gap-1.5 bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-bold">
@@ -1390,6 +1529,9 @@ export default function POS() {
               );
             })()}
 
+            {/* Section counter: no role switcher / new-order — staff just order, print, settle.
+                (+ New Order here would silently keep editing the previous order once activeOrderId is set.) */}
+            {!isSectionMode && <>
             <div className="w-px h-5 bg-gray-200 mx-1 hidden sm:block" />
 
             {/* Role Switcher — outside overflow container so dropdown isn't clipped */}
@@ -1413,9 +1555,11 @@ export default function POS() {
               + New Order
               {isOff("clearCart") && <Lock className="w-3 h-3 opacity-60" />}
             </button>
+            </>}
           </div>
 
-          {/* ── MIDDLE SCROLLABLE: search + short code ── */}
+          {/* ── MIDDLE SCROLLABLE: search + short code (hidden at section counters — tiny menu, big tiles) ── */}
+          {isSectionMode ? <div className="flex-1 min-w-0" /> :
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1">
             {/* Search */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 min-w-[140px] max-w-[200px] flex-1">
@@ -1443,14 +1587,15 @@ export default function POS() {
                 className="bg-transparent text-xs outline-none w-full placeholder-gray-400"
               />
             </div>
-          </div>
+          </div>}
 
-          {/* ── RIGHT FIXED: order types, customer, phone, actions — hidden on mobile ── */}
-          <div className="hidden md:flex items-center gap-2 shrink-0">
+          {/* ── RIGHT FIXED: order types, customer, phone, actions — hidden on mobile.
+               Section counters skip the whole cluster (walk-up customers, one global Parcel toggle). ── */}
+          {!isSectionMode && <div className="hidden md:flex items-center gap-2 shrink-0">
 
             {/* Order type tabs OR item-mode selector strip */}
             {(() => {
-              const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
+              const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               if (isTableSession) {
                 // "Adding as:" strip — tab clicks change item mode, not order type
                 const modes: [ItemServiceMode, string, string][] = [
@@ -1568,8 +1713,9 @@ export default function POS() {
               className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-28 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
             />
 
-            {/* Table Actions — outside overflow so dropdown renders above content */}
-            {!posMode && <div className="relative" onClick={(e) => e.stopPropagation()}>
+            {/* Table Actions — outside overflow so dropdown renders above content. Not shown
+                for quick-POS sections (no table workflow — just order, print, settle). */}
+            {!posMode && !isSectionMode && <div className="relative" onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => setShowActionsMenu((v) => !v)}
                 className="flex items-center gap-1 text-xs text-gray-600 border border-gray-200 px-2.5 py-1.5 rounded hover:bg-gray-50 transition-colors font-medium"
@@ -1606,9 +1752,19 @@ export default function POS() {
                 </div>
               )}
             </div>}
-          </div>
+          </div>}
         </div>
       </div>
+
+      {/* Section counter: big Eating Here/Parcel toggle — sets the mode NEW items are
+          added as (per-item, same backend logic as tables; orders can mix both) */}
+      {isSectionMode && (
+        <SectionParcelToggle
+          parcel={activeItemMode === "pickup"}
+          containerRate={containerRate}
+          onChange={(parcel) => setActiveItemMode(parcel ? "pickup" : "dinein")}
+        />
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
            MODIFIER MODAL — Petpooja style
@@ -1813,8 +1969,9 @@ export default function POS() {
         </Dialog>
       )}
 
-      {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped ── */}
-      <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
+      {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped.
+           Hidden at section counters (anonymous walk-ups). ── */}
+      {!isSectionMode && <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
         style={{ background: "var(--paper-0)" }}>
         {(() => {
           const nameVal = form.watch("customerName") || "";
@@ -1862,10 +2019,10 @@ export default function POS() {
           onChange={(e) => form.setValue("customerPhone", e.target.value)}
           className="w-32 px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
         />
-      </div>
+      </div>}
 
-      {/* ── Mobile: "Adding as:" strip — table sessions only ──────────────────── */}
-      {(!posMode && (!!preselectedTableId || isEditMode)) && (
+      {/* ── Mobile: "Adding as:" strip — table sessions only (sections use the Parcel toggle) ──── */}
+      {(!posMode && !isSectionMode && (!!preselectedTableId || isEditMode)) && (
         <div className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-100/60"
           style={{ background: "var(--paper-0)" }}>
           <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Adding as</span>
@@ -1909,7 +2066,7 @@ export default function POS() {
             >
               All Items
             </button>
-            {categories?.map((cat: any) => (
+            {visibleCategories?.map((cat: any) => (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
@@ -1942,7 +2099,7 @@ export default function POS() {
             >
               All
             </button>
-            {categories?.map((cat: any) => (
+            {visibleCategories?.map((cat: any) => (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
@@ -1962,7 +2119,9 @@ export default function POS() {
               {filteredItems?.length === 0 && (
                 <div className="text-center text-gray-400 py-16 text-sm">No items found</div>
               )}
-              <div className="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
+              <div className={isSectionMode
+                ? "grid grid-cols-2 md:grid-cols-3 gap-3"
+                : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2"}>
                 {filteredItems?.map((item: any) => {
                   const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
                   const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
@@ -1974,13 +2133,13 @@ export default function POS() {
                       key={item.id}
                       disabled={!isAvailable}
                       onClick={() => isAvailable && (needsPicker ? openPicker(item) : directAddItem(item))}
-                      className={`text-left bg-white rounded-lg p-2.5 shadow-sm transition-all border border-transparent ${
+                      className={`text-left bg-white rounded-lg ${isSectionMode ? "p-4 min-h-[92px]" : "p-2.5"} shadow-sm transition-all border border-transparent ${
                         isAvailable
                           ? "hover:border-green-500 hover:bg-green-50 hover:shadow-md cursor-pointer active:scale-95"
                           : "opacity-40 cursor-not-allowed"
                       }`}
                     >
-                      <div className="font-semibold text-xs mb-1 leading-tight line-clamp-2 text-gray-800">{item.name}</div>
+                      <div className={`font-semibold ${isSectionMode ? "text-base" : "text-xs"} mb-1 leading-tight line-clamp-2 text-gray-800`}>{item.name}</div>
                       {hasSizes ? (
                         <div className="flex flex-wrap gap-1 mt-1">
                           {item.sizes.map((s: SizeOption) => (
@@ -1990,7 +2149,7 @@ export default function POS() {
                           ))}
                         </div>
                       ) : (
-                        <div className="font-bold text-green-700 text-sm mt-0.5">{fmt(parseFloat(item.price || "0"))}</div>
+                        <div className={`font-bold text-green-700 ${isSectionMode ? "text-xl" : "text-sm"} mt-0.5`}>{fmt(parseFloat(item.price || "0"))}</div>
                       )}
                       <div className="flex items-center gap-1 mt-1">
                         {!isAvailable && <span className="text-[10px] text-green-500 font-medium">Unavailable</span>}
@@ -2005,7 +2164,7 @@ export default function POS() {
         </div>
 
         {/* ── RIGHT: Billing panel — full width on mobile when cart tab active ── */}
-        <div className={`md:w-[290px] w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
+        <div className={`${isSectionMode ? "md:w-[340px]" : "md:w-[290px]"} w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
           style={{
             background: "var(--paper-0)",
             borderLeft: "1px solid var(--line)",
@@ -2033,20 +2192,29 @@ export default function POS() {
                 <span className="text-[10px] bg-[var(--green-700)] text-white rounded-full px-1.5 py-0.5 font-bold">{cartItems.length}</span>
               )}
             </div>
-            {hasItems && (
+            <div className="flex items-center gap-2">
               <button
-                disabled={isOff("clearCart")}
-                onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
-                className="text-[10px] text-[var(--text-3)] hover:text-[var(--danger)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
+                disabled={isOff("openItem")}
+                onClick={() => go("openItem", "Add Open Item", () => setShowOpenItemDialog(true))}
+                className={`${isSectionMode ? "text-xs px-2.5 py-1.5" : "text-[10px] px-2 py-1"} font-semibold rounded-md border border-dashed border-[var(--green-700)] text-[var(--green-700)] hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1`}
               >
-                Clear all
-                {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
+                <Plus className="w-3 h-3" />Open Item
               </button>
-            )}
+              {hasItems && (
+                <button
+                  disabled={isOff("clearCart")}
+                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
+                  className="text-[10px] text-[var(--text-3)] hover:text-[var(--danger)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
+                >
+                  Clear all
+                  {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Column headers */}
-          {hasItems && (
+          {/* Column headers — skipped at section counters (bigger rows carry their own layout) */}
+          {hasItems && !isSectionMode && (
             <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 px-3 py-1 shrink-0"
               style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-50)" }}>
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase">Item</span>
@@ -2057,13 +2225,16 @@ export default function POS() {
           )}
           <ScrollArea className="flex-1 min-h-0">
             {(() => {
-              const isTableSession = !posMode && (!!preselectedTableId || isEditMode);
+              const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               const renderCartRow = (item: CartItem) => (
-                <div key={item.cartKey} className="border rounded-lg p-2.5 bg-background">
+                <div key={item.cartKey} className={`border rounded-lg ${isSectionMode ? "p-3" : "p-2.5"} bg-background`}>
                   <div className="flex justify-between items-start gap-1">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium leading-tight">
+                      <p className={`${isSectionMode ? "text-base" : "text-sm"} font-medium leading-tight`}>
                         {item.name}{item.size ? ` (${item.size})` : ""}
+                        {item.id < 0 && (
+                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[var(--green-700)] bg-green-50 border border-green-200 rounded px-1 py-px align-middle">Open</span>
+                        )}
                       </p>
                       {item.addons.map(a => (
                         <p key={a.name} className="text-xs text-muted-foreground">+ {a.name}</p>
@@ -2078,32 +2249,48 @@ export default function POS() {
                         <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel (+{fmt(containerRate)})</div>
                       )}
                     </div>
-                    <div className="flex items-center gap-0.5 w-16 justify-center">
-                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity - 0.5) * 10) / 10)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
-                        <Minus className="w-2.5 h-2.5" />
+                    <div className={`flex items-center gap-0.5 ${isSectionMode ? "w-24" : "w-16"} justify-center`}>
+                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity - 0.5) * 10) / 10)} className={`${isSectionMode ? "w-8 h-8" : "w-5 h-5"} rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors`}>
+                        <Minus className={isSectionMode ? "w-4 h-4" : "w-2.5 h-2.5"} />
                       </button>
-                      <span className="text-xs font-bold w-7 text-center">{item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}</span>
-                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity + 0.5) * 10) / 10)} className="w-5 h-5 rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors">
-                        <Plus className="w-2.5 h-2.5" />
+                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold w-7 text-center`}>{item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}</span>
+                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity + 0.5) * 10) / 10)} className={`${isSectionMode ? "w-8 h-8" : "w-5 h-5"} rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors`}>
+                        <Plus className={isSectionMode ? "w-4 h-4" : "w-2.5 h-2.5"} />
                       </button>
                     </div>
-                    <div className="w-10 text-right text-[10px] text-gray-500">{fmt(item.totalPrice)}</div>
+                    <div className={`w-10 text-right ${isSectionMode ? "text-xs" : "text-[10px]"} text-gray-500`}>{fmt(item.totalPrice)}</div>
                     <div className="w-12 flex items-center justify-end gap-0.5">
-                      <span className="text-xs font-bold text-gray-800">{fmt(item.totalPrice * item.quantity)}</span>
+                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold text-gray-800`}>{fmt(item.totalPrice * item.quantity)}</span>
                     </div>
                     <button onClick={() => removeFromCart(item.cartKey)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <button disabled={isOff("editItem")} onClick={() => go("editItem", "Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Edit2 className="w-2.5 h-2.5" />Edit
-                      {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
-                    </button>
+                    {/* Open items (id < 0) have no menu row to edit against — remove and re-add instead */}
+                    {item.id > 0 && (
+                      <button disabled={isOff("editItem")} onClick={() => go("editItem", "Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Edit2 className="w-2.5 h-2.5" />Edit
+                        {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                      </button>
+                    )}
                     <button disabled={isOff("removeItem")} onClick={() => go("removeItem", "Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
                       <Trash2 className="w-2.5 h-2.5" />Remove
                       {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                     </button>
+                    {/* Section counter: move this line between Eating Here ↔ Parcel (per-item, like tables) */}
+                    {isSectionMode && (
+                      <button
+                        onClick={() => flipItemMode(item.cartKey)}
+                        className={`${isSectionMode ? "text-xs" : "text-[10px]"} flex items-center gap-0.5 transition-colors font-semibold ${
+                          (item.serviceMode ?? "dinein") === "pickup"
+                            ? "text-green-600 hover:text-green-700"
+                            : "text-amber-500 hover:text-amber-700"
+                        }`}
+                      >
+                        {(item.serviceMode ?? "dinein") === "pickup" ? "🍽 Make Eating Here" : "🥡 Make Parcel"}
+                      </button>
+                    )}
                     {/* Parcel toggle only for dine-in items — pickup/delivery already add a container charge per item */}
                     {!isDeliveryOrPickup && (item.serviceMode ?? "dinein") === "dinein" && (
                       <button
@@ -2136,7 +2323,13 @@ export default function POS() {
               );
 
               if (isTableSession) {
-                const modeConfig: Record<ItemServiceMode, { label: string; headerCls: string }> = {
+                // Section counters use the same per-mode grouping as tables, with
+                // counter-friendly labels (Eating Here / Parcel instead of Dine-In / Pickup).
+                const modeConfig: Record<ItemServiceMode, { label: string; headerCls: string }> = isSectionMode ? {
+                  dinein:   { label: "🍽 Eating Here", headerCls: "text-green-700 border-green-200 bg-green-50"  },
+                  pickup:   { label: "🥡 Parcel",      headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
+                  delivery: { label: "🥡 Parcel",      headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
+                } : {
                   dinein:   { label: "🍽 Dine-In",  headerCls: "text-green-700 border-green-200 bg-green-50"  },
                   pickup:   { label: "📦 Pickup",   headerCls: "text-blue-700  border-blue-200  bg-blue-50"   },
                   delivery: { label: "🛵 Delivery", headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
@@ -2194,8 +2387,8 @@ export default function POS() {
             style={{ gridTemplateRows: summaryOpen ? "1fr" : "0fr" }}
           >
            <div className="overflow-hidden">
-          {/* Totals */}
-          <div className="md:border-t px-3 py-2 space-y-1" style={{ background: "var(--paper-50)" }}>
+          {/* Totals — section counters get their own breakdown inside SectionActionBar */}
+          {!isSectionMode && <div className="md:border-t px-3 py-2 space-y-1" style={{ background: "var(--paper-50)" }}>
             <div className="flex justify-between text-xs text-gray-500">
               <span>Subtotal</span>
               <span className="font-medium text-gray-700">{fmt(subtotal)}</span>
@@ -2245,7 +2438,7 @@ export default function POS() {
               <span className="text-gray-800">Total</span>
               <span className="text-green-600 text-base">{fmt(grandTotal)}</span>
             </div>
-          </div>
+          </div>}
 
           <SettlementDialog
             open={showSettleDialog}
@@ -2270,6 +2463,27 @@ export default function POS() {
 
           {/* Action buttons */}
           <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-1.5">
+            {isSectionMode ? (
+              /* Quick-POS section: the grand total (tax + container included) lives ON the
+                 Print Bill button — staff read that number to the customer, never a guess. */
+              <SectionActionBar
+                subtotal={subtotal}
+                tax={tax}
+                taxRatePct={settings?.taxRate ?? 18}
+                containerCharge={appliedContainerCharge}
+                containerRate={containerRate}
+                containerCount={containerQty + parcelCount}
+                grandTotal={grandTotal}
+                hasItems={hasItems}
+                isPending={isPending}
+                printLocked={isOff("printBill")}
+                settleLocked={isOff("settleOrder")}
+                settleLabel={settlePhase === "printing" ? "Printing…" : (settleMutation.isPending || settlePhase === "processing") ? "…" : "Settle"}
+                onPrintBill={() => go("printBill", "Print Bill", handleSaveAndPrint)}
+                onSettle={() => go("settleOrder", "Settle Order", handleSettle)}
+              />
+            ) : (
+              <>
             {/* Split + Complimentary */}
             <div className="grid grid-cols-2 gap-1">
               <button
@@ -2338,6 +2552,8 @@ export default function POS() {
                 {isOff("settleOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>
+              </>
+            )}
           </div>
            </div>
           </div>

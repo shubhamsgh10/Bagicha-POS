@@ -178,6 +178,12 @@ export class PrintQueue {
           orderId: job.orderId,
           error: job.lastError,
         });
+        // Give the durable job back to the pending pool so another station can rescue it.
+        if (job.printJob.jobId) {
+          this.release(job.printJob.jobId, job.lastError).catch((e) =>
+            console.warn(`[printQueue] release failed for job ${job.id}:`, e),
+          );
+        }
       }
     }
 
@@ -186,6 +192,20 @@ export class PrintQueue {
     // Process next job if any
     const hasMore = this.queue.some((j) => j.status === "pending");
     if (hasMore) setImmediate(() => this.processNext());
+  }
+
+  private async release(jobId: number, error?: string): Promise<void> {
+    const base = this.getApiBase();
+    const cookieHeader = await this.getCookieHeader();
+    const res = await fetch(`${base}/api/print/jobs/${jobId}/release`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify({ error }),
+    });
+    if (!res.ok) throw new Error(`Release failed: ${res.status}`);
   }
 
   private async ack(orderId: number, type: "kot" | "bill", jobId?: number): Promise<void> {
