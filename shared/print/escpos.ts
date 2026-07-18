@@ -43,6 +43,45 @@ export function centered(str: string, width = 32): Buffer {
   return line(" ".repeat(pad) + str);
 }
 
+/**
+ * Greedy word-wrap into lines no wider than `width`. Breaks at spaces so a
+ * trailing "(Small)"-style suffix never gets orphaned mid-word onto its own
+ * line; a single word longer than `width` (no spaces to break at) falls back
+ * to a hard character break so it can never overflow the column.
+ */
+export function wrapWords(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (word.length > width) {
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+      let rest = word;
+      while (rest.length > width) {
+        lines.push(rest.substring(0, width));
+        rest = rest.substring(width);
+      }
+      current = rest;
+      continue;
+    }
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > width) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 export function build(...parts: Buffer[]): Buffer {
   return Buffer.concat(parts);
 }

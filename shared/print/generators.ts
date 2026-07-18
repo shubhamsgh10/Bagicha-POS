@@ -254,18 +254,14 @@ export function generateBillBuffer(params: {
     const priceStr = unitPrice.toFixed(2).padStart(9);
     const amtStr   = lineAmt.toFixed(2).padStart(8);
 
-    let remaining = fullName;
-    let first = true;
-    while (remaining.length > 0) {
-      const chunk = remaining.substring(0, IW);
-      remaining = remaining.substring(IW);
-      if (first) {
+    const nameLines = E.wrapWords(fullName, IW);
+    nameLines.forEach((chunk, i) => {
+      if (i === 0) {
         parts.push(E.line(" ".repeat(M) + `${chunk.padEnd(IW)} ${qtyStr} ${priceStr} ${amtStr}`));
-        first = false;
       } else {
         parts.push(bodyLine(chunk));
       }
-    }
+    });
 
     if (billSettings.showAddons && item.specialInstructions) {
       parts.push(bodyLine(`  [${item.specialInstructions}]`));
@@ -296,9 +292,6 @@ export function generateBillBuffer(params: {
   }
   parts.push(E.divider("=", W));
   parts.push(E.BOLD_ON, tw("", `Grand Total  ${sym}${rounded.toFixed(2)}`), E.BOLD_OFF);
-  if (order.paymentMethod) {
-    parts.push(tw("", order.paymentMethod.toUpperCase()));
-  }
   parts.push(E.divider("=", W));
 
   if (restaurant.footerNote) {

@@ -214,14 +214,13 @@ function billTextLines(params: {
   for (const item of displayItems) {
     const fullName = item.size ? `${item.name} (${item.size})` : item.name;
     const unitPrice = parseFloat(item.price);
-    let remaining = fullName; let first = true;
-    while (remaining.length > 0) {
-      const chunk = remaining.substring(0, IW); remaining = remaining.substring(IW);
-      if (first) {
+    E.wrapWords(fullName, IW).forEach((chunk, i) => {
+      if (i === 0) {
         lines.push(body(`${chunk.padEnd(IW)} ${String(item.quantity).padStart(4)} ${unitPrice.toFixed(2).padStart(9)} ${(unitPrice * item.quantity).toFixed(2).padStart(8)}`));
-        first = false;
-      } else { lines.push(body(chunk)); }
-    }
+      } else {
+        lines.push(body(chunk));
+      }
+    });
     if (billSettings.showAddons && item.specialInstructions) lines.push(body(`  [${item.specialInstructions}]`));
     totalQty += item.quantity;
   }
@@ -241,7 +240,6 @@ function billTextLines(params: {
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) lines.push(two("", `Round off  ${roundOff.toFixed(2)}`));
   lines.push(div("="));
   lines.push(two("", `Grand Total  ${sym}${rounded.toFixed(2)}`));
-  if (order.paymentMethod) lines.push(two("", order.paymentMethod.toUpperCase()));
   lines.push(div("="));
   if (restaurant.footerNote) lines.push(center(restaurant.footerNote.substring(0, W)));
   return lines;

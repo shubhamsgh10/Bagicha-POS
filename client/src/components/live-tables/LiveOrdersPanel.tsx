@@ -179,13 +179,17 @@ function RailSection({ type, orders }: { type: "pickup" | "delivery"; orders: Li
   };
 
   return (
-    // pointer-events-auto so this section receives mouse events through the parent's pointer-events-none
+    // pointer-events-auto so this section receives mouse events through the parent's pointer-events-none.
+    // relative + the panel below being position:absolute keeps this section's box exactly tab-sized at
+    // all times — opening the panel must never change this wrapper's height, or it reflows the sibling
+    // pickup/delivery section in the parent's flex-col stack (the "tabs move relative to each other" bug).
     <div
-      className="flex flex-row items-start pointer-events-auto"
+      className="relative pointer-events-auto"
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
     >
-      {/* Expanding panel — sits LEFT of the tab, grows toward the left */}
+      {/* Expanding panel — absolute overlay, sits LEFT of the tab (right-10 = tab's own w-10), grows
+          toward the left. Absolute (not a flex sibling) so it never affects this wrapper's layout height. */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -194,7 +198,7 @@ function RailSection({ type, orders }: { type: "pickup" | "delivery"; orders: Li
             animate={{ width: PANEL_W, opacity: 1 }}
             exit={{ width: 0, opacity: 0, transition: { duration: 0.18, ease: "easeInOut" } }}
             transition={{ type: "spring", stiffness: 320, damping: 28 }}
-            className="overflow-hidden rounded-l-2xl shadow-2xl"
+            className="absolute right-10 top-0 overflow-hidden rounded-l-2xl shadow-2xl"
             style={{
               borderLeft:     "1px solid rgba(229,231,235,0.75)",
               borderTop:      "1px solid rgba(229,231,235,0.75)",
