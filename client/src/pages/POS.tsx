@@ -826,7 +826,20 @@ export default function POS() {
     },
     onError: (error: any) => {
       setSettlePhase("idle");
-      toast({ title: "Settlement failed", description: error.message || "Something went wrong", variant: "destructive" });
+      // apiRequest() throws `${status}: ${rawBodyText}` — for our JSON error
+      // responses that body is `{"error": "..."}`; pull the message back out so
+      // an already-settled order shows its actual cause, not a raw status dump.
+      let description = error.message || "Something went wrong";
+      const jsonStart = description.indexOf("{");
+      if (jsonStart !== -1) {
+        try {
+          const parsed = JSON.parse(description.slice(jsonStart));
+          if (parsed?.error) description = parsed.error;
+        } catch {
+          /* leave the raw message as-is */
+        }
+      }
+      toast({ title: "Settlement failed", description, variant: "destructive" });
     },
   });
 

@@ -1887,11 +1887,20 @@ export async function registerRoutes(
       if (customerPhone) updateData.customerPhone = customerPhone;
 
       // Conditional settle guards against a concurrent double-settlement: if another
-      // request already flipped this order out of 'pending', this is a no-op and the
-      // one-time side effects below are skipped.
+      // request already flipped this order out of 'pending', this is a no-op — the
+      // one-time side effects below are skipped, and (unlike before) the client is
+      // told explicitly rather than getting a 200 that silently discards whatever
+      // payment method THIS request tried to record. A double-tap on Settle, or a
+      // retried request after a slow/timed-out first attempt, used to look like
+      // success while quietly keeping the first attempt's (possibly different)
+      // payment method — printing the bill would then show that stale method.
       const order = await storage.settleOrderIfUnpaid(id, updateData);
       if (!order) {
-        return res.json(existingOrder);
+        return res.status(409).json({
+          error: `Order already settled as ${(existingOrder as any).paymentMethod ?? "cash"} — this ${primaryMethod} payment was not recorded.`,
+          alreadySettled: true,
+          order: existingOrder,
+        });
       }
 
       if ((order as any).tableId) {
