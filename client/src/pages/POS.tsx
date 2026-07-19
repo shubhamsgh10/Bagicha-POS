@@ -927,10 +927,6 @@ export default function POS() {
   };
 
   const removeFromCart = (cartKey: string) => setCartItems(prev => prev.filter(c => c.cartKey !== cartKey));
-  const updateQty = (cartKey: string, qty: number) => {
-    if (qty <= 0) { removeFromCart(cartKey); return; }
-    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: qty } : c));
-  };
   const toggleParcel = (cartKey: string) =>
     setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, parcelLeftover: !c.parcelLeftover } : c));
 
@@ -991,9 +987,12 @@ export default function POS() {
   // In table sessions (and quick-POS sections), container charge applies only to
   // pickup/delivery items (not dine-in items) — same per-item logic either way.
   const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId || isSectionMode);
+  // A container is a physical unit — a 0.5 qty still needs one whole container, so
+  // each line rounds up individually (ceil-then-sum, not sum-then-ceil: two separate
+  // 0.5-qty lines need two containers, not one).
   const containerQty = isTableSession
-    ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + i.quantity, 0)
-    : (isDeliveryOrPickup ? totalItemQty : 0);
+    ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + Math.ceil(i.quantity), 0)
+    : (isDeliveryOrPickup ? cartItems.reduce((s, i) => s + Math.ceil(i.quantity), 0) : 0);
   // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty).
   // Never applied to pickup/delivery orders — those already charge a container per item.
   const containerRate = Number(settings?.containerCharge ?? 15);
@@ -1028,7 +1027,14 @@ export default function POS() {
       name: c.size ? `${c.name} (${c.size})` : c.name,
       size: c.size || null,
       addons: c.addons,
-      serviceMode: c.serviceMode ?? "dinein",
+      // Table/section sessions track serviceMode per item (toggled via the parcel UI).
+      // A standalone order has no such per-item toggle — activeItemMode never leaves
+      // "dinein" there — so stamp it from the order type instead, or the server's
+      // per-item container-charge check (shared/orderPricing.ts) silently sees every
+      // line as dine-in and drops the container charge from the persisted total.
+      serviceMode: isTableSession
+        ? (c.serviceMode ?? "dinein")
+        : (isDeliveryOrPickup ? (currentOrderType === "delivery" ? "delivery" : "pickup") : "dinein"),
       parcelLeftover: c.parcelLeftover ?? false,
     }));
 
@@ -2262,14 +2268,12 @@ export default function POS() {
                         <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel (+{fmt(containerRate)})</div>
                       )}
                     </div>
-                    <div className={`flex items-center gap-0.5 ${isSectionMode ? "w-24" : "w-16"} justify-center`}>
-                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity - 0.5) * 10) / 10)} className={`${isSectionMode ? "w-8 h-8" : "w-5 h-5"} rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors`}>
-                        <Minus className={isSectionMode ? "w-4 h-4" : "w-2.5 h-2.5"} />
-                      </button>
-                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold w-7 text-center`}>{item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}</span>
-                      <button onClick={() => updateQty(item.cartKey, Math.round((item.quantity + 0.5) * 10) / 10)} className={`${isSectionMode ? "w-8 h-8" : "w-5 h-5"} rounded bg-gray-100 hover:bg-green-100 hover:text-green-600 flex items-center justify-center transition-colors`}>
-                        <Plus className={isSectionMode ? "w-4 h-4" : "w-2.5 h-2.5"} />
-                      </button>
+                    {/* Quantity is display-only here — direct inline edits bypassed the deliberate
+                        Edit-Item flow with no gating at all; change quantity via Edit instead. */}
+                    <div className={`flex items-center justify-center ${isSectionMode ? "w-24" : "w-16"}`}>
+                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold`}>
+                        {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}
+                      </span>
                     </div>
                     <div className={`w-10 text-right ${isSectionMode ? "text-xs" : "text-[10px]"} text-gray-500`}>{fmt(item.totalPrice)}</div>
                     <div className="w-12 flex items-center justify-end gap-0.5">

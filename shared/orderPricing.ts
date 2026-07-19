@@ -82,7 +82,7 @@ export function priceResolved(
     subtotal += unitPrice * qty;
 
     const sm = it.serviceMode ?? null;
-    if (sm === "pickup" || sm === "delivery") containerCharge += qty * containerRate;
+    if (sm === "pickup" || sm === "delivery") containerCharge += Math.ceil(qty) * containerRate;
     else if (it.parcelLeftover) containerCharge += containerRate;
 
     lines.push({
