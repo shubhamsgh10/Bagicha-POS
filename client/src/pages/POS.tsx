@@ -202,6 +202,11 @@ export default function POS() {
   const [showOpenItemDialog, setShowOpenItemDialog] = useState(false);
   const [openItemName, setOpenItemName] = useState("");
   const [openItemPrice, setOpenItemPrice] = useState("");
+  const [openItemQty, setOpenItemQty] = useState(1);
+  const [openItemQtyRaw, setOpenItemQtyRaw] = useState("1");
+  // Same dialog doubles as the editor for an existing open item — has no menu row to
+  // edit against via openEditPicker, so this is its only path to change qty/name/price.
+  const [editingOpenItemCartKey, setEditingOpenItemCartKey] = useState<string | null>(null);
   const openItemSeqRef = useRef(-(Date.now() % 1_000_000_000));
   // Active item mode — only relevant in table sessions; controls serviceMode of newly added items.
   // Section counters reuse it as the big Eating Here/Parcel toggle: "pickup" = parcel
@@ -933,17 +938,35 @@ export default function POS() {
   // Open item: off-menu line typed by staff. Always its own cart line (never merged),
   // under a fresh negative id so the server's menuItemId-keyed KOT delta stays correct.
   const openItemValid = openItemName.trim().length > 0 && parseFloat(openItemPrice) > 0;
-  const closeOpenItemDialog = () => { setShowOpenItemDialog(false); setOpenItemName(""); setOpenItemPrice(""); };
+  const closeOpenItemDialog = () => {
+    setShowOpenItemDialog(false);
+    setOpenItemName(""); setOpenItemPrice(""); setOpenItemQty(1); setOpenItemQtyRaw("1");
+    setEditingOpenItemCartKey(null);
+  };
+  const openOpenItemEditor = (item: CartItem) => {
+    setEditingOpenItemCartKey(item.cartKey);
+    setOpenItemName(item.name);
+    setOpenItemPrice(String(item.basePrice));
+    setOpenItemQty(item.quantity);
+    setOpenItemQtyRaw(String(item.quantity));
+    setShowOpenItemDialog(true);
+  };
   const addOpenItem = () => {
     if (!openItemValid) return;
     const price = parseFloat(openItemPrice);
-    openItemSeqRef.current -= 1;
-    const id = openItemSeqRef.current;
-    setCartItems(prev => [...prev, {
-      cartKey: `open-${id}-${activeItemMode}`,
-      id, name: openItemName.trim(), basePrice: price, addons: [], variants: {},
-      notes: "", totalPrice: price, quantity: 1, serviceMode: activeItemMode,
-    }]);
+    if (editingOpenItemCartKey) {
+      setCartItems(prev => prev.map(c => c.cartKey === editingOpenItemCartKey
+        ? { ...c, name: openItemName.trim(), basePrice: price, totalPrice: price, quantity: openItemQty }
+        : c));
+    } else {
+      openItemSeqRef.current -= 1;
+      const id = openItemSeqRef.current;
+      setCartItems(prev => [...prev, {
+        cartKey: `open-${id}-${activeItemMode}`,
+        id, name: openItemName.trim(), basePrice: price, addons: [], variants: {},
+        notes: "", totalPrice: price, quantity: openItemQty, serviceMode: activeItemMode,
+      }]);
+    }
     closeOpenItemDialog();
   };
 
@@ -1231,12 +1254,16 @@ export default function POS() {
       )}
 
 
-      {/* ── Open Item Dialog (off-menu item: staff types name + price) ────────── */}
+      {/* ── Open Item Dialog (off-menu item: staff types name + price; also doubles as
+             the editor for an existing open item, which has no menu row to edit against
+             via openEditPicker) ────────────────────────────────────────────────────── */}
       <Dialog open={showOpenItemDialog} onOpenChange={(o) => { if (!o) closeOpenItemDialog(); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Open Item</DialogTitle>
-            <DialogDescription>Add an item that's not on the menu.</DialogDescription>
+            <DialogTitle>{editingOpenItemCartKey ? "Edit Open Item" : "Open Item"}</DialogTitle>
+            <DialogDescription>
+              {editingOpenItemCartKey ? "Update this off-menu item." : "Add an item that's not on the menu."}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
             <div>
@@ -1266,6 +1293,37 @@ export default function POS() {
                 />
               </div>
             </div>
+            <div>
+              <label className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wide">Quantity *</label>
+              <div className="flex items-center gap-3 mt-1">
+                <button
+                  onClick={() => { const next = Math.max(0.5, Math.round((openItemQty - 0.5) * 10) / 10); setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
+                  className="w-9 h-9 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition-colors"
+                >
+                  <Minus className="w-4 h-4 text-gray-700" />
+                </button>
+                <input
+                  type="number"
+                  step="any"
+                  min="0.5"
+                  value={openItemQtyRaw}
+                  onChange={(e) => setOpenItemQtyRaw(e.target.value)}
+                  onBlur={(e) => {
+                    const v = parseFloat(e.target.value);
+                    const safe = !isNaN(v) && v >= 0.5 ? Math.round(v * 100) / 100 : openItemQty;
+                    setOpenItemQty(safe); setOpenItemQtyRaw(String(safe));
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  className="text-lg font-bold text-gray-800 w-16 text-center border border-gray-200 rounded-lg outline-none focus:border-green-400 bg-white py-1"
+                />
+                <button
+                  onClick={() => { const next = Math.round((openItemQty + 0.5) * 10) / 10; setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
+                  className="w-9 h-9 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="outline" size={isSectionMode ? "default" : "sm"} onClick={closeOpenItemDialog}>Cancel</Button>
               <Button
@@ -1274,7 +1332,7 @@ export default function POS() {
                 onClick={addOpenItem}
                 className="bg-[var(--green-700)] text-white hover:opacity-90"
               >
-                Save
+                {editingOpenItemCartKey ? "Update" : "Save"}
               </Button>
             </div>
           </div>
@@ -1793,11 +1851,11 @@ export default function POS() {
           <DialogContent className="max-w-md p-0 gap-0 overflow-hidden rounded-2xl">
 
             {/* Header */}
-            <div className="bg-green-600 px-5 py-4">
-              <DialogTitle className="text-white font-bold text-lg leading-tight">
+            <div className="bg-white border-b border-gray-100 px-5 py-4">
+              <DialogTitle className="text-gray-900 font-bold text-lg leading-tight">
                 {modal.item.name}
               </DialogTitle>
-              <DialogDescription className="text-green-100 text-sm mt-0.5">
+              <DialogDescription className="text-gray-500 text-sm mt-0.5">
                 Base price: {fmt(parseFloat(modal.item.price || "0"))}
                 {modal.isEdit && " · Editing cart item"}
               </DialogDescription>
@@ -1822,12 +1880,12 @@ export default function POS() {
                           onClick={() => setModal(m => m ? { ...m, size: { size: s.size, price: Number(s.price) } } : m)}
                           className={`py-2.5 px-2 rounded-xl border-2 text-center transition-all ${
                             chosen
-                              ? "border-green-500 bg-green-50"
+                              ? "border-[var(--green-700)] bg-[var(--success-bg)]"
                               : "border-gray-200 hover:border-green-300 bg-white"
                           }`}
                         >
-                          <div className={`text-xs font-bold ${chosen ? "text-green-700" : "text-gray-700"}`}>{s.size}</div>
-                          <div className={`text-xs font-semibold mt-0.5 ${chosen ? "text-green-600" : "text-gray-500"}`}>{fmt(Number(s.price))}</div>
+                          <div className={`text-xs font-bold ${chosen ? "text-[var(--green-700)]" : "text-gray-700"}`}>{s.size}</div>
+                          <div className={`text-xs font-semibold mt-0.5 ${chosen ? "text-[var(--green-700)]" : "text-gray-500"}`}>{fmt(Number(s.price))}</div>
                         </button>
                       );
                     })}
@@ -1854,16 +1912,16 @@ export default function POS() {
                             return { ...m, addons: has ? m.addons.filter(x => x.name !== a.name) : [...m.addons, { name: a.name, price: Number(a.price) }] };
                           })}
                           className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 transition-all text-left ${
-                            checked ? "border-green-500 bg-green-50" : "border-gray-200 hover:border-green-200 bg-white"
+                            checked ? "border-[var(--green-700)] bg-[var(--success-bg)]" : "border-gray-200 hover:border-green-300 bg-white"
                           }`}
                         >
                           <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-green-500 bg-green-500" : "border-gray-300"}`}>
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${checked ? "border-[var(--green-700)] bg-[var(--green-700)]" : "border-gray-300"}`}>
                               {checked && <span className="text-white text-[9px] font-bold">✓</span>}
                             </div>
-                            <span className={`text-sm font-medium ${checked ? "text-green-800" : "text-gray-700"}`}>{a.name}</span>
+                            <span className={`text-sm font-medium ${checked ? "text-[var(--green-700)]" : "text-gray-700"}`}>{a.name}</span>
                           </div>
-                          <span className={`text-sm font-bold ${checked ? "text-green-600" : "text-gray-400"}`}>+{fmt(Number(a.price))}</span>
+                          <span className={`text-sm font-bold ${checked ? "text-[var(--green-700)]" : "text-gray-400"}`}>+{fmt(Number(a.price))}</span>
                         </button>
                       );
                     })}
@@ -1889,11 +1947,11 @@ export default function POS() {
                           key={opt.name}
                           onClick={() => setModal(m => m ? { ...m, variants: { ...m.variants, [group.group]: opt.name } } : m)}
                           className={`py-2.5 px-2 rounded-xl border-2 text-center transition-all ${
-                            chosen ? "border-green-500 bg-green-50" : "border-gray-200 hover:border-green-300 bg-white"
+                            chosen ? "border-[var(--green-700)] bg-[var(--success-bg)]" : "border-gray-200 hover:border-green-300 bg-white"
                           }`}
                         >
-                          <div className={`text-xs font-bold ${chosen ? "text-green-700" : "text-gray-700"}`}>{opt.name}</div>
-                          {opt.price ? <div className={`text-[10px] font-semibold mt-0.5 ${chosen ? "text-green-600" : "text-gray-400"}`}>+{fmt(Number(opt.price))}</div> : null}
+                          <div className={`text-xs font-bold ${chosen ? "text-[var(--green-700)]" : "text-gray-700"}`}>{opt.name}</div>
+                          {opt.price ? <div className={`text-[10px] font-semibold mt-0.5 ${chosen ? "text-[var(--green-700)]" : "text-gray-400"}`}>+{fmt(Number(opt.price))}</div> : null}
                         </button>
                       );
                     })}
@@ -1913,7 +1971,7 @@ export default function POS() {
                     value={modal.notes}
                     onChange={(e) => setModal(m => m ? { ...m, notes: e.target.value } : m)}
                     rows={2}
-                    className="w-full border-2 border-gray-200 focus:border-green-400 rounded-xl px-3 py-2 text-sm outline-none resize-none placeholder-gray-300 text-gray-700 transition-colors"
+                    className="w-full border-2 border-gray-200 focus:border-[var(--ring)] rounded-xl px-3 py-2 text-sm outline-none resize-none placeholder-gray-300 text-gray-700 transition-colors"
                   />
                 </div>
               )}
@@ -1926,12 +1984,12 @@ export default function POS() {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => {
-                      const next = Math.max(0.5, modal.qty - 1);
+                      const next = Math.max(0.5, Math.round((modal.qty - 0.5) * 10) / 10);
                       setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
                     }}
-                    className="w-9 h-9 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition-colors"
+                    className="w-9 h-9 rounded-full bg-white border-2 border-[var(--green-700)] hover:bg-[var(--success-bg)] flex items-center justify-center transition-colors"
                   >
-                    <Minus className="w-4 h-4 text-gray-700" />
+                    <Minus className="w-4 h-4 text-[var(--green-700)]" />
                   </button>
                   <input
                     type="number"
@@ -1947,22 +2005,22 @@ export default function POS() {
                     onKeyDown={e => {
                       if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                     }}
-                    className="text-xl font-bold text-gray-800 w-14 text-center border border-gray-200 rounded-lg outline-none focus:border-green-400 bg-white py-0.5"
+                    className="text-xl font-bold text-gray-800 w-14 text-center border border-gray-200 rounded-lg outline-none focus:border-[var(--ring)] bg-white py-0.5"
                   />
                   <button
                     onClick={() => {
-                      const next = modal.qty + 1;
+                      const next = Math.round((modal.qty + 0.5) * 10) / 10;
                       setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
                     }}
-                    className="w-9 h-9 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center transition-colors"
+                    className="w-9 h-9 rounded-full bg-white border-2 border-[var(--green-700)] hover:bg-[var(--success-bg)] flex items-center justify-center transition-colors"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4 text-[var(--green-700)]" />
                   </button>
                 </div>
                 {/* Live total */}
                 <div className="text-right">
                   <div className="text-[10px] text-gray-400 uppercase font-semibold">Total</div>
-                  <div className="text-2xl font-bold text-green-700">{fmt(modalUnitTotal * modal.qty)}</div>
+                  <div className="text-2xl font-bold text-[var(--green-700)]">{fmt(modalUnitTotal * modal.qty)}</div>
                   {modal.qty !== 1 && (
                     <div className="text-[10px] text-gray-400">{fmt(modalUnitTotal)} × {modal.qty % 1 === 0 ? modal.qty : modal.qty.toFixed(1)}</div>
                   )}
@@ -1972,7 +2030,7 @@ export default function POS() {
               <button
                 disabled={!!(modalSizeBlocked || modalVariantBlocked)}
                 onClick={confirmModal}
-                className="w-full py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-colors"
+                className="w-full py-3 bg-[var(--green-700)] hover:opacity-90 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-colors"
               >
                 {modalSizeBlocked
                   ? "Select a size to continue"
@@ -2284,9 +2342,15 @@ export default function POS() {
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    {/* Open items (id < 0) have no menu row to edit against — remove and re-add instead */}
-                    {item.id > 0 && (
+                    {/* Open items (id < 0) have no menu row for openEditPicker — the Open
+                        Item dialog doubles as their editor instead. */}
+                    {item.id > 0 ? (
                       <button disabled={isOff("editItem")} onClick={() => go("editItem", "Edit Item", () => openEditPicker(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <Edit2 className="w-2.5 h-2.5" />Edit
+                        {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
+                      </button>
+                    ) : (
+                      <button disabled={isOff("editItem")} onClick={() => go("editItem", "Edit Item", () => openOpenItemEditor(item))} className="text-[10px] text-blue-400 hover:text-blue-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
                         <Edit2 className="w-2.5 h-2.5" />Edit
                         {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                       </button>
