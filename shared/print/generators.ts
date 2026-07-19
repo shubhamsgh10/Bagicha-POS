@@ -8,6 +8,9 @@ export interface KOTItem {
   size?: string | null;
   instructions?: string | null;
   serviceMode?: string | null;
+  /** Present when `quantity` is the incremental amount added to an existing line
+   *  (a quantity increase since the last print), not a genuinely new item. */
+  previousQty?: number;
 }
 
 export interface BillRestaurantInfo {
@@ -69,8 +72,12 @@ export function generateKOTBuffer(params: {
 
   const renderKotItem = (item: KOTItem) => {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
-    const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
+    const isIncrement = item.previousQty != null;
+    const qty = isIncrement ? `[+${item.quantity}]` : `[ ${String(item.quantity).padStart(2, "0")} ]`;
     parts.push(E.BOLD_ON, bodyLine(`${qty}  ${label}`), E.BOLD_OFF);
+    if (isIncrement) {
+      parts.push(bodyLine(`       now ${item.previousQty! + item.quantity} (was ${item.previousQty})`));
+    }
     if (params.kotSettings.printAddons && item.instructions) {
       parts.push(bodyLine(`       >> ${item.instructions}`));
     }

@@ -58,7 +58,7 @@ function kotTextLines(params: {
   tableNumber: string | null;
   isReprint: boolean;
   isDelta: boolean;
-  newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null; serviceMode?: string | null }>;
+  newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null; serviceMode?: string | null; previousQty?: number }>;
   modifiedItems: Array<{ name: string; quantity: number; size?: string | null; previousQty: number }>;
   cancelledItems: Array<{ name: string; quantity: number; size?: string | null }>;
   kotSettings: import("./settingsStore").KOTPrintSettings;
@@ -93,8 +93,12 @@ function kotTextLines(params: {
 
   const renderKotItem = (item: (typeof params.newItems)[0]) => {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
-    const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
+    const isIncrement = item.previousQty != null;
+    const qty = isIncrement ? `[+${item.quantity}]` : `[ ${String(item.quantity).padStart(2, "0")} ]`;
     lines.push(body(`${qty}  ${label}`));
+    if (isIncrement) {
+      lines.push(body(`       now ${item.previousQty! + item.quantity} (was ${item.previousQty})`));
+    }
     if (params.kotSettings.printAddons && item.instructions) {
       lines.push(body(`       >> ${item.instructions}`));
     }
@@ -294,7 +298,7 @@ export function registerPrintRoutes(app: Express): void {
         ]),
       );
 
-      let newItems: Array<SnapshotItem & { instructions?: string | null }> = currentSnapshot.map((i) => ({
+      let newItems: Array<SnapshotItem & { instructions?: string | null; previousQty?: number }> = currentSnapshot.map((i) => ({
         ...i,
         instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`)?.instructions ?? null,
       }));

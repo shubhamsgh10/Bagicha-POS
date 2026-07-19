@@ -12,7 +12,9 @@ export interface KotSnapshot {
 }
 
 export interface KotDelta {
-  newItems: SnapshotItem[];
+  // previousQty is present when this "new" entry is actually the incremental
+  // amount added to an existing line (quantity increase) — see computeDelta.
+  newItems: Array<SnapshotItem & { previousQty?: number }>;
   modifiedItems: Array<SnapshotItem & { previousQty: number }>;
   cancelledItems: SnapshotItem[];
 }
@@ -29,7 +31,7 @@ export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): Kot
     currentMap.set(snapKey(item), item);
   }
 
-  const newItems: SnapshotItem[] = [];
+  const newItems: Array<SnapshotItem & { previousQty?: number }> = [];
   const modifiedItems: Array<SnapshotItem & { previousQty: number }> = [];
   const cancelledItems: SnapshotItem[] = [];
 
@@ -38,7 +40,10 @@ export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): Kot
     if (!prev) {
       newItems.push(item);
     } else if (item.quantity > prev.quantity) {
-      newItems.push({ ...item, quantity: item.quantity - prev.quantity });
+      // Kitchen only needs to cook the increment, not redo the whole line — but tag
+      // it with previousQty so the ticket can show "+0.5 (now 1, was 0.5)" instead of
+      // a bare quantity indistinguishable from a genuinely fresh order of that size.
+      newItems.push({ ...item, quantity: item.quantity - prev.quantity, previousQty: prev.quantity });
     } else if (item.quantity < prev.quantity) {
       modifiedItems.push({ ...item, previousQty: prev.quantity });
     }
