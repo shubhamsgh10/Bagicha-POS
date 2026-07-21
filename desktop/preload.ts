@@ -16,6 +16,8 @@ import {
 
 const electronAPI = {
   isElectron: true as const,
+  /** Static, no IPC round-trip needed — used to gate Windows-only checks (e.g. checkPrinterQueueExists). */
+  platform: process.platform,
 
   // ── Printing ────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,10 @@ const electronAPI = {
 
   refreshPrinters: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.REFRESH_PRINTERS),
+
+  /** Does a Windows print queue by this exact name exist on THIS machine right now? */
+  checkPrinterQueueExists: (queueName: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PRINTER_QUEUE_EXISTS, queueName),
 
   getQueueStatus: (): Promise<Array<{
     id: string;

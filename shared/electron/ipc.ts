@@ -19,6 +19,7 @@ export const IPC = {
   QUEUE_STATUS: "queue:status",
   PRINTER_HEALTH: "printer:health",
   PRINT_LOGS: "print:logs",
+  PRINTER_QUEUE_EXISTS: "printer:queue-exists",
 
   // ── Biometric attendance device (K30 Pro) ─────────────────────────────────
   ATTENDANCE_TEST: "attendance:test",       // renderer → main: test a device connection

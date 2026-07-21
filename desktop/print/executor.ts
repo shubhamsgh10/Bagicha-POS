@@ -10,6 +10,13 @@ export async function sendToNetworkPrinter(ip: string, port: number, data: Buffe
           reject(err);
           return;
         }
+        // Disarm the idle watchdog now that the write succeeded — previously this timer
+        // stayed armed and fired 5s later regardless, forcibly destroying the socket via
+        // .destroy() even after a successful send. A slower downstream hop (e.g. a phone
+        // bridging these bytes on to a Bluetooth printer) can take longer than 5s to finish
+        // draining the connection, so the late destroy() could cut that off mid-relay even
+        // though our own write had already completed cleanly.
+        socket.setTimeout(0);
         socket.end();
         resolve();
       });

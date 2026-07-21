@@ -14,6 +14,7 @@ import type {
 
 export interface ElectronAPI {
   readonly isElectron: true;
+  readonly platform: string;
 
   // ── Printing ──────────────────────────────────────────────────────────────
   print: (job: PrintJob) => Promise<PrintExecuteResult>;
@@ -22,6 +23,7 @@ export interface ElectronAPI {
   getVersion: () => Promise<string>;
 
   refreshPrinters: () => Promise<{ ok: boolean; error?: string }>;
+  checkPrinterQueueExists: (queueName: string) => Promise<boolean>;
 
   getQueueStatus: () => Promise<Array<{
     id: string;

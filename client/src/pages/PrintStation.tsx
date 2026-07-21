@@ -9,10 +9,10 @@ import {
   pollPendingJobs,
   getOwnedPrinterIds,
   setOwnedPrinterIds,
+  isStationEnabled,
+  setStationEnabled,
   type RemotePrintJob,
 } from "@/lib/printStationCore";
-
-const STATION_ENABLED_KEY = "printStation.enabled";
 
 interface JobLogEntry {
   job: RemotePrintJob;
@@ -56,13 +56,7 @@ export default function PrintStation() {
   const { toast } = useToast();
   const isElectron = !!window.electronAPI?.isElectron;
 
-  const [enabled, setEnabled] = useState(() => {
-    try {
-      return localStorage.getItem(STATION_ENABLED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [enabled, setEnabled] = useState(isStationEnabled);
   const [ownedIds, setOwnedIds] = useState<string[]>(() => getOwnedPrinterIds());
   const [log, setLog] = useState<JobLogEntry[]>([]);
 
@@ -93,11 +87,7 @@ export default function PrintStation() {
 
   const toggleStation = (next: boolean) => {
     setEnabled(next);
-    try {
-      localStorage.setItem(STATION_ENABLED_KEY, next ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
+    setStationEnabled(next);
   };
 
   const toggleOwned = (printerId: string) => {
@@ -189,8 +179,10 @@ export default function PrintStation() {
 
       {isElectron && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          This is the desktop app — it already prints its own jobs natively. Station mode is
-          for phones/tablets without a wired printer.
+          This is the desktop app — it already prints its own jobs natively, so Station Mode
+          above stays OFF here. The printer checklist below still matters though: leave a
+          printer unchecked if it isn't wired to this device (e.g. a phone/Bluetooth printer
+          routed through RawBT) so this desktop never tries to claim jobs meant for it.
         </div>
       )}
 
@@ -213,6 +205,13 @@ export default function PrintStation() {
           {enabled ? "ON" : "OFF"}
         </button>
       </div>
+
+      {!enabled && !isElectron && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 flex items-center gap-2">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          Station Mode is OFF — this device will not receive or print any jobs until you turn it ON above.
+        </div>
+      )}
 
       {/* Connection state */}
       <div className="flex items-center gap-2 text-xs text-gray-500 px-1">
