@@ -1,7 +1,22 @@
-import type { PrintApiResponse, PrintJob } from "@shared/print/types";
+import type { PrintApiResponse, PrintConfigSettings, PrintJob } from "@shared/print/types";
 import { apiUrl } from "@/lib/api";
+import { queryClient } from "@/lib/queryClient";
 import { printKOT, printOrderBill } from "@/lib/printBill";
-import { claimPrintJob, releasePrintJob, ownsPrinter } from "@/lib/printStationCore";
+import { claimPrintJob, releasePrintJob, ownsPrinter, canExecuteLocallyVerified } from "@/lib/printStationCore";
+
+/** Same rationale as usePrintJobBridge.ts: don't let this host claim a printer it can't
+ *  physically execute (e.g. a phone/RawBT-routed printer, or a printer wired to a
+ *  DIFFERENT Electron host that merely shares the same DB-stored windowsQueueName) —
+ *  reads the already-cached /api/settings query rather than a fresh fetch, since this
+ *  runs on every print tap. */
+async function canExecuteHere(printerId: string): Promise<boolean> {
+  const settings = queryClient.getQueryData<{ printSettings?: PrintConfigSettings }>(["/api/settings"]);
+  const printers = settings?.printSettings?.printers;
+  if (!printers) return true;
+  const printer = printers.find((p) => p.id === printerId);
+  if (!printer) return true;
+  return canExecuteLocallyVerified(printer);
+}
 
 export { claimPrintJob } from "@/lib/printStationCore";
 
@@ -69,10 +84,20 @@ export async function handlePrintResponse(
     let dispatched = 0;
     let lastError: string | undefined;
 
-    for (const pj of jobList) {
-      // Jobs for printers this station doesn't own were already broadcast — leave
-      // them for the owning station (outdoor tablet, other host) to claim.
-      if (pj.jobId && !ownsPrinter(pj.printerId)) {
+    // Category routing can produce several routed jobs from one tap (CLAUDE.md's
+    // "Multi-station printing") — run the executability checks for all of them
+    // concurrently rather than one-at-a-time, since each can involve a PowerShell
+    // round-trip (canExecuteLocallyVerified) and they're independent of each other.
+    const executable = await Promise.all(
+      jobList.map((pj) => (pj.jobId ? canExecuteHere(pj.printerId) : Promise.resolve(true))),
+    );
+
+    for (let i = 0; i < jobList.length; i++) {
+      const pj = jobList[i];
+      // Jobs for printers this station doesn't own — or can't physically execute
+      // (e.g. a phone/RawBT-routed printer) — were already broadcast; leave them for
+      // the owning station (outdoor tablet, other host) to claim.
+      if (pj.jobId && (!ownsPrinter(pj.printerId) || !executable[i])) {
         dispatched++;
         continue;
       }

@@ -463,6 +463,24 @@ ipcMain.handle(IPC.QUEUE_STATUS, () => printQueue?.getStatus() ?? []);
 
 ipcMain.handle(IPC.PRINT_LOGS, (_e, n?: number) => printLog?.getRecent(n) ?? []);
 
+/**
+ * Live, this-machine check for whether a Windows print queue by this exact name is
+ * REGISTERED right now — used by the renderer BEFORE claiming a broadcast print job, so a
+ * second Electron host (e.g. left open on a laptop with no printer wired up, and no queue
+ * by this name installed there at all) doesn't win the claim race purely because the shared
+ * DB config's `windowsQueueName` string looks valid on paper.
+ *
+ * This only proves the queue NAME exists on this machine — Get-Printer can't tell a real,
+ * connected printer apart from an orphaned/ghost queue with no hardware behind it. If the
+ * wrong machine happens to have a genuinely-registered queue under the identical name (e.g.
+ * the same printer model was set up there too, at some point), this check still passes there
+ * and can't disambiguate — only per-device `ownedPrinterIds` scoping fully closes that case.
+ */
+ipcMain.handle(IPC.PRINTER_QUEUE_EXISTS, async (_e, queueName: unknown) => {
+  if (typeof queueName !== "string" || !queueName.trim()) return false;
+  return windowsPrinterQueueExists(queueName).catch(() => false);
+});
+
 ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
   printerCache = null;
   try {
