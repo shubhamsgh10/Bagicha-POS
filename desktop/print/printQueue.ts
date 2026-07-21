@@ -81,17 +81,24 @@ export class PrintQueue {
   }
 
   enqueue(spec: Omit<QueuedJob, "id" | "createdAt" | "status" | "retries">): string {
-    // Dedup: skip if same orderId+ackType already in-flight
+    // Dedup: skip only if the SAME ticket — same order + type + TARGET PRINTER — is already
+    // in-flight. Keying on printerId is essential for category routing: one order's KOT can
+    // split into several tickets for DIFFERENT printers (e.g. South Indian → counter printer,
+    // everything else → kitchen), and those must NOT be collapsed into one — doing so silently
+    // dropped the second printer's ticket. A genuine double-tap / auto-KOT race still dedups,
+    // since it repeats the same order+type+printer.
     if (spec.orderId && spec.ackType) {
+      const printerId = spec.printJob?.printerId;
       const duplicate = this.queue.find(
         (j) =>
           j.orderId === spec.orderId &&
           j.ackType === spec.ackType &&
+          j.printJob.printerId === printerId &&
           (j.status === "pending" || j.status === "processing" || j.status === "retrying"),
       );
       if (duplicate) {
         console.log(
-          `[printQueue] Dedup: job for order ${spec.orderId}/${spec.ackType} already queued (${duplicate.id})`,
+          `[printQueue] Dedup: job for order ${spec.orderId}/${spec.ackType} printer ${printerId} already queued (${duplicate.id})`,
         );
         return duplicate.id;
       }

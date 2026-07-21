@@ -26,6 +26,7 @@ import PrintStation from "@/pages/PrintStation";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import { UpdateNotification } from "@/components/UpdateNotification";
+import { PrintStationStatusBadge } from "@/components/PrintStationStatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
@@ -246,6 +247,7 @@ function App() {
     <TooltipProvider>
       <Toaster />
       <UpdateNotification />
+      <PrintStationStatusBadge />
       <ActiveRoleProvider>
         {/* NavigationProvider tracks history stack + direction for page transitions */}
         <AppWouterRouter>
