@@ -28,9 +28,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
+import { DayPicker } from "@/components/DayPicker";
+import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 
 const formatCurrency = (amount: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(amount);
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
 // ── Razorpay checkout loader ──────────────────────────────────────────────────
 
@@ -153,10 +155,38 @@ export default function Billing() {
     }
   };
 
+  const BILLABLE_STATUSES = ["pending", "preparing", "ready", "served"];
+  const [businessDate, setBusinessDate] = useState(() => todayBusinessDate());
+  const [showAllPending, setShowAllPending] = useState(false);
+  const isToday = businessDate === todayBusinessDate();
+
   const { data: orders, isLoading } = useQuery({
-    queryKey: ["/api/orders"],
+    queryKey: ["/api/orders", showAllPending ? "all" : businessDate],
+    queryFn: () => {
+      const url = showAllPending
+        ? apiUrl("/api/orders")
+        : (() => {
+            const { start, end } = businessDayRange(businessDate);
+            return apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`);
+          })();
+      return fetch(url, { credentials: "include" }).then(r => r.json());
+    },
     select: (data: any[]) =>
-      data.filter((o: any) => ["pending", "preparing", "ready", "served"].includes(o.status)),
+      data.filter((o: any) => BILLABLE_STATUSES.includes(o.status)),
+  });
+
+  // Unpaid orders from before today's business day — surfaced as a banner so an old
+  // pending bill can't quietly fall out of sight once the list defaults to "today".
+  const { data: backlogCount = 0 } = useQuery({
+    queryKey: ["/api/orders", "unpaid-backlog", businessDate],
+    enabled: isToday && !showAllPending,
+    queryFn: async () => {
+      const { start } = businessDayRange(businessDate);
+      const beforeToday = new Date(start.getTime() - 1);
+      const res = await fetch(apiUrl(`/api/orders?endDate=${beforeToday.toISOString()}`), { credentials: "include" });
+      const all: any[] = await res.json();
+      return all.filter((o: any) => BILLABLE_STATUSES.includes(o.status) && o.paymentStatus !== "paid").length;
+    },
   });
 
   // Reload loyalty when paying order opens
@@ -448,8 +478,31 @@ export default function Billing() {
     <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Billing"
-        description={`${orders?.length || 0} orders pending payment`}
+        description={showAllPending ? `${orders?.length || 0} orders pending payment (all dates)` : `${orders?.length || 0} orders pending payment`}
       />
+
+      <div className="px-3 sm:px-6 pt-3 sm:pt-4 flex items-center gap-2 flex-wrap">
+        <DayPicker
+          value={businessDate}
+          onChange={setBusinessDate}
+          allDates={showAllPending}
+          onAllDatesChange={setShowAllPending}
+        />
+      </div>
+
+      {isToday && !showAllPending && backlogCount > 0 && (
+        <div className="mx-3 sm:mx-6 mt-3 flex items-center justify-between gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5">
+          <span className="text-sm font-medium text-amber-700">
+            {backlogCount} unpaid order{backlogCount !== 1 ? "s" : ""} from before today
+          </span>
+          <button
+            onClick={() => setShowAllPending(true)}
+            className="text-sm font-semibold text-amber-700 underline underline-offset-2 hover:text-amber-800 transition-colors shrink-0"
+          >
+            Show all
+          </button>
+        </div>
+      )}
 
       <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-6">
         {orders?.length === 0 ? (

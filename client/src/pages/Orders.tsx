@@ -14,10 +14,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { billLines } from "@/lib/receiptText";
 import { serialNum, avatarNum } from "@/lib/orderDisplay";
+import { DayPicker } from "@/components/DayPicker";
+import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 
 
 const fmt = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(n);
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 
 const statusColors: Record<string, string> = {
   pending:   "bg-red-100 text-red-800",
@@ -320,7 +322,20 @@ export default function Orders() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const { data: orders, isLoading, refetch } = useQuery({ queryKey: ["/api/orders"] });
+  const [businessDate, setBusinessDate] = useState(() => todayBusinessDate());
+  const [showAll, setShowAll] = useState(false);
+  const { data: orders, isLoading, refetch } = useQuery({
+    queryKey: ["/api/orders", showAll ? "all" : businessDate],
+    queryFn: () => {
+      const url = showAll
+        ? apiUrl("/api/orders")
+        : (() => {
+            const { start, end } = businessDayRange(businessDate);
+            return apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`);
+          })();
+      return fetch(url, { credentials: "include" }).then(r => r.json());
+    },
+  });
 
   // Auto-refresh every 8 seconds
   useEffect(() => {
@@ -407,6 +422,13 @@ const q = search.trim().toLowerCase();
         >
           <RefreshCw className="w-3.5 h-3.5" /> Refresh
         </motion.button>
+
+        <DayPicker
+          value={businessDate}
+          onChange={setBusinessDate}
+          allDates={showAll}
+          onAllDatesChange={setShowAll}
+        />
 
         {/* Search */}
         <div className="flex items-center gap-2 bg-[var(--paper-0)] border border-[var(--line)]
