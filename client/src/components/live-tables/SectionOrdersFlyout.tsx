@@ -4,12 +4,11 @@ import type { LiveOrder } from "@/hooks/useLiveOrders";
 import { OrderRailCard } from "./LiveOrdersPanel";
 
 /**
- * Hover/tap flyout for a quick-POS section card (e.g. the South Indian counter).
+ * Tap flyout for a quick-POS section card (e.g. the South Indian counter).
  * Wraps the section card (children) and floats its open orders in front of it —
  * same visual language as the right-edge pickup/delivery rail panel, amber-themed.
  *
- * Desktop: hover opens (80 ms leave-grace like RailSection). Touch: tapping the
- * count badge toggles; tapping the card itself always starts a new order.
+ * Tapping the count badge opens it; tapping the card itself always starts a new order.
  */
 export function SectionOrdersFlyout({
   sectionId,
@@ -26,7 +25,6 @@ export function SectionOrdersFlyout({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Single 30-second tick refreshes the elapsed labels on child cards
   const [, tick] = useState(0);
@@ -40,7 +38,7 @@ export function SectionOrdersFlyout({
     if (orders.length === 0) setOpen(false);
   }, [orders.length]);
 
-  // Tap-away close (touch path — hover close doesn't fire without a mouse)
+  // Tap-away close
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -50,32 +48,18 @@ export function SectionOrdersFlyout({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  const handleEnter = () => {
-    if (orders.length === 0) return;
-    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
-    setOpen(true);
-  };
-
-  const handleLeave = () => {
-    // 80 ms grace period prevents flicker when the cursor crosses the card→panel gap
-    leaveTimer.current = setTimeout(() => setOpen(false), 80);
-  };
-
   return (
     <div
       ref={rootRef}
       className={`relative ${open ? "z-30" : ""}`}
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
     >
       <div onClick={onNewOrder} className="h-full">
         {children}
       </div>
 
-      {/* Count badge — the touch open. Open-only (never toggle): touch devices emulate
-          mouseenter before click, so a toggle would open-then-close on a single tap.
-          Closing is tap-away (touch) or mouse-leave (desktop). stopPropagation keeps
-          card tap = new order. */}
+      {/* Count badge — the only way to open. Open-only (never toggle): touch devices
+          emulate mouseenter before click, so a toggle would open-then-close on a single
+          tap. Closing is tap-away. stopPropagation keeps card tap = new order. */}
       {orders.length > 0 && (
         <button
           onClick={e => { e.stopPropagation(); setOpen(true); }}
