@@ -22,6 +22,7 @@ import { serialNum } from "@/lib/orderDisplay";
 import { SettlementDialog, type SettlementData } from "@/components/SettlementDialog";
 import { SectionParcelToggle } from "@/components/section-pos/SectionParcelToggle";
 import { SectionActionBar } from "@/components/section-pos/SectionActionBar";
+import { SectionOpenOrdersButton } from "@/components/section-pos/SectionOpenOrdersButton";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
@@ -1636,7 +1637,15 @@ export default function POS() {
           </div>
 
           {/* ── MIDDLE SCROLLABLE: search + short code (hidden at section counters — tiny menu, big tiles) ── */}
-          {isSectionMode ? <div className="flex-1 min-w-0" /> :
+          {isSectionMode ? (
+            <div className="flex-1 min-w-0 flex items-center justify-end">
+              <SectionOpenOrdersButton
+                sectionId={sectionId!}
+                sectionName={sectionName ?? activeSection?.name ?? "Section"}
+                currentOrderId={activeOrderId}
+              />
+            </div>
+          ) :
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide min-w-0 flex-1">
             {/* Search */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 min-w-[140px] max-w-[200px] flex-1">
