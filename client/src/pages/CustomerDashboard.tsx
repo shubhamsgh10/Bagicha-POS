@@ -247,8 +247,13 @@ function EditCustomerModal({
   const [form, setForm] = useState<CustomerExtra>({ ...extra });
   const set = (k: keyof CustomerExtra, v: any) => setForm(p => ({ ...p, [k]: v }));
 
-  const labelCls = "text-sm text-gray-700 pt-2 shrink-0 w-40";
-  const inputCls = "flex-1 text-sm border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-400 transition-colors";
+  // Stacked (label above input) on mobile — a fixed w-40 label plus flex-1 input has
+  // no room to shrink on a narrow modal (native date inputs especially refuse to go
+  // below their intrinsic min-content width), which pushed rows past the screen edge.
+  // Side-by-side only from sm: up, where there's actually width to spare.
+  const labelCls = "text-sm text-gray-700 sm:pt-2 shrink-0 sm:w-40";
+  const inputCls = "w-full min-w-0 flex-1 text-sm border border-gray-300 rounded px-3 py-2 bg-white focus:outline-none focus:border-blue-400 transition-colors";
+  const rowCls = "flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4";
 
   return (
     <motion.div
@@ -278,7 +283,7 @@ function EditCustomerModal({
         <div className="px-8 py-5 space-y-4">
 
           {/* Mobile */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Mobile</label>
             {customer.phone ? (
               // Phone derived from orders — read-only (it's the CRM key)
@@ -289,7 +294,7 @@ function EditCustomerModal({
               />
             ) : (
               // No order-derived phone — allow manual entry
-              <div className="flex-1 flex flex-col gap-1">
+              <div className="flex-1 min-w-0 flex flex-col gap-1">
                 <input
                   value={form.phone}
                   onChange={e => set("phone", e.target.value)}
@@ -303,7 +308,7 @@ function EditCustomerModal({
           </div>
 
           {/* Name */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Name</label>
             <div className="flex-1 flex flex-col gap-1">
               <input
@@ -321,7 +326,7 @@ function EditCustomerModal({
           </div>
 
           {/* Email */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Email</label>
             <input
               value={form.email}
@@ -333,7 +338,7 @@ function EditCustomerModal({
           </div>
 
           {/* Date of Birth */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Date of Birth</label>
             <input
               value={form.dateOfBirth}
@@ -344,7 +349,7 @@ function EditCustomerModal({
           </div>
 
           {/* Date of Anniversary */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Date of Anniversary</label>
             <input
               value={form.dateOfAnniversary}
@@ -355,7 +360,7 @@ function EditCustomerModal({
           </div>
 
           {/* Primary Locality */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Primary Locality</label>
             <input
               value={form.locality}
@@ -366,7 +371,7 @@ function EditCustomerModal({
           </div>
 
           {/* GST No. */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>GST No.</label>
             <input
               value={form.gstNo}
@@ -377,7 +382,7 @@ function EditCustomerModal({
           </div>
 
           {/* Primary Address */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Primary Address</label>
             <textarea
               value={form.address}
@@ -389,7 +394,7 @@ function EditCustomerModal({
           </div>
 
           {/* Checkboxes */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}></label>
             <div className="flex-1 space-y-3">
               <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -414,7 +419,7 @@ function EditCustomerModal({
           </div>
 
           {/* Customer Tags */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Customer Tags</label>
             <input
               value={form.tags}
@@ -425,7 +430,7 @@ function EditCustomerModal({
           </div>
 
           {/* Customer Remark */}
-          <div className="flex items-start gap-4">
+          <div className={rowCls}>
             <label className={labelCls}>Customer Remark</label>
             <textarea
               value={form.remark}

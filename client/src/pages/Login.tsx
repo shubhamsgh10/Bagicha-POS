@@ -426,6 +426,15 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [showPw, setShowPw]   = useState(false);
   const [showTotp, setShowTotp] = useState(false);
 
+  // Desktop staff-card panel — same "who are you?" flow mobile gets, reached via a
+  // "Staff Member" link below the credentials form instead of being the default.
+  const [desktopMode, setDesktopMode] = useState<"admin" | "staff">("admin");
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+  const [staffPin, setStaffPin] = useState("");
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffShake, setStaffShake] = useState(false);
+
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
   });
@@ -436,6 +445,36 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       .then(setCtx)
       .catch(() => setCtx({ isLocalNetwork: false, isMobile: false }));
   }, []);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/staff-members"), { credentials: "include" })
+      .then(r => r.json())
+      .then((m: StaffMember[]) => setStaff(m))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (staffPin.length === 6 && selectedStaff) submitStaffPin();
+  }, [staffPin]);
+
+  async function submitStaffPin() {
+    if (!selectedStaff) return;
+    setStaffLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/card-login", { kind: selectedStaff.kind ?? "staff", id: selectedStaff.id, pin: staffPin });
+      onLoginSuccess();
+    } catch (err: any) {
+      setStaffShake(true);
+      setTimeout(() => setStaffShake(false), 400);
+      setStaffPin("");
+      toast({
+        title: err.message?.includes("No PIN") ? "No PIN set — ask your manager." : "Wrong PIN. Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setStaffLoading(false);
+    }
+  }
 
   if (ctx?.isMobile) {
     return <StaffSelector onLoginSuccess={onLoginSuccess} />;
@@ -473,7 +512,105 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           </p>
         </div>
 
-        {showTotp ? (
+        {desktopMode === "staff" ? (
+          selectedStaff ? (
+            <motion.div key="pin" style={glassCard} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26 }}
+              className="p-6 flex flex-col items-center">
+              {(() => {
+                const [from, to] = getAvatarColors(selectedStaff.name);
+                return (
+                  <motion.div
+                    initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 320, damping: 22 }}
+                    className="w-[68px] h-[68px] rounded-full mb-2.5 flex items-center justify-center text-white font-bold text-xl"
+                    style={{
+                      background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
+                      boxShadow: `0 6px 20px ${from}55, 0 2px 6px rgba(0,0,0,0.12)`,
+                    }}
+                  >
+                    {getInitials(selectedStaff.name)}
+                  </motion.div>
+                );
+              })()}
+              <h2 className="text-[15px] font-bold text-gray-900">{selectedStaff.name}</h2>
+              <p className="text-xs text-gray-600 mt-0.5 mb-1">Enter your 6-digit PIN</p>
+              <PinDots value={staffPin} shake={staffShake} />
+              {staffLoading ? (
+                <div className="flex justify-center py-7">
+                  <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
+                </div>
+              ) : (
+                <PinPad
+                  onDigit={d => setStaffPin(p => p.length < 6 ? p + d : p)}
+                  onDelete={() => setStaffPin(p => p.slice(0, -1))}
+                  disabled={staffLoading}
+                />
+              )}
+              <button onClick={() => { setSelectedStaff(null); setStaffPin(""); }}
+                className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 mt-4 transition-colors">
+                <ChevronLeft className="w-3.5 h-3.5" /> Back
+              </button>
+            </motion.div>
+          ) : (
+            <motion.div key="grid" style={glassCard} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+              className="p-6 space-y-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 tracking-tight">Who are you?</h2>
+                <p className="text-xs text-gray-700 mt-0.5">Select your staff card to continue</p>
+              </div>
+
+              {staff.length === 0 ? (
+                <div className="text-center py-6 space-y-1">
+                  <p className="text-sm text-gray-700">No staff accounts found.</p>
+                  <p className="text-xs text-gray-500">Ask admin to create accounts.</p>
+                </div>
+              ) : (
+                <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
+                  {staff.map((s, idx) => {
+                    const [from, to] = getAvatarColors(s.name);
+                    return (
+                      <motion.button
+                        key={s.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
+                        whileTap={{ scale: 0.91 }}
+                        onClick={() => { setSelectedStaff(s); setStaffPin(""); }}
+                        className="group flex flex-col items-center gap-2.5 py-4 px-2 rounded-2xl transition-all duration-200 active:brightness-95"
+                        style={{
+                          background: "#F9FAFB",
+                          border: "1px solid #E5E7EB",
+                          boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <div
+                          className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-[1.1rem] transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
+                          style={{
+                            background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
+                            boxShadow: `0 4px 14px ${from}44`,
+                          }}
+                        >
+                          {getInitials(s.name)}
+                        </div>
+                        <span className="text-[11.5px] font-semibold text-gray-700 text-center leading-tight px-1">
+                          {s.name}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-gray-100 text-center">
+                <button onClick={() => setDesktopMode("admin")}
+                  className="flex items-center gap-1 mx-auto text-xs text-gray-600 hover:text-gray-900 transition-colors font-medium">
+                  <ChevronLeft className="w-3.5 h-3.5" /> Back to Sign in
+                </button>
+              </div>
+            </motion.div>
+          )
+        ) : showTotp ? (
           <TotpStep glassCard={glassCard} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
         ) : (
           <div style={glassCard} className="p-6 space-y-4">
@@ -513,6 +650,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   : "Sign in"}
               </button>
             </form>
+
+            <div className="pt-1 text-center">
+              <button onClick={() => setDesktopMode("staff")}
+                className="text-xs text-gray-600 hover:text-gray-900 transition-colors font-medium">
+                Staff Member →
+              </button>
+            </div>
           </div>
         )}
       </motion.div>

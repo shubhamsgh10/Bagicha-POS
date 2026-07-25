@@ -1,5 +1,5 @@
 import { apiUrl } from '@/lib/api';
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -243,6 +243,33 @@ export default function LiveAnalytics() {
   const toggleCard = (id: string) => setOpenCard(prev => (prev === id ? null : id));
   const now = new Date();
 
+  // Stat-card grid columns per breakpoint (matches grid-cols-2 md:grid-cols-4
+  // xl:grid-cols-8 below) — tracked in JS so the detail panel can be inserted
+  // after the LAST card of the row containing openCard, not right after the
+  // clicked card itself. Inserting right after the clicked card pushed its
+  // row-mates (e.g. Total Revenue, when Active Orders was clicked) down to a
+  // new row, while clicking the row's last card (already last, nothing to push)
+  // looked fine — inconsistent. Row-end insertion means no card ever moves.
+  const [columns, setColumns] = useState(() => {
+    if (typeof window === "undefined") return 2;
+    if (window.innerWidth >= 1280) return 8;
+    if (window.innerWidth >= 768) return 4;
+    return 2;
+  });
+
+  useEffect(() => {
+    const mdQuery = window.matchMedia("(min-width: 768px)");
+    const xlQuery = window.matchMedia("(min-width: 1280px)");
+    const update = () => setColumns(xlQuery.matches ? 8 : mdQuery.matches ? 4 : 2);
+    update();
+    mdQuery.addEventListener("change", update);
+    xlQuery.addEventListener("change", update);
+    return () => {
+      mdQuery.removeEventListener("change", update);
+      xlQuery.removeEventListener("change", update);
+    };
+  }, []);
+
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
     start: daysAgo(6),
     end:   today(),
@@ -394,6 +421,13 @@ export default function LiveAnalytics() {
     },
   ];
 
+  // Index of the last card in the same grid row as openCard — the panel is
+  // inserted right after this card, not after the clicked card itself, so
+  // nothing in that row shifts regardless of which card in it was clicked.
+  const openIndex = openCard ? statCards.findIndex(c => c.id === openCard) : -1;
+  const panelAfterIndex =
+    openIndex === -1 ? -1 : Math.min(statCards.length - 1, Math.ceil((openIndex + 1) / columns) * columns - 1);
+
   const chartTitle =
     dateRange.label === "Custom"
       ? `Sales — ${formatRangeLabel(dateRange.start, dateRange.end)}`
@@ -408,6 +442,158 @@ export default function LiveAnalytics() {
     dateRange.label === "Custom"
       ? `Category Sales — ${formatRangeLabel(dateRange.start, dateRange.end)}`
       : `Sales by Category — ${dateRange.label}`;
+
+  // Detail content for a given stat card — rendered inline, directly under that card
+  // in the grid (see statCards.map below), instead of in one fixed spot after the
+  // whole grid. That fixed spot meant tapping e.g. "Top Item Today" (row 3 of a
+  // 2-col mobile grid) opened its panel below row 4 too, sandwiching unrelated cards
+  // (Inner/Outer Running) between the card and its own details.
+  function renderCardDetail(id: string) {
+    if (id === "today-sales" || id === "orders-today") {
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            {id === "today-sales" ? "Today's Orders" : "Orders Today"}
+          </p>
+          {todayOrders.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No orders today yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+              {todayOrders.map((o: any) => (
+                <div key={o.id} className="flex items-center justify-between bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
+                  <div>
+                    <p className="text-xs font-semibold">{serialNum(o.id)}</p>
+                    <p className="text-[11px] text-muted-foreground capitalize">{o.orderType?.replace("-", " ")} {o.tableNumber ? `· Table ${o.tableNumber}` : ""}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-bold text-green-700">{fmt(parseFloat(o.totalAmount || "0"))}</p>
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                      o.status === "served" || o.status === "delivered" ? "bg-green-100 text-green-700" :
+                      o.status === "cancelled" ? "bg-gray-100 text-gray-600" : "bg-amber-100 text-amber-700"
+                    }`}>{o.status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (id === "active-orders") {
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Orders — Pending &amp; Preparing</p>
+          {activeOrdersList.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active orders right now.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+              {activeOrdersList.map((o: any) => (
+                <div key={o.id} className="flex items-center justify-between bg-amber-50/60 rounded-xl px-3 py-2 border border-amber-200/50">
+                  <div>
+                    <p className="text-xs font-semibold">{serialNum(o.id)}</p>
+                    <p className="text-[11px] text-muted-foreground">{o.tableNumber ? `Table ${o.tableNumber}` : o.orderType}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-bold">{fmt(parseFloat(o.totalAmount || "0"))}</p>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 capitalize">{o.status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (id === "total-revenue") {
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by Category</p>
+          {categorySales.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No sales data available.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {categorySales.map((c: any, idx: number) => (
+                <div key={c.category} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="w-2 h-2 rounded-full" style={{ background: PALETTE[idx % PALETTE.length] }} />
+                    <p className="text-[11px] font-medium text-muted-foreground truncate">{c.category}</p>
+                  </div>
+                  <p className="text-sm font-bold text-foreground">{fmt(c.total)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (id === "low-stock") {
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Low Stock Items</p>
+          {lowStockItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">All items are well stocked.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              {lowStockItems.map((item: any) => (
+                <div key={item.id} className="flex items-center justify-between bg-red-50/60 rounded-xl px-3 py-2 border border-red-200/50">
+                  <div>
+                    <p className="text-xs font-semibold">{item.itemName}</p>
+                    <p className="text-[11px] text-muted-foreground">Min: {item.minStock} {item.unit}</p>
+                  </div>
+                  <span className="text-sm font-bold text-red-500">{item.currentStock} {item.unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (id === "top-item") {
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Top Items Today</p>
+          {topItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No sales data today.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {topItems.map((item: any, idx: number) => (
+                <div key={item.name} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: PALETTE[idx % PALETTE.length] }}>{idx + 1}</span>
+                    <p className="text-[11px] font-medium truncate">{item.name}</p>
+                  </div>
+                  <p className="text-sm font-bold">{item.qty} <span className="text-[11px] font-normal text-muted-foreground">sold</span></p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (id === "inner-running" || id === "outer-running") {
+      const list = id === "inner-running" ? innerTables : outerTables;
+      return (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            {id === "inner-running" ? "Inner" : "Outer"} — Occupied Tables
+          </p>
+          {list.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No occupied tables in this section.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {list.map((t: any) => (
+                <div key={t.id} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)] min-w-[100px]">
+                  <p className="text-xs font-bold">Table {t.tableNumber}</p>
+                  <p className="text-[11px] text-muted-foreground capitalize">{t.status}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
+  }
 
   return (
     <div className="h-[100dvh] w-screen flex flex-col bg-background overflow-hidden">
@@ -443,162 +629,51 @@ export default function LiveAnalytics() {
       {/* ── Content ─────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto px-5 pt-5 pb-28 md:pb-8 space-y-5 min-h-0 overscroll-contain">
 
-        {/* ── Stat Cards (always today) ── */}
+        {/* ── Stat Cards (always today) — each card's detail panel renders inline,
+             immediately after it, spanning the full row at every breakpoint. ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
           {statCards.map((card, i) => (
-            <motion.div
-              key={card.label}
-              custom={i}
-              initial="hidden"
-              animate="visible"
-              variants={cardAnim}
-              whileHover={{ scale: 1.02, transition: { duration: 0.15 } }}
-              onClick={() => toggleCard(card.id)}
-              className={`rounded-2xl p-4 border shadow-sm cursor-pointer transition-shadow select-none
-                ${card.bg}
-                ${openCard === card.id
-                  ? "border-[var(--line)] shadow-md ring-2 ring-white/30"
-                  : "border-border/40 hover:shadow-md"
-                }`}
-            >
-              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
-                <card.icon className="w-4 h-4 text-white" />
-              </div>
-              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
-              <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
-            </motion.div>
+            <Fragment key={card.label}>
+              <motion.div
+                custom={i}
+                initial="hidden"
+                animate="visible"
+                variants={cardAnim}
+                whileHover={{ scale: 1.02, transition: { duration: 0.15 } }}
+                onClick={() => toggleCard(card.id)}
+                className={`rounded-2xl p-4 border shadow-sm cursor-pointer transition-shadow select-none
+                  ${card.bg}
+                  ${openCard === card.id
+                    ? "border-[var(--line)] shadow-md ring-2 ring-white/30"
+                    : "border-border/40 hover:shadow-md"
+                  }`}
+              >
+                <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
+                  <card.icon className="w-4 h-4 text-white" />
+                </div>
+                <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
+                <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
+              </motion.div>
+
+              {/* Inserted after the LAST card of openCard's row (panelAfterIndex), not
+                  after the clicked card itself — otherwise a card clicked mid-row (e.g.
+                  Active Orders, left of Total Revenue) pushed its row-mates down to a
+                  new row, while the row's last card looked fine since it had no
+                  row-mate to displace. Row-end insertion means nothing ever moves.
+                  Conditionally rendered (not just isOpen-gated): a col-span grid item
+                  still reserves its own row in CSS grid auto-flow even at zero content
+                  height, which would force a row break after every card. */}
+              {i === panelAfterIndex && (
+                <div className="col-span-2 md:col-span-4 xl:col-span-8">
+                  <SlidingGlassPanel isOpen>
+                    {renderCardDetail(openCard!)}
+                  </SlidingGlassPanel>
+                </div>
+              )}
+            </Fragment>
           ))}
         </div>
-
-        {/* ── Sliding Glass Panel ── */}
-        <SlidingGlassPanel isOpen={openCard !== null}>
-          {openCard === "today-sales" || openCard === "orders-today" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                {openCard === "today-sales" ? "Today's Orders" : "Orders Today"}
-              </p>
-              {todayOrders.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No orders today yet.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                  {todayOrders.map((o: any) => (
-                    <div key={o.id} className="flex items-center justify-between bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
-                      <div>
-                        <p className="text-xs font-semibold">{serialNum(o.id)}</p>
-                        <p className="text-[11px] text-muted-foreground capitalize">{o.orderType?.replace("-", " ")} {o.tableNumber ? `· Table ${o.tableNumber}` : ""}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs font-bold text-green-700">{fmt(parseFloat(o.totalAmount || "0"))}</p>
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                          o.status === "served" || o.status === "delivered" ? "bg-green-100 text-green-700" :
-                          o.status === "cancelled" ? "bg-gray-100 text-gray-600" : "bg-amber-100 text-amber-700"
-                        }`}>{o.status}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : openCard === "active-orders" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Orders — Pending &amp; Preparing</p>
-              {activeOrdersList.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No active orders right now.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                  {activeOrdersList.map((o: any) => (
-                    <div key={o.id} className="flex items-center justify-between bg-amber-50/60 rounded-xl px-3 py-2 border border-amber-200/50">
-                      <div>
-                        <p className="text-xs font-semibold">{serialNum(o.id)}</p>
-                        <p className="text-[11px] text-muted-foreground">{o.tableNumber ? `Table ${o.tableNumber}` : o.orderType}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs font-bold">{fmt(parseFloat(o.totalAmount || "0"))}</p>
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 capitalize">{o.status}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : openCard === "total-revenue" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by Category</p>
-              {categorySales.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No sales data available.</p>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                  {categorySales.map((c: any, idx: number) => (
-                    <div key={c.category} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="w-2 h-2 rounded-full" style={{ background: PALETTE[idx % PALETTE.length] }} />
-                        <p className="text-[11px] font-medium text-muted-foreground truncate">{c.category}</p>
-                      </div>
-                      <p className="text-sm font-bold text-foreground">{fmt(c.total)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : openCard === "low-stock" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Low Stock Items</p>
-              {lowStockItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground">All items are well stocked.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                  {lowStockItems.map((item: any) => (
-                    <div key={item.id} className="flex items-center justify-between bg-red-50/60 rounded-xl px-3 py-2 border border-red-200/50">
-                      <div>
-                        <p className="text-xs font-semibold">{item.itemName}</p>
-                        <p className="text-[11px] text-muted-foreground">Min: {item.minStock} {item.unit}</p>
-                      </div>
-                      <span className="text-sm font-bold text-red-500">{item.currentStock} {item.unit}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : openCard === "top-item" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Top Items Today</p>
-              {topItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No sales data today.</p>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                  {topItems.map((item: any, idx: number) => (
-                    <div key={item.name} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)]">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: PALETTE[idx % PALETTE.length] }}>{idx + 1}</span>
-                        <p className="text-[11px] font-medium truncate">{item.name}</p>
-                      </div>
-                      <p className="text-sm font-bold">{item.qty} <span className="text-[11px] font-normal text-muted-foreground">sold</span></p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : openCard === "inner-running" || openCard === "outer-running" ? (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                {openCard === "inner-running" ? "Inner" : "Outer"} — Occupied Tables
-              </p>
-              {(openCard === "inner-running" ? innerTables : outerTables).length === 0 ? (
-                <p className="text-sm text-muted-foreground">No occupied tables in this section.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {(openCard === "inner-running" ? innerTables : outerTables).map((t: any) => (
-                    <div key={t.id} className="bg-[var(--paper-0)] rounded-xl px-3 py-2 border border-[var(--line)] min-w-[100px]">
-                      <p className="text-xs font-bold">Table {t.tableNumber}</p>
-                      <p className="text-[11px] text-muted-foreground capitalize">{t.status}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : null}
-        </SlidingGlassPanel>
 
         {/* ── Sales Line + Category Pie ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
