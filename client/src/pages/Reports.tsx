@@ -112,12 +112,10 @@ function DateRangePicker({
         <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </motion.button>
 
-      <AnimatePresence>
-        {open && (
+      {open && (
           <motion.div
             initial={{ opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.97 }}
             transition={{ duration: 0.15 }}
             className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 z-50 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl
                        bg-[var(--paper-0)] border border-[var(--line)]
@@ -207,8 +205,7 @@ function DateRangePicker({
               </AnimatePresence>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+      )}
     </div>
   );
 }

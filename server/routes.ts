@@ -1580,13 +1580,16 @@ export async function registerRoutes(
     try {
       const { status, startDate, endDate } = req.query;
       let orders;
-      if (status) {
-        orders = await storage.getOrdersByStatus(status as string);
-      } else if (startDate && endDate) {
+      if (startDate || endDate) {
+        // Either bound alone is valid (e.g. endDate only = "everything before X") —
+        // combinable with status for narrower queries like "unpaid orders before today".
         orders = await storage.getOrdersByDateRange(
-          new Date(startDate as string),
-          new Date(endDate as string)
+          startDate ? new Date(startDate as string) : undefined,
+          endDate ? new Date(endDate as string) : undefined,
         );
+        if (status) orders = orders.filter((o: any) => o.status === status);
+      } else if (status) {
+        orders = await storage.getOrdersByStatus(status as string);
       } else {
         orders = await storage.getOrders();
       }

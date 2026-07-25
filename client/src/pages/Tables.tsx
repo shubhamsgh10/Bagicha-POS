@@ -123,9 +123,16 @@ export default function Tables() {
     try {
       const { printBillDirect } = await import("@/lib/printGateway");
       const outcome = await printBillDirect(orderId);
-      if (outcome === "hardware") {
+      if (outcome === "hardware" || outcome === "dispatched") {
         toast({ title: "Bill sent to printer!" });
-        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+        // Same status flip POS.tsx's Bill button does (POST bill-requested) — marks
+        // the table "billed" so this card matches the POS cart's Print Bill outcome
+        // instead of staying "running" with the print button still showing.
+        apiRequest("POST", `/api/orders/${orderId}/bill-requested`, {})
+          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
+          .catch(() => {
+            // non-critical — bill is printed even if status update fails
+          });
       } else if (outcome === "browser") {
         toast({
           title: "Cannot direct-print to this printer",

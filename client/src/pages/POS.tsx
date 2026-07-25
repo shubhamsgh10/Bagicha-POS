@@ -178,7 +178,7 @@ export default function POS() {
   // ── Active order ID (starts from URL, updated after KOT creates a new order) ─
   const [activeOrderId, setActiveOrderId] = useState<number | null>(editOrderId);
   // Tracks what action triggered the submit
-  const submitModeRef = useRef<"kot" | "kot-print" | "save" | "save-print" | "save-ebill" | "settle">("save");
+  const submitModeRef = useRef<"kot" | "kot-print" | "save" | "save-print" | "save-ebill" | "settle" | "bill-print">("save");
   // Snapshot of existingOrder.items captured at KOT click time — used for delta preview
   const preKOTItemsRef = useRef<Array<{ menuItemId: number; quantity: number; size: string | null }>>([]);
   // Payment method selection
@@ -786,6 +786,15 @@ export default function POS() {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
         setCartItems([]); setDiscountPercent(0);
         navigate("/tables");
+      } else if (mode === "bill-print") {
+        // Stays on screen (unlike save-print) — plain Bill is a mid-service
+        // reprint/preview, not a "finish and leave" action.
+        triggerBillPrint(vars.orderId, order);
+        apiRequest("POST", `/api/orders/${vars.orderId}/bill-requested`, {})
+          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
+          .catch(() => {
+            // non-critical — bill is printed even if status update fails
+          });
       } else if (mode === "settle") {
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
@@ -1111,15 +1120,14 @@ export default function POS() {
 
   const handleKOT     = () => { capturePreKOTItems(); submitModeRef.current = "kot-print"; triggerSubmit(); };
   const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
-  const handleBillPrint = async () => {
+  const handleBillPrint = () => {
     if (!activeOrderId) return;
-    triggerBillPrint(activeOrderId, existingOrder, true);
-    try {
-      await apiRequest("POST", `/api/orders/${activeOrderId}/bill-requested`, {});
-      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
-    } catch {
-      // non-critical — bill is printed even if status update fails
-    }
+    // Sync the current cart first — /api/print/bill reads order_items straight
+    // from the DB, so anything added to the cart after the last save/KOT (e.g.
+    // an item added right before printing) would otherwise be silently missing
+    // from the printed bill.
+    submitModeRef.current = "bill-print";
+    triggerSubmit();
   };
 
   // Direct KOT preview — no server call, shows delta of new items not yet in the order

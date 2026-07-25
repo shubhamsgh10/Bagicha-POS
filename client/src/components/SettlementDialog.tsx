@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api";
 
 export interface SettlementPayment {
-  method: "cash" | "upi" | "card";
+  method: "cash" | "upi";
   amount: number;
 }
 
@@ -48,10 +48,9 @@ interface Props {
   initialCustomerPhone?: string;
 }
 
-const METHODS: { key: "cash" | "upi" | "card"; label: string; icon: string }[] = [
+const METHODS: { key: "cash" | "upi"; label: string; icon: string }[] = [
   { key: "cash",  label: "Cash", icon: "💵" },
   { key: "upi",   label: "UPI",  icon: "📱" },
-  { key: "card",  label: "Card", icon: "💳" },
 ];
 
 interface CustomerSuggestion { name: string; phone: string | null; }
@@ -63,12 +62,11 @@ export function SettlementDialog({
 }: Props) {
   const [cash,  setCash]  = useState(0);
   const [upi,   setUpi]   = useState(0);
-  const [card,  setCard]  = useState(0);
   const [isDue, setIsDue] = useState(false);
   const [customerName,  setCustomerName]  = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
 
-  const inr = (n: number) => `₹${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`;
+  const inr = (n: number) => `₹${Math.round(n)}`;
 
   // Prefill customer fields from the order each time the dialog opens.
   useEffect(() => {
@@ -86,7 +84,7 @@ export function SettlementDialog({
   const abortCtrlRef  = useRef<AbortController | null>(null);
   const phoneRef      = useRef<HTMLDivElement>(null);
 
-  const totalEntered = cash + upi + card;
+  const totalEntered = cash + upi;
   const remaining    = grandTotal - totalEntered;
   const changeDue    = remaining < 0 ? Math.abs(remaining) : 0;
   const balanceDue   = remaining > 0 ? remaining : 0;
@@ -96,7 +94,7 @@ export function SettlementDialog({
     if (!open) {
       if (searchTimer.current) clearTimeout(searchTimer.current);
       if (abortCtrlRef.current) abortCtrlRef.current.abort();
-      setCash(0); setUpi(0); setCard(0);
+      setCash(0); setUpi(0);
       setIsDue(false); setCustomerName(""); setCustomerPhone("");
       setSuggestions([]); setShowSuggest(false);
     }
@@ -113,9 +111,9 @@ export function SettlementDialog({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const amounts: Record<"cash" | "upi" | "card", number> = { cash, upi, card };
-  const setters: Record<"cash" | "upi" | "card", (v: number) => void> = {
-    cash: setCash, upi: setUpi, card: setCard,
+  const amounts: Record<"cash" | "upi", number> = { cash, upi };
+  const setters: Record<"cash" | "upi", (v: number) => void> = {
+    cash: setCash, upi: setUpi,
   };
 
   // Running balance per row
@@ -128,17 +126,17 @@ export function SettlementDialog({
 
   const parse = (v: string) => Math.max(0, parseFloat(v) || 0);
 
-  // On blur: auto-fill remaining into the next empty method
-  const handleBlur = (idx: number) => {
-    const rem = grandTotal - (cash + upi + card);
-    if (rem <= 0) return;
-    for (let i = idx + 1; i < METHODS.length; i++) {
-      const next = METHODS[i].key;
-      if (amounts[next] === 0) {
-        setters[next](parseFloat(rem.toFixed(2)));
-        break;
-      }
-    }
+  // Auto-fill UPI with the remaining balance (grandTotal - cash) the moment its own
+  // field gains focus — covers both "cash entered, tab/click into UPI" (remaining
+  // splits in) and "click UPI first" (cash is still 0, so the whole bill lands in).
+  // Deliberately keyed off UPI's OWN focus event, not a blur on some other field —
+  // the previous implementation cascaded on *any* field's blur, so clicking anything
+  // else on screen (e.g. the Pay Later checkbox) blurred whatever was last focused
+  // and silently dropped the remaining amount into the next box.
+  const handleUpiFocus = () => {
+    if (upi !== 0) return; // never clobber an amount the staff already typed/edited
+    const rem = grandTotal - cash;
+    if (rem > 0) setUpi(Math.round(rem));
   };
 
   // Phone-first customer search with debounce + AbortController
@@ -181,27 +179,52 @@ export function SettlementDialog({
   };
 
   const handleSettle = () => {
+    // Pay Later means nothing was collected right now — the whole bill goes on the
+    // tab. Force an empty breakdown here regardless of what's in the boxes (belt and
+    // suspenders alongside resetting them when the checkbox is ticked, see below):
+    // the server marks paymentStatus "pending" purely off isDue, but it still stores
+    // whatever paidAmount/paymentBreakdown comes through — a leftover auto-filled
+    // amount would otherwise record a phantom "already paid" total on a due order.
+    if (isDue) {
+      onSettle({
+        payments: [],
+        totalPaid: 0,
+        changeAmount: 0,
+        isDue: true,
+        customerName,
+        customerPhone,
+      });
+      return;
+    }
     const payments: SettlementPayment[] = METHODS
       .filter(m => amounts[m.key] > 0)
       .map(m => ({ method: m.key, amount: amounts[m.key] }));
-    if (!isDue && payments.length === 0) return;
+    if (payments.length === 0) return;
     onSettle({
       payments,
       totalPaid: totalEntered,
       changeAmount: changeDue,
-      isDue,
-      customerName:  isDue ? customerName  : undefined,
-      customerPhone: isDue ? customerPhone : undefined,
+      isDue: false,
+      customerName: undefined,
+      customerPhone: undefined,
     });
   };
 
   const handleOpenChange = (v: boolean) => {
     if (!v) {
-      setCash(0); setUpi(0); setCard(0);
+      setCash(0); setUpi(0);
       setIsDue(false); setCustomerName(""); setCustomerPhone("");
       setSuggestions([]); setShowSuggest(false);
     }
     onOpenChange(v);
+  };
+
+  // Ticking Pay Later clears any amounts already in the boxes (e.g. from the UPI
+  // auto-fill above) so the summary/table can't keep showing "✓ Settled" for an
+  // order that's actually going on the customer's tab.
+  const handleDueToggle = (checked: boolean) => {
+    setIsDue(checked);
+    if (checked) { setCash(0); setUpi(0); }
   };
 
   return (
@@ -253,8 +276,9 @@ export function SettlementDialog({
             </div>
           )}
 
-          {/* Payment table */}
-          <table className="w-full text-sm">
+          {/* Payment table — disabled while Pay Later is on, since nothing is being
+              collected right now and any leftover amount would be misleading. */}
+          <table className={`w-full text-sm ${isDue ? "opacity-40 pointer-events-none" : ""}`}>
             <thead>
               <tr className="text-xs text-muted-foreground border-b">
                 <th className="text-left pb-2 font-medium">Method</th>
@@ -270,9 +294,10 @@ export function SettlementDialog({
                     <Input
                       type="number"
                       min={0}
+                      disabled={isDue}
                       value={amounts[m.key] || ""}
                       onChange={e => setters[m.key](parse(e.target.value))}
-                      onBlur={() => handleBlur(i)}
+                      onFocus={m.key === "upi" ? handleUpiFocus : undefined}
                       placeholder="0"
                       className="w-28 text-right h-8 text-sm ml-auto"
                     />
@@ -288,29 +313,35 @@ export function SettlementDialog({
           </table>
 
           {/* Summary bar */}
-          <div className={`rounded-lg px-3 py-2 text-sm flex justify-between items-center ${
-            balanceDue > 0
-              ? "bg-red-50 text-red-700"
-              : changeDue > 0
-              ? "bg-blue-50 text-blue-700"
-              : "bg-green-50 text-green-700"
-          }`}>
-            <span>Total entered <strong>₹{totalEntered.toFixed(0)}</strong></span>
-            <span className="font-bold">
-              {balanceDue > 0
-                ? `Balance due ₹${balanceDue.toFixed(0)}`
+          {isDue ? (
+            <div className="rounded-lg px-3 py-2 text-sm bg-amber-50 text-amber-700 font-medium">
+              Marked as Due — ₹{grandTotal.toFixed(0)} will be added to the customer's tab
+            </div>
+          ) : (
+            <div className={`rounded-lg px-3 py-2 text-sm flex justify-between items-center ${
+              balanceDue > 0
+                ? "bg-red-50 text-red-700"
                 : changeDue > 0
-                ? `Change ₹${changeDue.toFixed(0)}`
-                : "✓ Settled"}
-            </span>
-          </div>
+                ? "bg-blue-50 text-blue-700"
+                : "bg-green-50 text-green-700"
+            }`}>
+              <span>Total entered <strong>₹{totalEntered.toFixed(0)}</strong></span>
+              <span className="font-bold">
+                {balanceDue > 0
+                  ? `Balance due ₹${balanceDue.toFixed(0)}`
+                  : changeDue > 0
+                  ? `Change ₹${changeDue.toFixed(0)}`
+                  : "✓ Settled"}
+              </span>
+            </div>
+          )}
 
           {/* Mark Due toggle */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={isDue}
-              onChange={e => setIsDue(e.target.checked)}
+              onChange={e => handleDueToggle(e.target.checked)}
               className="accent-amber-500 w-4 h-4"
             />
             <span className="text-sm font-medium text-amber-700">
