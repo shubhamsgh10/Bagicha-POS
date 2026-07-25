@@ -88,7 +88,7 @@ export interface IStorage {
   getOrders(): Promise<Order[]>;
   getOrderById(id: number): Promise<Order | undefined>;
   getOrdersByStatus(status: string): Promise<Order[]>;
-  getOrdersByDateRange(startDate: Date, endDate: Date): Promise<Order[]>;
+  getOrdersByDateRange(startDate?: Date, endDate?: Date): Promise<Order[]>;
   getOpenTabsByCustomer(): Promise<OpenTabCustomer[]>;
   settleCustomerTabs(key: string, paymentMethod?: string): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
@@ -359,10 +359,14 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders).where(eq(orders.status, status)).orderBy(desc(orders.createdAt));
   }
 
-  async getOrdersByDateRange(startDate: Date, endDate: Date): Promise<Order[]> {
-    return await db.select().from(orders).where(
-      and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate))
-    ).orderBy(desc(orders.createdAt));
+  async getOrdersByDateRange(startDate?: Date, endDate?: Date): Promise<Order[]> {
+    const conditions = [];
+    if (startDate) conditions.push(gte(orders.createdAt, startDate));
+    if (endDate) conditions.push(lte(orders.createdAt, endDate));
+    if (conditions.length === 0) return await this.getOrders();
+    return await db.select().from(orders)
+      .where(and(...conditions))
+      .orderBy(desc(orders.createdAt));
   }
 
   // Customers with open "tabs" = served + unpaid orders (paymentStatus pending), grouped by

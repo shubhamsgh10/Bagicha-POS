@@ -374,5 +374,16 @@
     "sentAt": "2026-06-14T12:46:25.625Z",
     "status": "sent",
     "campaign": "WELCOME"
+  },
+  {
+    "id": "6226887f-1075-4ca6-89b1-4ef213034d64",
+    "customerId": "8319526008",
+    "customerName": "Adhish Rateria",
+    "phone": "918319526008",
+    "trigger": "DUE_REMINDER",
+    "message": "Hi Adhish! 🙏 Thank you for visiting *Bagicha*. Here are your bill details:\n\nOrder ORD0077 · Table 3\n• Chilli x1 — ₹299\n• Mini Idli x1 — ₹80\nTotal: ₹398\n\n*Amount due: ₹398*\n\nPlease settle it at your convenience. Thank you! 🌿",
+    "sentAt": "2026-07-21T19:51:21.626Z",
+    "status": "sent",
+    "campaign": "DUE_REMINDER"
   }
 ]
