@@ -2,6 +2,7 @@
   "version": 2,
   "buildCommand": "npm run build:web && npm run build:api",
   "outputDirectory": "dist/public",
+  "regions": ["bom1"],
   "functions": {
     "api/index.ts": {
       "maxDuration": 30
