@@ -18,7 +18,8 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useEffect, useState } from "react";
-import { Plus, X, Package } from "lucide-react";
+import { Plus, X, Package, IndianRupee } from "lucide-react";
+import { computeMenuItemCost, computeMarginPercent, type InventoryLink } from "@shared/menuCost";
 
 const PIZZA_SIZES = ["Small", "Medium", "Large"] as const;
 const WOODFIRE_PIZZA = "Woodfire Pizza";
@@ -61,6 +62,13 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
     Medium: "",
     Large: "",
   });
+  // Scales recipe/stock consumption for this size (e.g. Large = 1.5x the linked
+  // ingredient quantities). Blank = 1 (no scaling) — see shared/menuCost.ts.
+  const [sizeMultipliers, setSizeMultipliers] = useState<Record<string, string>>({
+    Small: "",
+    Medium: "",
+    Large: "",
+  });
   const [addonsEnabled, setAddonsEnabled] = useState(false);
   const [addonsList, setAddonsList] = useState<AddonEntry[]>([]);
   const [inventoryLinks, setInventoryLinks] = useState<InventoryLinkEntry[]>([]);
@@ -92,6 +100,15 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
   const selectedCategoryId = form.watch("categoryId");
   const selectedCategory = categories?.find((c: any) => c.id === selectedCategoryId);
   const isWoodfirePizza = selectedCategory?.name === WOODFIRE_PIZZA;
+
+  // Live cost/margin preview — same shared/menuCost.ts math the server uses to
+  // snapshot orderItems.unitCost, so what staff see here matches what gets recorded.
+  const costByInventoryId = new Map<number, string | null>(
+    inventoryItems.map((inv: any) => [inv.id, inv.costPerUnit])
+  );
+  const numericLinks: InventoryLink[] = inventoryLinks
+    .filter((l) => l.inventoryId && parseFloat(l.quantity) > 0)
+    .map((l) => ({ inventoryId: Number(l.inventoryId), quantity: parseFloat(l.quantity) }));
 
   const createMenuItemMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -170,6 +187,17 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
       .map(l => ({ inventoryId: parseInt(l.inventoryId), quantity: parseFloat(l.quantity) }));
 
   const onSubmit = (data: MenuItemForm) => {
+    const invalidLinks = inventoryLinks.filter(
+      l => l.inventoryId && !(parseFloat(l.quantity) > 0)
+    );
+    if (invalidLinks.length > 0) {
+      toast({
+        title: "Invalid ingredient quantity",
+        description: "Enter a quantity greater than 0 for every linked ingredient, or remove the row.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (isWoodfirePizza) {
       const missingPrices = PIZZA_SIZES.filter(s => !sizePrices[s] || isNaN(parseFloat(sizePrices[s])));
       if (missingPrices.length > 0) {
@@ -180,7 +208,14 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         });
         return;
       }
-      const sizes = PIZZA_SIZES.map(s => ({ size: s, price: parseFloat(sizePrices[s]) }));
+      const sizes = PIZZA_SIZES.map(s => {
+        const m = parseFloat(sizeMultipliers[s]);
+        return {
+          size: s,
+          price: parseFloat(sizePrices[s]),
+          ...(Number.isFinite(m) && m > 0 ? { stockMultiplier: m } : {}),
+        };
+      });
       const minPrice = Math.min(...sizes.map(s => s.price));
       createMenuItemMutation.mutate({
         ...data,
@@ -228,12 +263,18 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
 
       if (editItem.sizes && editItem.sizes.length > 0) {
         const sp: Record<string, string> = { Small: "", Medium: "", Large: "" };
+        const sm: Record<string, string> = { Small: "", Medium: "", Large: "" };
         editItem.sizes.forEach((s: any) => {
-          if (s.size in sp) sp[s.size] = s.price.toString();
+          if (s.size in sp) {
+            sp[s.size] = s.price.toString();
+            sm[s.size] = s.stockMultiplier != null ? s.stockMultiplier.toString() : "";
+          }
         });
         setSizePrices(sp);
+        setSizeMultipliers(sm);
       } else {
         setSizePrices({ Small: "", Medium: "", Large: "" });
+        setSizeMultipliers({ Small: "", Medium: "", Large: "" });
       }
 
       setAddonsEnabled(editItem.addonsEnabled ?? false);
@@ -261,6 +302,7 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         allergens: "",
       });
       setSizePrices({ Small: "", Medium: "", Large: "" });
+      setSizeMultipliers({ Small: "", Medium: "", Large: "" });
       setAddonsEnabled(false);
       setAddonsList([]);
       setInventoryLinks([]);
@@ -330,9 +372,26 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
                           }
                         />
                       </div>
+                      <div className="flex items-center gap-1 w-24">
+                        <Input
+                          type="number"
+                          step="any"
+                          min="0"
+                          placeholder="1x"
+                          title="Ingredient multiplier for this size (blank = 1x)"
+                          value={sizeMultipliers[size]}
+                          onChange={(e) =>
+                            setSizeMultipliers((prev) => ({ ...prev, [size]: e.target.value }))
+                          }
+                        />
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">×</span>
+                      </div>
                     </div>
                   ))}
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  The × field scales ingredient consumption for that size (e.g. 1.5 for Large) — leave blank for no scaling.
+                </p>
               </div>
             ) : (
               <div>
@@ -500,17 +559,22 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
                         ))}
                       </SelectContent>
                     </Select>
-                    <div className="flex items-center gap-1 w-28">
+                    <div className="flex items-center gap-1 w-32">
                       <span className="text-xs text-muted-foreground whitespace-nowrap">Qty:</span>
                       <Input
                         type="number"
-                        step="0.1"
+                        step="any"
                         min="0.01"
                         placeholder="1"
                         value={link.quantity}
                         onChange={(e) => updateInventoryLink(idx, "quantity", e.target.value)}
                         className="h-8 text-sm"
                       />
+                      {link.inventoryId && (
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {inventoryItems.find((inv: any) => inv.id === Number(link.inventoryId))?.unit}
+                        </span>
+                      )}
                     </div>
                     <Button
                       type="button"
@@ -526,6 +590,46 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
               </div>
             )}
           </div>
+
+          {/* Live cost / margin preview — recomputes as ingredients/prices are edited */}
+          {numericLinks.length > 0 && (
+            <div className="rounded-lg border bg-emerald-50/40 p-3 space-y-1">
+              <p className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                <IndianRupee className="w-3.5 h-3.5" /> Estimated plate cost
+              </p>
+              {isWoodfirePizza ? (
+                <div className="space-y-0.5">
+                  {PIZZA_SIZES.map((size) => {
+                    const multiplier = parseFloat(sizeMultipliers[size]) || 1;
+                    const result = computeMenuItemCost(numericLinks, costByInventoryId, multiplier);
+                    const price = parseFloat(sizePrices[size]);
+                    const margin = computeMarginPercent(price, result.cost);
+                    return (
+                      <p key={size} className="text-xs text-gray-600">
+                        {size}: ₹{result.cost.toFixed(2)}
+                        {result.hasIncompleteCost && <span className="text-amber-600"> (incomplete)</span>}
+                        {margin != null && <span className="ml-1 text-emerald-700 font-medium">· margin {margin.toFixed(0)}%</span>}
+                      </p>
+                    );
+                  })}
+                </div>
+              ) : (
+                (() => {
+                  const result = computeMenuItemCost(numericLinks, costByInventoryId, 1);
+                  const margin = computeMarginPercent(parseFloat(form.watch("price")), result.cost);
+                  return (
+                    <p className="text-sm text-gray-700">
+                      ₹{result.cost.toFixed(2)}
+                      {result.hasIncompleteCost && (
+                        <span className="text-amber-600 text-xs ml-1">(incomplete — missing cost/unit on an ingredient)</span>
+                      )}
+                      {margin != null && <span className="ml-2 text-emerald-700 font-medium">Margin: {margin.toFixed(0)}%</span>}
+                    </p>
+                  );
+                })()
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex items-center space-x-2">

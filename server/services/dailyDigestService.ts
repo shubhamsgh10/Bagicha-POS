@@ -40,6 +40,7 @@ export interface DailyMetrics {
   vipCount:      number;
   atRiskCount:   number;
   lowStockItems: string[];
+  negativeStockItems: string[];
   feedback: {
     avgRating:      number;
     responses:      number;
@@ -125,6 +126,14 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
     .where(sql`${inventory.currentStock} <= ${inventory.minStock}`)
     .limit(10);
 
+  // Negative stock — distinct from low: the count is known-wrong (an oversold order
+  // was allowed rather than blocked) and needs a physical recount, not just a reorder.
+  const negativeStock = await db
+    .select({ itemName: inventory.itemName })
+    .from(inventory)
+    .where(sql`${inventory.currentStock} < 0`)
+    .limit(10);
+
   // Feedback today
   const dayFeedback = await db
     .select({
@@ -169,6 +178,7 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
     vipCount:      Number(vipRows[0]?.count ?? 0),
     atRiskCount:   Number(atRiskRows[0]?.count ?? 0),
     lowStockItems: lowStock.map(r => r.itemName),
+    negativeStockItems: negativeStock.map(r => r.itemName),
     feedback:      { avgRating, responses: responded.length, detractors },
     hourlyPeaks,
   };
@@ -195,6 +205,9 @@ function fallbackSummary(m: DailyMetrics, restaurant: string): string {
   if (m.lowStockItems.length > 0) {
     lines.push(`📦 Low stock: ${m.lowStockItems.slice(0, 5).join(", ")}`);
   }
+  if (m.negativeStockItems.length > 0) {
+    lines.push(`🔴 Needs recount (negative stock): ${m.negativeStockItems.slice(0, 5).join(", ")}`);
+  }
   return lines.join("\n");
 }
 
@@ -214,6 +227,7 @@ KPIs:
 - New customers: ${m.newCustomers}
 - VIP customers: ${m.vipCount}, At-risk: ${m.atRiskCount}
 - Low stock: ${m.lowStockItems.slice(0, 8).join(", ") || "None"}
+- Negative stock (needs recount): ${m.negativeStockItems.slice(0, 8).join(", ") || "None"}
 - Feedback: avg ${m.feedback.avgRating.toFixed(1)}/5 from ${m.feedback.responses} reviews; ${m.feedback.detractors} detractors
 - Peak hours: ${m.hourlyPeaks.map(h => `${h.hour}:00 (${h.count})`).join(", ")}
 

@@ -17,13 +17,15 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useRole } from "@/hooks/useRole";
+import { computeMenuItemCost, computeMarginPercent } from "@shared/menuCost";
 
 interface Category { id: number; name: string; description?: string; }
 interface MenuItem {
   id: number; name: string; description?: string; price: string;
   categoryId: number; preparationTime: number; isAvailable: boolean;
   isVegetarian?: boolean; isSpicy?: boolean; allergens?: string;
-  sizes?: Array<{ size: string; price: number }>;
+  sizes?: Array<{ size: string; price: number; stockMultiplier?: number }>;
   inventoryLinks?: Array<{ inventoryId: number; quantity: number }>;
   addonsEnabled?: boolean;
   addons?: Array<{ name: string; price: number }>;
@@ -75,6 +77,19 @@ export default function Menu() {
   const { data: soldToday = {} } = useQuery<Record<number, number>>({
     queryKey: ["/api/menu/sold-today"], staleTime: 0, refetchInterval: 30000,
   });
+
+  // Cost/margin is sensitive business data (same tier as payroll — see CLAUDE.md's
+  // requireManagerOrAdmin note) — only fetched and shown to manager/admin, never staff.
+  const role = useRole();
+  const canSeeCost = role === "admin" || role === "manager";
+  const { data: inventoryItems = [] } = useQuery<any[]>({
+    queryKey: ["/api/inventory"],
+    enabled: canSeeCost,
+  });
+  const costByInventoryId = useMemo(
+    () => new Map<number, string | null>(inventoryItems.map((inv: any) => [inv.id, inv.costPerUnit])),
+    [inventoryItems]
+  );
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(amount);
@@ -643,6 +658,22 @@ export default function Menu() {
                             {item.inventoryLinks && item.inventoryLinks.length > 0 && (
                               <span className="text-blue-400 font-medium">{item.inventoryLinks.length} ingredient{item.inventoryLinks.length > 1 ? "s" : ""}</span>
                             )}
+                            {canSeeCost && item.inventoryLinks && item.inventoryLinks.length > 0 && (() => {
+                              // Base-recipe cost (no size multiplier) against the card's displayed
+                              // price — an approximation for pizzas (which show a min-size price);
+                              // AddMenuItemModal shows the accurate per-size breakdown for editing.
+                              const result = computeMenuItemCost(item.inventoryLinks, costByInventoryId, 1);
+                              if (result.hasIncompleteCost) {
+                                return <span className="text-gray-400" title="Some linked ingredients have no cost/unit set">Margin: —</span>;
+                              }
+                              const margin = computeMarginPercent(parseFloat(item.price), result.cost);
+                              if (margin == null) return null;
+                              return (
+                                <span className={`font-medium ${margin < 20 ? "text-red-500" : margin < 40 ? "text-amber-600" : "text-emerald-600"}`}>
+                                  Margin: {margin.toFixed(0)}%
+                                </span>
+                              );
+                            })()}
                             <span>Sold today: {soldToday[item.id] ?? 0}</span>
                           </div>
                         </div>

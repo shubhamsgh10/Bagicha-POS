@@ -1,9 +1,10 @@
 import {
-  users, categories, menuItems, inventory, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
+  users, categories, menuItems, inventory, inventoryCategories, orders, orderItems, kotTickets, deliveryIntegrations, sales, tables,
   staffProfiles, attendance, leaves, shifts, shiftAssignments,
-  staffMembers,
+  staffMembers, stockMovements,
   type User, type InsertUser, type Category, type InsertCategory, type MenuItem, type InsertMenuItem,
-  type Inventory, type InsertInventory, type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
+  type Inventory, type InsertInventory, type InventoryCategory, type InsertInventoryCategory,
+  type Order, type InsertOrder, type OrderItem, type InsertOrderItem,
   type KotTicket, type InsertKotTicket, type DeliveryIntegration, type InsertDeliveryIntegration,
   type Sales, type InsertSales, type Table, type InsertTable,
   type StaffProfile, type InsertStaffProfile, type Attendance, type InsertAttendance,
@@ -15,6 +16,7 @@ import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
+import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
@@ -74,15 +76,38 @@ export interface IStorage {
   bulkUpdateMenuItems(ids: number[], updates: Partial<InsertMenuItem>): Promise<void>;
   bulkDeleteMenuItems(ids: number[]): Promise<void>;
   deleteMenuItem(id: number): Promise<void>;
-  deductInventoryForOrder(orderItems: Array<{ menuItemId: number; quantity: number }>): Promise<void>;
+  computeMenuItemCost(menuItemId: number, size?: string | null): Promise<MenuCostResult | null>;
+  computeMenuItemCosts(items: Array<{ menuItemId: number; size?: string | null }>): Promise<Array<MenuCostResult | null>>;
+  reconcileOrderInventory(
+    orderId: number,
+    lineItems: Array<{ menuItemId: number; quantity: number; size?: string | null }>,
+    actor?: { userId?: number; staffMemberId?: number },
+  ): Promise<void>;
 
   // Inventory
   getInventory(): Promise<Inventory[]>;
   getLowStockItems(): Promise<Inventory[]>;
-  updateInventory(id: number, stock: number): Promise<Inventory>;
+  getNegativeStockItems(): Promise<Inventory[]>;
+  recordStockMovement(m: {
+    inventoryId: number;
+    quantityDelta: number;
+    type: "sale" | "sale_reversal" | "manual_adjustment" | "restock" | "import";
+    orderId?: number | null;
+    menuItemId?: number | null;
+    note?: string | null;
+    actorUserId?: number | null;
+    actorStaffMemberId?: number | null;
+  }, tx?: any): Promise<void>;
   createInventoryItem(item: InsertInventory): Promise<Inventory>;
-  updateInventoryItem(id: number, item: Partial<InsertInventory>): Promise<Inventory>;
+  updateInventoryItem(id: number, item: Partial<InsertInventory>, actor?: { userId?: number; staffMemberId?: number }): Promise<Inventory>;
   deleteInventoryItem(id: number): Promise<void>;
+
+  // Inventory Categories
+  getInventoryCategories(): Promise<InventoryCategory[]>;
+  createInventoryCategory(category: InsertInventoryCategory): Promise<InventoryCategory>;
+  updateInventoryCategory(id: number, category: Partial<InsertInventoryCategory>): Promise<InventoryCategory>;
+  deleteInventoryCategory(id: number): Promise<void>;
+  reorderInventoryCategories(orderedIds: number[]): Promise<void>;
 
   // Orders
   getOrders(): Promise<Order[]>;
@@ -156,7 +181,10 @@ export interface IStorage {
   getDashboardTopItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; qty: number }>>;
 
   // Reports
-  getTopSellingItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; totalSold: number; revenue: number }>>;
+  getTopSellingItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{
+    name: string; totalSold: number; revenue: number;
+    cost: number | null; costCoverageQty: number; margin: number | null;
+  }>>;
 
   // Staff Management
   getStaffProfiles(): Promise<(StaffProfile & { user: User })[]>;
@@ -276,6 +304,50 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
+  // Live plate cost — walks inventoryLinks against CURRENT inventory.costPerUnit, scaled
+  // by the size's stockMultiplier if any. Used both for the admin-facing cost/margin
+  // preview and (via the orderId-bearing caller) to snapshot orderItems.unitCost at sale
+  // time — that snapshot deliberately freezes the value so a later costPerUnit change
+  // doesn't retroactively rewrite historical COGS. See shared/menuCost.ts for the math.
+  async computeMenuItemCost(menuItemId: number, size?: string | null): Promise<MenuCostResult | null> {
+    const item = await this.getMenuItemById(menuItemId);
+    if (!item) return null;
+    // No recipe entered means "cost unknown," NOT "cost is zero" — most menu items
+    // predate this feature, and reporting them as a free 100% margin would be worse
+    // than just admitting the data isn't there. Only a fully-costed recipe returns a number.
+    if (!item.inventoryLinks || item.inventoryLinks.length === 0) return null;
+    const invRows = await db.select().from(inventory);
+    const costByInventoryId = new Map(invRows.map((r) => [r.id, r.costPerUnit]));
+    const sizeMultiplier = resolveSizeMultiplier(item.sizes, size);
+    return computeMenuItemCostPure(item.inventoryLinks, costByInventoryId, sizeMultiplier);
+  }
+
+  // Batched version of computeMenuItemCost — fetches the distinct menu items and the
+  // whole inventory table ONCE regardless of order size, instead of once per line item.
+  // Order create/edit call this per-item via Promise.all; an N-item order previously
+  // meant up to 2N DB round trips here alone (getMenuItemById + full inventory scan,
+  // each per item) on the two hottest routes in the app. Returns results positionally,
+  // matching `items`.
+  async computeMenuItemCosts(
+    items: Array<{ menuItemId: number; size?: string | null }>,
+  ): Promise<Array<MenuCostResult | null>> {
+    const distinctIds = Array.from(new Set(items.map((i) => i.menuItemId)));
+    const [menuItemRows, invRows] = await Promise.all([
+      distinctIds.length > 0
+        ? db.select().from(menuItems).where(inArray(menuItems.id, distinctIds))
+        : Promise.resolve([] as MenuItem[]),
+      db.select().from(inventory),
+    ]);
+    const menuItemById = new Map(menuItemRows.map((m) => [m.id, m]));
+    const costByInventoryId = new Map(invRows.map((r) => [r.id, r.costPerUnit]));
+    return items.map(({ menuItemId, size }) => {
+      const item = menuItemById.get(menuItemId);
+      if (!item?.inventoryLinks || item.inventoryLinks.length === 0) return null;
+      const sizeMultiplier = resolveSizeMultiplier(item.sizes, size);
+      return computeMenuItemCostPure(item.inventoryLinks, costByInventoryId, sizeMultiplier);
+    });
+  }
+
   async createMenuItem(item: InsertMenuItem): Promise<MenuItem> {
     const [newItem] = await db.insert(menuItems).values(item as any).returning();
     return newItem;
@@ -300,17 +372,79 @@ export class DatabaseStorage implements IStorage {
     await db.update(menuItems).set({ isDeleted: true }).where(eq(menuItems.id, id));
   }
 
-  async deductInventoryForOrder(orderItems: Array<{ menuItemId: number; quantity: number }>): Promise<void> {
-    for (const { menuItemId, quantity } of orderItems) {
-      const item = await this.getMenuItemById(menuItemId);
+  // Reconciles one order's net inventory footprint to `lineItems` — the single function
+  // behind create, edit, AND cancel (called with lineItems = [] to reverse everything).
+  // Rather than re-deducting from scratch, it diffs the freshly-computed target against
+  // what stock_movements says this order has ALREADY consumed, and applies only the
+  // difference. That makes it naturally idempotent (same lineItems twice → zero-diff
+  // second time), correct even if a recipe changes after the order was placed (the
+  // ledger, not the current recipe, is the source of truth for "what was deducted"),
+  // and the one thing that finally makes editing/cancelling an order touch stock at all.
+  async reconcileOrderInventory(
+    orderId: number,
+    lineItems: Array<{ menuItemId: number; quantity: number; size?: string | null }>,
+    actor?: { userId?: number; staffMemberId?: number },
+  ): Promise<void> {
+    // 1. Target consumption per inventoryId for the given line items.
+    //    Batch-fetch all distinct menu items in one query instead of one per line —
+    //    an order with 5 items previously meant 5 sequential round trips here.
+    const distinctIds = Array.from(new Set(lineItems.map((li) => li.menuItemId)));
+    const menuItemRows = distinctIds.length > 0
+      ? await db.select().from(menuItems).where(inArray(menuItems.id, distinctIds))
+      : [];
+    const menuItemById = new Map(menuItemRows.map((m) => [m.id, m]));
+
+    const target = new Map<number, { qty: number; menuItemId: number }>();
+    for (const { menuItemId, quantity, size } of lineItems) {
+      const item = menuItemById.get(menuItemId);
       if (!item?.inventoryLinks || item.inventoryLinks.length === 0) continue;
+      const sizeMultiplier =
+        size && Array.isArray(item.sizes)
+          ? (item.sizes.find((s) => s.size === size)?.stockMultiplier ?? 1)
+          : 1;
       for (const link of item.inventoryLinks) {
-        const needed = link.quantity * quantity;
-        await db.execute(
-          sql`UPDATE inventory SET current_stock = GREATEST(0, current_stock - ${needed}) WHERE id = ${link.inventoryId}`
-        );
+        const needed = link.quantity * quantity * sizeMultiplier;
+        const existing = target.get(link.inventoryId);
+        target.set(link.inventoryId, { qty: (existing?.qty ?? 0) + needed, menuItemId });
       }
     }
+
+    // 2. What this order has already net-consumed, per the ledger (not the previous
+    //    order_items rows — the ledger is authoritative even across a recipe change).
+    const already: any = await db.execute(sql`
+      SELECT inventory_id, SUM(quantity_delta) AS net
+      FROM stock_movements
+      WHERE order_id = ${orderId} AND type IN ('sale', 'sale_reversal')
+      GROUP BY inventory_id
+    `);
+    const alreadyApplied = new Map<number, number>(
+      (already?.rows ?? []).map((r: any) => [Number(r.inventory_id), parseFloat(r.net)])
+    );
+
+    // 3. Diff and apply. round() avoids float-noise producing spurious near-zero diffs.
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const inventoryIds = new Set<number>(Array.from(target.keys()).concat(Array.from(alreadyApplied.keys())));
+
+    await db.transaction(async (tx) => {
+      for (const inventoryId of Array.from(inventoryIds)) {
+        const desiredDelta = round2(-(target.get(inventoryId)?.qty ?? 0)); // negative = net consumption
+        const currentDelta = round2(alreadyApplied.get(inventoryId) ?? 0);
+        const diff = round2(desiredDelta - currentDelta);
+        if (Math.abs(diff) < 0.005) continue;
+        await this.recordStockMovement(
+          {
+            inventoryId,
+            quantityDelta: diff,
+            type: diff < 0 ? "sale" : "sale_reversal",
+            orderId,
+            menuItemId: target.get(inventoryId)?.menuItemId ?? null, // best-effort — a diff spanning multiple dishes sharing this ingredient can't attribute to one; orderId is the reliable trace
+            actorUserId: actor?.userId ?? null,
+            actorStaffMemberId: actor?.staffMemberId ?? null,
+          },
+          tx as any,
+        );
+      }
+    });
   }
 
   // Inventory
@@ -324,12 +458,50 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  async updateInventory(id: number, stock: number): Promise<Inventory> {
-    const [updated] = await db.update(inventory).set({ 
-      currentStock: stock.toString(),
-      lastRestocked: new Date()
-    }).where(eq(inventory.id, id)).returning();
-    return updated;
+  // Rows with a known-wrong (negative) balance — distinct from "low stock", which is
+  // still >= 0 but below minStock. Negative means an oversold order drove the count
+  // past zero and the physical shelf needs a recount. See recordStockMovement — no
+  // GREATEST(0, ...) clamp is applied anywhere, so this can genuinely happen.
+  async getNegativeStockItems(): Promise<Inventory[]> {
+    return await db.select().from(inventory).where(sql`${inventory.currentStock} < 0`);
+  }
+
+  // Single choke point for every write to inventory.currentStock. Applies the signed
+  // delta (no clamping — negative stock is allowed and surfaced via getNegativeStockItems,
+  // not silently absorbed) and appends a self-describing, append-only ledger row in the
+  // same statement group. Accepts an optional transaction handle so callers that need to
+  // batch several movements atomically (reconcileOrderInventory) can pass one in.
+  async recordStockMovement(
+    m: {
+      inventoryId: number;
+      quantityDelta: number;
+      type: "sale" | "sale_reversal" | "manual_adjustment" | "restock" | "import";
+      orderId?: number | null;
+      menuItemId?: number | null;
+      note?: string | null;
+      actorUserId?: number | null;
+      actorStaffMemberId?: number | null;
+    },
+    tx: typeof db = db,
+  ): Promise<void> {
+    const result: any = await tx.execute(sql`
+      UPDATE inventory SET current_stock = current_stock + ${m.quantityDelta}
+      WHERE id = ${m.inventoryId}
+      RETURNING current_stock
+    `);
+    const stockAfter = result?.rows?.[0]?.current_stock;
+    if (stockAfter === undefined) return; // inventory row no longer exists — nothing to ledger
+    await tx.insert(stockMovements).values({
+      inventoryId: m.inventoryId,
+      orderId: m.orderId ?? null,
+      menuItemId: m.menuItemId ?? null,
+      type: m.type,
+      quantityDelta: m.quantityDelta.toString(),
+      stockAfter: String(stockAfter),
+      note: m.note ?? null,
+      actorUserId: m.actorUserId ?? null,
+      actorStaffMemberId: m.actorStaffMemberId ?? null,
+    });
   }
 
   async createInventoryItem(item: InsertInventory): Promise<Inventory> {
@@ -337,13 +509,69 @@ export class DatabaseStorage implements IStorage {
     return newItem;
   }
 
-  async updateInventoryItem(id: number, item: Partial<InsertInventory>): Promise<Inventory> {
+  // Manual edits (Admin → Inventory) route currentStock changes through recordStockMovement
+  // so they're ledgered as 'manual_adjustment' — every other field updates directly.
+  async updateInventoryItem(id: number, item: Partial<InsertInventory>, actor?: { userId?: number; staffMemberId?: number }): Promise<Inventory> {
+    if (item.currentStock !== undefined) {
+      const { currentStock, ...rest } = item;
+      const [current] = await db.select().from(inventory).where(eq(inventory.id, id));
+      if (current && Object.keys(rest).length > 0) {
+        await db.update(inventory).set(rest).where(eq(inventory.id, id));
+      }
+      if (current) {
+        const delta = parseFloat(String(currentStock)) - parseFloat(current.currentStock);
+        if (delta !== 0) {
+          await this.recordStockMovement({
+            inventoryId: id,
+            quantityDelta: delta,
+            type: "manual_adjustment",
+            actorUserId: actor?.userId ?? null,
+            actorStaffMemberId: actor?.staffMemberId ?? null,
+          });
+        }
+      }
+      const [updated] = await db.select().from(inventory).where(eq(inventory.id, id));
+      return updated;
+    }
     const [updated] = await db.update(inventory).set(item).where(eq(inventory.id, id)).returning();
     return updated;
   }
 
   async deleteInventoryItem(id: number): Promise<void> {
     await db.delete(inventory).where(eq(inventory.id, id));
+  }
+
+  // Inventory Categories
+  async getInventoryCategories(): Promise<InventoryCategory[]> {
+    return await db.select().from(inventoryCategories)
+      .where(eq(inventoryCategories.isActive, true))
+      .orderBy(asc(inventoryCategories.displayOrder), asc(inventoryCategories.id));
+  }
+
+  async createInventoryCategory(category: InsertInventoryCategory): Promise<InventoryCategory> {
+    const existing = await db.select().from(inventoryCategories).where(eq(inventoryCategories.isActive, true));
+    const maxOrder = existing.reduce((m, c) => Math.max(m, c.displayOrder ?? 0), 0);
+    const [newCategory] = await db.insert(inventoryCategories).values({ ...category, displayOrder: maxOrder + 1 }).returning();
+    return newCategory;
+  }
+
+  async updateInventoryCategory(id: number, category: Partial<InsertInventoryCategory>): Promise<InventoryCategory> {
+    const [updated] = await db.update(inventoryCategories).set(category).where(eq(inventoryCategories.id, id)).returning();
+    return updated;
+  }
+
+  async deleteInventoryCategory(id: number): Promise<void> {
+    // Detach items first so they fall back to "Uncategorized" instead of pointing at a hidden category.
+    await db.update(inventory).set({ categoryId: null }).where(eq(inventory.categoryId, id));
+    await db.update(inventoryCategories).set({ isActive: false }).where(eq(inventoryCategories.id, id));
+  }
+
+  async reorderInventoryCategories(orderedIds: number[]): Promise<void> {
+    await Promise.all(
+      orderedIds.map((id, index) =>
+        db.update(inventoryCategories).set({ displayOrder: index }).where(eq(inventoryCategories.id, id))
+      )
+    );
   }
 
   // Orders
@@ -881,7 +1109,10 @@ export class DatabaseStorage implements IStorage {
     limit = 10,
     startDate?: Date,
     endDate?: Date
-  ): Promise<Array<{ name: string; totalSold: number; revenue: number }>> {
+  ): Promise<Array<{
+    name: string; totalSold: number; revenue: number;
+    cost: number | null; costCoverageQty: number; margin: number | null;
+  }>> {
     const conditions = [];
     if (startDate) conditions.push(gte(orders.createdAt, startDate));
     if (endDate)   conditions.push(lte(orders.createdAt, endDate));
@@ -891,6 +1122,13 @@ export class DatabaseStorage implements IStorage {
         name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         totalSold: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
         revenue: sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * ${orderItems.price}) as numeric)`,
+        // COGS is only summed over rows that actually carry a unitCost snapshot (orders
+        // placed before this feature shipped, or items with no priced recipe, have
+        // unit_cost = NULL) — costCoverageQty tells the caller how much of totalSold
+        // that cost figure actually covers, so a partial number is never presented as
+        // if it were complete.
+        costSum: sql<string | null>`sum(cast(${orderItems.quantity} as numeric) * ${orderItems.unitCost}) FILTER (WHERE ${orderItems.unitCost} IS NOT NULL)`,
+        costCoverageQty: sql<string | null>`sum(${orderItems.quantity}) FILTER (WHERE ${orderItems.unitCost} IS NOT NULL)`,
       })
       .from(orderItems)
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
@@ -900,11 +1138,20 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(limit);
 
-    return result.map(r => ({
-      name: r.name,
-      totalSold: Number(r.totalSold),
-      revenue: Number(r.revenue),
-    }));
+    return result.map(r => {
+      const revenue = Number(r.revenue);
+      const costCoverageQty = Number(r.costCoverageQty ?? 0);
+      const cost = costCoverageQty > 0 ? Number(r.costSum) : null;
+      const margin = cost != null && revenue > 0 ? ((revenue - cost) / revenue) * 100 : null;
+      return {
+        name: r.name,
+        totalSold: Number(r.totalSold),
+        revenue,
+        cost,
+        costCoverageQty,
+        margin,
+      };
+    });
   }
 
   // ============================================================

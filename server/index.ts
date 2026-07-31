@@ -40,6 +40,19 @@ process.on("uncaughtException", (err: any) => {
 // (X-Content-Type-Options, frameguard, HSTS in prod, etc.) apply.
 app.use(helmet({ contentSecurityPolicy: false }));
 
+// API responses must never be cached by the browser/Electron HTTP cache — every
+// GET here reflects live DB state and React Query already owns client-side
+// freshness via invalidateQueries. Without this, responses carry no explicit
+// Cache-Control (Express only sets ETag), and Electron's session persists its
+// disk HTTP cache across app restarts (see desktop/main.ts's clearCache() call
+// and comment) — a request the disk cache considers still-fresh can silently
+// serve a stale JSON body for a resource that was just written, with no error
+// and no way to tell short of a hard refresh.
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api")) res.set("Cache-Control", "no-store");
+  next();
+});
+
 applyCors(app);
 
 // Sentry — init before any middleware so it can instrument everything.

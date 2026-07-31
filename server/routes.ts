@@ -5,7 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "child_process";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertOrderSchema } from "@shared/schema";
+import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema, insertOrderSchema } from "@shared/schema";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -51,7 +51,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
+import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
 import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
@@ -1052,6 +1052,18 @@ export async function registerRoutes(
           minStock:     min.toFixed(2),
           unit:         row.unit?.trim() || "pcs",
         }).returning();
+        // Row already carries its opening balance from the INSERT above (unlike
+        // recordStockMovement, which UPDATEs an existing row) — ledger it directly
+        // so the import is still traceable in stock_movements.
+        const importActor = actorRefFromReq(req);
+        await db.insert(stockMovements).values({
+          inventoryId: item.id,
+          type: "import",
+          quantityDelta: current.toFixed(2),
+          stockAfter: current.toFixed(2),
+          actorUserId: importActor.userId ?? null,
+          actorStaffMemberId: importActor.staffMemberId ?? null,
+        });
         imported.push(item.id);
       } catch (err: any) {
         errors.push(`"${row.itemName}": ${err.message}`);
@@ -1258,6 +1270,20 @@ export async function registerRoutes(
     }
   });
 
+  // Registered before /:id — Express matches routes in registration order, so a literal path
+  // (like /reorder) registered AFTER a param path (/:id) is unreachable; it was previously being
+  // swallowed by /:id (parseInt("reorder") -> NaN), silently breaking drag-to-reorder.
+  app.put("/api/categories/reorder", requireAuth, async (req, res) => {
+    try {
+      const { orderedIds } = req.body;
+      if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
+      await storage.reorderCategories(orderedIds.map(Number));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to reorder categories" });
+    }
+  });
+
   app.put("/api/categories/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -1277,17 +1303,6 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete category" });
-    }
-  });
-
-  app.put("/api/categories/reorder", requireAuth, async (req, res) => {
-    try {
-      const { orderedIds } = req.body;
-      if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
-      await storage.reorderCategories(orderedIds.map(Number));
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to reorder categories" });
     }
   });
 
@@ -1394,6 +1409,24 @@ export async function registerRoutes(
     }
   });
 
+  // Strips malformed rows rather than trusting the client shape — an inventoryId that
+  // isn't a positive integer or a quantity that isn't a finite positive number would
+  // otherwise corrupt downstream deduction math (see reconcileOrderInventory).
+  function sanitizeInventoryLinks(raw: unknown): Array<{ inventoryId: number; quantity: number }> {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((l: any) => ({ inventoryId: Number(l?.inventoryId), quantity: Number(l?.quantity) }))
+      .filter((l) => Number.isInteger(l.inventoryId) && l.inventoryId > 0 && Number.isFinite(l.quantity) && l.quantity > 0);
+  }
+
+  // users and staffMembers share the integer id space (see CLAUDE.md id-collision gotcha) —
+  // resolve req.user into the correct column for stock-movement/audit attribution.
+  function actorRefFromReq(req: any): { userId?: number; staffMemberId?: number } {
+    const actor = req.user as any;
+    if (!actor) return {};
+    return actor._isStaffMember ? { staffMemberId: actor.id } : { userId: actor.id };
+  }
+
   // ── Menu Items ────────────────────────────────────────────────────────────────
 
   app.get("/api/menu", requireAuth, async (req, res) => {
@@ -1445,7 +1478,7 @@ export async function registerRoutes(
         sizes: Array.isArray(b.sizes) ? b.sizes : null,
         addonsEnabled,
         addons: addonsEnabled && Array.isArray(b.addons) ? b.addons : [],
-        inventoryLinks: Array.isArray(b.inventoryLinks) && b.inventoryLinks.length > 0 ? b.inventoryLinks : null,
+        inventoryLinks: sanitizeInventoryLinks(b.inventoryLinks),
       } as any);
       res.json(menuItem);
     } catch (error) {
@@ -1468,7 +1501,7 @@ export async function registerRoutes(
       updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
       updatePayload.addonsEnabled = b.addonsEnabled === true;
       updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
-      if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = Array.isArray(b.inventoryLinks) ? b.inventoryLinks : null;
+      if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = sanitizeInventoryLinks(b.inventoryLinks);
       const menuItem = await storage.updateMenuItem(id, updatePayload);
       res.json(menuItem);
     } catch (error) {
@@ -1544,6 +1577,18 @@ export async function registerRoutes(
     }
   });
 
+  // Distinct from low-stock: a negative balance means the count is already known-wrong
+  // (an oversold order was allowed rather than blocked — see reconcileOrderInventory)
+  // and needs a physical recount, not just a reorder.
+  app.get("/api/inventory/negative-stock", requireAuth, async (req, res) => {
+    try {
+      const negativeStockItems = await storage.getNegativeStockItems();
+      res.json(negativeStockItems);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch negative stock items" });
+    }
+  });
+
   app.post("/api/inventory", requireAuth, async (req, res) => {
     try {
       const inventoryData = insertInventorySchema.parse(req.body);
@@ -1557,7 +1602,8 @@ export async function registerRoutes(
   app.put("/api/inventory/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const inventory = await storage.updateInventoryItem(id, req.body);
+      const inventoryData = insertInventorySchema.partial().parse(req.body);
+      const inventory = await storage.updateInventoryItem(id, inventoryData, actorRefFromReq(req));
       res.json(inventory);
     } catch (error) {
       res.status(400).json({ error: "Invalid inventory data" });
@@ -1571,6 +1617,63 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete inventory item" });
+    }
+  });
+
+  // ── Inventory Categories ─────────────────────────────────────────────────────
+
+  app.get("/api/inventory-categories", requireAuth, async (req, res) => {
+    try {
+      const inventoryCategories = await storage.getInventoryCategories();
+      res.json(inventoryCategories);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to fetch inventory categories" });
+    }
+  });
+
+  app.post("/api/inventory-categories", requireAuth, async (req, res) => {
+    try {
+      const categoryData = insertInventoryCategorySchema.parse(req.body);
+      const category = await storage.createInventoryCategory(categoryData);
+      res.json(category);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid category data" });
+    }
+  });
+
+  // Registered before /:id — a literal path after a param path is unreachable in Express (see the
+  // /api/categories/reorder bug fixed below in this same file).
+  app.put("/api/inventory-categories/reorder", requireAuth, async (req, res) => {
+    try {
+      const { orderedIds } = req.body;
+      if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
+      await storage.reorderInventoryCategories(orderedIds.map(Number));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to reorder inventory categories" });
+    }
+  });
+
+  app.put("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, description } = req.body;
+      if (!name) return res.status(400).json({ error: "Name is required" });
+      const updated = await storage.updateInventoryCategory(id, { name, description });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update inventory category" });
+    }
+  });
+
+  app.delete("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteInventoryCategory(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete inventory category" });
     }
   });
 
@@ -1671,16 +1774,26 @@ export async function registerRoutes(
       // users, so attribute to the right column (see CLAUDE.md id-collision gotcha).
       const isStaffMemberActor = !!actor?._isStaffMember;
 
-      // Order items with server-validated unit prices.
-      const itemsToInsert = lineItems.map((item: any, idx: number) => ({
-        menuItemId: Number(item.menuItemId),
-        quantity: Number(item.quantity),
-        price: String(priced.lines[idx].unitPrice),
-        specialInstructions: item.specialInstructions || "",
-        size: item.size || null,
-        serviceMode: item.serviceMode || null,
-        parcelLeftover: item.parcelLeftover ?? false,
-      }));
+      // Order items with server-validated unit prices. unitCost is a snapshot of the
+      // plate cost AT SALE TIME (shared/menuCost.ts via storage.computeMenuItemCosts) —
+      // null when no full recipe cost is known, never a fabricated 0. Batched: one
+      // call computes all lines' costs in 2 DB round trips total, not 2 per line.
+      const costResults = await storage.computeMenuItemCosts(
+        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+      );
+      const itemsToInsert = lineItems.map((item: any, idx: number) => {
+        const costResult = costResults[idx];
+        return {
+          menuItemId: Number(item.menuItemId),
+          quantity: Number(item.quantity),
+          price: String(priced.lines[idx].unitPrice),
+          specialInstructions: item.specialInstructions || "",
+          size: item.size || null,
+          serviceMode: item.serviceMode || null,
+          parcelLeftover: item.parcelLeftover ?? false,
+          unitCost: costResult && !costResult.hasIncompleteCost ? costResult.cost.toFixed(2) : null,
+        };
+      });
 
       // KOT ticket lines.
       const kotNumber = String(await incrementKotCounter()).padStart(3, "0");
@@ -1712,14 +1825,18 @@ export async function registerRoutes(
         { kotNumber, items: kotItems as any },
       );
 
-      // Deduct inventory based on inventoryLinks for each menu item
-      if (items && items.length > 0) {
+      // Deduct inventory based on inventoryLinks for each menu item. Non-fatal at this
+      // layer (the order already committed) — reconcileOrderInventory's own transaction
+      // means a failure here can't leave a half-deducted state, only a fully-skipped one.
+      if (lineItems.length > 0) {
         try {
-          await storage.deductInventoryForOrder(
-            items.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity) }))
+          await storage.reconcileOrderInventory(
+            order.id,
+            lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
+            isStaffMemberActor ? { staffMemberId: actor?.id } : { userId: actor?.id },
           );
         } catch (invErr) {
-          console.error("[order] inventory deduction error (non-fatal):", invErr);
+          console.error("[order] inventory reconciliation error (non-fatal):", invErr);
         }
       }
 
@@ -1771,19 +1888,30 @@ export async function registerRoutes(
       const existingItems = await storage.getOrderItems(id);
       const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
 
-      // Replace all order items with server-validated unit prices
+      // Replace all order items with server-validated unit prices. unitCost is a
+      // snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
+      // storage.computeMenuItemCosts) — null when no full recipe cost is known,
+      // never a fabricated 0. Batched — same pattern as POST /api/orders above.
       await storage.deleteOrderItemsByOrderId(id);
-      await storage.createOrderItems(lineItems.map((item: any, idx: number) => ({
-        orderId: id,
-        menuItemId: Number(item.menuItemId),
-        name: item.name ?? null,
-        quantity: Number(item.quantity),
-        price: String(priced.lines[idx].unitPrice),
-        specialInstructions: item.specialInstructions || "",
-        size: item.size || null,
-        serviceMode: item.serviceMode || null,
-        parcelLeftover: item.parcelLeftover ?? false,
-      })));
+      const editCostResults = await storage.computeMenuItemCosts(
+        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+      );
+      const itemsToInsert = lineItems.map((item: any, idx: number) => {
+        const costResult = editCostResults[idx];
+        return {
+          orderId: id,
+          menuItemId: Number(item.menuItemId),
+          name: item.name ?? null,
+          quantity: Number(item.quantity),
+          price: String(priced.lines[idx].unitPrice),
+          specialInstructions: item.specialInstructions || "",
+          size: item.size || null,
+          serviceMode: item.serviceMode || null,
+          parcelLeftover: item.parcelLeftover ?? false,
+          unitCost: costResult && !costResult.hasIncompleteCost ? costResult.cost.toFixed(2) : null,
+        };
+      });
+      await storage.createOrderItems(itemsToInsert);
 
       const order = await storage.updateOrder(id, {
         totalAmount: priced.total.toFixed(2),
@@ -1792,6 +1920,20 @@ export async function registerRoutes(
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);
+
+      // Reconcile inventory to the new line items — this is what makes editing a running
+      // table (adding/removing/re-quantifying items across rounds) actually touch stock;
+      // previously this route had zero inventory code. Non-fatal: the order edit itself
+      // already succeeded, so don't fail the request over a reconciliation hiccup.
+      try {
+        await storage.reconcileOrderInventory(
+          id,
+          lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
+          actorRefFromReq(req),
+        );
+      } catch (invErr) {
+        console.error("[order] inventory reconciliation error (non-fatal):", invErr);
+      }
 
       // Delta KOT — only print items newly added to this order
       const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
@@ -2111,6 +2253,13 @@ export async function registerRoutes(
       await storage.updateOrder(id, { status: "cancelled" } as any);
       if ((order as any).tableId) {
         await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+      }
+      // Reverse whatever this order net-consumed — an empty target means "restore
+      // everything." Previously a cancelled order permanently kept its stock deducted.
+      try {
+        await storage.reconcileOrderInventory(id, [], actorRefFromReq(req));
+      } catch (invErr) {
+        console.error("[order] inventory reconciliation error (non-fatal):", invErr);
       }
       logAudit(req, "order.cancel", "order", id, {
         orderNumber: (order as any).orderNumber,
