@@ -145,7 +145,29 @@ function SortableCategoryRow({
   );
 }
 
-export function CategoriesTab() {
+interface CategoriesTabProps {
+  /** Base REST path for this category resource, e.g. "/api/categories" or "/api/inventory-categories". */
+  endpoint?: string;
+  /** React Query key for the list — normally the same string as `endpoint`. */
+  queryKey?: string;
+  /** Placeholder text for the "Category Name" input in the Add form. */
+  namePlaceholder?: string;
+  /** Hint line shown above the draggable list. */
+  dragHint?: string;
+  /** Confirm-delete prompt text, given the category name. */
+  deleteConfirm?: (name: string) => string;
+  /** Extra query keys to invalidate after create/update/delete (e.g. the item list this feeds). */
+  alsoInvalidate?: string[];
+}
+
+export function CategoriesTab({
+  endpoint = "/api/categories",
+  queryKey = "/api/categories",
+  namePlaceholder = "e.g. Pizza, Drinks, Desserts",
+  dragHint = "Drag rows to reorder. POS reflects same order.",
+  deleteConfirm = (name: string) => `Delete category "${name}"? This will hide it from the menu.`,
+  alsoInvalidate = [],
+}: CategoriesTabProps = {}) {
   const { toast } = useToast();
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -155,7 +177,7 @@ export function CategoriesTab() {
   const [localOrder, setLocalOrder] = useState<Category[] | null>(null);
 
   const { data: serverCategories, isLoading } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
+    queryKey: [queryKey],
     select: (data) => [...data].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)),
   });
 
@@ -167,11 +189,16 @@ export function CategoriesTab() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: [queryKey] });
+    for (const key of alsoInvalidate) queryClient.invalidateQueries({ queryKey: [key] });
+  };
+
   const reorderMutation = useMutation({
     mutationFn: async (orderedIds: number[]) =>
-      apiRequest("PUT", "/api/categories/reorder", { orderedIds }),
+      apiRequest("PUT", `${endpoint}/reorder`, { orderedIds }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      invalidateAll();
       setLocalOrder(null);
     },
     onError: () => {
@@ -192,10 +219,10 @@ export function CategoriesTab() {
 
   const createMutation = useMutation({
     mutationFn: async () =>
-      apiRequest("POST", "/api/categories", { name: newName.trim(), description: newDesc.trim() || null }),
+      apiRequest("POST", endpoint, { name: newName.trim(), description: newDesc.trim() || null }),
     onSuccess: () => {
       toast({ title: "Category created" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      invalidateAll();
       setNewName("");
       setNewDesc("");
     },
@@ -206,10 +233,10 @@ export function CategoriesTab() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, name, description }: { id: number; name: string; description: string }) =>
-      apiRequest("PUT", `/api/categories/${id}`, { name, description: description || null }),
+      apiRequest("PUT", `${endpoint}/${id}`, { name, description: description || null }),
     onSuccess: () => {
       toast({ title: "Category updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      invalidateAll();
       setEditingId(null);
     },
     onError: (err: any) => {
@@ -218,10 +245,10 @@ export function CategoriesTab() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => apiRequest("DELETE", `/api/categories/${id}`),
+    mutationFn: async (id: number) => apiRequest("DELETE", `${endpoint}/${id}`),
     onSuccess: () => {
       toast({ title: "Category deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      invalidateAll();
     },
     onError: (err: any) => {
       toast({ title: "Failed to delete category", description: parseError(err), variant: "destructive" });
@@ -240,7 +267,7 @@ export function CategoriesTab() {
               <Input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Pizza, Drinks, Desserts"
+                placeholder={namePlaceholder}
                 className="h-8"
               />
             </div>
@@ -279,7 +306,7 @@ export function CategoriesTab() {
         <>
           {categories.length > 0 && (
             <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1">
-              <GripVertical className="w-3 h-3" /> Drag rows to reorder. POS reflects same order.
+              <GripVertical className="w-3 h-3" /> {dragHint}
             </p>
           )}
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -298,7 +325,7 @@ export function CategoriesTab() {
                     onEditSave={() => updateMutation.mutate({ id: editingId!, name: editName, description: editDesc })}
                     onEditCancel={() => setEditingId(null)}
                     onDelete={(c) => {
-                      if (confirm(`Delete category "${c.name}"? This will hide it from the menu.`)) {
+                      if (confirm(deleteConfirm(c.name))) {
                         deleteMutation.mutate(c.id);
                       }
                     }}

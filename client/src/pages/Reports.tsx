@@ -14,6 +14,7 @@ import {
 import { serialNum } from "@/lib/orderDisplay";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useRole } from "@/hooks/useRole";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -297,6 +298,9 @@ function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }:
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState("sales");
+  // Cost/margin is sensitive business data (same tier as payroll) — never shown to staff.
+  const role = useRole();
+  const canSeeCost = role === "admin" || role === "manager";
 
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
     start: daysAgo(6),
@@ -362,7 +366,10 @@ export default function Reports() {
   });
 
   const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales, orders: d.orders ?? 0 }));
-  const topItems  = topItemsData.map((d: any) => ({ name: d.name, sold: d.totalSold, revenue: d.revenue }));
+  const topItems  = topItemsData.map((d: any) => ({
+    name: d.name, sold: d.totalSold, revenue: d.revenue,
+    cost: d.cost, margin: d.margin, costCoverageQty: d.costCoverageQty ?? 0,
+  }));
 
   const tabs = [
     { id: "sales",    label: "Sales Chart" },
@@ -619,6 +626,20 @@ export default function Reports() {
                     <span className="text-[11px] font-medium bg-emerald-100/80 text-emerald-700 px-2 py-0.5 rounded-lg">
                       {((item.revenue / (salesReport?.totalSales || 1)) * 100).toFixed(1)}%
                     </span>
+                    {canSeeCost && (
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {item.margin != null ? (
+                          <>
+                            Margin: <span className="font-medium text-gray-600">{item.margin.toFixed(0)}%</span>
+                            {item.costCoverageQty < item.sold && (
+                              <span className="text-amber-600"> (based on {item.costCoverageQty}/{item.sold} sold)</span>
+                            )}
+                          </>
+                        ) : (
+                          "Cost data unavailable"
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}

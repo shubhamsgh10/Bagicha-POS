@@ -16,6 +16,15 @@ app.set("trust proxy", 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 
+// See server/index.ts for why: API GETs carry no explicit Cache-Control
+// (Express only sets ETag) and Electron's session persists its disk HTTP
+// cache across app restarts, which can silently serve a stale JSON body for
+// a resource just written elsewhere in the same session.
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api")) res.set("Cache-Control", "no-store");
+  next();
+});
+
 applyCors(app);
 
 app.use(express.json({ limit: "10mb" }));
