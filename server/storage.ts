@@ -229,10 +229,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCategory(category: InsertCategory): Promise<Category> {
-    // Assign next display_order
-    const existing = await db.select().from(categories).where(eq(categories.isActive, true));
-    const maxOrder = existing.reduce((m, c) => Math.max(m, c.displayOrder ?? 0), 0);
-    const [newCategory] = await db.insert(categories).values({ ...category, displayOrder: maxOrder + 1 }).returning();
+    // Assign next display_order in the same INSERT instead of a separate SELECT round trip.
+    const [newCategory] = await db.insert(categories).values({
+      ...category,
+      displayOrder: sql`(SELECT COALESCE(MAX(${categories.displayOrder}), -1) + 1 FROM ${categories} WHERE ${categories.isActive} = true)`,
+    } as any).returning();
     return newCategory;
   }
 
@@ -420,13 +421,15 @@ export class DatabaseStorage implements IStorage {
     const dueOrders = await db.select().from(orders)
       .where(and(eq(orders.paymentStatus, "pending"), eq(orders.status, "served")));
     const mine = dueOrders.filter(o => (o.customerPhone?.trim() || o.customerName?.trim() || `order-${o.id}`) === key);
-    for (const o of mine) {
-      await db.update(orders).set({
-        paymentStatus: "paid",
-        paymentMethod: o.paymentMethod ?? paymentMethod,
-        paidAmount: String(o.totalAmount ?? "0"),
-      }).where(eq(orders.id, o.id));
-    }
+    if (mine.length === 0) return 0;
+    // Single UPDATE across all matching ids — paymentMethod/paidAmount expressions
+    // reference each row's own existing columns, so this stays a per-row-correct
+    // update without a per-row round trip.
+    await db.update(orders).set({
+      paymentStatus: "paid",
+      paymentMethod: sql`coalesce(${orders.paymentMethod}, ${paymentMethod})`,
+      paidAmount: sql`coalesce(${orders.totalAmount}, '0')`,
+    }).where(inArray(orders.id, mine.map((o) => o.id)));
     return mine.length;
   }
 
@@ -498,8 +501,10 @@ export class DatabaseStorage implements IStorage {
         ...(order as any),
         updatedAt: new Date(),
       }).returning();
-      for (const it of items) {
-        await tx.insert(orderItems).values({ ...(it as any), orderId: newOrder.id });
+      if (items.length > 0) {
+        await tx.insert(orderItems).values(
+          items.map((it) => ({ ...(it as any), orderId: newOrder.id })),
+        );
       }
       const kotItems = Array.isArray(kot.items) ? kot.items : undefined;
       await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id });
@@ -541,6 +546,11 @@ export class DatabaseStorage implements IStorage {
     return newItem;
   }
 
+  async createOrderItems(items: InsertOrderItem[]): Promise<OrderItem[]> {
+    if (items.length === 0) return [];
+    return await db.insert(orderItems).values(items).returning();
+  }
+
   async updateOrderItem(id: number, item: Partial<InsertOrderItem>): Promise<OrderItem> {
     const [updated] = await db.update(orderItems).set(item).where(eq(orderItems.id, id)).returning();
     return updated;
@@ -548,6 +558,11 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOrderItem(id: number): Promise<void> {
     await db.delete(orderItems).where(eq(orderItems.id, id));
+  }
+
+  async deleteOrderItems(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await db.delete(orderItems).where(inArray(orderItems.id, ids));
   }
 
   async deleteOrderItemsByOrderId(orderId: number): Promise<void> {
