@@ -1773,20 +1773,17 @@ export async function registerRoutes(
 
       // Replace all order items with server-validated unit prices
       await storage.deleteOrderItemsByOrderId(id);
-      for (let idx = 0; idx < lineItems.length; idx++) {
-        const item = lineItems[idx];
-        await storage.createOrderItem({
-          orderId: id,
-          menuItemId: Number(item.menuItemId),
-          name: item.name ?? null,
-          quantity: Number(item.quantity),
-          price: String(priced.lines[idx].unitPrice),
-          specialInstructions: item.specialInstructions || "",
-          size: item.size || null,
-          serviceMode: item.serviceMode || null,
-          parcelLeftover: item.parcelLeftover ?? false,
-        });
-      }
+      await storage.createOrderItems(lineItems.map((item: any, idx: number) => ({
+        orderId: id,
+        menuItemId: Number(item.menuItemId),
+        name: item.name ?? null,
+        quantity: Number(item.quantity),
+        price: String(priced.lines[idx].unitPrice),
+        specialInstructions: item.specialInstructions || "",
+        size: item.size || null,
+        serviceMode: item.serviceMode || null,
+        parcelLeftover: item.parcelLeftover ?? false,
+      })));
 
       const order = await storage.updateOrder(id, {
         totalAmount: priced.total.toFixed(2),
@@ -2196,16 +2193,14 @@ export async function registerRoutes(
       if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
       // Copy source items into target order
       const sourceItems = await storage.getOrderItems(sourceOrderId);
-      for (const item of sourceItems) {
-        await storage.createOrderItem({
-          orderId: targetOrderId,
-          menuItemId: item.menuItemId,
-          quantity: item.quantity,
-          price: item.price,
-          specialInstructions: item.specialInstructions,
-          size: item.size,
-        } as any);
-      }
+      await storage.createOrderItems(sourceItems.map((item) => ({
+        orderId: targetOrderId,
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        price: item.price,
+        specialInstructions: item.specialInstructions,
+        size: item.size,
+      } as any)));
       // Recalculate target order totals using the configured tax rate
       const allItems = await storage.getOrderItems(targetOrderId);
       const merged = computeTotalsFromLines(
@@ -2262,17 +2257,15 @@ export async function registerRoutes(
         notes: `Split from ${(sourceOrder as any).orderNumber}`,
       } as any);
       // Move split items to new order, delete from source
-      for (const item of splitItems) {
-        await storage.createOrderItem({
-          orderId: newOrder.id,
-          menuItemId: item.menuItemId,
-          quantity: item.quantity,
-          price: item.price,
-          specialInstructions: item.specialInstructions,
-          size: item.size,
-        } as any);
-        await storage.deleteOrderItem(item.id);
-      }
+      await storage.createOrderItems(splitItems.map((item) => ({
+        orderId: newOrder.id,
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        price: item.price,
+        specialInstructions: item.specialInstructions,
+        size: item.size,
+      } as any)));
+      await storage.deleteOrderItems(splitItems.map((item) => item.id));
       // Recalculate source order total using the configured tax rate
       const remaining = await storage.getOrderItems(id);
       const srcTotals = computeTotalsFromLines(
