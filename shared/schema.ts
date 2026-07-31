@@ -34,13 +34,21 @@ export const menuItems = pgTable("menu_items", {
   preparationTime: integer("preparation_time").notNull().default(15),
   ingredients: text("ingredients").array(),
   image: text("image"),
-  sizes: json("sizes").$type<Array<{ size: string; price: number }>>(),
+  sizes: json("sizes").$type<Array<{ size: string; price: number; stockMultiplier?: number }>>(), // stockMultiplier scales recipe consumption for this size (e.g. Large = 1.5); missing/undefined = 1
   addonsEnabled: boolean("addons_enabled").notNull().default(false),
   addons: json("addons").$type<Array<{ name: string; price: number }>>(),
   variants: json("variants").$type<Array<{ group: string; options: Array<{ name: string; price?: number }>; required?: boolean }>>(),
   notesAllowed: boolean("notes_allowed").notNull().default(true),
   shortCode: text("short_code"),
   inventoryLinks: json("inventory_links").$type<Array<{ inventoryId: number; quantity: number }>>(),
+});
+
+export const inventoryCategories = pgTable("inventory_categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  displayOrder: integer("display_order").notNull().default(0),
 });
 
 export const inventory = pgTable("inventory", {
@@ -50,6 +58,25 @@ export const inventory = pgTable("inventory", {
   minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull(),
   unit: text("unit").notNull(),
   lastRestocked: timestamp("last_restocked").defaultNow(),
+  categoryId: integer("category_id"), // nullable, no FK — matches menuItems.categoryId convention; null = "Uncategorized"
+  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }), // nullable
+});
+
+// Append-only ledger of every change to inventory.currentStock — never updated or deleted,
+// same principle as auditLogs. quantityDelta is signed (negative = consumption); stockAfter
+// is a snapshot of the resulting balance so a row is self-describing without replaying deltas.
+export const stockMovements = pgTable("stock_movements", {
+  id: serial("id").primaryKey(),
+  inventoryId: integer("inventory_id").notNull(),
+  orderId: integer("order_id"),
+  menuItemId: integer("menu_item_id"), // which dish drove this, for sale/sale_reversal movements
+  type: text("type").notNull(), // 'sale' | 'sale_reversal' | 'manual_adjustment' | 'restock' | 'import'
+  quantityDelta: decimal("quantity_delta", { precision: 10, scale: 2 }).notNull(),
+  stockAfter: decimal("stock_after", { precision: 10, scale: 2 }).notNull(),
+  note: text("note"),
+  actorUserId: integer("actor_user_id"),
+  actorStaffMemberId: integer("actor_staff_member_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const orders = pgTable("orders", {
@@ -99,6 +126,7 @@ export const orderItems = pgTable("order_items", {
   size: text("size"),
   serviceMode: text("service_mode"), // "dinein" | "pickup" | "delivery" — null treated as "dinein"
   parcelLeftover: boolean("parcel_leftover").default(false), // dine-in leftover packed as takeaway → flat container charge
+  unitCost: decimal("unit_cost", { precision: 10, scale: 2 }), // snapshot of computeMenuItemCost() at sale time — never recomputed retroactively, so historical COGS/margin stay stable when inventory.costPerUnit later changes
 });
 
 export const kotTickets = pgTable("kot_tickets", {
@@ -168,6 +196,7 @@ export const kotTicketsRelations = relations(kotTickets, ({ one }) => ({
 // Zod schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
+export const insertInventoryCategorySchema = createInsertSchema(inventoryCategories).omit({ id: true });
 export const insertMenuItemSchema = createInsertSchema(menuItems).omit({ id: true });
 export const insertInventorySchema = createInsertSchema(inventory).omit({ id: true, lastRestocked: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
@@ -176,12 +205,15 @@ export const insertKotTicketSchema = createInsertSchema(kotTickets).omit({ id: t
 export const insertDeliveryIntegrationSchema = createInsertSchema(deliveryIntegrations).omit({ id: true });
 export const insertSalesSchema = createInsertSchema(sales).omit({ id: true, date: true });
 export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
+export const insertStockMovementSchema = createInsertSchema(stockMovements).omit({ id: true, createdAt: true });
 
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Category = typeof categories.$inferSelect;
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
+export type InventoryCategory = typeof inventoryCategories.$inferSelect;
+export type InsertInventoryCategory = z.infer<typeof insertInventoryCategorySchema>;
 export type MenuItem = typeof menuItems.$inferSelect;
 export type InsertMenuItem = z.infer<typeof insertMenuItemSchema>;
 export type Inventory = typeof inventory.$inferSelect;
@@ -198,6 +230,8 @@ export type Sales = typeof sales.$inferSelect;
 export type InsertSales = z.infer<typeof insertSalesSchema>;
 export type Table = typeof tables.$inferSelect;
 export type InsertTable = z.infer<typeof insertTableSchema>;
+export type StockMovement = typeof stockMovements.$inferSelect;
+export type InsertStockMovement = z.infer<typeof insertStockMovementSchema>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CRM EXTENSION TABLES (Phase 1 — additive, backward-compatible)
