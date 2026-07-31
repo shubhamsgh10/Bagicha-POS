@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,24 +13,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useEffect } from "react";
 
+const UNCATEGORIZED = "uncategorized";
+
 const inventorySchema = z.object({
   itemName: z.string().min(1, "Item name is required"),
-  description: z.string().optional(),
+  categoryId: z.string().optional(),
   currentStock: z.string().min(1, "Current stock is required"),
   minStock: z.string().min(1, "Minimum stock is required"),
   unit: z.string().min(1, "Unit is required"),
-  supplierName: z.string().optional(),
-  supplierContact: z.string().optional(),
   costPerUnit: z.string().optional(),
-  expiryDate: z.string().optional(),
 });
 
 type InventoryForm = z.infer<typeof inventorySchema>;
+
+interface InventoryCategoryOption {
+  id: number;
+  name: string;
+}
 
 interface AddInventoryModalProps {
   isOpen: boolean;
@@ -38,49 +41,60 @@ interface AddInventoryModalProps {
   editItem?: any;
 }
 
+function emptyValues(): InventoryForm {
+  return {
+    itemName: "",
+    categoryId: UNCATEGORIZED,
+    currentStock: "",
+    minStock: "",
+    unit: "",
+    costPerUnit: "",
+  };
+}
+
+function valuesFromItem(item: any): InventoryForm {
+  return {
+    itemName: item.itemName ?? "",
+    categoryId: item.categoryId != null ? String(item.categoryId) : UNCATEGORIZED,
+    currentStock: item.currentStock ?? "",
+    minStock: item.minStock ?? "",
+    unit: item.unit ?? "",
+    costPerUnit: item.costPerUnit ?? "",
+  };
+}
+
 export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryModalProps) {
   const { toast } = useToast();
 
+  const { data: categories = [] } = useQuery<InventoryCategoryOption[]>({
+    queryKey: ["/api/inventory-categories"],
+    enabled: isOpen,
+  });
+
   const form = useForm<InventoryForm>({
     resolver: zodResolver(inventorySchema),
-    defaultValues: {
-      itemName: editItem?.itemName || "",
-      description: editItem?.description || "",
-      currentStock: editItem?.currentStock || "",
-      minStock: editItem?.minStock || "",
-      unit: editItem?.unit || "",
-      supplierName: editItem?.supplierName || "",
-      supplierContact: editItem?.supplierContact || "",
-      costPerUnit: editItem?.costPerUnit || "",
-      expiryDate: editItem?.expiryDate || "",
-    },
+    defaultValues: editItem ? valuesFromItem(editItem) : emptyValues(),
   });
 
   useEffect(() => {
     if (isOpen) {
-      if (editItem) {
-        form.reset(editItem);
-      } else {
-        form.reset({
-          itemName: "",
-          description: "",
-          currentStock: "",
-          minStock: "",
-          unit: "",
-          supplierName: "",
-          supplierContact: "",
-          costPerUnit: "",
-          expiryDate: "",
-        });
-      }
+      form.reset(editItem ? valuesFromItem(editItem) : emptyValues());
     }
   }, [isOpen, editItem, form]);
 
-  const createInventoryMutation = useMutation({
+  const saveInventoryMutation = useMutation({
     mutationFn: async (data: InventoryForm) => {
       const url = editItem ? `/api/inventory/${editItem.id}` : '/api/inventory';
       const method = editItem ? 'PUT' : 'POST';
-      const res = await apiRequest(method, url, data);
+      const payload = {
+        itemName: data.itemName,
+        unit: data.unit,
+        currentStock: data.currentStock,
+        minStock: data.minStock,
+        categoryId: data.categoryId && data.categoryId !== UNCATEGORIZED ? Number(data.categoryId) : null,
+        costPerUnit: data.costPerUnit?.trim() ? data.costPerUnit : null,
+      };
+      const res = await apiRequest(method, url, payload);
       return await res.json();
     },
     onSuccess: () => {
@@ -90,6 +104,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
       });
       queryClient.invalidateQueries({ queryKey: ['/api/inventory'] });
       queryClient.invalidateQueries({ queryKey: ['/api/inventory/low-stock'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/inventory/negative-stock'] });
       onClose();
       form.reset();
     },
@@ -114,6 +129,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
       });
       queryClient.invalidateQueries({ queryKey: ['/api/inventory'] });
       queryClient.invalidateQueries({ queryKey: ['/api/inventory/low-stock'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/inventory/negative-stock'] });
       onClose();
     },
     onError: (error: any) => {
@@ -126,7 +142,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
   });
 
   const onSubmit = (data: InventoryForm) => {
-    createInventoryMutation.mutate(data);
+    saveInventoryMutation.mutate(data);
   };
 
   const handleDelete = () => {
@@ -137,7 +153,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {editItem ? "Edit Inventory Item" : "Add New Inventory Item"}
@@ -148,7 +164,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
+            <div className="md:col-span-2">
               <Label htmlFor="itemName">Item Name *</Label>
               <Input
                 id="itemName"
@@ -158,6 +174,23 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
               {form.formState.errors.itemName && (
                 <p className="text-sm text-red-500">{form.formState.errors.itemName.message}</p>
               )}
+            </div>
+            <div>
+              <Label htmlFor="categoryId">Category</Label>
+              <Select
+                value={form.watch("categoryId") || UNCATEGORIZED}
+                onValueChange={(value: string) => form.setValue("categoryId", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Uncategorized" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={UNCATEGORIZED}>Uncategorized</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label htmlFor="unit">Unit *</Label>
@@ -210,7 +243,7 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
               )}
             </div>
             <div>
-              <Label htmlFor="costPerUnit">Cost per Unit (₹)</Label>
+              <Label htmlFor="costPerUnit">Cost per Unit (₹) — optional</Label>
               <Input
                 id="costPerUnit"
                 type="number"
@@ -219,38 +252,6 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
                 {...form.register("costPerUnit")}
               />
             </div>
-            <div>
-              <Label htmlFor="expiryDate">Expiry Date</Label>
-              <Input
-                id="expiryDate"
-                type="date"
-                {...form.register("expiryDate")}
-              />
-            </div>
-            <div>
-              <Label htmlFor="supplierName">Supplier Name</Label>
-              <Input
-                id="supplierName"
-                placeholder="Enter supplier name"
-                {...form.register("supplierName")}
-              />
-            </div>
-            <div>
-              <Label htmlFor="supplierContact">Supplier Contact</Label>
-              <Input
-                id="supplierContact"
-                placeholder="Enter supplier contact"
-                {...form.register("supplierContact")}
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              placeholder="Enter item description"
-              {...form.register("description")}
-            />
           </div>
           <div className="flex justify-between">
             <div className="flex space-x-2">
@@ -269,9 +270,9 @@ export function AddInventoryModal({ isOpen, onClose, editItem }: AddInventoryMod
             </div>
             <Button
               type="submit"
-              disabled={createInventoryMutation.isPending}
+              disabled={saveInventoryMutation.isPending}
             >
-              {createInventoryMutation.isPending
+              {saveInventoryMutation.isPending
                 ? editItem
                   ? "Updating..."
                   : "Adding..."

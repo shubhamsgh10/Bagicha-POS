@@ -47,7 +47,7 @@ export function isConfigured(): boolean {
 
 async function dumpAllTables() {
   const [
-    users, categories, menuItems, inventory, orders, orderItems,
+    users, categories, inventoryCategories, menuItems, inventory, stockMovements, orders, orderItems,
     kotTickets, tables, sales, deliveryIntegrations,
     customersMaster, customerProfiles, customerEvents, customerSegments,
     automationRules, automationJobs, customerMessages,
@@ -57,8 +57,10 @@ async function dumpAllTables() {
   ] = await Promise.all([
     db.select().from(T.users),
     db.select().from(T.categories),
+    db.select().from(T.inventoryCategories),
     db.select().from(T.menuItems),
     db.select().from(T.inventory),
+    db.select().from(T.stockMovements),
     db.select().from(T.orders),
     db.select().from(T.orderItems),
     db.select().from(T.kotTickets),
@@ -85,7 +87,7 @@ async function dumpAllTables() {
   ]);
 
   return {
-    users, categories, menuItems, inventory, orders, orderItems,
+    users, categories, inventoryCategories, menuItems, inventory, stockMovements, orders, orderItems,
     kotTickets, tables, sales, deliveryIntegrations,
     customersMaster, customerProfiles, customerEvents, customerSegments,
     automationRules, automationJobs, customerMessages,
