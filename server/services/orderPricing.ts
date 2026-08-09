@@ -46,11 +46,13 @@ export async function priceOrder(
 
 /**
  * Recompute totals for an order whose items already live in the DB (merge/split),
- * using the configured tax rate and a clamped discount.
+ * using the configured tax rate and a clamped discount. Pass `containerCharge`
+ * (from computeContainerCharge over the same item rows) or it defaults to 0.
  */
 export function computeTotalsFromLines(
   lineTotals: number[],
   discountAmountRaw: unknown,
-): { subtotal: number; discount: number; tax: number; total: number } {
-  return computeTotals(lineTotals, discountAmountRaw, pricingRates().taxRate);
+  containerCharge = 0,
+): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number } {
+  return computeTotals(lineTotals, discountAmountRaw, pricingRates().taxRate, containerCharge);
 }
