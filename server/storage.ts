@@ -666,13 +666,22 @@ export class DatabaseStorage implements IStorage {
     if (mine.length === 0) return 0;
     // Single UPDATE across all matching ids — paymentMethod/paidAmount expressions
     // reference each row's own existing columns, so this stays a per-row-correct
-    // update without a per-row round trip.
-    await db.update(orders).set({
+    // update without a per-row round trip. Conditional on paymentStatus='pending' AT
+    // WRITE TIME too (not just in the SELECT above) — the same guard settleOrderIfUnpaid
+    // uses, so a single-order settle racing with this bulk settle between the SELECT and
+    // this UPDATE can't be silently overwritten. Returns the rows THIS call actually
+    // flipped (via .returning()), which can be fewer than mine.length if one of them was
+    // settled individually in that window — previously this returned the stale
+    // read-time count regardless of what the UPDATE actually did.
+    const settled = await db.update(orders).set({
       paymentStatus: "paid",
       paymentMethod: sql`coalesce(${orders.paymentMethod}, ${paymentMethod})`,
       paidAmount: sql`coalesce(${orders.totalAmount}, '0')`,
-    }).where(inArray(orders.id, mine.map((o) => o.id)));
-    return mine.length;
+    }).where(and(
+      inArray(orders.id, mine.map((o) => o.id)),
+      eq(orders.paymentStatus, "pending"),
+    )).returning({ id: orders.id });
+    return settled.length;
   }
 
   async getStaffTableReport(startDate: Date, endDate: Date): Promise<Array<{
