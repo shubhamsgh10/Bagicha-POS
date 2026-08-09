@@ -2407,7 +2407,7 @@ export default function POS() {
               if (cartItems.length === 0) return (
                 <div className="flex flex-col items-center justify-center text-center px-6 py-10">
                   <img
-                    src="/brand/illustration-wood-fire-oven.png"
+                    src={apiUrl("/brand/illustration-wood-fire-oven.png")}
                     alt=""
                     aria-hidden
                     className="w-40 max-w-[70%] mb-1 select-none pointer-events-none"
