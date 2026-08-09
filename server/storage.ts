@@ -635,12 +635,16 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(orders.createdAt));
     if (dueOrders.length === 0) return [];
 
-    // All items for these orders in one pass — open-item safe (prefer orderItems.name, else menu name).
+    // All items for these orders in one pass — open-item safe (prefer orderItems.name,
+    // else menu name). The coalesce previously omitted orderItems.name entirely despite
+    // this comment, so every open item (synthetic negative menuItemId, no menuItems row)
+    // rendered as the literal string "Item" on every Pay-Later tab and consolidated
+    // e-bill — see CLAUDE.md's Open Items section, which documents this exact pattern.
     const orderIds = dueOrders.map(o => o.id);
     const itemRows = await db
       .select({
         orderId: orderItems.orderId,
-        name: sql<string>`coalesce(${menuItems.name}, 'Item')`,
+        name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         quantity: orderItems.quantity,
         price: orderItems.price,
       })
@@ -1179,17 +1183,22 @@ export class DatabaseStorage implements IStorage {
       end   = new Date(); end.setHours(23, 59, 59, 999);
     }
 
+    // leftJoin, not innerJoin — open items (synthetic negative menuItemId, no menuItems
+    // row, so no categoryId either) were previously dropped from this query entirely,
+    // meaning summed category revenue could be strictly less than true order revenue
+    // whenever open items existed, with no indication anywhere that anything was
+    // missing. They now land in an "Uncategorized" bucket instead of vanishing.
     const result = await db
       .select({
-        category: categories.name,
+        category: sql<string>`coalesce(${categories.name}, 'Uncategorized')`,
         total: sql<number>`cast(sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) as numeric)`,
       })
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
-      .innerJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-      .innerJoin(categories, eq(menuItems.categoryId, categories.id))
+      .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+      .leftJoin(categories, eq(menuItems.categoryId, categories.id))
       .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
-      .groupBy(categories.id, categories.name)
+      .groupBy(sql`coalesce(${categories.id}, -1)`, sql`coalesce(${categories.name}, 'Uncategorized')`)
       .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`);
 
     return result.map(r => ({ category: r.category, total: Number(r.total) }));
