@@ -5,7 +5,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "child_process";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema, insertOrderSchema } from "@shared/schema";
+import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
+import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -1811,6 +1812,10 @@ export async function registerRoutes(
       });
 
       // Order + items + KOT are created atomically (see storage.createOrderWithItems).
+      // ORDER_CREATE_FORCED_DEFAULTS spread LAST: paymentStatus/paidAmount/changeAmount/
+      // paymentMethod/paymentBreakdown must never come from the client body — an order used
+      // to be creatable already marked "paid" by simply including that field in orderInfo.
+      // Real payment state is only ever set by POST /api/orders/:id/payment (settlement).
       const order = await storage.createOrderWithItems(
         {
           ...orderInfo,
@@ -1821,6 +1826,7 @@ export async function registerRoutes(
           createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
           createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
           createdByName: actor?.username ?? null,
+          ...ORDER_CREATE_FORCED_DEFAULTS,
         },
         itemsToInsert,
         { kotNumber, items: kotItems as any },
@@ -1959,10 +1965,12 @@ export async function registerRoutes(
     }
   });
 
+  // Deliberately narrow: money/payment/identity fields are NOT settable here — see
+  // shared/orderMutation.ts's orderUpdateAllowlist for why.
   app.put("/api/orders/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const orderData = insertOrderSchema.partial().parse(req.body);
+      const orderData = orderUpdateAllowlist.parse(req.body);
       const order = await storage.updateOrder(id, orderData);
       broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
