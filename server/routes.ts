@@ -67,6 +67,7 @@ import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsapp
 import { registerStaffRoutes } from "./staffRoutes";
 import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
+import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs } from "./services/auditService";
@@ -489,8 +490,7 @@ export async function registerRoutes(
         if (user.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
         return req.logIn(user as any, (err) => {
           if (err) return next(err);
-          const { password, ...safe } = user as any;
-          res.json(safe);
+          res.json(sanitizeUser(user as any));
         });
       }
 
@@ -511,12 +511,13 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", (req, res) => {
     if (!req.isAuthenticated()) return res.status(200).json(null);
-    const user = req.user as any;
-    const { password, ...safeUser } = user;
-    res.json(safeUser);
+    res.json(sanitizeUser(req.user as any));
   });
 
-  app.put("/api/auth/profile", requireAuth, async (req, res) => {
+  // requireUserAccount: a staff-member session (`{id: staffMembers.id, _isStaffMember:true}`)
+  // must never reach these — `users` and `staffMembers` share an integer id space, so an
+  // unguarded lookup by `currentUser.id` here is a cross-table IDOR (see CLAUDE.md).
+  app.put("/api/auth/profile", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const { username } = req.body;
       if (!username || typeof username !== "string" || username.trim().length === 0) {
@@ -528,15 +529,14 @@ export async function registerRoutes(
         return res.status(409).json({ message: "Username already taken" });
       }
       const updated = await storage.updateUser(Number(currentUser.id), { username: username.trim() });
-      const { password, ...safeUser } = updated;
-      res.json(safeUser);
+      res.json(sanitizeUser(updated));
     } catch (err) {
       console.error("Profile update error:", err);
       res.status(500).json({ message: "Failed to update profile" });
     }
   });
 
-  app.put("/api/auth/password", requireAuth, async (req, res) => {
+  app.put("/api/auth/password", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
       if (!currentPassword || !newPassword) {
@@ -620,8 +620,7 @@ export async function registerRoutes(
       }
       const updated = await storage.updateUser(id, { pin: pin ? String(pin) : null });
       logAudit(req, "user.pin_update", "user", id, { cleared: !pin });
-      const { password: _, ...safeUser } = updated;
-      res.json(safeUser);
+      res.json(sanitizeUser(updated));
     } catch (err) {
       console.error("Update PIN error:", err);
       res.status(500).json({ message: "Failed to update PIN" });
@@ -1387,7 +1386,9 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/tables/:id/shift", requireAuth, async (req, res) => {
+  // Same effect as PUT /api/orders/:id/move-table (relocates an active order to another
+  // table) — gated the same way.
+  app.post("/api/tables/:id/shift", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const fromTableId = parseInt(req.params.id);
       const { toTableId } = req.body;
@@ -3065,15 +3066,13 @@ export async function registerRoutes(
   // STAFF MANAGEMENT ROUTES
   // ==========================================================================
 
-  // GET /api/staff — all users with staff profiles
-  app.get("/api/staff", requireAuth, async (req, res) => {
-    try {
-      res.json(await storage.getStaffProfiles());
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
-  });
+  // NOTE: GET /api/staff is registered in staffRoutes.ts (requireManagerOrAdmin) and, being
+  // registered earlier via registerStaffRoutes(app) above, wins over any duplicate here — a
+  // second registration was previously here with a weaker `requireAuth` guard and has been
+  // removed rather than left as dead code (see CLAUDE.md's staff/payroll authorization note).
 
   // PUT /api/staff/:id/profile — upsert staff profile (salary, biometricId, dept, etc.)
-  app.put("/api/staff/:id/profile", requireAuth, async (req, res) => {
+  app.put("/api/staff/:id/profile", requireManagerOrAdmin, async (req, res) => {
     try {
       const userId = parseInt(req.params.id, 10);
       if (Number.isNaN(userId)) return res.status(400).json({ message: "Invalid staff id" });
