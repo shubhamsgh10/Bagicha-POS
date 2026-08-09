@@ -1915,14 +1915,12 @@ export async function registerRoutes(
       // snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
       // storage.computeMenuItemCosts) — null when no full recipe cost is known,
       // never a fabricated 0. Batched — same pattern as POST /api/orders above.
-      await storage.deleteOrderItemsByOrderId(id);
       const editCostResults = await storage.computeMenuItemCosts(
         lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
       );
       const itemsToInsert = lineItems.map((item: any, idx: number) => {
         const costResult = editCostResults[idx];
         return {
-          orderId: id,
           menuItemId: Number(item.menuItemId),
           name: item.name ?? null,
           quantity: Number(item.quantity),
@@ -1934,9 +1932,11 @@ export async function registerRoutes(
           unitCost: costResult && !costResult.hasIncompleteCost ? costResult.cost.toFixed(2) : null,
         };
       });
-      await storage.createOrderItems(itemsToInsert);
 
-      const order = await storage.updateOrder(id, {
+      // Delete + reinsert + totals update in one transaction (storage.replaceOrderItems)
+      // — previously three separate statements, so a crash between the delete and the
+      // reinsert left the order with zero items.
+      const order = await storage.replaceOrderItems(id, itemsToInsert as any, {
         totalAmount: priced.total.toFixed(2),
         taxAmount: priced.tax.toFixed(2),
         discountAmount: priced.discount.toFixed(2),
