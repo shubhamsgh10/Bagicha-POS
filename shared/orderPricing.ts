@@ -115,3 +115,48 @@ export function computeTotals(
   const tax = taxable * taxRate;
   return { subtotal, discount, tax, total: taxable + tax };
 }
+
+export interface BillTotals {
+  subtotal: number;
+  discount: number;
+  containerCharge: number;
+  tax: number;
+  total: number;
+}
+
+/**
+ * Resolve the four bill-line components (subtotal/discount/container/tax) for a
+ * persisted order, for any place that needs to print or re-derive them.
+ *
+ * `orders` used to have no `subtotalAmount`/`containerCharge` columns, so every such
+ * site reconstructed subtotal as `totalAmount - taxAmount` — correct ONLY when
+ * discount = 0 AND containerCharge = 0, since the true relation (see priceResolved
+ * above) is `total = (subtotal - discount) * (1 + taxRate) + containerCharge`, i.e.
+ * `total - tax = subtotal - discount + containerCharge`, not `subtotal` alone. With a
+ * discount and a container charge both present this was wrong by a very real amount
+ * (see scripts/verify-bill-derivation.ts for a worked example) — the printed "Sub
+ * Total" line didn't match the actual pre-discount item sum, and re-deriving it as
+ * the base for a second discount (coupon/loyalty) compounded the error.
+ *
+ * Both columns are now populated at order-creation/edit time from the same `priced`
+ * object that computes totalAmount/taxAmount/discountAmount, so this prefers them.
+ * The `total - tax` fallback only fires for legacy rows written before those columns
+ * existed — deliberately left as-is for those (not retroactively recomputed from
+ * order_items), since it doesn't change what those rows already show today.
+ */
+export function deriveBillTotals(order: {
+  totalAmount: string | number;
+  taxAmount: string | number;
+  discountAmount?: string | number | null;
+  subtotalAmount?: string | number | null;
+  containerCharge?: string | number | null;
+}): BillTotals {
+  const total = Number(order.totalAmount) || 0;
+  const tax = Number(order.taxAmount) || 0;
+  const discount = Number(order.discountAmount ?? 0) || 0;
+  const subtotal =
+    order.subtotalAmount != null ? Number(order.subtotalAmount) || 0 : total - tax;
+  const containerCharge =
+    order.containerCharge != null ? Number(order.containerCharge) || 0 : 0;
+  return { subtotal, discount, containerCharge, tax, total };
+}

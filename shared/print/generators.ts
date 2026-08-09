@@ -1,6 +1,7 @@
 import * as E from "./escpos";
 import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, KOTPrintSettings } from "./types";
+import { deriveBillTotals } from "../orderPricing";
 
 export interface KOTItem {
   name: string;
@@ -136,6 +137,8 @@ export function generateBillBuffer(params: {
     totalAmount: string;
     taxAmount: string;
     discountAmount: string | null;
+    subtotalAmount?: string | null;
+    containerCharge?: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
     kotPrintCount?: number;
@@ -278,9 +281,7 @@ export function generateBillBuffer(params: {
 
   parts.push(E.divider("-", W));
 
-  const tax      = parseFloat(order.taxAmount);
-  const discount = parseFloat(order.discountAmount || "0");
-  const subtotal = parseFloat(order.totalAmount) - tax;
+  const { subtotal, discount, containerCharge, tax } = deriveBillTotals(order);
   const rawTotal = parseFloat(order.totalAmount);
   const rounded  = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
@@ -293,6 +294,9 @@ export function generateBillBuffer(params: {
   parts.push(tw("", `SGST ${cgstRate}%  ${sgst.toFixed(2)}`));
   if (discount > 0) {
     parts.push(tw("", `Discount  -${discount.toFixed(2)}`));
+  }
+  if (containerCharge > 0) {
+    parts.push(tw("", `Container  ${containerCharge.toFixed(2)}`));
   }
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) {
     parts.push(tw("", `Round off  ${roundOff.toFixed(2)}`));

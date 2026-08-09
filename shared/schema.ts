@@ -96,6 +96,13 @@ export const orders = pgTable("orders", {
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull(),
   discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).default("0"),
+  // Pre-discount, pre-container, pre-tax item sum and the flat parcel/container charge —
+  // both snapshotted at order-creation/edit time from the same priced object that computes
+  // totalAmount/taxAmount/discountAmount. Nullable: rows written before this column existed
+  // have no value here; shared/orderPricing.ts's deriveBillTotals() falls back to
+  // `totalAmount - taxAmount` for those (see its comment for why that's only an approximation).
+  subtotalAmount: decimal("subtotal_amount", { precision: 10, scale: 2 }),
+  containerCharge: decimal("container_charge", { precision: 10, scale: 2 }).default("0"),
   paymentStatus: text("payment_status").notNull().default("pending"),
   paymentMethod: text("payment_method"),
   notes: text("notes"),
