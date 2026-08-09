@@ -115,8 +115,11 @@ app.use((req, res, next) => {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
+      // Errors get more room — the response body is often the only clue to what
+      // failed, and 80 chars was cutting it off before anything useful showed.
+      const maxLen = res.statusCode >= 400 ? 500 : 80;
+      if (logLine.length > maxLen) {
+        logLine = logLine.slice(0, maxLen - 1) + "…";
       }
 
       log(logLine);
@@ -135,10 +138,12 @@ app.use((req, res, next) => {
     Sentry.setupExpressErrorHandler(app);
   }
 
-  // Global error handler — Sentry captures before we respond
+  // Global error handler — always logged (previously only reported to Sentry when a
+  // DSN was configured, so without one a 500 here was invisible in any log).
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
+    console.error(`[error] ${req.method} ${req.url} -> ${status}:`, err.stack || err);
     if (status >= 500 && process.env.SENTRY_DSN) {
       Sentry.captureException(err, { extra: { url: req.url, method: req.method } });
     }

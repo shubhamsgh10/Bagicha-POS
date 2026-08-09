@@ -1,5 +1,7 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryCache, MutationCache, QueryFunction } from "@tanstack/react-query";
+import * as Sentry from "@sentry/react";
 import { apiUrl } from "./api";
+import { toast } from "@/hooks/use-toast";
 
 type UnauthorizedBehavior = "returnNull" | "throw";
 
@@ -45,6 +47,32 @@ export const getQueryFn: <T>(options: {
   };
 
 export const queryClient = new QueryClient({
+  // Background queries fail silently to the user by design — most poll (tables,
+  // live-status, orders every 5s) and a toast per failed poll would spam. Still log/report
+  // it somewhere instead of it vanishing entirely (previously: nowhere at all).
+  queryCache: new QueryCache({
+    onError: (error) => {
+      console.error("[query error]", error);
+      Sentry.captureException(error);
+    },
+  }),
+  // Most mutations already show their own toast via a local onError. This fallback only
+  // fires for the ones that don't (mutation.options.onError is unset) — those previously
+  // failed completely silently (e.g. useConversations.ts's reply/takeover/returnToBot/
+  // markRead, Menu.tsx's delete, Staff.tsx's remove). Checking for a local handler avoids
+  // double-toasting the ~45 mutations that already handle their own error.
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      console.error("[mutation error]", error);
+      Sentry.captureException(error);
+      if (mutation.options.onError) return;
+      toast({
+        title: "Something went wrong",
+        description: error instanceof Error ? error.message : "The action didn't complete.",
+        variant: "destructive",
+      });
+    },
+  }),
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "returnNull" }),

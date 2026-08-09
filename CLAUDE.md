@@ -13,7 +13,11 @@ npm run db:push    # Push Drizzle schema changes to the database
 npm run seed       # Seed the database with initial data
 ```
 
-There are no automated tests in this project.
+There is no test framework (no vitest/jest/playwright) — but this is not "no automated tests":
+`npm run test:pure` runs a growing set of hand-rolled, DB-free `scripts/verify-*.ts` scripts (plain
+`tsx` programs, `PASS`/`FAIL` per assertion, nonzero exit on failure) that lock in the security/money
+invariants below, and it runs on every push/PR via CI (see "CI" under Security & data-integrity
+invariants). Several more `scripts/verify-*.ts` exist but touch a live DB and stay manual-only.
 
 ## Architecture
 
@@ -75,6 +79,7 @@ Client-side PIN gates are UX only; the server enforces the following independent
 - **Realtime is authenticated**: the `/ws` upgrade is checked against the session cookie (sessionMiddleware threaded into `registerRoutes` from both `server/index.ts` and `server-fn.ts`); Pusher uses a **private channel** (`private-bagicha-pos` default) authorized by `POST /api/pusher/auth` (`requireAuth`) — client `useRealtime.ts` wires a `channelAuthorization.customHandler`. Server `PUSHER_CHANNEL` and client `VITE_PUSHER_CHANNEL` must match.
 - **Delivery webhook** (`POST /api/delivery/webhook/:platform`): now fail-closed — requires `x-webhook-secret` == `DELIVERY_WEBHOOK_SECRET` and a known platform.
 - **Hardening**: `helmet()` on both entries; session cookie `secure` in prod + `sameSite:"lax"`; `SESSION_SECRET` **required in production** (`server/sessionSecret.ts` throws on boot if unset — no more hardcoded fallback; `.session-secret` file deleted). Multer capped at 5MB + spreadsheet/CSV `fileFilter` before `XLSX.read`. Config file writes (`automationStore.writeJson`) are atomic (temp+rename). `process.on('unhandledRejection'|'uncaughtException')` guards in `server/index.ts`.
+- **Observability**: `client/src/components/ErrorBoundary.tsx` wraps the whole render tree in `main.tsx` (there was no ErrorBoundary anywhere before — a single render-phase throw white-screened the app with no fallback and no report). `main.tsx` also adds `window.onerror`/`unhandledrejection` listeners for errors outside React's render cycle (event handlers, timers, promise rejections), which an ErrorBoundary can't catch. `client/src/lib/queryClient.ts`'s `QueryClient` now has a `queryCache.onError` (console.error + `Sentry.captureException`, no toast — most queries poll every 5s and a toast per failed poll would spam) and a `mutationCache.onError` that shows a fallback toast **only** when the specific mutation has no local `onError` (checked via `mutation.options.onError`) — closes several previously-silent mutations (`useConversations.ts`'s reply/takeover/returnToBot/markRead, `Menu.tsx`'s delete, `Staff.tsx`'s remove) without double-toasting the ~45 mutations that already handle their own error. `GET /api/health` + `GET /api/version` (both unauthenticated, `routes.ts`) — no liveness/diagnostic probe existed before. `vite.config.ts` and both `esbuild` build commands (`build`, `build:api`) now emit source maps — without them a production/Sentry stack trace only pointed at minified bundle offsets. `server/index.ts`'s global error middleware now always `console.error`s (previously only reported to Sentry when `SENTRY_DSN` was set, so a 500 with no DSN configured was invisible in any log); the request logger's truncation is 500 chars for non-2xx responses (was a blanket 80, which cut off the one thing that showed what failed). `SENTRY_DSN`/`VITE_SENTRY_DSN` are installed and initialized (`server/index.ts`, `client/src/main.tsx`) but were undocumented in `.env.example` — now listed there; Sentry stays a no-op until a real DSN is set in the deployment's environment.
 - **CI** (`.github/workflows/ci.yml`): `npm run check` + `npm run test:pure` on every push/PR. `test:pure` runs the two DB-free verify scripts; the DB/settings-touching `verify-*.ts` stay manual.
 - **PINs are still plaintext** (known residual, not in this pass) — hashing them is a tracked follow-up.
 

@@ -248,6 +248,19 @@ export async function registerRoutes(
     void publishRealtime(data);
   };
 
+  // Unauthenticated liveness/diagnostic probes — nothing like this existed before, so an
+  // uptime monitor (or a human debugging "is the deployment even up") had no endpoint to
+  // hit without a session. Deliberately minimal: no business data, no auth state.
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", uptime: process.uptime() });
+  });
+  app.get("/api/version", (_req, res) => {
+    res.json({
+      version: process.env.npm_package_version || "unknown",
+      env: process.env.NODE_ENV || "development",
+    });
+  });
+
   // Pusher private-channel auth — only an authenticated session may subscribe to
   // the realtime channel (which carries orders, customer phones, WhatsApp bodies).
   app.post("/api/pusher/auth", requireAuth, (req, res) => {
