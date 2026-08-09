@@ -52,7 +52,8 @@
       "mcp__plugin_vercel_vercel__list_deployments",
       "PowerShell(npm run check 2>&1)",
       "Bash(node scripts/migrate-print-jobs.mjs)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "WebSearch"
     ]
   },
   "enabledMcpjsonServers": []
