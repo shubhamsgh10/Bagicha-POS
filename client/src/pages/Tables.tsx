@@ -19,6 +19,9 @@ import { useLocation } from "wouter";
 import { useLiveOrders } from "@/hooks/useLiveOrders";
 import { LiveOrdersPanel, LiveOrdersStrip } from "@/components/live-tables/LiveOrdersPanel";
 import { SectionOrdersFlyout } from "@/components/live-tables/SectionOrdersFlyout";
+import { usePermission } from "@/hooks/usePermission";
+import { useActiveRoleContext } from "@/context/ActiveRoleContext";
+import { PinGuard } from "@/components/PinGuard";
 
 interface Table {
   id: number;
@@ -182,6 +185,12 @@ export default function Tables() {
   const posSections: Array<{ id: string; name: string; categoryIds: number[] }> =
     appSettings?.posSections ?? [];
 
+  // Shifting a table's active order to another table is the same privileged action as
+  // POS.tsx's "Move Table" (PUT /api/orders/:id/move-table, requireElevation("manager")
+  // server-side) — gate it the same way here, using the same configured cartPermissions.
+  const { activeRole } = useActiveRoleContext();
+  const { go, pinRequest, resolvePinSuccess, resolvePinCancel } = usePermission(activeRole, appSettings?.cartPermissions);
+
   const { data: liveStatus } = useQuery<{
     runningTables: number;
     freeTables: number;
@@ -301,6 +310,16 @@ export default function Tables() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden" style={{ background: "transparent" }}>
+
+      {/* ── Manager PIN Guard (Shift Table) ───────────────────────────────────── */}
+      {pinRequest && (
+        <PinGuard
+          actionLabel={pinRequest.label}
+          requiredRole={pinRequest.requiredRole}
+          onSuccess={resolvePinSuccess}
+          onCancel={resolvePinCancel}
+        />
+      )}
 
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 sm:px-4 py-2"
@@ -567,7 +586,7 @@ export default function Tables() {
                         >
                           {table.status === "running" && (
                             <button
-                              onClick={e => { e.stopPropagation(); setShiftFrom(table); }}
+                              onClick={e => { e.stopPropagation(); go("moveTable", "Shift Table", () => setShiftFrom(table)); }}
                               className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-blue-200 dark:hover:bg-blue-900 text-blue-600 transition-colors"
                               title="Shift table"
                             >
