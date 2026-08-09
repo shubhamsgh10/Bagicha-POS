@@ -60,6 +60,9 @@ export default defineConfig(async ({ mode }) => {
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // Without these, a prod/Sentry stack trace only points at minified bundle
+    // offsets and is unreadable back to source.
+    sourcemap: true,
   },
   server: {
     host: "0.0.0.0",
