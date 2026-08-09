@@ -125,6 +125,20 @@ export interface IStorage {
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   deleteOrder(id: number): Promise<void>;
+  mergeOrders(params: {
+    targetOrderId: number;
+    sourceOrderId: number;
+    sourceTableId: number | null;
+    newItems: Array<Omit<InsertOrderItem, "orderId">>;
+    targetTotals: Partial<InsertOrder>;
+  }): Promise<Order>;
+  splitOrder(params: {
+    sourceOrderId: number;
+    splitItemIds: number[];
+    newOrder: InsertOrder;
+    newOrderItems: Array<Omit<InsertOrderItem, "orderId">>;
+    sourceTotals: Partial<InsertOrder>;
+  }): Promise<{ newOrder: Order; sourceOrder: Order }>;
 
   // Order Items
   getOrderItems(orderId: number): Promise<OrderItem[]>;
@@ -762,6 +776,62 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOrder(id: number): Promise<void> {
     await db.delete(orders).where(eq(orders.id, id));
+  }
+
+  // Atomic merge: copies source's items into target, recomputes target's totals, frees
+  // the source table, and deletes the source order + its items — all in one transaction.
+  // Previously these were separate statements; a failure partway through could duplicate
+  // items across both orders or delete the source order while its items still existed.
+  async mergeOrders(params: {
+    targetOrderId: number;
+    sourceOrderId: number;
+    sourceTableId: number | null;
+    newItems: Array<Omit<InsertOrderItem, "orderId">>;
+    targetTotals: Partial<InsertOrder>;
+  }): Promise<Order> {
+    return await db.transaction(async (tx) => {
+      if (params.newItems.length > 0) {
+        await tx.insert(orderItems).values(
+          params.newItems.map((it) => ({ ...(it as any), orderId: params.targetOrderId })),
+        );
+      }
+      const [updatedTarget] = await tx.update(orders).set({
+        ...(params.targetTotals as any),
+        updatedAt: new Date(),
+      }).where(eq(orders.id, params.targetOrderId)).returning();
+      if (params.sourceTableId != null) {
+        await tx.update(tables).set({ status: "free", currentOrderId: null }).where(eq(tables.id, params.sourceTableId));
+      }
+      await tx.delete(orderItems).where(eq(orderItems.orderId, params.sourceOrderId));
+      await tx.delete(orders).where(eq(orders.id, params.sourceOrderId));
+      return updatedTarget;
+    });
+  }
+
+  // Atomic split: creates the new order + moves the split items onto it, removes them
+  // from the source, and recomputes the source's totals — all in one transaction, for
+  // the same reason as mergeOrders above.
+  async splitOrder(params: {
+    sourceOrderId: number;
+    splitItemIds: number[];
+    newOrder: InsertOrder;
+    newOrderItems: Array<Omit<InsertOrderItem, "orderId">>;
+    sourceTotals: Partial<InsertOrder>;
+  }): Promise<{ newOrder: Order; sourceOrder: Order }> {
+    return await db.transaction(async (tx) => {
+      const [newOrderRow] = await tx.insert(orders).values(params.newOrder as any).returning();
+      if (params.newOrderItems.length > 0) {
+        await tx.insert(orderItems).values(
+          params.newOrderItems.map((it) => ({ ...(it as any), orderId: newOrderRow.id })),
+        );
+      }
+      await tx.delete(orderItems).where(inArray(orderItems.id, params.splitItemIds));
+      const [updatedSource] = await tx.update(orders).set({
+        ...(params.sourceTotals as any),
+        updatedAt: new Date(),
+      }).where(eq(orders.id, params.sourceOrderId)).returning();
+      return { newOrder: newOrderRow, sourceOrder: updatedSource };
+    });
   }
 
   // Order Items

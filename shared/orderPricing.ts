@@ -48,6 +48,30 @@ export interface ResolvedMenuItem {
 
 const EPS = 0.01;
 
+export interface ContainerChargeInput {
+  quantity: number | string;
+  serviceMode?: string | null;
+  parcelLeftover?: boolean | null;
+}
+
+/**
+ * Container charge rounds up per line, never per fractional quantity — ceil-then-sum,
+ * not sum-then-ceil (two separate 0.5-qty parcel lines need two containers, not one
+ * that a naive ceil(0.5+0.5) would give). Factored out of priceResolved so every other
+ * caller that needs to (re)compute a container charge from a set of order_items rows
+ * (merge/split) uses the exact same rule instead of a second, potentially-diverging copy.
+ */
+export function computeContainerCharge(items: ContainerChargeInput[], containerRate: number): number {
+  let containerCharge = 0;
+  for (const it of items) {
+    const qty = Number(it.quantity) || 0;
+    const sm = it.serviceMode ?? null;
+    if (sm === "pickup" || sm === "delivery") containerCharge += Math.ceil(qty) * containerRate;
+    else if (it.parcelLeftover) containerCharge += containerRate;
+  }
+  return containerCharge;
+}
+
 export function priceResolved(
   items: PricingItemInput[],
   menuById: Map<number, ResolvedMenuItem>,
@@ -58,7 +82,6 @@ export function priceResolved(
   const list = Array.isArray(items) ? items : [];
 
   let subtotal = 0;
-  let containerCharge = 0;
   const lines: PricedLine[] = [];
 
   for (const it of list) {
@@ -81,20 +104,17 @@ export function priceResolved(
 
     subtotal += unitPrice * qty;
 
-    const sm = it.serviceMode ?? null;
-    if (sm === "pickup" || sm === "delivery") containerCharge += Math.ceil(qty) * containerRate;
-    else if (it.parcelLeftover) containerCharge += containerRate;
-
     lines.push({
       menuItemId: mid,
       quantity: qty,
       unitPrice,
-      serviceMode: sm,
+      serviceMode: it.serviceMode ?? null,
       parcelLeftover: !!it.parcelLeftover,
       size: it.size ?? null,
     });
   }
 
+  const containerCharge = computeContainerCharge(lines, containerRate);
   const discount = Math.min(Math.max(0, Number(discountAmountRaw) || 0), subtotal);
   const taxable = subtotal - discount;
   const tax = taxable * taxRate;
@@ -103,17 +123,23 @@ export function priceResolved(
   return { subtotal, discount, taxRate, tax, containerCharge, total, lines };
 }
 
-/** Recompute totals for lines whose per-line totals are already known (merge/split). */
+/**
+ * Recompute totals for lines whose per-line totals are already known (merge/split).
+ * `containerCharge` defaults to 0 for backward compatibility with existing callers
+ * that don't track it, but merge/split now pass the real value — see
+ * computeContainerCharge, which must be run over the actual item rows first.
+ */
 export function computeTotals(
   lineTotals: number[],
   discountAmountRaw: unknown,
   taxRate: number,
-): { subtotal: number; discount: number; tax: number; total: number } {
+  containerCharge = 0,
+): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number } {
   const subtotal = lineTotals.reduce((s, v) => s + v, 0);
   const discount = Math.min(Math.max(0, Number(discountAmountRaw) || 0), subtotal);
   const taxable = subtotal - discount;
   const tax = taxable * taxRate;
-  return { subtotal, discount, tax, total: taxable + tax };
+  return { subtotal, discount, tax, containerCharge, total: taxable + tax + containerCharge };
 }
 
 export interface BillTotals {

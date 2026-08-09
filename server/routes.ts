@@ -66,7 +66,8 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
-import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
+import { priceOrder, computeTotalsFromLines, pricingRates } from "./services/orderPricing";
+import { computeContainerCharge } from "@shared/orderPricing";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { earnPointsForOrder } from "./services/loyaltyService";
@@ -2366,34 +2367,55 @@ export async function registerRoutes(
       const targetOrder = await storage.getOrderById(targetOrderId);
       const sourceOrder = await storage.getOrderById(sourceOrderId);
       if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
-      // Copy source items into target order
+
       const sourceItems = await storage.getOrderItems(sourceOrderId);
-      await storage.createOrderItems(sourceItems.map((item) => ({
-        orderId: targetOrderId,
-        menuItemId: item.menuItemId,
-        quantity: item.quantity,
-        price: item.price,
-        specialInstructions: item.specialInstructions,
-        size: item.size,
-      } as any)));
-      // Recalculate target order totals using the configured tax rate
-      const allItems = await storage.getOrderItems(targetOrderId);
+      const targetExistingItems = await storage.getOrderItems(targetOrderId);
+      const allItems = [...targetExistingItems, ...sourceItems];
+
+      // Recalculate target order totals using the configured tax rate AND container
+      // charge — computeTotalsFromLines previously had no container term at all, so a
+      // merge silently dropped any parcel container charge baked into either order's
+      // totalAmount. Also persists subtotalAmount/containerCharge (see CLAUDE.md).
+      const { containerRate } = pricingRates();
+      const containerCharge = computeContainerCharge(allItems, containerRate);
       const merged = computeTotalsFromLines(
         allItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (targetOrder as any).discountAmount,
+        containerCharge,
       );
-      await storage.updateOrder(targetOrderId, {
-        totalAmount: merged.total.toFixed(2),
-        taxAmount: merged.tax.toFixed(2),
-      } as any);
-      // Free source table and delete source order
-      if ((sourceOrder as any).tableId) {
-        await storage.updateTableStatus(Number((sourceOrder as any).tableId), "free", null);
-      }
-      await storage.deleteOrderItemsByOrderId(sourceOrderId);
-      await storage.deleteOrder(sourceOrderId);
+
+      // Copy ALL item fields, not just {menuItemId, quantity, price, specialInstructions,
+      // size} — dropping name/serviceMode/parcelLeftover/unitCost broke open items (no
+      // stored name to fall back to), lost the container-charge basis, and blanked the
+      // COGS snapshot. Atomic: item copy + target totals + free source table + delete
+      // source order/items all happen in one transaction (storage.mergeOrders) — a
+      // failure partway through used to be able to duplicate items across both orders or
+      // delete the source order while its items still existed elsewhere.
+      const updatedTarget = await storage.mergeOrders({
+        targetOrderId,
+        sourceOrderId,
+        sourceTableId: (sourceOrder as any).tableId ?? null,
+        newItems: sourceItems.map((item) => ({
+          menuItemId: item.menuItemId,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+          serviceMode: item.serviceMode,
+          parcelLeftover: item.parcelLeftover,
+          unitCost: item.unitCost,
+        } as any)),
+        targetTotals: {
+          totalAmount: merged.total.toFixed(2),
+          taxAmount: merged.tax.toFixed(2),
+          subtotalAmount: merged.subtotal.toFixed(2),
+          containerCharge: merged.containerCharge.toFixed(2),
+        } as any,
+      });
+
       broadcast({ type: "TABLE_UPDATE" });
-      broadcast({ type: "ORDER_UPDATE" });
+      broadcast({ type: "ORDER_UPDATE", order: updatedTarget });
       res.json({ success: true });
     } catch (error) {
       console.error("Merge error:", error);
@@ -2413,44 +2435,88 @@ export async function registerRoutes(
       const allItems = await storage.getOrderItems(id);
       const splitItems = allItems.filter((i) => itemIds.includes(i.id));
       if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
-      // Calculate new order total using the configured tax rate
+      const remainingItems = allItems.filter((i) => !itemIds.includes(i.id));
+
+      const { taxRate, containerRate } = pricingRates();
+
+      // The source order's existing discount is left entirely on the source (see
+      // CLAUDE.md — this is aggregate-neutral by design, not a bug), UNLESS it now
+      // exceeds what remains after the split-out items leave — computeTotals' clamp
+      // would otherwise silently drop the excess with nothing collecting it anywhere,
+      // a real net overcharge across the two resulting bills. Refuse rather than guess
+      // how to reallocate it; the manager can reduce the discount first and retry.
+      const remainingSubtotal = remainingItems.reduce((s, i) => s + parseFloat(i.price as any) * i.quantity, 0);
+      const existingDiscount = parseFloat((sourceOrder as any).discountAmount ?? "0") || 0;
+      if (existingDiscount > remainingSubtotal + 0.01) {
+        return res.status(400).json({
+          error: `This order's ₹${existingDiscount.toFixed(2)} discount exceeds the ₹${remainingSubtotal.toFixed(2)} that will remain after this split. Reduce the discount before splitting.`,
+        });
+      }
+
+      // Calculate the new order's total using the configured tax rate + its own
+      // container charge (previously always 0 — computeTotalsFromLines had no
+      // container term).
+      const newContainerCharge = computeContainerCharge(splitItems, containerRate);
       const splitTotals = computeTotalsFromLines(
         splitItems.map((i) => parseFloat(i.price as any) * i.quantity),
         "0",
+        newContainerCharge,
       );
-      // Create new split order (takeaway, no table)
-      const newOrder = await storage.createOrder({
-        orderNumber: `ORD${String(await incrementBillCounter()).padStart(4, "0")}`,
-        orderType: "dine-in",
-        status: "pending",
-        totalAmount: splitTotals.total.toFixed(2),
-        taxAmount: splitTotals.tax.toFixed(2),
-        discountAmount: "0",
-        paymentStatus: "pending",
-        customerName: (sourceOrder as any).customerName || null,
-        customerPhone: (sourceOrder as any).customerPhone || null,
-        notes: `Split from ${(sourceOrder as any).orderNumber}`,
-      } as any);
-      // Move split items to new order, delete from source
-      await storage.createOrderItems(splitItems.map((item) => ({
-        orderId: newOrder.id,
-        menuItemId: item.menuItemId,
-        quantity: item.quantity,
-        price: item.price,
-        specialInstructions: item.specialInstructions,
-        size: item.size,
-      } as any)));
-      await storage.deleteOrderItems(splitItems.map((item) => item.id));
-      // Recalculate source order total using the configured tax rate
-      const remaining = await storage.getOrderItems(id);
+
+      // Recalculate the source order's totals over what remains, same container-charge
+      // fix.
+      const srcContainerCharge = computeContainerCharge(remainingItems, containerRate);
       const srcTotals = computeTotalsFromLines(
-        remaining.map((i) => parseFloat(i.price as any) * i.quantity),
+        remainingItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (sourceOrder as any).discountAmount,
+        srcContainerCharge,
       );
-      await storage.updateOrder(id, {
-        totalAmount: srcTotals.total.toFixed(2),
-        taxAmount: srcTotals.tax.toFixed(2),
-      } as any);
+
+      // Still dine-in — a split bill is two checks for people still sitting at the same
+      // table, not a takeaway order; it just doesn't carry its own tableId (this order
+      // is a bill-only record, the table's own order is what stays "running").
+      const newOrderNumber = `ORD${String(await incrementBillCounter()).padStart(4, "0")}`;
+
+      // Copy ALL item fields (name/serviceMode/parcelLeftover/unitCost, not just
+      // {menuItemId, quantity, price, specialInstructions, size}) — atomic: new order +
+      // its items + removing them from source + source's recomputed totals all happen
+      // in one transaction (storage.splitOrder), for the same reason as merge above.
+      const { newOrder } = await storage.splitOrder({
+        sourceOrderId: id,
+        splitItemIds: splitItems.map((item) => item.id),
+        newOrder: {
+          orderNumber: newOrderNumber,
+          orderType: "dine-in",
+          status: "pending",
+          totalAmount: splitTotals.total.toFixed(2),
+          taxAmount: splitTotals.tax.toFixed(2),
+          subtotalAmount: splitTotals.subtotal.toFixed(2),
+          containerCharge: splitTotals.containerCharge.toFixed(2),
+          discountAmount: "0",
+          paymentStatus: "pending",
+          customerName: (sourceOrder as any).customerName || null,
+          customerPhone: (sourceOrder as any).customerPhone || null,
+          notes: `Split from ${(sourceOrder as any).orderNumber}`,
+        } as any,
+        newOrderItems: splitItems.map((item) => ({
+          menuItemId: item.menuItemId,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          specialInstructions: item.specialInstructions,
+          size: item.size,
+          serviceMode: item.serviceMode,
+          parcelLeftover: item.parcelLeftover,
+          unitCost: item.unitCost,
+        } as any)),
+        sourceTotals: {
+          totalAmount: srcTotals.total.toFixed(2),
+          taxAmount: srcTotals.tax.toFixed(2),
+          subtotalAmount: srcTotals.subtotal.toFixed(2),
+          containerCharge: srcTotals.containerCharge.toFixed(2),
+        } as any,
+      });
+
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true, newOrderId: newOrder.id });
     } catch (error) {
