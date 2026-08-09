@@ -1836,6 +1836,8 @@ export async function registerRoutes(
           totalAmount: priced.total.toFixed(2),
           taxAmount: priced.tax.toFixed(2),
           discountAmount: priced.discount.toFixed(2),
+          subtotalAmount: priced.subtotal.toFixed(2),
+          containerCharge: priced.containerCharge.toFixed(2),
           createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
           createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
           createdByName: actor?.username ?? null,
@@ -1937,6 +1939,8 @@ export async function registerRoutes(
         totalAmount: priced.total.toFixed(2),
         taxAmount: priced.tax.toFixed(2),
         discountAmount: priced.discount.toFixed(2),
+        subtotalAmount: priced.subtotal.toFixed(2),
+        containerCharge: priced.containerCharge.toFixed(2),
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);

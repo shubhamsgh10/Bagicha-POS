@@ -22,6 +22,9 @@ import {
   paymentTransactions,
 } from "../shared/schema";
 import { storage } from "./storage";
+import { requireElevation } from "./elevation";
+import { deriveBillTotals } from "../shared/orderPricing";
+import { pricingRates } from "./services/orderPricing";
 
 import {
   isConfigured as razorpayConfigured,
@@ -309,8 +312,8 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
     }
   });
 
-  /** Apply (redeem) a coupon to an order. */
-  app.post("/api/coupons/apply", requireAuth, async (req, res) => {
+  /** Apply (redeem) a coupon to an order. Applying a discount is a privileged action. */
+  app.post("/api/coupons/apply", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const { couponId, orderId, customerKey } = req.body as {
         couponId: number;
@@ -320,7 +323,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       const order = await storage.getOrderById(Number(orderId));
       if (!order) return res.status(404).json({ error: "Order not found" });
 
-      const subtotal = parseFloat(String(order.totalAmount ?? 0)) - parseFloat(String(order.taxAmount ?? 0));
+      const { subtotal, containerCharge } = deriveBillTotals(order);
 
       const result = await redeemCoupon(
         Number(couponId),
@@ -331,14 +334,15 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
 
       if (!result.ok) return res.status(400).json({ error: result.reason });
 
-      // Update order's discount and totals
-      const config = getAutomationConfig();
-      const taxRate = 0.18;            // matches existing 18% fallback used elsewhere
+      // Update order's discount and totals. Uses the configured tax rate (not a
+      // hardcoded 18%) and keeps the container charge that was already on the order
+      // (the previous version dropped it from the recomputed total entirely).
+      const { taxRate } = pricingRates();
       const baseDiscount = parseFloat(String(order.discountAmount ?? 0));
       const newDiscount = baseDiscount + result.discount;
       const taxable = Math.max(0, subtotal - newDiscount);
       const tax = taxable * taxRate;
-      const total = taxable + tax;
+      const total = taxable + tax + containerCharge;
 
       const updated = await storage.updateOrder(Number(orderId), {
         discountAmount: newDiscount.toFixed(2),
@@ -409,7 +413,8 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
     }
   });
 
-  app.post("/api/loyalty/redeem", requireAuth, async (req, res) => {
+  // Redeeming points applies a discount to the order — same privileged action as coupons.
+  app.post("/api/loyalty/redeem", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const { customerKey, points, orderId } = req.body as {
         customerKey: string;
@@ -424,14 +429,17 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       const result = await redeemPoints(customerKey, customerName, Number(points), orderId ?? null);
       if (!result.ok) return res.status(400).json({ error: result.reason });
 
-      // Apply discount to order (if provided)
+      // Apply discount to order (if provided). Uses the configured tax rate (not a
+      // hardcoded 18%) and keeps the container charge already on the order (the
+      // previous version dropped it from the recomputed total entirely).
       if (order && result.discount > 0) {
-        const subtotal = parseFloat(String(order.totalAmount ?? 0)) - parseFloat(String(order.taxAmount ?? 0));
+        const { subtotal, containerCharge } = deriveBillTotals(order);
+        const { taxRate } = pricingRates();
         const baseDiscount = parseFloat(String(order.discountAmount ?? 0));
         const newDiscount = baseDiscount + result.discount;
         const taxable = Math.max(0, subtotal - newDiscount);
-        const tax = taxable * 0.18;
-        const total = taxable + tax;
+        const tax = taxable * taxRate;
+        const total = taxable + tax + containerCharge;
         const updated = await storage.updateOrder(order.id, {
           discountAmount: newDiscount.toFixed(2),
           taxAmount:      tax.toFixed(2),
