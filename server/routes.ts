@@ -2775,7 +2775,7 @@ export async function registerRoutes(
   });
 
   /** DELETE /api/automation/logs — clear all logs */
-  app.delete("/api/automation/logs", requireAuth, (_req, res) => {
+  app.delete("/api/automation/logs", requireAdmin, (_req, res) => {
     clearLogs();
     res.json({ ok: true });
   });
@@ -2786,7 +2786,7 @@ export async function registerRoutes(
   });
 
   /** POST /api/automation/run — manually trigger one run now (force-bypasses enabled flag) */
-  app.post("/api/automation/run", requireAuth, async (_req, res) => {
+  app.post("/api/automation/run", requireAdmin, async (_req, res) => {
     try {
       const result = await runCustomerAutomation({ force: true });
       res.json({ ok: true, ...result });
@@ -2985,7 +2985,7 @@ export async function registerRoutes(
    * POST /api/crm/customers/:key/message
    * Send a manual message to a customer via any channel.
    */
-  app.post("/api/crm/customers/:key/message", requireAuth, async (req, res) => {
+  app.post("/api/crm/customers/:key/message", requireManagerOrAdmin, async (req, res) => {
     try {
       const key     = decodeURIComponent(req.params.key);
       const { channel, to, message, subject, trigger } = req.body as {
@@ -3372,7 +3372,9 @@ export async function registerRoutes(
 
   // POST /api/leaves — body { kind:"user"|"staff", id, leaveType, startDate, endDate, reason, totalDays }
   // (legacy { userId } still accepted). Stamps exactly one of userId/staffMemberId per the person kind.
-  app.post("/api/leaves", requireAuth, async (req, res) => {
+  // requireManagerOrAdmin (not requireAuth): this takes an arbitrary {kind,id} target, not "self" —
+  // a bare staff-tier session could otherwise file a leave request as anyone.
+  app.post("/api/leaves", requireManagerOrAdmin, async (req, res) => {
     try {
       const { kind, id, userId, ...rest } = req.body;
       const person = kind && id != null ? { kind, id: Number(id) } : { kind: "user" as const, id: Number(userId) };
@@ -3384,8 +3386,13 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // PUT /api/leaves/:id — approve or reject
-  app.put("/api/leaves/:id", requireAuth, async (req, res) => {
+  // PUT /api/leaves/:id — approve or reject. requireManagerOrAdmin: this is the approval
+  // action, with no restriction against approving one's own request — a bare staff-tier
+  // session could previously approve/reject any leave, including its own. Gating this
+  // also makes reviewedBy: req.user.id safe by construction, since only a `users` account
+  // (never a staffMember session) can carry role manager/admin — see CLAUDE.md's
+  // id-collision note.
+  app.put("/api/leaves/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const { status, notes } = req.body;
       const updated = await storage.updateLeave(parseInt(req.params.id), {
@@ -3403,14 +3410,14 @@ export async function registerRoutes(
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  // POST /api/shifts
-  app.post("/api/shifts", requireAuth, async (req, res) => {
+  // POST /api/shifts — creates a shift TYPE definition (Morning/Evening/etc).
+  app.post("/api/shifts", requireManagerOrAdmin, async (req, res) => {
     try { res.json(await storage.createShift(req.body)); }
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   // PUT /api/shifts/:id
-  app.put("/api/shifts/:id", requireAuth, async (req, res) => {
+  app.put("/api/shifts/:id", requireManagerOrAdmin, async (req, res) => {
     try { res.json(await storage.updateShift(parseInt(req.params.id), req.body)); }
     catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -3430,7 +3437,9 @@ export async function registerRoutes(
 
   // POST /api/shifts/roster — manually assign a shift to a person (user OR staff member) on a date.
   // Body { kind:"user"|"staff", id, date, shiftId } (legacy { userId } still accepted).
-  app.post("/api/shifts/roster", requireAuth, async (req, res) => {
+  // requireManagerOrAdmin: assigns/unassigns ANY employee to ANY date — roster management,
+  // not self-service; a bare staff-tier session could previously do this for anyone.
+  app.post("/api/shifts/roster", requireManagerOrAdmin, async (req, res) => {
     try {
       const { kind, id, userId, date, shiftId } = req.body;
       const person = kind && id != null
@@ -3441,7 +3450,7 @@ export async function registerRoutes(
   });
 
   // DELETE /api/shifts/roster/:id — removes a MANUAL assignment (auto rows re-derive from punches).
-  app.delete("/api/shifts/roster/:id", requireAuth, async (req, res) => {
+  app.delete("/api/shifts/roster/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       await storage.deleteShiftAssignment(parseInt(req.params.id));
       res.json({ ok: true });
