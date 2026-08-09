@@ -257,6 +257,31 @@ export function getSettings(): RestaurantSettings {
   return settingsCache ?? loadFromFile();
 }
 
+// Async — re-reads the settings row straight from the DB and refreshes the cache, instead
+// of trusting this process's possibly-stale copy. On Vercel, `settingsCache` is per-instance
+// and only updated by writes THIS instance performs — a concurrently-warm instance that was
+// cold-started before some other instance saved a change (e.g. a newly-added posSections
+// entry from Admin -> Print Settings) keeps serving its old snapshot indefinitely, since
+// nothing invalidates it across instances. That's why a GET could intermittently omit
+// recently-saved data depending purely on which instance the load balancer picked. Use this
+// wherever a request must reflect the current DB truth, and inside saveSettings() so a merge
+// never clobbers a field this process doesn't know about yet.
+async function readSettingsFromDb(): Promise<RestaurantSettings> {
+  try {
+    const rows = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
+    const fresh = rows.length > 0 ? buildSettings(rows[0].settings as Record<string, any>) : loadFromFile();
+    settingsCache = fresh;
+    return fresh;
+  } catch (e) {
+    console.error("[settings] Fresh DB read failed, falling back to in-memory cache/file:", e);
+    return getSettings();
+  }
+}
+
+export function getSettingsFresh(): Promise<RestaurantSettings> {
+  return readSettingsFromDb();
+}
+
 // Counter issuance is allocated by the DATABASE, not from the in-memory cache.
 //
 // The number must be unique across every process that can create an order, and
@@ -309,7 +334,7 @@ export function incrementKotCounter(): Promise<number> {
 
 // Async — updates cache immediately, then awaits DB write before resolving
 export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
-  const current = getSettings();
+  const current = await readSettingsFromDb();
   const updated: RestaurantSettings = { ...current, ...settings };
   if (settings.attendanceDevice) {
     updated.attendanceDevice = { ...current.attendanceDevice, ...settings.attendanceDevice };

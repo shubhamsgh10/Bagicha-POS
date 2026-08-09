@@ -20,8 +20,11 @@ export function useAuth() {
 
   const logout = async () => {
     await apiRequest("POST", "/api/auth/logout");
-    // Hard-navigate to login: unmounts all components before they can refetch with an expired session
-    window.location.href = "/login";
+    // Hard-reload: unmounts all components before they can refetch with an expired session.
+    // Reloads the current URL (not a hardcoded "/login" — there is no such route; App.tsx shows
+    // the Login panel purely from isAuthenticated state) so this also works under the Electron
+    // thin-client's file:// origin, which has no server to resolve an absolute "/login" path against.
+    window.location.reload();
   };
 
   return {

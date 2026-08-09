@@ -168,8 +168,17 @@ export default function Tables() {
     refetchInterval: 5000,
   });
 
-  // Quick-POS sections (e.g. South Indian counter) — configured in Print Settings → Sections
-  const { data: appSettings } = useQuery<any>({ queryKey: ["/api/settings"] });
+  // Quick-POS sections (e.g. South Indian counter) — configured in Print Settings → Sections.
+  // refetchOnMount:"always" + retry:2 (overriding the app-wide retry:false default) so a
+  // transient failure right after login — e.g. a 401 while the session cookie is still
+  // propagating, which the default queryFn resolves as a "successful" null rather than an
+  // error — doesn't leave posSections stuck at [] for the rest of this page visit.
+  const { data: appSettings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: 2,
+  });
   const posSections: Array<{ id: string; name: string; categoryIds: number[] }> =
     appSettings?.posSections ?? [];
 

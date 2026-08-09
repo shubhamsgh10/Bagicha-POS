@@ -10,7 +10,7 @@ import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
-import { getSettings, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
+import { getSettings, getSettingsFresh, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
 import { timingSafeEqual } from "crypto";
 import { getLogBuffer } from "./logBuffer";
 import {
@@ -1159,9 +1159,9 @@ export async function registerRoutes(
 
   // ── Settings ──────────────────────────────────────────────────────────────────
 
-  app.get("/api/settings", requireAuth, (req, res) => {
+  app.get("/api/settings", requireAuth, async (req, res) => {
     try {
-      const s = getSettings();
+      const s = await getSettingsFresh();
       const role = (req.user as any)?.role;
       // Only the owner (admin) may see the device token (defense in depth).
       if (role !== "admin") {
