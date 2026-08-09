@@ -139,6 +139,11 @@ export interface IStorage {
     newOrderItems: Array<Omit<InsertOrderItem, "orderId">>;
     sourceTotals: Partial<InsertOrder>;
   }): Promise<{ newOrder: Order; sourceOrder: Order }>;
+  replaceOrderItems(
+    orderId: number,
+    items: Array<Omit<InsertOrderItem, "orderId">>,
+    orderTotals: Partial<InsertOrder>,
+  ): Promise<Order>;
 
   // Order Items
   getOrderItems(orderId: number): Promise<OrderItem[]>;
@@ -423,23 +428,33 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    // 2. What this order has already net-consumed, per the ledger (not the previous
-    //    order_items rows — the ledger is authoritative even across a recipe change).
-    const already: any = await db.execute(sql`
-      SELECT inventory_id, SUM(quantity_delta) AS net
-      FROM stock_movements
-      WHERE order_id = ${orderId} AND type IN ('sale', 'sale_reversal')
-      GROUP BY inventory_id
-    `);
-    const alreadyApplied = new Map<number, number>(
-      (already?.rows ?? []).map((r: any) => [Number(r.inventory_id), parseFloat(r.net)])
-    );
-
-    // 3. Diff and apply. round() avoids float-noise producing spurious near-zero diffs.
+    // round() avoids float-noise producing spurious near-zero diffs.
     const round2 = (n: number) => Math.round(n * 100) / 100;
-    const inventoryIds = new Set<number>(Array.from(target.keys()).concat(Array.from(alreadyApplied.keys())));
 
+    // 2. What this order has already net-consumed (per the ledger) and 3. the diff-apply
+    //    must be atomic together — two concurrent edits of the SAME order (e.g. a double
+    //    -tapped Save) could otherwise both read the same "already applied" baseline
+    //    outside any lock and then both apply the full diff, double-deducting stock.
+    //    Plain READ COMMITTED does NOT prevent this: it only guards visibility within
+    //    one statement/transaction, not a read in one transaction followed by a write
+    //    in a separate later transaction. pg_advisory_xact_lock(orderId), taken first
+    //    thing inside this transaction, serializes concurrent calls for THIS order
+    //    specifically (other orders' reconciliation proceeds unblocked) and releases
+    //    automatically on commit/rollback.
     await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${orderId})`);
+
+      const already: any = await tx.execute(sql`
+        SELECT inventory_id, SUM(quantity_delta) AS net
+        FROM stock_movements
+        WHERE order_id = ${orderId} AND type IN ('sale', 'sale_reversal')
+        GROUP BY inventory_id
+      `);
+      const alreadyApplied = new Map<number, number>(
+        (already?.rows ?? []).map((r: any) => [Number(r.inventory_id), parseFloat(r.net)])
+      );
+
+      const inventoryIds = new Set<number>(Array.from(target.keys()).concat(Array.from(alreadyApplied.keys())));
       for (const inventoryId of Array.from(inventoryIds)) {
         const desiredDelta = round2(-(target.get(inventoryId)?.qty ?? 0)); // negative = net consumption
         const currentDelta = round2(alreadyApplied.get(inventoryId) ?? 0);
@@ -840,6 +855,28 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date(),
       }).where(eq(orders.id, params.sourceOrderId)).returning();
       return { newOrder: newOrderRow, sourceOrder: updatedSource };
+    });
+  }
+
+  // Atomic item replace: delete-then-reinsert + the recomputed order totals all in one
+  // transaction. Previously these were three separate statements (delete, insert,
+  // update) with no transaction — a crash/error between the delete and the reinsert
+  // left the order with zero items and no way to recover short of a manual DB fix.
+  async replaceOrderItems(
+    orderId: number,
+    items: Array<Omit<InsertOrderItem, "orderId">>,
+    orderTotals: Partial<InsertOrder>,
+  ): Promise<Order> {
+    return await db.transaction(async (tx) => {
+      await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+      if (items.length > 0) {
+        await tx.insert(orderItems).values(items.map((it) => ({ ...(it as any), orderId })));
+      }
+      const [updated] = await tx.update(orders).set({
+        ...(orderTotals as any),
+        updatedAt: new Date(),
+      }).where(eq(orders.id, orderId)).returning();
+      return updated;
     });
   }
 

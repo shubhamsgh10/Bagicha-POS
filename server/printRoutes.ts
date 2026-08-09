@@ -354,7 +354,7 @@ export function registerPrintRoutes(app: Express): void {
           await db
             .update(orders)
             .set({
-              kotPrintCount: (order.kotPrintCount ?? 0) + 1,
+              kotPrintCount: sql`${orders.kotPrintCount} + 1`,
               lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
             })
             .where(eq(orders.id, orderId));
@@ -426,7 +426,7 @@ export function registerPrintRoutes(app: Express): void {
           await db
             .update(orders)
             .set({
-              kotPrintCount: (order.kotPrintCount ?? 0) + 1,
+              kotPrintCount: sql`${orders.kotPrintCount} + 1`,
               lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
             })
             .where(eq(orders.id, orderId));
@@ -553,7 +553,7 @@ export function registerPrintRoutes(app: Express): void {
       if (!printer) {
         await db
           .update(orders)
-          .set({ billPrintCount: (order.billPrintCount ?? 0) + 1 })
+          .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
           .where(eq(orders.id, orderId));
         return res.json({ browserPrint: true });
       }
@@ -590,7 +590,7 @@ export function registerPrintRoutes(app: Express): void {
       const commitBillState = async () => {
         await db
           .update(orders)
-          .set({ billPrintCount: (order.billPrintCount ?? 0) + 1 })
+          .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
           .where(eq(orders.id, orderId));
       };
 
@@ -763,7 +763,7 @@ export function registerPrintRoutes(app: Express): void {
       if (type === "bill") {
         await db
           .update(orders)
-          .set({ billPrintCount: (order.billPrintCount ?? 0) + 1 })
+          .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
           .where(eq(orders.id, orderId));
         return res.json({ ok: true, type: "bill" });
       }
@@ -791,7 +791,7 @@ export function registerPrintRoutes(app: Express): void {
       await db
         .update(orders)
         .set({
-          kotPrintCount: (order.kotPrintCount ?? 0) + 1,
+          kotPrintCount: sql`${orders.kotPrintCount} + 1`,
           lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
         })
         .where(eq(orders.id, orderId));

@@ -332,35 +332,54 @@ export function incrementKotCounter(): Promise<number> {
   return nextCounter("kotCounter");
 }
 
-// Async — updates cache immediately, then awaits DB write before resolving
+// Async — reads, merges, and writes inside ONE db.transaction with a row lock
+// (SELECT ... FOR UPDATE) on id=1, so the whole read-modify-write is atomic against
+// both a concurrent saveSettings call AND issueCounter()'s atomic jsonb_set UPDATE.
+//
+// Before this, saveSettings did its read (readSettingsFromDb) and its write
+// (onConflictDoUpdate) as two separate round trips with no lock between them. If
+// issueCounter incremented billCounter 5->6 and committed in that window, this
+// function's `updated` object still had the stale billCounter:5 it read earlier
+// baked in, and its full-row write stomped the counter back down to 5 — the exact
+// class of bug CLAUDE.md documents as already fixed for counter issuance, just not
+// yet closed for general settings saves. FOR UPDATE serializes against issueCounter's
+// plain UPDATE on the same row (a bare UPDATE on a row waits for a FOR UPDATE lock
+// on that row to release), so a counter increment can no longer land inside this
+// function's read-to-write window.
 export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
-  const current = await readSettingsFromDb();
-  const updated: RestaurantSettings = { ...current, ...settings };
-  if (settings.attendanceDevice) {
-    updated.attendanceDevice = { ...current.attendanceDevice, ...settings.attendanceDevice };
-    // A blank incoming token (e.g. redacted from a non-owner view) must never wipe the real one.
-    if (!settings.attendanceDevice.token) {
-      updated.attendanceDevice.token = current.attendanceDevice.token;
+  const updated = await db.transaction(async (tx) => {
+    const rows = await tx.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1)).for("update");
+    const current: RestaurantSettings = rows.length > 0 ? buildSettings(rows[0].settings as Record<string, any>) : loadFromFile();
+
+    const merged: RestaurantSettings = { ...current, ...settings };
+    if (settings.attendanceDevice) {
+      merged.attendanceDevice = { ...current.attendanceDevice, ...settings.attendanceDevice };
+      // A blank incoming token (e.g. redacted from a non-owner view) must never wipe the real one.
+      if (!settings.attendanceDevice.token) {
+        merged.attendanceDevice.token = current.attendanceDevice.token;
+      }
+      // Auto-provision a device token the first time the device is enabled.
+      if (merged.attendanceDevice.enabled && !merged.attendanceDevice.token) {
+        merged.attendanceDevice = { ...merged.attendanceDevice, token: randomBytes(24).toString("hex") };
+      }
     }
-    // Auto-provision a device token the first time the device is enabled.
-    if (updated.attendanceDevice.enabled && !updated.attendanceDevice.token) {
-      updated.attendanceDevice = { ...updated.attendanceDevice, token: randomBytes(24).toString("hex") };
+    if (settings.printSettings) {
+      merged.printSettings = {
+        ...current.printSettings,
+        ...settings.printSettings,
+        kot: { ...current.printSettings.kot, ...(settings.printSettings.kot ?? {}) },
+        bill: { ...current.printSettings.bill, ...(settings.printSettings.bill ?? {}) },
+      };
     }
-  }
-  if (settings.printSettings) {
-    updated.printSettings = {
-      ...current.printSettings,
-      ...settings.printSettings,
-      kot: { ...current.printSettings.kot, ...(settings.printSettings.kot ?? {}) },
-      bill: { ...current.printSettings.bill, ...(settings.printSettings.bill ?? {}) },
-    };
-  }
+
+    await tx.insert(restaurantSettings)
+      .values({ id: 1, settings: merged as any, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: restaurantSettings.id,
+        set: { settings: merged as any, updatedAt: new Date() },
+      });
+    return merged;
+  });
   settingsCache = updated;
-  await db.insert(restaurantSettings)
-    .values({ id: 1, settings: updated as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: updated as any, updatedAt: new Date() },
-    });
   return updated;
 }
