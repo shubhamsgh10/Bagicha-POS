@@ -639,6 +639,15 @@ export function registerPrintRoutes(app: Express): void {
       }
 
       if (canExecutePrintOnServer() && !escPosOk && printer.type !== "usb") {
+        // Same reasoning as the "no printer configured" branch above: a browser print's
+        // outcome can never be confirmed back to the server (no client call-back exists
+        // for it), so billPrintCount can only ever count requests, not confirmed
+        // successes, for this fallback. This branch used to skip the increment entirely
+        // — the only difference between it and the "no printer configured" branch is
+        // WHY browser print was chosen, not whether a bill is genuinely being (re)printed
+        // — so any restaurant with a configured non-ESC-POS bill printer never got the
+        // showDuplicate "** DUPLICATE **" watermark on a real reprint.
+        await commitBillState();
         return res.json({
           printed: false,
           browserPrint: true,
