@@ -77,6 +77,8 @@ export function normalizeWaPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return "";
   if (digits.length === 10) return `91${digits}`;
+  // 11 digits with a leading trunk "0" (e.g. 09876543210) — strip it before prepending.
+  if (digits.length === 11 && digits.startsWith("0")) return `91${digits.slice(1)}`;
   return digits;
 }
 

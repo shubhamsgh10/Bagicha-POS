@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -433,7 +433,13 @@ export const conversationMessages = pgTable("conversation_messages", {
   createdAt:      timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("idx_conv_msgs_conversation").on(t.conversationId),
-  index("idx_conv_msgs_wa_id").on(t.waMessageId),
+  // unique (not a plain index): Postgres treats NULLs as distinct, so pending
+  // outbound rows (waMessageId still null) are unaffected. Backs conversationStore's
+  // recordMessage dedup-on-conflict — see scripts/migrate-conv-msg-wa-unique.mjs
+  // (NOT auto-run; matches this repo's scripts/migrate-*.mjs convention for
+  // additive changes against the shared, already-drifted DB, per CLAUDE.md's
+  // Database section warning).
+  uniqueIndex("idx_conv_msgs_wa_id").on(t.waMessageId),
 ]);
 
 // ── CRM Relations ─────────────────────────────────────────────────────────────

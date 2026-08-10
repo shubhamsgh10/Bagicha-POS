@@ -32,7 +32,15 @@ export interface SendResult {
 export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return "";
-  return digits.startsWith("91") ? digits : `91${digits}`;
+  // A bare 10-digit mobile number always needs the country code prepended —
+  // including ones that legitimately start with "91" as their own digits
+  // (e.g. 9187654321), which digits.startsWith("91") used to misdetect as
+  // "already has the country code" and leave un-prefixed at 10 digits,
+  // failing isValidPhone's length check and silently dropping the send.
+  if (digits.length === 10) return `91${digits}`;
+  // 11 digits with a leading trunk "0" (e.g. 09876543210) — strip it before prepending.
+  if (digits.length === 11 && digits.startsWith("0")) return `91${digits.slice(1)}`;
+  return digits;
 }
 
 function isValidPhone(phone: string): boolean {

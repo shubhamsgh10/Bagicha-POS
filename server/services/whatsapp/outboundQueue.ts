@@ -248,8 +248,15 @@ export function startOutboundWorker(): void {
   if (workerRunning) return;
   workerRunning = true;
 
-  // Recover jobs stuck in "sending" from a previous crash
-  db.update(automationJobs).set({ status: "pending" })
+  // Recover jobs stuck in "sending" from a previous crash. A job in this state was
+  // claimed and driver.sendText() may or may not have actually reached WhatsApp before
+  // the crash — there's no idempotency token to safely tell the difference or retry
+  // against. Mark it "failed" for manual review instead of resetting to "pending" and
+  // auto-resending: a false failure just costs a manual resend, but a false auto-resend
+  // risks a real duplicate message landing on a customer's phone (worse — send volume is
+  // also a number-ban risk, see CLAUDE.md's WhatsApp Automation section).
+  db.update(automationJobs)
+    .set({ status: "failed", error: "Interrupted mid-send by a server restart — verify before resending" })
     .where(eq(automationJobs.status, "sending"))
     .then(() => {})
     .catch(err => console.warn("[WhatsApp][Queue] sending-state recovery failed:", err));
