@@ -462,8 +462,22 @@ export function registerPrintRoutes(app: Express): void {
       const remoteJobs = kotJobs.filter((j) => j.escPosOk && !(canExecutePrintOnServer() && j.printer.type !== "usb"));
       const nonEscPosJobs = kotJobs.filter((j) => !j.escPosOk);
 
-      // Direct hardware sends first — fail fast before any durable side effects.
-      for (const j of directJobs) await sendToPrinter(j.printer, j.buffer);
+      // Direct hardware sends — each printer is an independent physical device, so one
+      // printer being offline/misconfigured must not stop the OTHER printers (direct or
+      // remote-dispatched below) from getting their ticket. Previously a bare
+      // `for (...) await sendToPrinter(...)` let the first throw abort the whole handler
+      // — e.g. a mixed South-Indian/Chinese order would lose BOTH tickets if only the
+      // South-Indian printer was offline, even though the Chinese-counter printer (and
+      // any remote-dispatched printer) was perfectly reachable.
+      const directFailures: { printer: PrinterConfig; error: string }[] = [];
+      for (const j of directJobs) {
+        try {
+          await sendToPrinter(j.printer, j.buffer);
+        } catch (err: any) {
+          console.error(`[Print/KOT] direct send failed for printer ${j.printer.id}:`, err);
+          directFailures.push({ printer: j.printer, error: err?.message || String(err) });
+        }
+      }
 
       const dispatchedJobs = [] as ReturnType<typeof toPrintJob>[];
       for (const j of remoteJobs) {
@@ -476,12 +490,28 @@ export function registerPrintRoutes(app: Express): void {
         dispatchedJobs.push(toPrintJob(j.printer.id, j.buffer, { orderId, ackType: "kot", jobId }));
       }
 
+      // If literally nothing went out (every direct printer failed and there's nothing
+      // dispatched/non-ESC-POS to fall back on), keep the existing full-failure behavior
+      // — throw so the client gets its "KOT print failed" toast + preview fallback.
+      if (directFailures.length > 0 && directFailures.length === directJobs.length
+        && dispatchedJobs.length === 0 && nonEscPosJobs.length === 0) {
+        throw new Error(`Printer error: ${directFailures.map((f) => f.error).join("; ")}`);
+      }
+
       // Commit once per tap — payloads are frozen in print_jobs, so late printing stays
       // correct and acks only flip job rows (no double-increment across multiple tickets).
+      // Commit even on a partial direct failure: the printers that DID succeed already
+      // printed this delta, so a retry must not re-send it to them.
       await commitKotState();
 
+      const failureMessage = directFailures.length > 0
+        ? `Printer error on ${directFailures.map((f) => f.printer.name ?? f.printer.id).join(", ")}: ${directFailures[0].error}`
+        : undefined;
+
       if (dispatchedJobs.length === 0 && nonEscPosJobs.length === 0) {
-        return res.json({ printed: true, isDelta, reprint });
+        // Some direct printers succeeded (the all-failed case threw above) — report
+        // success but surface which printer(s) still need attention.
+        return res.json({ printed: true, isDelta, reprint, message: failureMessage });
       }
 
       const allNonEscPos = nonEscPosJobs.length === kotJobs.length;
@@ -492,7 +522,7 @@ export function registerPrintRoutes(app: Express): void {
         printJobs: dispatchedJobs.length > 0 ? dispatchedJobs : undefined,
         browserPrint: allNonEscPos,
         reason: allNonEscPos ? "non_escpos_printer" : undefined,
-        message: nonEscPosJobs.length > 0 ? nonEscPosPrinterMessage(nonEscPosJobs[0].printer) : undefined,
+        message: nonEscPosJobs.length > 0 ? nonEscPosPrinterMessage(nonEscPosJobs[0].printer) : failureMessage,
         pendingAck: dispatchedJobs.length > 0 && !reprint,
         orderId,
         isDelta,

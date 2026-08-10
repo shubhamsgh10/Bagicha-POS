@@ -139,11 +139,20 @@ export class PrintQueue {
     try {
       const printers = await this.getPrinters();
       await executePrintJob(job.printJob, printers);
-      // Ack if needed
+      // Ack if needed. The print itself already physically happened (ink/paper spent) —
+      // a failed ack must NOT be retried via the normal job-retry path below, since that
+      // re-runs executePrintJob and would print the ticket a second time. Instead retry
+      // just the ack call a few times; /api/print/jobs/:id/release's 2-minute stale-claim
+      // window means a permanently-failed ack leaves a small residual risk of another
+      // station reclaiming and reprinting this same job later, but that's strictly better
+      // than the previous behavior (swallow the ack failure silently on the first try,
+      // remove the job from the queue as if fully done — a guaranteed miss the moment the
+      // ack request had a transient network blip).
       if (job.orderId && job.ackType) {
-        await this.ack(job.orderId, job.ackType, job.printJob.jobId).catch((e) =>
-          console.warn(`[printQueue] ack failed for job ${job.id}:`, e),
-        );
+        const ackOk = await this.ackWithRetry(job.orderId, job.ackType, job.printJob.jobId, job.id);
+        if (!ackOk) {
+          console.error(`[printQueue] Job ${job.id} printed but ack permanently failed for order ${job.orderId}/${job.ackType}`);
+        }
       }
       console.log(`[printQueue] Job ${job.id} (${job.type}) succeeded`);
       this.printLog?.append({
@@ -191,6 +200,14 @@ export class PrintQueue {
             console.warn(`[printQueue] release failed for job ${job.id}:`, e),
           );
         }
+        // Unlike "success", nothing previously removed a "failed" job from this.queue —
+        // it sat there forever, re-persisted to print-queue.json on every subsequent
+        // event, growing unbounded over a long-running always-on desktop session (see
+        // CLAUDE.md's Electron host build note). printLog above already durably records
+        // this failure for history/audit; release() above already hands the work back to
+        // the server for another station — this local in-memory/on-disk queue doesn't
+        // need to keep it too.
+        this.queue = this.queue.filter((j) => j !== job);
       }
     }
 
@@ -213,6 +230,25 @@ export class PrintQueue {
       body: JSON.stringify({ error }),
     });
     if (!res.ok) throw new Error(`Release failed: ${res.status}`);
+  }
+
+  private async ackWithRetry(
+    orderId: number,
+    type: "kot" | "bill",
+    jobId: number | undefined,
+    logId: string,
+  ): Promise<boolean> {
+    const delays = [0, 1_000, 3_000];
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i] > 0) await new Promise((r) => setTimeout(r, delays[i]));
+      try {
+        await this.ack(orderId, type, jobId);
+        return true;
+      } catch (e) {
+        console.warn(`[printQueue] ack attempt ${i + 1}/${delays.length} failed for job ${logId}:`, e);
+      }
+    }
+    return false;
   }
 
   private async ack(orderId: number, type: "kot" | "bill", jobId?: number): Promise<void> {

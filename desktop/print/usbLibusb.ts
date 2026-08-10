@@ -62,20 +62,32 @@ export async function sendViaLibusb(vendorId: number, productId: number, data: B
       });
     });
   } finally {
-    try {
-      iface.release(true, () => {
+    // iface.release() is callback-async (releasing takes real time, more so with
+    // closeEndpoints:true) — this used to fire-and-forget it, so sendViaLibusb's
+    // promise resolved before the interface was actually released and the device
+    // actually closed. A rapid next print to the SAME USB device (double-tap, or the
+    // next job draining off the print queue) could then race device.open()/iface.claim()
+    // against a still-in-progress release, failing or hanging on a device the OS/driver
+    // hadn't actually freed yet. Now awaited so this function doesn't return until
+    // release + close have truly finished.
+    await new Promise<void>((resolve) => {
+      try {
+        iface.release(true, () => {
+          try {
+            device.close();
+          } catch {
+            /* ignore */
+          }
+          resolve();
+        });
+      } catch {
         try {
           device.close();
         } catch {
           /* ignore */
         }
-      });
-    } catch {
-      try {
-        device.close();
-      } catch {
-        /* ignore */
+        resolve();
       }
-    }
+    });
   }
 }

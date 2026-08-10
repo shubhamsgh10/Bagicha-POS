@@ -55,6 +55,29 @@ export function computeDelta(current: SnapshotItem[], last: SnapshotItem[]): Kot
     }
   }
 
+  // snapKey includes serviceMode so two concurrent lines of the same dish in
+  // different modes (e.g. Section POS's per-item "eat here" vs "parcel" — see
+  // CLAUDE.md) track their quantities independently. But that means a pure
+  // serviceMode flip on an otherwise-unchanged line (same dish, same size, same
+  // quantity, just re-tagged dine-in<->parcel/pickup/delivery) changes its key and
+  // fell straight into the cancel/new logic above as a spurious full VOID + full
+  // NEW — telling the kitchen to stop cooking something they're already cooking
+  // and start a fresh order of the exact same thing, for what's really just a
+  // packaging/billing change. Net out any such pair: same itemId+size+quantity,
+  // one cancelled and one genuinely-new (not a quantity-increase entry, which
+  // always carries previousQty and is never a flip). This can only match a true
+  // flip — a cancel+new pair with equal itemId+size can only exist in the first
+  // place because their serviceMode differed.
+  for (let i = cancelledItems.length - 1; i >= 0; i--) {
+    const c = cancelledItems[i];
+    const j = newItems.findIndex(
+      (n) => n.previousQty === undefined && n.itemId === c.itemId && n.size === c.size && n.quantity === c.quantity,
+    );
+    if (j !== -1) {
+      cancelledItems.splice(i, 1);
+      newItems.splice(j, 1);
+    }
+  }
 
   return { newItems, modifiedItems, cancelledItems };
 }

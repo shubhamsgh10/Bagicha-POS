@@ -137,9 +137,18 @@ export default function PrintStation() {
     if (!enabled) return;
     let lock: any = null;
     const acquire = async () => {
+      // Already held — skip. Without this guard, a visibilitychange->"visible" firing
+      // while a still-live lock is held (or resolving) piles up an extra sentinel that
+      // never gets an explicit .release() call, since the cleanup below only knows about
+      // whichever lock reference this closure variable last got overwritten with.
+      if (lock) return;
       try {
         lock = await (navigator as any).wakeLock?.request("screen");
+        // Browsers auto-release the sentinel when the tab is hidden — clear our
+        // reference when that happens so a later acquire() isn't skipped forever.
+        lock?.addEventListener?.("release", () => { lock = null; });
       } catch {
+        lock = null;
         /* unsupported / not visible — retried on visibilitychange */
       }
     };

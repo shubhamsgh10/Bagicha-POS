@@ -12,9 +12,14 @@ export async function generateQRDataURL(username: string, secret: string): Promi
 
 export function verifyToken(token: string, secret: string): boolean {
   try {
-    // window:1 accepts ±1 time step (±30s clock drift)
-    const result = verifySync({ token, secret, window: 1 } as Parameters<typeof verifySync>[0]);
-    return !!result && (result as { valid: boolean }).valid;
+    // otplib v13's verifySync takes `epochTolerance` (seconds), not `window` (a v11/v12-era
+    // option name) — `window: 1` was silently ignored as an unrecognized property (only
+    // caught by the `as Parameters<typeof verifySync>[0]` cast masking the resulting TS
+    // error), so verification ran with the library's actual default of ZERO tolerance:
+    // an exact single 30s step match, no forgiveness for clock drift at all, despite the
+    // comment here claiming ±30s. epochTolerance:30 is the real equivalent of "±1 step".
+    const result = verifySync({ token, secret, epochTolerance: 30 });
+    return !!result && result.valid;
   } catch {
     return false;
   }

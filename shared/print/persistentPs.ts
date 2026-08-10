@@ -151,22 +151,34 @@ export async function sendRawFast(queueName: string, data: Buffer): Promise<void
       `if([RawPrinterHelper]::SendBytesToPrinter('${esc}',$b)){Write-Output "PRINT_OK"}` +
       `else{Write-Output "PRINT_FAIL:WritePrinter returned false"}\n`;
 
-    const t = setTimeout(() => {
-      const i = pending.findIndex((h) => h.resolve === resolveWrapper);
-      if (i !== -1) pending.splice(i, 1);
-      reject(new Error("Print job timed out (30s)"));
-    }, 30_000);
-
-    const resolveWrapper = () => { clearTimeout(t); resolve(); };
-    const rejectWrapper  = (e: Error) => { clearTimeout(t); reject(e); };
-
-    pending.push({ resolve: resolveWrapper, reject: rejectWrapper });
     if (!ps?.stdin) {
-      pending.pop();
-      clearTimeout(t);
       reject(new Error("PowerShell session not available"));
       return;
     }
+
+    // drainResponses() matches stdout output to pending jobs strictly FIFO — this is
+    // one PowerShell process executing commands one at a time in the order they were
+    // written to stdin, so that's a valid matching strategy AS LONG AS every entry
+    // this function ever pushes stays in `pending` in its original position until its
+    // own response consumes it. The timeout below used to splice its entry OUT of
+    // `pending` on fire — if PowerShell's real response for this job then arrived late
+    // (after the 30s timeout already rejected the caller), drainResponses() would shift
+    // the NEXT, unrelated pending job off the front instead and resolve/reject IT with
+    // this job's actual outcome. Keep the slot in place and make it inert instead, so a
+    // late response is consumed (and discarded) in its correct spot.
+    const entry: { resolve: () => void; reject: (e: Error) => void } = {
+      resolve: () => {},
+      reject: () => {},
+    };
+    const t = setTimeout(() => {
+      entry.resolve = () => {};
+      entry.reject = () => {};
+      reject(new Error("Print job timed out (30s)"));
+    }, 30_000);
+    entry.resolve = () => { clearTimeout(t); resolve(); };
+    entry.reject = (e: Error) => { clearTimeout(t); reject(e); };
+
+    pending.push(entry);
     ps.stdin.write(cmd);
   });
 }
