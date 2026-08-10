@@ -1727,6 +1727,11 @@ export async function registerRoutes(
       }
       res.json(orders);
     } catch (error) {
+      // This swallowed the real exception with no server-side trace — a genuine schema
+      // drift (orders.subtotal_amount/container_charge existing in shared/schema.ts but
+      // missing from the live DB until its migration was actually run) surfaced as an
+      // opaque "Failed to fetch orders" with nothing in the logs to diagnose it from.
+      console.error("GET /api/orders error:", error);
       res.status(500).json({ error: "Failed to fetch orders" });
     }
   });
