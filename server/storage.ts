@@ -544,12 +544,23 @@ export class DatabaseStorage implements IStorage {
   async updateInventoryItem(id: number, item: Partial<InsertInventory>, actor?: { userId?: number; staffMemberId?: number }): Promise<Inventory> {
     if (item.currentStock !== undefined) {
       const { currentStock, ...rest } = item;
-      const [current] = await db.select().from(inventory).where(eq(inventory.id, id));
-      if (current && Object.keys(rest).length > 0) {
-        await db.update(inventory).set(rest).where(eq(inventory.id, id));
-      }
-      if (current) {
-        const delta = parseFloat(String(currentStock)) - parseFloat(current.currentStock);
+      const requestedStock = parseFloat(String(currentStock));
+      // The read-compute-write of the delta below must be atomic against a concurrent
+      // edit of the SAME item (double-click Save, or a retried timed-out request) — two
+      // concurrent edits both reading currentStock=10 and both wanting to set it to 20
+      // would otherwise each independently compute delta=+10 from the same stale read,
+      // landing the row on 30, not the intended 20, with two separate manual_adjustment
+      // ledger rows for what was meant to be one edit. pg_advisory_xact_lock keyed on
+      // the inventory id serializes concurrent edits of THIS item without blocking
+      // edits to other items — same pattern as reconcileOrderInventory.
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${id}::bigint)`);
+        const [current] = await tx.select().from(inventory).where(eq(inventory.id, id));
+        if (!current) return;
+        if (Object.keys(rest).length > 0) {
+          await tx.update(inventory).set(rest).where(eq(inventory.id, id));
+        }
+        const delta = requestedStock - parseFloat(current.currentStock);
         if (delta !== 0) {
           await this.recordStockMovement({
             inventoryId: id,
@@ -557,9 +568,9 @@ export class DatabaseStorage implements IStorage {
             type: "manual_adjustment",
             actorUserId: actor?.userId ?? null,
             actorStaffMemberId: actor?.staffMemberId ?? null,
-          });
+          }, tx as any);
         }
-      }
+      });
       const [updated] = await db.select().from(inventory).where(eq(inventory.id, id));
       return updated;
     }
