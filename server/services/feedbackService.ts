@@ -15,7 +15,7 @@
 
 import crypto from "crypto";
 import { db } from "../db";
-import { eq, and, isNull, lte } from "drizzle-orm";
+import { eq, and, isNull, lte, desc } from "drizzle-orm";
 import {
   feedback,
   orders,
@@ -250,7 +250,10 @@ export async function listRecentFeedback(limit = 50) {
   return db
     .select()
     .from(feedback)
-    .orderBy(eq(feedback.id, feedback.id))   // placeholder so order param is set
+    // Was `orderBy(eq(feedback.id, feedback.id))` — a boolean-constant "placeholder"
+    // that isn't a sort at all, so the admin "recent feedback" list came back in
+    // whatever order Postgres happened to produce, not newest-first as the name implies.
+    .orderBy(desc(feedback.createdAt))
     .limit(limit);
 }
 
