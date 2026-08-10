@@ -69,6 +69,7 @@ import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsapp
 import { registerStaffRoutes } from "./staffRoutes";
 import { priceOrder, computeTotalsFromLines, pricingRates } from "./services/orderPricing";
 import { computeContainerCharge } from "@shared/orderPricing";
+import { buildSpecialInstructions } from "@shared/orderItemText";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { earnPointsForOrder } from "./services/loyaltyService";
@@ -1836,7 +1837,12 @@ export async function registerRoutes(
           menuItemId: Number(item.menuItemId),
           quantity: Number(item.quantity),
           price: String(priced.lines[idx].unitPrice),
-          specialInstructions: item.specialInstructions || "",
+          // orderItems has no addons column — fold addon names into the same free-text
+          // field the KOT/bill "showAddons" line already reads (see
+          // shared/orderItemText.ts), or they're permanently lost the moment this row
+          // is written; this used to only merge into the transient kotItems array below,
+          // which nothing ever reads back.
+          specialInstructions: buildSpecialInstructions(item.specialInstructions, item.addons),
           size: item.size || null,
           serviceMode: item.serviceMode || null,
           parcelLeftover: item.parcelLeftover ?? false,
@@ -1844,19 +1850,15 @@ export async function registerRoutes(
         };
       });
 
-      // KOT ticket lines.
+      // KOT ticket lines (kotTickets.items — a write-only historical record; the actual
+      // print always re-derives fresh from orderItems via /api/print/kot).
       const kotNumber = String(await incrementKotCounter()).padStart(3, "0");
-      const kotItems = lineItems.map((item: any) => {
-        const addonLines = Array.isArray(item.addons) && item.addons.length > 0
-          ? item.addons.map((a: any) => `+ ${a.name}`).join(", ")
-          : "";
-        return {
-          name: item.name,
-          quantity: item.quantity,
-          instructions: [item.specialInstructions, addonLines].filter(Boolean).join(" | ") || undefined,
-          serviceMode: item.serviceMode || undefined,
-        };
-      });
+      const kotItems = lineItems.map((item: any) => ({
+        name: item.name,
+        quantity: item.quantity,
+        instructions: buildSpecialInstructions(item.specialInstructions, item.addons) || undefined,
+        serviceMode: item.serviceMode || undefined,
+      }));
 
       // Order + items + KOT are created atomically (see storage.createOrderWithItems).
       // ORDER_CREATE_FORCED_DEFAULTS spread LAST: paymentStatus/paidAmount/changeAmount/
@@ -1969,7 +1971,11 @@ export async function registerRoutes(
           name: item.name ?? null,
           quantity: Number(item.quantity),
           price: String(priced.lines[idx].unitPrice),
-          specialInstructions: item.specialInstructions || "",
+          // Same fold as POST /api/orders — this route had NO addon awareness at all
+          // (not even for the transient kotItems below), so any item added or edited
+          // via a running-table edit lost its addon selection on the printed KOT/bill
+          // from the very first print, not just on reprint.
+          specialInstructions: buildSpecialInstructions(item.specialInstructions, item.addons),
           size: item.size || null,
           serviceMode: item.serviceMode || null,
           parcelLeftover: item.parcelLeftover ?? false,
@@ -2012,7 +2018,7 @@ export async function registerRoutes(
         const kotItems = newItems.map((item: any) => ({
           name: item.name,
           quantity: Number(item.quantity),
-          instructions: item.specialInstructions || undefined,
+          instructions: buildSpecialInstructions(item.specialInstructions, item.addons) || undefined,
           serviceMode: item.serviceMode || undefined,
         }));
         await storage.createKotTicket({ orderId: id, kotNumber, items: kotItems });
