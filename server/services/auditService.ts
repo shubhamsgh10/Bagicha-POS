@@ -6,10 +6,18 @@ import { desc, eq, and } from "drizzle-orm";
 function getActorFromReq(req: Request) {
   const user = (req as any).user;
   if (!user) return { actorId: "anonymous", actorName: "anonymous", actorRole: "none" };
-  const id = user.id ?? user.staffId ?? "?";
-  const name = user.username ?? user.name ?? String(id);
+  const rawId = user.id ?? user.staffId ?? "?";
+  // `users` and `staffMembers` share the integer id space (CLAUDE.md's id-collision
+  // gotcha) — every logAudit() call site (order.payment, order.cancel,
+  // order.coupon_applied, order.loyalty_redeemed, etc — including manager-elevated
+  // actions reachable from a staff-tier PIN/card session) used to write a bare numeric
+  // actorId, so a staff-card session with sm.id=N was indistinguishable in the audit
+  // trail from a `users` row with id=N. Prefixed with kind, same "u:"/"sm:" convention
+  // shared/pageAccess.ts's personPageKey already uses elsewhere in the app.
+  const actorId = user._isStaffMember ? `sm:${rawId}` : `u:${rawId}`;
+  const name = user.username ?? user.name ?? String(rawId);
   const role = user.role ?? "staff";
-  return { actorId: String(id), actorName: name, actorRole: role };
+  return { actorId, actorName: name, actorRole: role };
 }
 
 function getIp(req: Request): string {
