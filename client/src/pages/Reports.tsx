@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiJson } from '@/lib/api';
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -310,38 +310,42 @@ export default function Reports() {
 
   const params = buildParams(dateRange);
 
+  // apiJson() checks res.ok and throws before parsing — a hand-rolled
+  // fetch(...).then(r => r.json()) here used to let a non-2xx response's JSON error
+  // body flow straight into downstream .map()/.reduce() calls as if it were real report
+  // data, crashing the page instead of surfacing through React Query's error state.
   const { data: salesReport, isLoading } = useQuery<any>({
     queryKey: ["/api/reports/sales", dateRange.start, dateRange.end],
-    queryFn: () => fetch(apiUrl(`/api/reports/sales${params}`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson(`/api/reports/sales${params}`),
   });
 
   const { data: weeklyData = [] } = useQuery<any[]>({
     queryKey: ["/api/reports/weekly", dateRange.start, dateRange.end],
-    queryFn: () => fetch(apiUrl(`/api/reports/weekly${params}`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson<any[]>(`/api/reports/weekly${params}`),
   });
 
   const { data: topItemsData = [] } = useQuery<any[]>({
     queryKey: ["/api/reports/top-items", dateRange.start, dateRange.end],
-    queryFn: () => fetch(apiUrl(`/api/reports/top-items${params}`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson<any[]>(`/api/reports/top-items${params}`),
   });
 
   const { data: paymentSummary } = useQuery<any>({
     queryKey: ["/api/reports/payment-summary", dateRange.start, dateRange.end],
-    queryFn: () => fetch(apiUrl(`/api/reports/payment-summary${params}`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson(`/api/reports/payment-summary${params}`),
   });
 
   const { data: staffTableReport = [] } = useQuery<Array<{
     date: string; staff: string; tables: string[]; orderCount: number; revenue: number;
   }>>({
     queryKey: ["/api/reports/staff-tables", dateRange.start, dateRange.end],
-    queryFn: () => fetch(apiUrl(`/api/reports/staff-tables${params}`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson(`/api/reports/staff-tables${params}`),
   });
 
   const { toast } = useToast();
   // Outstanding tabs are "current," not date-bound — no date params.
   const { data: dues } = useQuery<any>({
     queryKey: ["/api/reports/tabs"],
-    queryFn: () => fetch(apiUrl(`/api/reports/tabs`), { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiJson(`/api/reports/tabs`),
   });
 
   const invalidateDues = () => {

@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import {
   Receipt, CreditCard, DollarSign, Printer, CheckCircle2,
-  Tag, Star, Loader2, ShieldCheck,
+  Tag, Star, Loader2, ShieldCheck, RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -161,16 +161,21 @@ export default function Billing() {
   const [showAllPending, setShowAllPending] = useState(false);
   const isToday = businessDate === todayBusinessDate();
 
-  const { data: orders, isLoading } = useQuery({
+  // apiJson() checks res.ok and throws before parsing — a hand-rolled
+  // fetch(...).then(r => r.json()) here used to let a non-2xx response's JSON error
+  // body ({message:"..."} / {error:"..."}, not an array) flow straight into `select`'s
+  // .filter() below as if it were the orders list, crashing the whole page instead of
+  // surfacing through React Query's error state.
+  const { data: orders, isLoading, isError, refetch: refetchOrders } = useQuery({
     queryKey: ["/api/orders", showAllPending ? "all" : businessDate],
     queryFn: () => {
-      const url = showAllPending
-        ? apiUrl("/api/orders")
+      const path = showAllPending
+        ? "/api/orders"
         : (() => {
             const { start, end } = businessDayRange(businessDate);
-            return apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`);
+            return `/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
           })();
-      return fetch(url, { credentials: "include" }).then(r => r.json());
+      return apiJson<any[]>(path);
     },
     select: (data: any[]) =>
       data.filter((o: any) => BILLABLE_STATUSES.includes(o.status)),
@@ -184,8 +189,7 @@ export default function Billing() {
     queryFn: async () => {
       const { start } = businessDayRange(businessDate);
       const beforeToday = new Date(start.getTime() - 1);
-      const res = await fetch(apiUrl(`/api/orders?endDate=${beforeToday.toISOString()}`), { credentials: "include" });
-      const all: any[] = await res.json();
+      const all = await apiJson<any[]>(`/api/orders?endDate=${beforeToday.toISOString()}`);
       return all.filter((o: any) => BILLABLE_STATUSES.includes(o.status) && o.paymentStatus !== "paid").length;
     },
   });
@@ -470,6 +474,20 @@ export default function Billing() {
           {[...Array(4)].map((_, i) => (
             <Card key={i} className="animate-pulse"><CardContent className="p-4 h-40" /></Card>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header title="Billing" description="Couldn't load orders" />
+        <div className="p-6 text-center text-gray-400">
+          <p className="text-sm font-medium mb-3">Couldn't load orders</p>
+          <Button onClick={() => refetchOrders()} size="sm">
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+          </Button>
         </div>
       </div>
     );

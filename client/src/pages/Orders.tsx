@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -324,16 +324,21 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [businessDate, setBusinessDate] = useState(() => todayBusinessDate());
   const [showAll, setShowAll] = useState(false);
-  const { data: orders, isLoading, refetch } = useQuery({
+  const { data: orders, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/orders", showAll ? "all" : businessDate],
+    // apiJson() checks res.ok and throws before parsing — a hand-rolled
+    // fetch(...).then(r => r.json()) here used to let a non-2xx response's JSON error
+    // body ({message:"..."} / {error:"..."}, not an array) flow straight into the
+    // .map()/.filter() calls below as if it were the orders list, crashing the whole
+    // page instead of surfacing through React Query's error state.
     queryFn: () => {
-      const url = showAll
-        ? apiUrl("/api/orders")
+      const path = showAll
+        ? "/api/orders"
         : (() => {
             const { start, end } = businessDayRange(businessDate);
-            return apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`);
+            return `/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
           })();
-      return fetch(url, { credentials: "include" }).then(r => r.json());
+      return apiJson<any[]>(path);
     },
   });
 
@@ -380,6 +385,27 @@ const q = search.trim().toLowerCase();
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-16 skeleton-glass" />
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header title="Order History" description="View and manage all restaurant orders" />
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
+          <div className="text-center py-16 text-gray-400">
+            <ShoppingBag className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm font-medium">Couldn't load orders</p>
+            <button
+              onClick={() => refetch()}
+              className="mt-3 flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded-xl text-sm font-semibold
+                         bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white hover:shadow-md transition-all"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retry
+            </button>
+          </div>
         </div>
       </div>
     );
