@@ -665,6 +665,24 @@ export default function POS() {
 
     autoKotTimerRef.current = setTimeout(async () => {
       try {
+        // /api/print/kot computes its delta strictly from persisted order_items — it has
+        // no knowledge of this tab's in-memory cart. Without syncing first, this timer
+        // fired against whatever was last saved (e.g. the previous manual KOT/Save), so
+        // anything typed since then was silently never sent to the kitchen: the server
+        // saw no delta, returned reason:"no_delta", and this effect (like manual KOT)
+        // treats that as a quiet no-op — the user believed Auto-KOT had it covered.
+        const syncRes = await fetch(apiUrl(`/api/orders/${activeOrderId}/items`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: activeOrderId,
+            items: buildItemsPayload(cartItems),
+            discountAmount: discountAmt.toFixed(2),
+          }),
+          credentials: 'include',
+        });
+        if (!syncRes.ok) return;
+
         const res = await fetch(apiUrl('/api/print/kot'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1037,13 +1055,9 @@ export default function POS() {
 
   // ── Submit ───────────────────────────────────────────────────────────────────
 
-  const onSubmit = (data: OrderForm) => {
-    if (cartItems.length === 0) {
-      toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
-      setSettlePhase("idle"); // a settle attempt on an unloaded/empty cart must not freeze the buttons
-      return;
-    }
-
+  // Shared with the Auto-KOT effect below, which must sync the cart through this exact
+  // same shape before asking the server to print — see its comment for why.
+  const buildItemsPayload = (cartSource: CartItem[]) => {
     const buildInstructions = (c: CartItem) => {
       const parts: string[] = [];
       const variantEntries = Object.entries(c.variants);
@@ -1051,8 +1065,7 @@ export default function POS() {
       if (c.notes) parts.push(`Note: ${c.notes}`);
       return parts.join(" | ");
     };
-
-    const itemsPayload = cartItems.map(c => ({
+    return cartSource.map(c => ({
       menuItemId: c.id,
       quantity: c.quantity,
       price: c.totalPrice.toFixed(2),
@@ -1070,6 +1083,16 @@ export default function POS() {
         : (isDeliveryOrPickup ? (currentOrderType === "delivery" ? "delivery" : "pickup") : "dinein"),
       parcelLeftover: c.parcelLeftover ?? false,
     }));
+  };
+
+  const onSubmit = (data: OrderForm) => {
+    if (cartItems.length === 0) {
+      toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
+      setSettlePhase("idle"); // a settle attempt on an unloaded/empty cart must not freeze the buttons
+      return;
+    }
+
+    const itemsPayload = buildItemsPayload(cartItems);
 
     if (activeOrderId) {
       updateOrderMutation.mutate({

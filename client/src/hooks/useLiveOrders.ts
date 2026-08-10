@@ -66,6 +66,25 @@ function rawToOrder(raw: any): LiveOrder | null {
   };
 }
 
+/**
+ * Compare previous items vs the freshly fetched items — true only when a genuinely
+ * new dish was added or an existing line's quantity increased. Keyed by
+ * menuItemId+size, not DB id: PUT /api/orders/:id/items deletes and re-inserts every
+ * item on each save, so every item gets a fresh DB id on every edit — keying by id
+ * would read as "all new" on any save, including ones that changed nothing about
+ * the items (a status flip, a bill-requested stamp, a discount edit). Same approach
+ * as useLiveTableOperations.ts's diffItems, without the per-item isNew bookkeeping
+ * since LiveOrder only needs one order-level hasNewItems flag.
+ */
+function hasGenuinelyNewItems(prevItems: LiveOrderItem[], newItems: LiveOrderItem[]): boolean {
+  const stableKey = (menuItemId: number, size: string | null) => `${menuItemId}|${size ?? ""}`;
+  const prevMap = new Map(prevItems.map(i => [stableKey(i.menuItemId, i.size), i]));
+  return newItems.some(i => {
+    const prev = prevMap.get(stableKey(i.menuItemId, i.size));
+    return !prev || i.quantity > prev.quantity;
+  });
+}
+
 // ── Module-level cache — survives unmount/remount ─────────────────────────────
 let _ordersCache: LiveOrder[] | null = null;
 
@@ -180,6 +199,12 @@ export function useLiveOrders() {
       // Only process if we're already tracking this order
       if (!ordersRef.current.some(o => o.id === order.id)) return;
 
+      // Snapshot items NOW (before the async fetch below) — the true pre-update
+      // baseline. If another update lands and `orders` state changes while this
+      // fetch is in flight, reading items off that later state would make the
+      // diff below find nothing to compare against.
+      const baselineItems = ordersRef.current.find(o => o.id === order.id)?.items ?? [];
+
       (async () => {
         try {
           const full = await apiFetch<any>(`/api/orders/${order.id}`);
@@ -191,7 +216,11 @@ export function useLiveOrders() {
           }
           const updated = rawToOrder(full);
           if (!updated) return;
-          updated.hasNewItems = true;
+          // Must reflect an actual item change (new dish / qty increase) — this used
+          // to be hardcoded true, so ANY order update (a status flip, a bill-requested
+          // stamp, a discount edit with unchanged items) permanently rang the card
+          // yellow with a "new items" highlight that had nothing to do with new items.
+          updated.hasNewItems = hasGenuinelyNewItems(baselineItems, updated.items);
           updated.lastUpdated = Date.now();
           setOrders(prev => prev.map(o => o.id === full.id ? updated : o));
         } catch { /* silent */ }
