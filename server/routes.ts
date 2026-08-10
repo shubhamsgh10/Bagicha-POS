@@ -1417,10 +1417,25 @@ export async function registerRoutes(
       const toTable = await storage.getTableById(Number(toTableId));
       if (!toTable) return res.status(400).json({ error: "Target table not found" });
       if (toTable.status !== "free") return res.status(400).json({ error: "Target table is not free" });
-      // Move order to new table
+      // Move order to new table. This is the authoritative write — order.tableId is
+      // what other reads (order detail, bill routing) key off. The two table-status
+      // flips below are best-effort display bookkeeping on top of it: previously
+      // unguarded, so a failure on EITHER (a transient DB blip) reported
+      // "Failed to shift table" even though the order had already genuinely moved,
+      // and — since they ran sequentially with no try/catch — a failure on the first
+      // update also silently skipped the second, potentially leaving BOTH tables
+      // showing the wrong status (new table still "free", old table still "running").
       await storage.updateOrder(fromTable.currentOrderId, { tableId: Number(toTableId), tableNumber: toTable.name } as any);
-      await storage.updateTableStatus(Number(toTableId), "running", fromTable.currentOrderId);
-      await storage.updateTableStatus(fromTableId, "free", null);
+      try {
+        await storage.updateTableStatus(Number(toTableId), "running", fromTable.currentOrderId);
+      } catch (tableErr) {
+        console.error("[table] shift: destination table status update error (non-fatal):", tableErr);
+      }
+      try {
+        await storage.updateTableStatus(fromTableId, "free", null);
+      } catch (tableErr) {
+        console.error("[table] shift: source table status update error (non-fatal):", tableErr);
+      }
       broadcast({ type: 'TABLE_UPDATE' });
       res.json({ success: true });
     } catch (error) {
@@ -1881,10 +1896,21 @@ export async function registerRoutes(
         }
       }
 
-      // Update table status if dine-in
+      // Update table status if dine-in. Non-fatal, same reasoning as the inventory
+      // reconciliation above: the order is ALREADY committed by this point
+      // (createOrderWithItems's transaction), so a failure here must not turn a
+      // successful order creation into an error response — that used to make the
+      // client believe the order was never created, inviting a retry that creates a
+      // genuine DUPLICATE order (double KOT to the kitchen, double inventory
+      // deduction) for the exact same table, on top of leaving that table's status/
+      // currentOrderId stale (still showing "free" despite a real order pointing at it).
       if (orderInfo.tableId) {
-        await storage.updateTableStatus(Number(orderInfo.tableId), "running", order.id);
-        broadcast({ type: 'TABLE_UPDATE' });
+        try {
+          await storage.updateTableStatus(Number(orderInfo.tableId), "running", order.id);
+          broadcast({ type: 'TABLE_UPDATE' });
+        } catch (tableErr) {
+          console.error("[order] table status update error (non-fatal):", tableErr);
+        }
       }
       broadcast({ type: 'NEW_ORDER', order, items });
 
@@ -2090,9 +2116,21 @@ export async function registerRoutes(
         });
       }
 
+      // Non-fatal: settleOrderIfUnpaid already committed the payment above — a failure
+      // freeing the table must not turn a genuinely successful settlement into an error
+      // response. That used to make staff believe the payment failed (risking a second
+      // collection attempt from the customer) AND skip everything below this point
+      // (loyalty points, CRM messages, feedback scheduling), since the thrown exception
+      // propagated straight past them to the outer catch. The table just stays stuck
+      // showing "running"/"billed" instead of "free" — a real but far smaller problem
+      // than losing the payment record.
       if ((order as any).tableId) {
-        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
-        broadcast({ type: "TABLE_UPDATE" });
+        try {
+          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+          broadcast({ type: "TABLE_UPDATE" });
+        } catch (tableErr) {
+          console.error("[payment] table free error (non-fatal):", tableErr);
+        }
       }
       broadcast({ type: "ORDER_UPDATE", order });
 
@@ -2261,12 +2299,21 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      // Free the table
-      if ((order as any).tableId) {
-        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
-      }
-      // Mark order as held and clear table association
+      const tableId = (order as any).tableId;
+      // Mark order as held FIRST — this is the actual point of the endpoint. Doing the
+      // table free first (the old order) meant a failure there left the order neither
+      // held nor freed: still attached to a table that already forgot about it, showing
+      // up on neither the table card nor the Hold/Recall list. Freeing the table is now
+      // non-fatal and best-effort — if it fails, the order is still correctly held
+      // (the state that matters), just with a table card that needs a manual refresh/fix.
       await storage.updateOrder(id, { status: "hold", tableId: null, tableNumber: null } as any);
+      if (tableId) {
+        try {
+          await storage.updateTableStatus(Number(tableId), "free", null);
+        } catch (tableErr) {
+          console.error("[order] table free error on hold (non-fatal):", tableErr);
+        }
+      }
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
@@ -2297,8 +2344,16 @@ export async function registerRoutes(
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
       await storage.updateOrder(id, { status: "cancelled" } as any);
+      // Non-fatal — the order is already marked cancelled above; a failure here must not
+      // report "Failed to cancel order" for an order that genuinely IS cancelled now
+      // (same reasoning as the settlement/creation table-status fixes elsewhere in this
+      // file). Worst case the table is left showing "running" and needs a manual fix.
       if ((order as any).tableId) {
-        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+        try {
+          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+        } catch (tableErr) {
+          console.error("[order] table free error on cancel (non-fatal):", tableErr);
+        }
       }
       // Reverse whatever this order net-consumed — an empty target means "restore
       // everything." Previously a cancelled order permanently kept its stock deducted.
@@ -2328,14 +2383,27 @@ export async function registerRoutes(
       if (!newTableId) return res.status(400).json({ error: "newTableId required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      // Free old table
-      if ((order as any).tableId) {
-        await storage.updateTableStatus(Number((order as any).tableId), "free", null);
-      }
-      // Update order with new table
+      const oldTableId = (order as any).tableId;
+      // Update order with new table FIRST — this is the authoritative write (same
+      // reasoning as /api/tables/:id/shift above: order.tableId is what other reads key
+      // off). The two table-status flips are best-effort display bookkeeping on top of
+      // it — previously unguarded and ran BEFORE this write, so a failure freeing the
+      // old table skipped the move entirely, and a failure on the new-table flip
+      // reported "Failed to move order" even though the order had already genuinely
+      // moved, leaving the new table stuck showing "free" with an order attached.
       await storage.updateOrder(id, { tableId: newTableId, tableNumber: newTableName || String(newTableId) } as any);
-      // Set new table to running
-      await storage.updateTableStatus(newTableId, "running", id);
+      if (oldTableId) {
+        try {
+          await storage.updateTableStatus(Number(oldTableId), "free", null);
+        } catch (tableErr) {
+          console.error("[table] move: old table status update error (non-fatal):", tableErr);
+        }
+      }
+      try {
+        await storage.updateTableStatus(newTableId, "running", id);
+      } catch (tableErr) {
+        console.error("[table] move: new table status update error (non-fatal):", tableErr);
+      }
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });

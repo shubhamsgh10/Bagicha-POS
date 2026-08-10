@@ -238,8 +238,23 @@ export default function Billing() {
         .catch(() => {});
       setPayingOrder(null);
     },
-    onError: () => {
-      toast({ title: "Payment failed", description: "Could not process payment", variant: "destructive" });
+    onError: (error: any) => {
+      // apiRequest() throws `${status}: ${rawBodyText}` — for our JSON error responses
+      // that body is `{"error": "..."}`. This used to always show a blanket "Could not
+      // process payment", so a double-settle (409 alreadySettled) looked identical to a
+      // genuine failure instead of explaining what actually happened — same unwrap
+      // POS.tsx's settleMutation.onError already does.
+      let description = error?.message || "Could not process payment";
+      const jsonStart = description.indexOf("{");
+      if (jsonStart !== -1) {
+        try {
+          const parsed = JSON.parse(description.slice(jsonStart));
+          if (parsed?.error) description = parsed.error;
+        } catch {
+          /* leave the raw message as-is */
+        }
+      }
+      toast({ title: "Payment failed", description, variant: "destructive" });
     },
   });
 
