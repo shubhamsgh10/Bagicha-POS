@@ -7,6 +7,7 @@
 import fs from "fs";
 import crypto from "crypto";
 import { dataPath } from "../dataDir";
+import { istCalendarDate } from "../../shared/businessDay";
 
 // ── File paths ─────────────────────────────────────────────────────────────────
 
@@ -250,9 +251,12 @@ export function clearLogs(): void {
 
 /** Returns true if this customer already has a log entry from today. */
 export function hasBeenMessagedToday(customerId: string): boolean {
-  const today = new Date().toDateString();
+  // IST calendar date, not `toDateString()` (server-local — not guaranteed to be IST,
+  // see CLAUDE.md). Same dedup-boundary bug class as automationRuleEngine.ts's
+  // hasJobToday and outboundQueue.ts's enqueueWhatsApp/sentToday.
+  const today = istCalendarDate();
   return loadLogs().some(
-    l => l.customerId === customerId && new Date(l.sentAt).toDateString() === today
+    l => l.customerId === customerId && istCalendarDate(new Date(l.sentAt)) === today
   );
 }
 

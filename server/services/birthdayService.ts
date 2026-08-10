@@ -25,14 +25,16 @@ import { sendWhatsAppMessage } from "./whatsappService";
 import { issueCoupon } from "./couponService";
 import { logEventByKey } from "./crm/eventService";
 import { CRM_EVENT_TYPES } from "../../shared/schema";
+import { istMonthDay, istCalendarDate, istCalendarDayRange } from "../../shared/businessDay";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// IST, not server-local — see CLAUDE.md's formatISTDateTime write-up. On a server
+// whose local TZ lags IST (e.g. UTC), this job (once-daily, no same-day retry) used
+// to be able to skip a customer's real-IST-today birthday entirely during the
+// IST 00:00-05:29 window, when the server's own local calendar date is still "yesterday".
 function todayMonthDay(): string {
-  const d = new Date();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}-${dd}`;
+  return istMonthDay();
 }
 
 /** Extract MM-DD from a YYYY-MM-DD or DD/MM/YYYY string. Returns null on parse error. */
@@ -54,7 +56,8 @@ function extractMonthDay(value: string | null | undefined): string | null {
 // ── Job dedupe ────────────────────────────────────────────────────────────────
 
 async function alreadySentToday(customerId: string, triggerType: string): Promise<boolean> {
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  // IST midnight, not server-local — see automationRuleEngine.ts's hasJobToday for why.
+  const { start: todayStart } = istCalendarDayRange(istCalendarDate());
   const rows = await db
     .select({ id: automationJobs.id })
     .from(automationJobs)

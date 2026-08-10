@@ -35,6 +35,7 @@ import {
 import { getDriver } from "./whatsapp/driverManager";
 import { enqueueWhatsApp } from "./whatsapp/outboundQueue";
 import { resolveCustomerId } from "./crm/customerIdService";
+import { istHour } from "../../shared/businessDay";
 
 // ── Constants (mirrors useCustomerIntelligence thresholds) ────────────────────
 
@@ -127,7 +128,7 @@ async function buildCustomerProfiles(): Promise<CustomerSnapshot[]> {
     // Peak order hour
     const hourCounts: Record<number, number> = {};
     for (const o of customerOrders) {
-      const h = new Date(o.createdAt).getHours();
+      const h = istHour(new Date(o.createdAt));
       hourCounts[h] = (hourCounts[h] ?? 0) + 1;
     }
     const peakHour = customerOrders.length

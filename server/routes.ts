@@ -8,6 +8,7 @@ import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
+import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -1226,11 +1227,14 @@ export async function registerRoutes(
     }
   });
 
+  // startDate/endDate query params are business-day date strings (YYYY-MM-DD, IST
+  // calendar) — storage.getSalesChart resolves them via businessDayRange(). Sliced to
+  // 10 chars defensively in case a full ISO timestamp is ever passed instead.
   app.get("/api/dashboard/sales-chart", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      const start = startDate ? new Date(startDate as string) : undefined;
-      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const start = startDate ? (startDate as string).slice(0, 10) : undefined;
+      const end   = endDate   ? (endDate   as string).slice(0, 10) : undefined;
       const data = await storage.getSalesChart(start, end);
       res.json(data);
     } catch (error) {
@@ -1241,8 +1245,8 @@ export async function registerRoutes(
   app.get("/api/dashboard/category-sales", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      const start = startDate ? new Date(startDate as string) : undefined;
-      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const start = startDate ? (startDate as string).slice(0, 10) : undefined;
+      const end   = endDate   ? (endDate   as string).slice(0, 10) : undefined;
       const data = await storage.getCategorySales(start, end);
       res.json(data);
     } catch (error) {
@@ -1253,8 +1257,8 @@ export async function registerRoutes(
   app.get("/api/dashboard/top-items", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      const start = startDate ? new Date(startDate as string) : undefined;
-      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      const start = startDate ? (startDate as string).slice(0, 10) : undefined;
+      const end   = endDate   ? (endDate   as string).slice(0, 10) : undefined;
       const data = await storage.getDashboardTopItems(8, start, end);
       res.json(data);
     } catch (error) {
@@ -1328,10 +1332,10 @@ export async function registerRoutes(
       const runningTables = allTables.filter(t => t.status === "running").length;
       const freeTables    = allTables.filter(t => t.status === "free").length;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — a naive
+      // local-midnight boundary disagreed with those pages for any order placed between
+      // midnight and 5am IST, even on an IST-hosted server.
+      const { start: today, end: todayEnd } = businessDayRange(todayBusinessDate());
 
       const allOrders = await storage.getOrders();
       const activeOrders = allOrders.filter(
@@ -1340,7 +1344,7 @@ export async function registerRoutes(
       const todaySales = allOrders
         .filter(o => {
           const d = new Date(o.createdAt);
-          return d >= today && d < tomorrow && o.paymentStatus === 'paid';
+          return d >= today && d <= todayEnd && o.paymentStatus === 'paid';
         })
         .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
 
@@ -2188,9 +2192,10 @@ export async function registerRoutes(
           new Date(endDate as string)
         );
       } else {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-        allOrders = await storage.getOrdersByDateRange(today, tomorrow);
+        // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — not a naive
+        // local-midnight calendar day.
+        const { start, end } = businessDayRange(todayBusinessDate());
+        allOrders = await storage.getOrdersByDateRange(start, end);
       }
 
       // Only count paid orders for revenue; due orders counted separately
@@ -2627,37 +2632,33 @@ export async function registerRoutes(
     try {
       const { startDate, endDate } = req.query;
 
-      let end: Date, start: Date;
-      if (startDate && endDate) {
-        start = new Date(startDate as string);
-        start.setHours(0, 0, 0, 0);
-        end = new Date(endDate as string);
-        end.setHours(23, 59, 59, 999);
-      } else {
-        end = new Date();
-        end.setHours(23, 59, 59, 999);
-        start = new Date();
-        start.setDate(start.getDate() - 6);
-        start.setHours(0, 0, 0, 0);
-      }
+      // Business-day date strings (YYYY-MM-DD, IST calendar) — see getSalesChart's
+      // comment in storage.ts. Both branches here used to re-normalize via LOCAL
+      // setHours()/UTC toISOString(), which disagreed with Orders.tsx/Billing.tsx for
+      // any order between midnight and 5am IST.
+      const startKey = startDate ? (startDate as string).slice(0, 10) : shiftBusinessDate(todayBusinessDate(), -6);
+      const endKey = endDate ? (endDate as string).slice(0, 10) : todayBusinessDate();
+      const start = businessDayRange(startKey).start;
+      const end = businessDayRange(endKey).end;
 
       const allOrders = await storage.getOrdersByDateRange(start, end);
 
-      // Build one entry per day in the selected range
+      // Build one entry per business day in the selected range
       const days: { name: string; date: string; sales: number; orders: number }[] = [];
-      const cursor = new Date(start);
-      while (cursor <= end) {
+      let cursorKey = startKey;
+      while (cursorKey <= endKey) {
+        const labelDate = businessDayRange(cursorKey).start;
         days.push({
-          name: cursor.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-          date: cursor.toISOString().slice(0, 10),
+          name: labelDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }),
+          date: cursorKey,
           sales: 0,
           orders: 0,
         });
-        cursor.setDate(cursor.getDate() + 1);
+        cursorKey = shiftBusinessDate(cursorKey, 1);
       }
 
       for (const order of allOrders) {
-        const orderDate = new Date(order.createdAt!).toISOString().slice(0, 10);
+        const orderDate = businessDateOf(new Date(order.createdAt!));
         const day = days.find(d => d.date === orderDate);
         if (day) {
           day.sales  += parseFloat(order.totalAmount);
@@ -2674,8 +2675,11 @@ export async function registerRoutes(
   app.get("/api/reports/staff-tables", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      const start = (() => { const d = new Date((startDate as string) || new Date().toISOString().slice(0, 10)); d.setUTCHours(0, 0, 0, 0); return d; })();
-      const end   = (() => { const d = new Date((endDate   as string) || new Date().toISOString().slice(0, 10)); d.setUTCHours(23, 59, 59, 999); return d; })();
+      // Business day (5am IST cutoff), not UTC midnight — this used to explicitly pin
+      // UTC, which is a real timezone but not the restaurant's, so it disagreed with
+      // Orders.tsx/Billing.tsx the same way the local-midnight sites elsewhere did.
+      const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
+      const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
       const report = await storage.getStaffTableReport(start, end);
       res.json(report);
     } catch (error) {
@@ -2705,11 +2709,9 @@ export async function registerRoutes(
           new Date(endDate as string)
         );
       } else {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        orders = await storage.getOrdersByDateRange(today, tomorrow);
+        // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx.
+        const { start, end } = businessDayRange(todayBusinessDate());
+        orders = await storage.getOrdersByDateRange(start, end);
       }
 
       const totalSales = orders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0);

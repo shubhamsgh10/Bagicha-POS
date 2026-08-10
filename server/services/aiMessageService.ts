@@ -11,6 +11,7 @@
  */
 
 import { type TriggerType } from "./automationStore";
+import { istHour } from "../../shared/businessDay";
 
 // ── Customer snapshot (server-side, from DB aggregation) ──────────────────────
 
@@ -178,7 +179,11 @@ Rules:
  * Also avoids 11 PM – 7 AM regardless.
  */
 export function isGoodSendTime(customer: CustomerSnapshot): boolean {
-  const hour = new Date().getHours();
+  // IST wall-clock hour, not the server's local hour — this is a ban-avoidance guard
+  // (CLAUDE.md's WhatsApp "Footguns" section), so getting the wrong 8-hour window on a
+  // non-IST host (e.g. UTC) both blocks legitimate daytime sends and allows genuine
+  // late-night-IST sends, exactly backwards from the intent.
+  const hour = istHour();
 
   // Never disturb at night
   if (hour < 7 || hour >= 23) return false;

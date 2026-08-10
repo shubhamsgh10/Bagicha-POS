@@ -35,6 +35,7 @@ import { generateMessage, type CustomerSnapshot as AISnapshot } from "../aiMessa
 import { buildSnapshotForKey } from "../customerAutomationService";
 import { enqueueWhatsApp } from "../whatsapp/outboundQueue";
 import { getDriver } from "../whatsapp/driverManager";
+import { istCalendarDayRange, istCalendarDate, istMonthDay } from "../../../shared/businessDay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -205,9 +206,11 @@ function evaluateRule(rule: AutomationRule, c: CustomerSnapshot): boolean {
   }
   if (rule.triggerType === "BIRTHDAY") {
     if (!c.dob) return false;
-    const today    = new Date();
-    const birthday = new Date(c.dob);
-    return birthday.getMonth() === today.getMonth() && birthday.getDate() === today.getDate();
+    // IST month-day, not server-local — a second, independent birthday-matching site
+    // from birthdayService.ts's own scan (this one backs the DB-configurable rule
+    // engine). Same class of bug: local Date components read the server's ambient
+    // timezone, not guaranteed to be IST (see CLAUDE.md).
+    return istMonthDay(new Date(c.dob)) === istMonthDay();
   }
   return false;
 }
@@ -326,7 +329,8 @@ export async function runAutomationServerSide(
       // settlement + outbound-queue paths.
       const customerId = await resolveCustomerId(customer.key, customer.name, customer.phone);
 
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      // IST midnight, not server-local — see hasJobToday's comment below for why.
+      const { start: todayStart } = istCalendarDayRange(istCalendarDate());
       const recentJob = await db
         .select({ id: automationJobs.id })
         .from(automationJobs)
@@ -481,8 +485,13 @@ const DEFAULT_DUE_TEMPLATE =
 
 /** True if a same-day job already exists for this customer + any of these triggers. */
 async function hasJobToday(customerId: string, triggers: string[]): Promise<boolean> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // IST midnight, not server-local — `new Date().setHours(0,0,0,0)` reads the SERVER's
+  // ambient timezone (not guaranteed to be IST, per CLAUDE.md). On a non-IST host, a
+  // customer settled at 11:50 PM IST and again at 12:10 AM IST (20 real-world minutes
+  // apart, same night) could straddle the server's own local-midnight boundary, so this
+  // check misses the earlier job and the documented "one message per customer per day"
+  // guarantee silently breaks (a duplicate WELCOME/VIP/due-reminder goes out).
+  const { start: todayStart } = istCalendarDayRange(istCalendarDate());
   const rows = await db
     .select({ id: automationJobs.id })
     .from(automationJobs)

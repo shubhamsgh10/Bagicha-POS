@@ -43,3 +43,35 @@ export function shiftBusinessDate(dateStr: string, deltaDays: number): string {
   const [y, m, day] = dateStr.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, day + deltaDays)).toISOString().slice(0, 10);
 }
+
+// ── Plain IST calendar helpers (distinct from the business-day concept above) ──
+// Some call sites don't want the 5am-cutoff business day — they want the actual IST
+// wall-clock hour or calendar date: WhatsApp quiet-hours gating, "already messaged this
+// customer today" dedup (should reset at IST midnight, not 5am), birthday matching, and
+// the daily scheduler's once-per-day job gates. Using `new Date().getHours()`/`.getDate()`
+// for any of these reads the SERVER's ambient timezone, which CLAUDE.md documents as
+// "not guaranteed to be IST even though the restaurant is" — exactly what bit
+// formatISTDateTime's callers before that fix. Use these instead.
+
+/** Current hour in IST (0-23) for a given instant (defaults to now). */
+export function istHour(d: Date = new Date()): number {
+  return istDateAndHour(d).hour;
+}
+
+/** IST calendar date (YYYY-MM-DD) for a given instant (defaults to now). */
+export function istCalendarDate(d: Date = new Date()): string {
+  return istDateAndHour(d).dateStr;
+}
+
+/** IST month-day (MM-DD) for a given instant — e.g. for birthday-field matching. */
+export function istMonthDay(d: Date = new Date()): string {
+  return istCalendarDate(d).slice(5);
+}
+
+/** [start, end] UTC instants spanning the PLAIN IST calendar day for `dateStr`
+ *  (00:00:00.000 through 23:59:59.999 IST) — distinct from businessDayRange's 5am cutoff. */
+export function istCalendarDayRange(dateStr: string): { start: Date; end: Date } {
+  const start = new Date(`${dateStr}T00:00:00.000+05:30`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { start, end };
+}

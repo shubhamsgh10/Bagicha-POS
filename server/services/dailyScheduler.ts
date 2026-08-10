@@ -14,6 +14,7 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { dailyDigests } from "../../shared/schema";
+import { istCalendarDate, istHour } from "../../shared/businessDay";
 import { getAutomationConfig } from "./automationStore";
 import { processPendingFeedback } from "./feedbackService";
 import { runBirthdayAutomation } from "./birthdayService";
@@ -31,17 +32,19 @@ let lastRuleEngineDate:  string | null = null;
 
 const TICK_INTERVAL_MS = 60 * 1000; // every minute
 
-function todayDateStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 // ── Tick ──────────────────────────────────────────────────────────────────────
 
 async function tick(): Promise<void> {
   const config = getAutomationConfig();
   const now    = new Date();
-  const today  = todayDateStr();
-  const hour   = now.getHours();
+  // Both from the SAME IST-pinned source — these used to be `today` in UTC
+  // (toISOString) but `hour` in the server's LOCAL time, which disagree for part of
+  // every day on any non-UTC-and-non-IST host (and even on an IST host, since
+  // toISOString() is always UTC): the gate could pass with a stale-looking `today`
+  // that was actually still yesterday in UTC, letting lastXDate !== today fire twice
+  // for the same real IST day once UTC caught up. See shared/businessDay.ts.
+  const today  = istCalendarDate(now);
+  const hour   = istHour(now);
 
   // 1. Feedback dispatch — runs every tick
   if (config.feedbackEnabled) {
