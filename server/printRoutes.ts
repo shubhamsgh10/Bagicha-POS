@@ -60,7 +60,7 @@ function kotTextLines(params: {
   isReprint: boolean;
   isDelta: boolean;
   newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null; serviceMode?: string | null; previousQty?: number }>;
-  modifiedItems: Array<{ name: string; quantity: number; size?: string | null; previousQty: number }>;
+  modifiedItems: Array<{ name: string; quantity: number; size?: string | null; previousQty: number; instructions?: string | null }>;
   cancelledItems: Array<{ name: string; quantity: number; size?: string | null }>;
   kotSettings: import("./settingsStore").KOTPrintSettings;
   width: number;
@@ -122,6 +122,12 @@ function kotTextLines(params: {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
       lines.push(two(`${qty}  ${label}`, `was ${item.previousQty}`));
+      // Drift fix: generateKOTBuffer (the real hardware print) already shows this line
+      // for modified items — this preview-only renderer was missing it, so the browser
+      // preview didn't match what actually printed for any modified item carrying addons.
+      if (params.kotSettings.printAddons && item.instructions) {
+        lines.push(body(`       >> ${item.instructions}`));
+      }
     }
   }
   if (params.kotSettings.printCancelledKOT && params.cancelledItems.length > 0) {
