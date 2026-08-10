@@ -30,6 +30,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
+import { deriveBillTotals } from "@shared/orderPricing";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -57,8 +58,7 @@ function ensureRazorpayScript(): Promise<boolean> {
 function printBill(order: any, items: any[] = [], settings?: any) {
   const win = window.open("", "_blank", "width=450,height=700");
   if (!win) return;
-  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount);
-  const discount = parseFloat(order.discountAmount || "0");
+  const { subtotal, discount, containerCharge } = deriveBillTotals(order);
   const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
   const address = settings?.address || "";
   const phone = settings?.phone || "";
@@ -106,6 +106,7 @@ function printBill(order: any, items: any[] = [], settings?: any) {
         <div class="divider"></div>
         <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
         ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
+        ${containerCharge > 0 ? `<div class="row"><span>Container</span><span>₹${containerCharge.toFixed(0)}</span></div>` : ""}
         <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount).toFixed(0)}</span></div>
         <div class="divider"></div>
         <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
@@ -288,7 +289,7 @@ export default function Billing() {
     }
     try {
       const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
-      const orderAmount = parseFloat(payingOrder.totalAmount) - parseFloat(payingOrder.taxAmount);
+      const orderAmount = deriveBillTotals(payingOrder).subtotal;
 
       const validateRes = await apiRequest("POST", "/api/coupons/validate", {
         code: couponCode.trim(),
@@ -474,6 +475,10 @@ export default function Billing() {
     );
   }
 
+  const payingOrderTotals = payingOrder
+    ? deriveBillTotals(payingOrder)
+    : { subtotal: 0, discount: 0, containerCharge: 0, tax: 0, total: 0 };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <Header
@@ -552,12 +557,18 @@ export default function Billing() {
                     <Separator className="my-2" />
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal</span>
-                      <span>{formatCurrency(parseFloat(order.totalAmount) - parseFloat(order.taxAmount))}</span>
+                      <span>{formatCurrency(deriveBillTotals(order).subtotal)}</span>
                     </div>
                     {order.discountAmount && parseFloat(order.discountAmount) > 0 && (
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Discount</span>
                         <span className="text-green-600">-{formatCurrency(parseFloat(order.discountAmount))}</span>
+                      </div>
+                    )}
+                    {deriveBillTotals(order).containerCharge > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Container</span>
+                        <span>{formatCurrency(deriveBillTotals(order).containerCharge)}</span>
                       </div>
                     )}
                     <div className="flex justify-between">
@@ -698,12 +709,18 @@ export default function Billing() {
             <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span>{formatCurrency(parseFloat(payingOrder?.totalAmount || "0") - parseFloat(payingOrder?.taxAmount || "0"))}</span>
+                <span>{formatCurrency(payingOrderTotals.subtotal)}</span>
               </div>
               {payingOrder && parseFloat(payingOrder.discountAmount || "0") > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span>Discount</span>
                   <span>-{formatCurrency(parseFloat(payingOrder.discountAmount))}</span>
+                </div>
+              )}
+              {payingOrderTotals.containerCharge > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Container</span>
+                  <span>{formatCurrency(payingOrderTotals.containerCharge)}</span>
                 </div>
               )}
               <div className="flex justify-between">
