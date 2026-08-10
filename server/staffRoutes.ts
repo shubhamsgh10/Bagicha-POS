@@ -9,6 +9,7 @@ import { orders, users, staffMembers } from "../shared/schema";
 import { gte, lte, and, sql, count } from "drizzle-orm";
 import { requireAuth, requireManagerOrAdmin } from "./routes";
 import { storage } from "./storage";
+import { personPageKey } from "../shared/pageAccess";
 
 export function registerStaffRoutes(app: Express) {
 
@@ -65,18 +66,27 @@ export function registerStaffRoutes(app: Express) {
       for (const r of rows) {
         let staffId: number | null = null;
         let staffName: string | null = null;
+        let kind: "user" | "staff" | null = null;
 
         if (r.createdByStaffMemberId != null) {
           staffId = r.createdByStaffMemberId;
           staffName = staffMap.get(r.createdByStaffMemberId) ?? null;
+          kind = "staff";
         } else if (r.createdBy != null) {
           const u = userMap.get(r.createdBy);
           if (u?.role === "admin") continue; // owner/admin excluded from staff performance
           staffId = r.createdBy;
           staffName = u?.username ?? null;
+          kind = "user";
         }
 
-        const key = staffName ? `${staffId}` : "unassigned";
+        // Must be kind-prefixed, not just `${staffId}` — createdBy (users.id) and
+        // createdByStaffMemberId (staffMembers.id) share an integer id space (see the
+        // comment above and CLAUDE.md's id-collision note), so a bare numeric key
+        // silently merged a user and a staff member that happened to share an id into
+        // one row, summing their revenue together and dropping whichever name lost the
+        // Map.set race.
+        const key = staffName && kind ? personPageKey(kind, staffId!) : "unassigned";
         const existing = merged.get(key);
         if (existing) {
           existing.totalOrders += Number(r.totalOrders);

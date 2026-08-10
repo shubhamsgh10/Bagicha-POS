@@ -24,6 +24,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useRealtime } from "@/hooks/useRealtime";
 import { BiometricDevicePanel } from "@/components/staff/BiometricDevicePanel";
 import { LiveAttendanceBoard } from "@/components/staff/LiveAttendanceBoard";
+import { weekStringOf, shiftWeek } from "@shared/weekMath";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,12 +107,7 @@ function ShiftsPanel() {
   const { toast } = useToast();
   const [showNewShift, setShowNewShift] = useState(false);
   const [newShift, setNewShift] = useState({ name: "", startTime: "09:00", endTime: "17:00" });
-  const [currentWeek, setCurrentWeek] = useState(() => {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-    return `${now.getFullYear()}-${String(weekNum).padStart(2, "0")}`;
-  });
+  const [currentWeek, setCurrentWeek] = useState(() => weekStringOf(new Date()));
 
   const { data: shiftDefs = [] } = useQuery<any[]>({ queryKey: ["/api/shifts"] });
   const { data: roster = [] } = useQuery<any[]>({ queryKey: [`/api/shifts/roster?week=${currentWeek}`] });
@@ -154,10 +150,7 @@ function ShiftsPanel() {
   });
 
   const navigateWeek = (delta: number) => {
-    const [y, w] = currentWeek.split("-").map(Number);
-    let nw = w + delta, ny = y;
-    if (nw < 1) { ny--; nw = 52; } else if (nw > 52) { ny++; nw = 1; }
-    setCurrentWeek(`${ny}-${String(nw).padStart(2, "0")}`);
+    setCurrentWeek(shiftWeek(currentWeek, delta));
   };
 
   const dates: string[] = roster[0]?.dates ?? [];

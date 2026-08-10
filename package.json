@@ -27,7 +27,7 @@
     "build:web": "vite build",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",
-    "test:pure": "tsx scripts/verify-order-pricing.ts && tsx scripts/verify-elevation.ts && tsx scripts/verify-self-scope.ts && tsx scripts/verify-order-mutation-guard.ts && tsx scripts/verify-bill-derivation.ts && tsx scripts/verify-merge-split.ts && tsx scripts/verify-ist-datemath.ts",
+    "test:pure": "tsx scripts/verify-order-pricing.ts && tsx scripts/verify-elevation.ts && tsx scripts/verify-self-scope.ts && tsx scripts/verify-order-mutation-guard.ts && tsx scripts/verify-bill-derivation.ts && tsx scripts/verify-merge-split.ts && tsx scripts/verify-ist-datemath.ts && tsx scripts/verify-week-math.ts",
     "db:push": "drizzle-kit push",
     "seed": "tsx -r dotenv/config server/seed.ts",
     "dev:watch": "nodemon --watch server --ext ts,js --exec \"tsx -r dotenv/config server/index.ts\""

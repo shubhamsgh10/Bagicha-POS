@@ -3394,7 +3394,10 @@ export async function registerRoutes(
         userId: person.kind === "user" ? person.id : null,
         staffMemberId: person.kind === "staff" ? person.id : null,
       }));
-    } catch (err: any) { res.status(500).json({ message: err.message }); }
+    } catch (err: any) {
+      const status = /overlapping/i.test(err.message ?? "") ? 409 : 500;
+      res.status(status).json({ message: err.message });
+    }
   });
 
   // PUT /api/leaves/:id — approve or reject. requireManagerOrAdmin: this is the approval
