@@ -472,7 +472,13 @@ export default function POS() {
       if (outcome === 'skipped') {
         toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
       } else if (outcome === 'hardware') {
-        toast({ title: 'KOT sent to printer!' });
+        // data.message carries a partial-failure note when one routed printer failed
+        // but at least one other printer (direct or dispatched) still got the ticket —
+        // "printed: true" is accurate for the ones that succeeded, but staff still need
+        // to know a specific printer needs attention, not silence.
+        toast(data.message
+          ? { title: 'KOT sent to printer!', description: data.message, variant: 'destructive' }
+          : { title: 'KOT sent to printer!' });
       } else if (outcome === 'browser') {
         toast({
           title: data.reason === 'non_escpos_printer' ? 'Use KOT preview to print' : 'KOT ready',
