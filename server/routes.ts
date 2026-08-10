@@ -1549,6 +1549,15 @@ export async function registerRoutes(
       if (updates.isAvailable !== undefined) allowed.isAvailable = Boolean(updates.isAvailable);
       if (updates.categoryId !== undefined) allowed.categoryId = Number(updates.categoryId);
       if (updates.price !== undefined) allowed.price = String(updates.price);
+      // A size-priced item's actual sale price comes from sizes[].price, never the base
+      // `price` column (see shared/orderPricing.ts's floor logic) — bulk price updates
+      // used to only ever send `price`, so they silently no-op for every sized item
+      // while still reporting success. Menu.tsx now sends adjusted sizes for those.
+      if (Array.isArray(updates.sizes)) {
+        allowed.sizes = updates.sizes
+          .filter((s: any) => s && typeof s.size === "string" && s.size.trim() && !isNaN(Number(s.price)))
+          .map((s: any) => ({ size: String(s.size).trim(), price: Number(s.price), stockMultiplier: s.stockMultiplier != null ? Number(s.stockMultiplier) : undefined }));
+      }
       if (updates.addonsEnabled !== undefined) allowed.addonsEnabled = Boolean(updates.addonsEnabled);
       if (Array.isArray(updates.addons)) {
         allowed.addons = updates.addons

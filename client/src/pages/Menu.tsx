@@ -206,17 +206,52 @@ export default function Menu() {
     const val = parseFloat(bulkPriceValue);
     if (isNaN(val) || val < 0) return toast({ title: "Invalid value", variant: "destructive" });
     const ids = Array.from(selectedIds);
+    const itemsToUpdate = rawItems.filter((i) => ids.includes(i.id));
+    // A size-priced item's real sale price is sizes[].price, never the base `price`
+    // field (shared/orderPricing.ts's floor logic ignores base price once a size
+    // matches) — bulk price updates used to only ever send `price`, so they silently
+    // no-op for every sized item (e.g. "Cold Coffee" Regular/Large) while the mutation
+    // still reported success. Split sized vs plain items and handle each correctly.
+    const sizedItems = itemsToUpdate.filter((i) => i.sizes && i.sizes.length > 0);
+    const plainItems = itemsToUpdate.filter((i) => !(i.sizes && i.sizes.length > 0));
+
     if (bulkPriceMode === "fixed") {
-      bulkUpdateMutation.mutate({ ids, updates: { price: val.toString() } });
+      // One absolute price doesn't map cleanly onto a multi-size item (which size
+      // would get it?) — apply only to plain items and tell the admin the rest need
+      // editing individually, instead of silently doing nothing for them. Bypasses
+      // bulkUpdateMutation's own success toast (same reason the % branch below does)
+      // so there's exactly one combined toast, not a race between two.
+      const request = plainItems.length > 0
+        ? apiRequest("POST", "/api/menu/bulk-update", { ids: plainItems.map((i) => i.id), updates: { price: val.toString() } })
+        : Promise.resolve();
+      request.then(() => {
+        if (sizedItems.length > 0) {
+          toast({
+            title: plainItems.length > 0
+              ? `Updated ${plainItems.length} item(s) — skipped ${sizedItems.length} multi-size item(s)`
+              : `Skipped ${sizedItems.length} multi-size item(s)`,
+            description: "Multi-size items need a fixed price per size — edit them individually, or use the % option.",
+          });
+        } else {
+          toast({ title: `Updated ${plainItems.length} item(s)` });
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/menu?all=true"] });
+        setSelectedIds(new Set());
+      }).catch(() => toast({ title: "Price update failed", variant: "destructive" }));
     } else {
-      // percent: compute each item's new price individually
+      // percent: compute each item's new price individually, including every size.
       const factor = 1 + val / 100;
-      // Apply to each item separately (need their current prices)
-      const itemsToUpdate = rawItems.filter((i) => ids.includes(i.id));
       Promise.all(
         itemsToUpdate.map((item) => {
-          const newPrice = (getItemPrice(item) * factor).toFixed(2);
-          return apiRequest("POST", "/api/menu/bulk-update", { ids: [item.id], updates: { price: newPrice } });
+          const hasSizes = item.sizes && item.sizes.length > 0;
+          const updates: any = { price: (getItemPrice(item) * factor).toFixed(2) };
+          if (hasSizes) {
+            updates.sizes = item.sizes!.map((s) => ({
+              ...s,
+              price: Number((s.price * factor).toFixed(2)),
+            }));
+          }
+          return apiRequest("POST", "/api/menu/bulk-update", { ids: [item.id], updates });
         })
       ).then(() => {
         toast({ title: `Updated prices for ${ids.length} item(s)` });
