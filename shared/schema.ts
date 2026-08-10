@@ -205,7 +205,24 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
 export const insertInventoryCategorySchema = createInsertSchema(inventoryCategories).omit({ id: true });
 export const insertMenuItemSchema = createInsertSchema(menuItems).omit({ id: true });
-export const insertInventorySchema = createInsertSchema(inventory).omit({ id: true, lastRestocked: true });
+// drizzle-zod emits a bare z.string() for `decimal` columns (no numeric refinement), so
+// "abc", "", and "-5" all passed .safeParse() for currentStock/minStock — a non-numeric
+// value produced Postgres NUMERIC "NaN" (permanently corrupting the row, since
+// NaN + x = NaN forever after, and getLowStockItems/getNegativeStockItems both silently
+// stop alerting on it because Postgres treats NaN as greater than any value); a negative
+// minStock made currentStock <= minStock never true, permanently disabling that item's
+// low-stock alert. These two fields must be a valid non-negative number string —
+// negative currentStock is still allowed to arise as a CONSEQUENCE of an oversold order
+// (recordStockMovement deliberately has no clamp, see getNegativeStockItems), just not
+// as something typed directly into the create/edit form.
+const nonNegativeNumericString = z.string().refine(
+  (v) => v.trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0,
+  { message: "Must be a non-negative number" },
+);
+export const insertInventorySchema = createInsertSchema(inventory).omit({ id: true, lastRestocked: true }).extend({
+  currentStock: nonNegativeNumericString,
+  minStock: nonNegativeNumericString,
+});
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true });
 export const insertKotTicketSchema = createInsertSchema(kotTickets).omit({ id: true, printedAt: true, completedAt: true });
