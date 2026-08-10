@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -523,9 +523,13 @@ export default function POS() {
         ackType: 'bill',
         pendingAck: data.pendingAck,
         onBrowserBill: async () => {
+          // apiJson() checks res.ok before parsing — a hand-rolled fetch(...).then(r =>
+          // r.json()) here used to let a non-2xx response's error body flow straight into
+          // printOrderBill as if it were real order/settings data instead of throwing
+          // (which triggerBillPrint's outer catch already handles via showBillPreview).
           const [freshOrder, freshSettings] = await Promise.all([
-            fetch(apiUrl(`/api/orders/${orderId}`), { credentials: 'include' }).then((r) => r.json()),
-            fetch(apiUrl('/api/settings'), { credentials: 'include' }).then((r) => r.json()),
+            apiJson<any>(`/api/orders/${orderId}`),
+            apiJson<any>('/api/settings'),
           ]);
           const printed = await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
           // Popup + iframe both blocked (rare) — show the in-page preview so the user isn't stuck.

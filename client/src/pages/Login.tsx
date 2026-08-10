@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -206,8 +206,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   });
 
   useEffect(() => {
-    fetch(apiUrl("/api/staff-members"), { credentials: "include" })
-      .then(r => r.json())
+    apiJson<StaffMember[]>("/api/staff-members")
       .then((m: StaffMember[]) => setStaff(m))
       .catch(() => {});
   }, []);
@@ -447,8 +446,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   }, []);
 
   useEffect(() => {
-    fetch(apiUrl("/api/staff-members"), { credentials: "include" })
-      .then(r => r.json())
+    apiJson<StaffMember[]>("/api/staff-members")
       .then((m: StaffMember[]) => setStaff(m))
       .catch(() => {});
   }, []);
