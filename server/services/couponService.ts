@@ -164,7 +164,8 @@ export async function redeemCoupon(
   const coupon = rows[0];
   if (!coupon) return { ok: false, discount: 0, reason: "Coupon not found" };
 
-  // Re-validate (race-safe enough for a small POS)
+  // Re-validate the non-count-based rules (active, date range, min order, customer-bound)
+  // — these don't have a race window on their own.
   const v = await validateCoupon({
     code: coupon.code,
     orderAmount,
@@ -181,13 +182,47 @@ export async function redeemCoupon(
     }
   }
 
-  await db.insert(couponRedemptions).values({
-    couponId,
-    orderId,
-    customerId,
-    customerKey: customerKey ?? null,
-    discountApplied: (v.discount ?? 0).toFixed(2),
+  // validateCoupon's usage-limit / per-customer-limit checks ran outside any lock, so two
+  // concurrent redemptions of the same single-use coupon (retry after a slow response, or
+  // two staff applying it at once) could both see totalUsed below the limit and both pass
+  // — the coupon gets honored twice, a real overcharge on the discount side. Re-check both
+  // limits AND insert the redemption atomically under a per-coupon advisory lock, which
+  // serializes concurrent redemptions of THIS coupon without blocking other coupons.
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${couponId}::bigint)`);
+
+    const [{ totalUsed }] = await tx
+      .select({ totalUsed: sql<number>`count(*)::int` })
+      .from(couponRedemptions)
+      .where(eq(couponRedemptions.couponId, coupon.id));
+    if (totalUsed >= coupon.usageLimit) {
+      return { ok: false as const, reason: "Coupon usage limit reached" };
+    }
+
+    if (customerKey) {
+      const [{ perCust }] = await tx
+        .select({ perCust: sql<number>`count(*)::int` })
+        .from(couponRedemptions)
+        .where(and(
+          eq(couponRedemptions.couponId, coupon.id),
+          eq(couponRedemptions.customerKey, customerKey),
+        ));
+      if (perCust >= coupon.perCustomerLimit) {
+        return { ok: false as const, reason: "You've already used this coupon" };
+      }
+    }
+
+    await tx.insert(couponRedemptions).values({
+      couponId,
+      orderId,
+      customerId,
+      customerKey: customerKey ?? null,
+      discountApplied: (v.discount ?? 0).toFixed(2),
+    });
+    return { ok: true as const };
   });
+
+  if (!result.ok) return { ok: false, discount: 0, reason: result.reason };
 
   if (customerKey) {
     logEventByKey(customerKey, customerKey, CRM_EVENT_TYPES.COUPON_USED, {

@@ -108,11 +108,6 @@ export async function redeemPoints(
     return { ok: false, reason: `Redeem in multiples of ${MIN_REDEEM_POINTS}`, discount: 0 };
   }
 
-  const balance = await getBalance(customerKey);
-  if (pointsToRedeem > balance) {
-    return { ok: false, reason: `Only ${balance} pts available`, discount: 0 };
-  }
-
   let customerId: string;
   try {
     customerId = await resolveCustomerId(customerKey, customerName, null);
@@ -120,13 +115,35 @@ export async function redeemPoints(
     return { ok: false, reason: "Customer lookup failed", discount: 0 };
   }
 
-  await db.insert(loyaltyPoints).values({
-    customerId,
-    customerKey,
-    points:  -pointsToRedeem,
-    reason:  "redeem_order",
-    orderId: orderId ?? null,
+  // The ledger is append-only (balance = SUM of all rows, no mutable balance column to
+  // row-lock), so without a lock here two concurrent redemptions for the same customer
+  // (double-tap on the manager-PIN-gated Redeem button, or a retried request) could both
+  // read the same balance via getBalance() before either insert commits, both pass the
+  // check below, and both insert a negative row — driving the balance negative and
+  // double-applying the discount to an order. pg_advisory_xact_lock keyed on a hash of
+  // customerId serializes redemptions for THIS customer specifically without blocking
+  // unrelated customers, and releases automatically on commit/rollback.
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${customerId})::bigint)`);
+    const [row] = await tx
+      .select({ total: sql<number>`coalesce(sum(${loyaltyPoints.points}), 0)::int` })
+      .from(loyaltyPoints)
+      .where(eq(loyaltyPoints.customerKey, customerKey));
+    const balance = Number(row?.total ?? 0);
+    if (pointsToRedeem > balance) {
+      return { ok: false as const, reason: `Only ${balance} pts available` };
+    }
+    await tx.insert(loyaltyPoints).values({
+      customerId,
+      customerKey,
+      points:  -pointsToRedeem,
+      reason:  "redeem_order",
+      orderId: orderId ?? null,
+    });
+    return { ok: true as const };
   });
+
+  if (!result.ok) return { ok: false, reason: result.reason, discount: 0 };
 
   const discount = pointsToRupees(pointsToRedeem);
 
