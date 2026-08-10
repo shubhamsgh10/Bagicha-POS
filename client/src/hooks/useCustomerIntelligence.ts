@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
+import { istHour } from "@shared/businessDay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -125,7 +126,11 @@ export function useCustomerIntelligence() {
       // Peak order hour
       const hourCounts: Record<number, number> = {};
       for (const o of orders) {
-        const h = new Date(o.createdAt).getHours();
+        // IST hour, not the viewing browser's local hour — matches
+        // customerAutomationService.ts's server-side computation of the same figure
+        // (an owner checking this while traveling outside IST would otherwise see a
+        // shifted peak hour for the same data).
+        const h = istHour(new Date(o.createdAt));
         hourCounts[h] = (hourCounts[h] ?? 0) + 1;
       }
       const peakHour = orders.length

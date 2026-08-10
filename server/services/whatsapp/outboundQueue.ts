@@ -23,6 +23,7 @@ import { publishRealtime } from "../../realtime/publisher";
 import { getDriver } from "./driverManager";
 import { getOrCreateConversation, recordMessage } from "./conversationStore";
 import { normalizeWaPhone, isValidWaPhone } from "./types";
+import { istCalendarDate, istCalendarDayRange } from "../../../shared/businessDay";
 
 const MAX_ATTEMPTS = 3;
 const IDLE_POLL_MS = 10_000;
@@ -41,8 +42,13 @@ export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
   //    let hourly runs stack), OR
   //  - a job already SENT today for the same customer + trigger (cross-path guard
   //    — e.g. settlement already sent WELCOME, so the scheduler must not resend).
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // IST midnight, not server-local (see shared/businessDay.ts). Also checks
+  // `executedAt` (when it actually sent), not `scheduledAt` (set once, at enqueue
+  // time) — a job enqueued late one day but deferred (offline driver, maxPerDay cap)
+  // until it actually sends the next day used to still read as "sent today" by its
+  // stale scheduledAt, so a later same-day trigger for the same customer+trigger
+  // didn't see it as already-sent and enqueued a real duplicate message.
+  const { start: todayStart } = istCalendarDayRange(istCalendarDate());
   const existing = await db.select({ id: automationJobs.id })
     .from(automationJobs)
     .where(and(
@@ -50,7 +56,7 @@ export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
       eq(automationJobs.triggerType, input.trigger),
       or(
         inArray(automationJobs.status, ["pending", "sending"]),
-        and(eq(automationJobs.status, "sent"), gte(automationJobs.scheduledAt, todayStart)),
+        and(eq(automationJobs.status, "sent"), gte(automationJobs.executedAt, todayStart)),
       ),
     ))
     .limit(1);
@@ -66,10 +72,9 @@ export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
   });
 }
 
-/** Sent count since local midnight — enforces the maxPerDay ban guard. */
+/** Sent count since IST midnight — enforces the maxPerDay ban guard. */
 async function sentToday(): Promise<number> {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const { start: startOfDay } = istCalendarDayRange(istCalendarDate());
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(automationJobs)

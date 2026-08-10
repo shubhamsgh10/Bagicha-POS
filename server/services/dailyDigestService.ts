@@ -23,6 +23,7 @@ import {
 } from "../../shared/schema";
 import { getAutomationConfig } from "./automationStore";
 import { sendWhatsAppMessage } from "./whatsappService";
+import { istCalendarDate, istCalendarDayRange, istHour } from "../../shared/businessDay";
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
@@ -49,13 +50,15 @@ export interface DailyMetrics {
   hourlyPeaks:   Array<{ hour: number; count: number }>;
 }
 
-function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics> {
-  const start = new Date(date);  start.setHours(0, 0, 0, 0);
-  const end   = new Date(date);  end.setHours(23, 59, 59, 999);
+  // IST calendar day, not the server's ambient local day — this used to set LOCAL
+  // midnight for start/end but serialize `metrics.date` via toISOString() (always UTC),
+  // so on any server whose local TZ is ahead of UTC (e.g. IST), local midnight of
+  // "today" serialized to YESTERDAY's UTC date. The dedup lookup below then found
+  // yesterday's already-sent digest row and overwrote it with today's data instead of
+  // inserting a new one — see CLAUDE.md's formatISTDateTime/businessDay.ts write-up.
+  const dateStr = istCalendarDate(date);
+  const { start, end } = istCalendarDayRange(dateStr);
 
   const dayOrders = await db
     .select()
@@ -156,7 +159,7 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   // Hourly peaks
   const hourMap: Record<number, number> = {};
   for (const o of dayOrders) {
-    const h = new Date(o.createdAt).getHours();
+    const h = istHour(new Date(o.createdAt));
     hourMap[h] = (hourMap[h] ?? 0) + 1;
   }
   const hourlyPeaks = Object.entries(hourMap)
@@ -165,7 +168,7 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
     .slice(0, 3);
 
   return {
-    date:          formatDate(start),
+    date:          dateStr,
     totalRevenue,
     totalOrders:   dayOrders.length,
     avgOrderValue: dayOrders.length ? totalRevenue / dayOrders.length : 0,

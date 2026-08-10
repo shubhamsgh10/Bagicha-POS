@@ -17,6 +17,7 @@ import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
+import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
@@ -195,9 +196,9 @@ export interface IStorage {
   }>;
 
   // Dashboard Charts
-  getSalesChart(startDate?: Date, endDate?: Date): Promise<Array<{ date: string; total: number }>>;
-  getCategorySales(startDate?: Date, endDate?: Date): Promise<Array<{ category: string; total: number }>>;
-  getDashboardTopItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; qty: number }>>;
+  getSalesChart(startDate?: string, endDate?: string): Promise<Array<{ date: string; total: number }>>;
+  getCategorySales(startDate?: string, endDate?: string): Promise<Array<{ category: string; total: number }>>;
+  getDashboardTopItems(limit?: number, startDate?: string, endDate?: string): Promise<Array<{ name: string; qty: number }>>;
 
   // Reports
   getTopSellingItems(limit?: number, startDate?: Date, endDate?: Date): Promise<Array<{
@@ -1036,10 +1037,11 @@ export class DatabaseStorage implements IStorage {
 
   // Sold Today
   async getSoldToday(): Promise<Record<number, number>> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — not a naive
+    // local-midnight calendar day. This used to disagree with those pages for any order
+    // placed between midnight and 5am IST (filed under "yesterday" there, "today" here),
+    // and was wrong even on an IST-hosted server, not just a non-IST one.
+    const { start: today, end: tomorrow } = businessDayRange(todayBusinessDate());
 
     const result = await db
       .select({
@@ -1071,10 +1073,9 @@ export class DatabaseStorage implements IStorage {
     outerRunning: number;
     totalTables: number;
   }> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — see getSoldToday's
+    // comment above for why this must not be a naive local-midnight calendar day.
+    const { start: today, end: tomorrow } = businessDayRange(todayBusinessDate());
 
     const [todayResult] = await db.select({
       count: sql<number>`count(*)`,
@@ -1135,15 +1136,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Dashboard Charts
-  async getSalesChart(startDate?: Date, endDate?: Date): Promise<Array<{ date: string; total: number }>> {
-    let start: Date, end: Date;
-    if (startDate && endDate) {
-      start = new Date(startDate); start.setHours(0, 0, 0, 0);
-      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
-    } else {
-      end = new Date(); end.setHours(23, 59, 59, 999);
-      start = new Date(); start.setDate(start.getDate() - 6); start.setHours(0, 0, 0, 0);
-    }
+  // startDate/endDate are business-day date strings (YYYY-MM-DD, IST calendar) — same
+  // format DayPicker/businessDayRange use elsewhere (Orders.tsx/Billing.tsx). This used
+  // to take Date objects and re-normalize them via LOCAL setHours(), which both
+  // disagreed with Orders/Billing's business-day filtering for any order between
+  // midnight and 5am IST, AND could shift the range entirely on a non-IST server (a
+  // date-only string like "2026-08-10" parses as UTC midnight; re-normalizing that via
+  // local setHours() on a non-UTC host shifts it to a different real instant).
+  async getSalesChart(startDate?: string, endDate?: string): Promise<Array<{ date: string; total: number }>> {
+    const startKey = startDate ?? shiftBusinessDate(todayBusinessDate(), -6);
+    const endKey = endDate ?? todayBusinessDate();
+    const start = businessDayRange(startKey).start;
+    const end = businessDayRange(endKey).end;
 
     const allOrders = await db.select({
       createdAt: orders.createdAt,
@@ -1152,20 +1156,21 @@ export class DatabaseStorage implements IStorage {
       and(gte(orders.createdAt, start), lte(orders.createdAt, end))
     );
 
-    // Build a day slot for every day in the range
+    // Build a day slot for every business day in the range.
     const days: Array<{ date: string; dateKey: string; total: number }> = [];
-    const cursor = new Date(start);
-    while (cursor <= end) {
+    let cursorKey = startKey;
+    while (cursorKey <= endKey) {
+      const labelDate = businessDayRange(cursorKey).start;
       days.push({
-        date: cursor.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' }),
-        dateKey: cursor.toISOString().slice(0, 10),
+        date: labelDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }),
+        dateKey: cursorKey,
         total: 0,
       });
-      cursor.setDate(cursor.getDate() + 1);
+      cursorKey = shiftBusinessDate(cursorKey, 1);
     }
 
     for (const order of allOrders) {
-      const dateKey = new Date(order.createdAt!).toISOString().slice(0, 10);
+      const dateKey = businessDateOf(new Date(order.createdAt!));
       const day = days.find(d => d.dateKey === dateKey);
       if (day) day.total += parseFloat(order.totalAmount);
     }
@@ -1173,15 +1178,11 @@ export class DatabaseStorage implements IStorage {
     return days.map(({ date, total }) => ({ date, total }));
   }
 
-  async getCategorySales(startDate?: Date, endDate?: Date): Promise<Array<{ category: string; total: number }>> {
-    let start: Date, end: Date;
-    if (startDate && endDate) {
-      start = new Date(startDate); start.setHours(0, 0, 0, 0);
-      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
-    } else {
-      start = new Date(); start.setHours(0, 0, 0, 0);
-      end   = new Date(); end.setHours(23, 59, 59, 999);
-    }
+  // startDate/endDate are business-day date strings (YYYY-MM-DD) — see getSalesChart's
+  // comment above.
+  async getCategorySales(startDate?: string, endDate?: string): Promise<Array<{ category: string; total: number }>> {
+    const start = businessDayRange(startDate ?? todayBusinessDate()).start;
+    const end = businessDayRange(endDate ?? todayBusinessDate()).end;
 
     // leftJoin, not innerJoin — open items (synthetic negative menuItemId, no menuItems
     // row, so no categoryId either) were previously dropped from this query entirely,
@@ -1204,15 +1205,11 @@ export class DatabaseStorage implements IStorage {
     return result.map(r => ({ category: r.category, total: Number(r.total) }));
   }
 
-  async getDashboardTopItems(limit: number = 8, startDate?: Date, endDate?: Date): Promise<Array<{ name: string; qty: number }>> {
-    let start: Date, end: Date;
-    if (startDate && endDate) {
-      start = new Date(startDate); start.setHours(0, 0, 0, 0);
-      end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
-    } else {
-      start = new Date(); start.setHours(0, 0, 0, 0);
-      end   = new Date(); end.setHours(23, 59, 59, 999);
-    }
+  // startDate/endDate are business-day date strings (YYYY-MM-DD) — see getSalesChart's
+  // comment above.
+  async getDashboardTopItems(limit: number = 8, startDate?: string, endDate?: string): Promise<Array<{ name: string; qty: number }>> {
+    const start = businessDayRange(startDate ?? todayBusinessDate()).start;
+    const end = businessDayRange(endDate ?? todayBusinessDate()).end;
 
     const result = await db
       .select({
