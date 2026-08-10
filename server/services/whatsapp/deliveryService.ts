@@ -22,6 +22,15 @@ const STATUS_RANK: Record<string, number> = {
 
 function shouldUpgrade(current: string, next: string): boolean {
   if (current === "failed") return false;
+  if (next === "failed") {
+    // "failed" ranks above delivered/read in STATUS_RANK for display purposes only —
+    // using that ordinal directly here would let a stale/out-of-order failure receipt
+    // regress an already delivered/read message back to "failed", erasing proof the
+    // message actually landed. failed is only a valid forward transition from
+    // pending/sent (never sent successfully in the first place, or sent but bounced
+    // before a delivery receipt arrived).
+    return current === "pending" || current === "sent";
+  }
   return (STATUS_RANK[next] ?? 0) > (STATUS_RANK[current] ?? 0);
 }
 

@@ -16,6 +16,21 @@ import type { WhatsAppDriver, WaConnectionState } from "./types";
 
 let driver: WhatsAppDriver | null = null;
 
+// Serializes every driver lifecycle mutation (start/switch/reconnect/logout) against
+// concurrent invocations — e.g. a double-clicked Connect button, or a switch racing a
+// reconnect. Without this, two overlapping calls can each read the same `driver`,
+// both destroy it, then both create + assign a new instance; whichever assignment
+// loses the race is orphaned (its socket/session never destroyed, its listeners
+// still wired and still processing inbound messages/status updates) instead of
+// being cleaned up. This module is single-process by contract (see file header),
+// so a promise-chain mutex is sufficient — no cross-process coordination needed.
+let driverOpLock: Promise<unknown> = Promise.resolve();
+function withDriverLock<T>(fn: () => Promise<T>): Promise<T> {
+  const result = driverOpLock.then(fn, fn);
+  driverOpLock = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 function wireDriver(d: WhatsAppDriver): void {
   d.onMessageReceived((msg) => {
     handleInbound(msg).catch(err => console.error("[WhatsApp] inbound handler error:", err));
@@ -43,26 +58,30 @@ export async function initWhatsAppDriver(): Promise<void> {
 }
 
 async function startDriver(name: "baileys" | "meta"): Promise<void> {
-  if (driver) {
-    await driver.destroy().catch(() => {});
-    driver = null;
-  }
-  const d = createDriver(name);
-  wireDriver(d);
-  driver = d;
-  console.log(`[WhatsApp] Starting ${name} driver…`);
-  await d.init();
+  return withDriverLock(async () => {
+    if (driver) {
+      await driver.destroy().catch(() => {});
+      driver = null;
+    }
+    const d = createDriver(name);
+    wireDriver(d);
+    driver = d;
+    console.log(`[WhatsApp] Starting ${name} driver…`);
+    await d.init();
+  });
 }
 
 /** Switch driver at runtime and persist the choice. */
 export async function switchDriver(name: "baileys" | "meta" | "none"): Promise<void> {
   saveAutomationConfig({ whatsappDriver: name });
   if (name === "none") {
-    if (driver) {
-      await driver.destroy().catch(() => {});
-      driver = null;
-    }
-    void publishRealtime({ type: "WA_CONNECTION", driver: "none", state: "disconnected" });
+    await withDriverLock(async () => {
+      if (driver) {
+        await driver.destroy().catch(() => {});
+        driver = null;
+      }
+      void publishRealtime({ type: "WA_CONNECTION", driver: "none", state: "disconnected" });
+    });
     return;
   }
   await startDriver(name);
@@ -77,9 +96,11 @@ export async function reconnectDriver(): Promise<void> {
 
 /** Unpair / wipe session for the active driver. */
 export async function logoutDriver(): Promise<void> {
-  if (!driver) return;
-  await driver.logout();
-  void publishRealtime({ type: "WA_CONNECTION", driver: driver.name, state: "disconnected" });
+  await withDriverLock(async () => {
+    if (!driver) return;
+    await driver.logout();
+    void publishRealtime({ type: "WA_CONNECTION", driver: driver.name, state: "disconnected" });
+  });
 }
 
 export function getDriver(): WhatsAppDriver | null {

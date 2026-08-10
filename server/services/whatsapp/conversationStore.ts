@@ -65,12 +65,24 @@ export async function getOrCreateConversation(
   }
 
   const customerId = await findCustomerIdByPhone(phone);
-  const [created] = await db.insert(conversations).values({
-    phone,
-    customerId,
-    displayName: pushName ?? null,
-  }).returning();
-  return created;
+  try {
+    const [created] = await db.insert(conversations).values({
+      phone,
+      customerId,
+      displayName: pushName ?? null,
+    }).returning();
+    return created;
+  } catch (err: any) {
+    // conversations.phone is unique — two concurrent inbound messages from the same
+    // new number (Baileys can deliver a burst on reconnect) can both miss the SELECT
+    // above and race to insert. The loser hits 23505; fall back to the row the winner
+    // just created instead of throwing and dropping this message.
+    if (err?.code === "23505") {
+      const rows = await db.select().from(conversations).where(eq(conversations.phone, phone)).limit(1);
+      if (rows[0]) return rows[0];
+    }
+    throw err;
+  }
 }
 
 export interface RecordMessageInput {
@@ -95,16 +107,25 @@ export async function recordMessage(input: RecordMessageInput): Promise<Conversa
     if (dup[0]) return null;
   }
 
-  const [msg] = await db.insert(conversationMessages).values({
-    conversationId: input.conversationId,
-    direction:      input.direction,
-    sender:         input.sender,
-    senderName:     input.senderName ?? null,
-    body:           input.body,
-    waMessageId:    input.waMessageId ?? null,
-    status:         input.status ?? (input.direction === "in" ? "delivered" : "pending"),
-    trigger:        input.trigger ?? null,
-  }).returning();
+  let msg: ConversationMessage | undefined;
+  try {
+    [msg] = await db.insert(conversationMessages).values({
+      conversationId: input.conversationId,
+      direction:      input.direction,
+      sender:         input.sender,
+      senderName:     input.senderName ?? null,
+      body:           input.body,
+      waMessageId:    input.waMessageId ?? null,
+      status:         input.status ?? (input.direction === "in" ? "delivered" : "pending"),
+      trigger:        input.trigger ?? null,
+    }).returning();
+  } catch (err: any) {
+    // waMessageId is uniquely indexed (see scripts/migrate-conv-msg-wa-unique.mjs) — a
+    // concurrent duplicate delivery of the same message can race past the dedup SELECT
+    // above; the loser hits 23505 here instead of creating a second row.
+    if (input.waMessageId && err?.code === "23505") return null;
+    throw err;
+  }
 
   await db.update(conversations).set({
     lastMessageAt:      new Date(),
@@ -114,7 +135,7 @@ export async function recordMessage(input: RecordMessageInput): Promise<Conversa
       : {}),
   }).where(eq(conversations.id, input.conversationId));
 
-  return msg;
+  return msg ?? null;
 }
 
 export async function getConversation(id: number): Promise<Conversation | null> {
