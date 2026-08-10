@@ -665,7 +665,12 @@ export async function buildOrderBillBlock(
   const due   = Math.max(0, total - paid);
 
   const itemLines = rawItems.map(it => {
-    const nm  = menuName[it.menuItemId] ?? "Item";
+    // Prefer the stored orderItems.name snapshot — the comment above already claimed
+    // this, but the code never actually referenced `it.name`, so every open item
+    // (negative synthetic menuItemId, no menuItems row) rendered as the literal string
+    // "Item" in due-bill reminders and consolidated e-bills. Same class of bug as
+    // storage.getOpenTabsByCustomer's coalesce (see CLAUDE.md's Open Items section).
+    const nm  = it.name ?? menuName[it.menuItemId] ?? "Item";
     const amt = Math.round(Number(it.quantity) * parseFloat(String(it.price ?? "0")));
     return `• ${nm} x${it.quantity} — ₹${amt}`;
   });
