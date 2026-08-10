@@ -82,13 +82,31 @@ export async function resolveCustomerId(
     if (byPhone.length > 0) return byPhone[0].id;
   }
 
-  // 3. Insert new master record
-  const inserted = await db
-    .insert(customersMaster)
-    .values({ key, name, phone: phone ?? null })
-    .returning({ id: customersMaster.id });
-
-  return inserted[0].id;
+  // 3. Insert new master record. A concurrent resolveCustomerId call for the same
+  //    brand-new customer (steps 1-2 both missed for both callers — e.g. logOrderPlaced
+  //    and a settlement-time call racing for the same first-time customer) can hit
+  //    customers_master's unique `key` constraint here. Most callers already catch and
+  //    degrade gracefully, but triggerSettlementMessage/triggerDueBillMessage
+  //    (automationRuleEngine.ts) call this unguarded, so letting the exception escape
+  //    silently dropped a real customer message rather than just losing this one insert
+  //    attempt — recover by returning the row the concurrent winner just created.
+  try {
+    const inserted = await db
+      .insert(customersMaster)
+      .values({ key, name, phone: phone ?? null })
+      .returning({ id: customersMaster.id });
+    return inserted[0].id;
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      const retry = await db
+        .select({ id: customersMaster.id })
+        .from(customersMaster)
+        .where(eq(customersMaster.key, key))
+        .limit(1);
+      if (retry.length > 0) return retry[0].id;
+    }
+    throw err;
+  }
 }
 
 /**

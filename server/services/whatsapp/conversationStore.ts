@@ -8,7 +8,7 @@
  */
 
 import { db } from "../../db";
-import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
 import {
   conversations,
   conversationMessages,
@@ -30,7 +30,14 @@ async function findCustomerIdByPhone(phone: string): Promise<string | null> {
       isNotNull(customersMaster.phone),
       sql`right(regexp_replace(${customersMaster.phone}, '\\D', '', 'g'), 10) = ${last10}`,
     ))
-    .orderBy(desc(customersMaster.createdAt))
+    // Oldest match wins — must match customerIdService.resolveCustomerId's documented
+    // canonical-row choice ("pick the oldest match as the canonical row") exactly. This
+    // used to pick the NEWEST, so a customer with duplicate customers_master rows
+    // sharing a phone (the exact case both functions exist to handle) could end up with
+    // their WhatsApp conversation linked to a DIFFERENT customerId than the one
+    // automation/orders resolve to — splitting one person's history/opt-out state
+    // across two records.
+    .orderBy(asc(customersMaster.createdAt))
     .limit(1);
   return rows[0]?.id ?? null;
 }

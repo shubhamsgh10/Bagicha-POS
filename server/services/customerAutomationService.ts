@@ -180,18 +180,32 @@ export async function buildSnapshotForKey(
   phone?: string | null,
 ): Promise<CustomerSnapshot | null> {
   const last10 = (phone ?? "").replace(/\D/g, "").slice(-10);
-  const conds: any[] = [];
+
+  // Prefer phone as the SOLE match when available — this used to OR a phone condition
+  // with unconditional name conditions, so even when a real phone was supplied, any
+  // OTHER customer's orders sharing the same name still got pulled into the snapshot.
+  // Concrete failure: an existing 15-visit VIP "Raj Kumar" (phone A) and a brand-new
+  // walk-in also named "Raj Kumar" (phone B) settling their first-ever bill — the name
+  // clause merged the VIP's history into the new customer's snapshot, so they never got
+  // WELCOME and the VIP's own snapshot was polluted by the walk-in's orders too. Only
+  // fall back to name-matching (still imperfect, but the best available signal) when no
+  // usable phone digits exist at all — matching customerIdService.resolveCustomerId's
+  // phone-first discipline instead of reimplementing matching ad hoc.
+  let whereClause;
   if (last10.length === 10) {
-    conds.push(sql`right(regexp_replace(coalesce(${orders.customerPhone}, ''), '\\D', '', 'g'), 10) = ${last10}`);
+    whereClause = sql`right(regexp_replace(coalesce(${orders.customerPhone}, ''), '\\D', '', 'g'), 10) = ${last10}`;
+  } else {
+    const nameConds: any[] = [];
+    if (name) nameConds.push(eq(orders.customerName, name));
+    if (key && key !== name) nameConds.push(eq(orders.customerName, key));
+    if (!nameConds.length) return null;
+    whereClause = nameConds.length === 1 ? nameConds[0] : or(...nameConds);
   }
-  if (name) conds.push(eq(orders.customerName, name));
-  if (key && key !== name) conds.push(eq(orders.customerName, key));
-  if (!conds.length) return null;
 
   const customerOrders = await db
     .select()
     .from(orders)
-    .where(conds.length === 1 ? conds[0] : or(...conds))
+    .where(whereClause)
     .orderBy(desc(orders.createdAt)) as RawOrder[];
   if (!customerOrders.length) return null;
 
@@ -208,7 +222,7 @@ export async function buildSnapshotForKey(
 
   const hourCounts: Record<number, number> = {};
   for (const o of customerOrders) {
-    const h = new Date(o.createdAt).getHours();
+    const h = istHour(new Date(o.createdAt));
     hourCounts[h] = (hourCounts[h] ?? 0) + 1;
   }
   const peakHour = +Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0][0];
