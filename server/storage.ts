@@ -16,8 +16,10 @@ import { db } from "./db";
 import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
+import { weekDates } from "@shared/weekMath";
 import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
+import { getSettings } from "./settingsStore";
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
@@ -1419,6 +1421,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createLeave(data: InsertLeave): Promise<Leave> {
+    // Nothing previously stopped the same person from holding two overlapping leave
+    // requests (a duplicate submit, or an admin fat-fingering a second entry) — both
+    // could get approved and double-count in getPayrollReport's approvedLeaves sum,
+    // paying out more leave days than were actually taken.
+    const personCond = data.userId != null
+      ? eq(leaves.userId, data.userId)
+      : data.staffMemberId != null
+        ? eq(leaves.staffMemberId, data.staffMemberId)
+        : null;
+    if (personCond) {
+      const overlapping = await db.select({ id: leaves.id }).from(leaves).where(and(
+        personCond,
+        inArray(leaves.status, ["pending", "approved"]),
+        lte(leaves.startDate, data.endDate),
+        gte(leaves.endDate, data.startDate),
+      )).limit(1);
+      if (overlapping.length > 0) {
+        throw new Error("This person already has a pending or approved leave overlapping these dates");
+      }
+    }
     const [created] = await db.insert(leaves).values(data).returning();
     return created;
   }
@@ -1449,17 +1471,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRoster(week: string): Promise<any[]> {
-    const [year, weekNum] = week.split('-').map(Number);
-    const jan4 = new Date(year, 0, 4);
-    const dayOfWeek = jan4.getDay() || 7;
-    const weekStart = new Date(jan4);
-    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (weekNum - 1) * 7);
-    const dates: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(weekStart.getDate() + i);
-      dates.push(d.toISOString().split('T')[0]);
-    }
+    const dates = weekDates(week);
     // Union of BOTH identity systems (users manager/staff + staffMembers), like payroll —
     // so PIN/biometric-only staff appear in the roster, not just login accounts.
     const people = await this.getPayrollPeople();
@@ -1579,6 +1591,12 @@ export class DatabaseStorage implements IStorage {
     const people = await this.getPayrollPeople();
     const monthAttendance = await db.select().from(attendance)
       .where(sql`${attendance.date} LIKE ${month + '-%'}`);
+    // Approved leave must count as a paid day, or an employee who took legitimately
+    // approved leave gets docked pay for it via absentDays below — leaves.userId/
+    // staffMemberId are already union-based (see CLAUDE.md's Leaves section), so this
+    // just needed wiring up. "unpaid" leaveType is exactly that and stays excluded.
+    const monthLeaves = await db.select().from(leaves)
+      .where(and(eq(leaves.status, 'approved'), sql`${leaves.startDate} LIKE ${month + '-%'}`));
     return people.map(person => {
       const salary = parseFloat(person.monthlySalary ?? '0');
       const records = person.kind === 'user'
@@ -1586,13 +1604,23 @@ export class DatabaseStorage implements IStorage {
         : monthAttendance.filter(a => a.staffMemberId === person.id);
       const daysPresent = records.filter(a => a.status === 'present').length;
       const halfDays = records.filter(a => a.status === 'half-day').length;
-      const approvedLeaves = 0; // leave is modelled per-user only; not counted in the unified roster yet
+      const personLeaves = person.kind === 'user'
+        ? monthLeaves.filter(l => l.userId === person.id)
+        : monthLeaves.filter(l => l.staffMemberId === person.id);
+      const approvedLeaves = personLeaves
+        .filter(l => l.leaveType !== 'unpaid')
+        .reduce((s, l) => s + l.totalDays, 0);
       const paidDays = daysPresent + (halfDays * 0.5) + approvedLeaves;
       const absentDays = Math.max(0, workingDays - paidDays);
       const dailyRate = workingDays > 0 ? salary / workingDays : 0;
       const deductions = absentDays * dailyRate;
       const overtimeHours = records.reduce((s, a) => s + parseFloat(a.overtimeHours ?? '0'), 0);
-      const overtimePay = overtimeHours * (dailyRate / 8);
+      // Must match the same standardHours setting deviceAttendanceService.ts uses to
+      // compute overtimeHours in the first place (default 8, but admin-configurable) —
+      // a hardcoded /8 here mispriced every overtime hour whenever that setting differs
+      // from the default.
+      const standardHours = getSettings().attendanceDevice?.standardHours ?? 8;
+      const overtimePay = overtimeHours * (dailyRate / standardHours);
       const netSalary = salary - deductions + overtimePay;
       return {
         kind: person.kind,
