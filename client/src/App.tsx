@@ -145,6 +145,11 @@ function Router() {
               staleTime: 0,
             });
             queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+            // The pre-login /api/settings fetch (usePrintJobBridge's printer-config query)
+            // 401s and caches as null — without this, that null sits until its 30s staleTime
+            // elapses, leaving the print bridge's printer-race check on the permissive
+            // "allow" fallback for up to 30s after a real login.
+            queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
             navigate("/tables", { replace: true });
           }}
         />
