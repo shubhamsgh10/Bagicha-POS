@@ -11,21 +11,34 @@ import {
 } from "lucide-react";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
+import { useRole } from "@/hooks/useRole";
 import { useRealtime } from "@/hooks/useRealtime";
 import { queryClient } from "@/lib/queryClient";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Users } from "lucide-react";
 
 // ── types ───────────────────────────────────────────────────────────────────────
 interface AttRecord {
-  id: number; userId: number; date: string;
+  id: number; userId: number | null; staffMemberId: number | null; date: string;
   clockIn: string | null; clockOut: string | null;
   status: string; workingHours: string | null; overtimeHours: string | null;
+  displayName?: string;
 }
 interface PayrollRow {
-  userId: number; username: string; role: string;
+  kind?: "user" | "staff";
+  userId?: number; staffMemberId?: number;
+  username: string; role: string; name?: string; designation?: string | null;
   monthlySalary: number; workingDays: number; daysPresent: number; halfDays: number;
   approvedLeaves: number; absentDays: number; deductions: number;
   overtimeHours: number; overtimePay: number; netSalary: number;
 }
+interface RosterPerson {
+  kind: "user" | "staff";
+  id: number;
+  name: string;
+  role: string | null;
+}
+type SelectedPerson = "self" | { kind: "user" | "staff"; id: number; name: string };
 
 // ── status visual language ────────────────────────────────────────────────────────
 const STATUS: Record<string, { label: string; color: string; bg: string; dot: string }> = {
@@ -54,28 +67,62 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function MyAttendance() {
   const { user } = useAuth();
+  const role = useRole();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const monthKey = format(cursor, "yyyy-MM");
   const { lastMessage } = useRealtime();
+  const [selected, setSelected] = useState<SelectedPerson>("self");
 
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"], staleTime: 60_000 });
   const symbol = settings?.currencySymbol ?? "₹";
+  const isAdmin = role === "admin";
+  const canViewOthers = isAdmin || (role === "manager" && !!settings?.managerCanViewAllAttendance);
+
+  const { data: roster = [] } = useQuery<RosterPerson[]>({
+    queryKey: ["/api/payroll/people"],
+    enabled: canViewOthers,
+  });
+
+  // Admins never have their own attendance/payroll data (getPayrollPeople() excludes
+  // admins/owner by construction) — for them, "self" isn't a real option, so it's treated as
+  // "nothing picked yet" rather than falling back to a self-view that would just be empty.
+  // Managers and staff DO mark their own attendance, so "self" stays a real, real-data view.
+  const target = selected === "self" ? null : selected;
+  const hasSelection = !isAdmin || target !== null;
+
+  const attendanceUrl = target
+    ? `/api/attendance/person?kind=${target.kind}&id=${target.id}&month=${monthKey}`
+    : `/api/attendance/me?month=${monthKey}`;
+  const payrollUrl = target
+    ? `/api/payroll/person/${monthKey}?kind=${target.kind}&id=${target.id}`
+    : `/api/payroll/me/${monthKey}`;
 
   const { data: records = [] } = useQuery<AttRecord[]>({
-    queryKey: [`/api/attendance/me?month=${monthKey}`],
+    queryKey: [attendanceUrl],
+    enabled: hasSelection,
   });
   const { data: pay } = useQuery<PayrollRow | null>({
-    queryKey: [`/api/payroll/me/${monthKey}`],
+    queryKey: [payrollUrl],
+    enabled: hasSelection,
   });
 
-  // Live refresh when this user's attendance changes on the device feed
+  // Live refresh when the VIEWED person's attendance changes on the device feed.
   useEffect(() => {
-    if (lastMessage?.type !== "ATTENDANCE_UPDATE") return;
-    const ids = (lastMessage as any).userIds as number[] | undefined;
-    if (user && ids && !ids.includes(user.id)) return;
-    queryClient.invalidateQueries({ queryKey: [`/api/attendance/me?month=${monthKey}`] });
-    queryClient.invalidateQueries({ queryKey: [`/api/payroll/me/${monthKey}`] });
-  }, [lastMessage, monthKey, user]);
+    if (!hasSelection || lastMessage?.type !== "ATTENDANCE_UPDATE") return;
+    const uIds = (lastMessage as any).userIds as number[] | undefined;
+    const smIds = (lastMessage as any).staffMemberIds as number[] | undefined;
+
+    const viewing = target ?? (user
+      ? { kind: (user._isStaffMember ? "staff" : "user") as "user" | "staff", id: user.id }
+      : null);
+
+    if (viewing) {
+      const ids = viewing.kind === "staff" ? smIds : uIds;
+      if (ids && !ids.includes(viewing.id)) return;
+    }
+    queryClient.invalidateQueries({ queryKey: [attendanceUrl] });
+    queryClient.invalidateQueries({ queryKey: [payrollUrl] });
+  }, [lastMessage, target, user, attendanceUrl, payrollUrl, hasSelection]);
 
   const byDate = useMemo(() => {
     const m = new Map<string, AttRecord>();
@@ -116,11 +163,21 @@ export default function MyAttendance() {
     { label: "Overtime", value: fmtHours(tally.ot),    icon: TrendingUp,    color: "#8b5cf6", bg: "rgba(139,92,246,0.10)" },
   ];
 
+  // Prefer the server-computed name (always correct for both id kinds) over the roster
+  // snapshot stashed in `selected` when the dropdown was picked.
+  const viewName = target ? (pay?.name ?? target.name) : null;
+  const title = viewName ? `${viewName}'s Attendance` : isAdmin ? "Staff Attendance" : "My Attendance";
+  const description = viewName
+    ? `${viewName}'s day-by-day attendance & this month's pay`
+    : isAdmin
+      ? "Pick a staff member to view their attendance & pay"
+      : "Your day-by-day attendance & this month's pay";
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <Header
-        title="My Attendance"
-        description="Your day-by-day attendance & this month's pay"
+        title={title}
+        description={description}
         action={
           <div style={{ ...glass, borderRadius: 12, padding: 4, display: "flex", alignItems: "center", gap: 2 }}>
             <button onClick={() => setCursor((c) => addMonths(c, -1))}
@@ -140,6 +197,46 @@ export default function MyAttendance() {
 
       <main className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-6 space-y-4 sm:space-y-5">
 
+        {/* ── Person picker (admin, or manager when the toggle is on) ────────────── */}
+        {canViewOthers && (
+          <div style={{ ...glass, borderRadius: 14, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+            <Users size={16} color="#0d9488" />
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: "#374151" }}>Viewing:</span>
+            <Select
+              value={target ? `${target.kind}:${target.id}` : (isAdmin ? "" : "self")}
+              onValueChange={(v) => {
+                if (v === "self") { setSelected("self"); return; }
+                const [kind, idStr] = v.split(":");
+                const person = roster.find(p => p.kind === kind && String(p.id) === idStr);
+                setSelected({ kind: kind as "user" | "staff", id: Number(idStr), name: person?.name ?? "" });
+              }}
+            >
+              <SelectTrigger className="h-8 text-sm w-56 border-0 bg-transparent shadow-none focus:ring-0">
+                <SelectValue placeholder="Select a staff member…" />
+              </SelectTrigger>
+              <SelectContent>
+                {/* Admins aren't in the payroll roster and don't mark their own attendance —
+                    no "self" option for them, only real members. */}
+                {!isAdmin && <SelectItem value="self">Myself</SelectItem>}
+                {roster.map(p => (
+                  <SelectItem key={`${p.kind}:${p.id}`} value={`${p.kind}:${p.id}`}>
+                    {p.name}{p.role ? ` · ${p.role}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {!hasSelection && (
+          <div style={{ ...glass, borderRadius: 20, padding: "40px 24px", textAlign: "center" }}>
+            <Users size={28} color="#9ca3af" style={{ margin: "0 auto 10px" }} />
+            <p style={{ fontSize: 13.5, fontWeight: 600, color: "#374151" }}>Select a staff member above</p>
+            <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>Pick a name to see their day-by-day attendance and this month's pay.</p>
+          </div>
+        )}
+
+        {hasSelection && <>
         {/* ── Net-pay hero ─────────────────────────────────────────────────────── */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
           style={{
@@ -162,7 +259,7 @@ export default function MyAttendance() {
                 {pay ? money(pay.netSalary) : "—"}
               </div>
               <div style={{ fontSize: 12.5, opacity: 0.9, marginTop: 4 }}>
-                Hi {user?.username ?? "there"} — keep up the great work
+                {viewName ? `${viewName}'s attendance for ${format(cursor, "MMMM")}` : `Hi ${user?.username ?? "there"} — keep up the great work`}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 22px", fontSize: 12.5 }}>
@@ -251,16 +348,21 @@ export default function MyAttendance() {
             ))}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Sparkles size={12} color="#0d9488" />
-              <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Updates live as you punch</span>
+              <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>
+                {viewName ? "Updates live from the biometric device" : "Updates live as you punch"}
+              </span>
             </div>
           </div>
         </motion.div>
 
         {!pay && (
           <p style={{ textAlign: "center", fontSize: 12.5, color: "#9ca3af", padding: "4px 0 8px" }}>
-            No payroll profile yet — ask your manager to set your salary &amp; biometric ID.
+            {viewName
+              ? `No payroll profile yet for ${viewName} — set their salary & biometric ID in Staff → Device.`
+              : "No payroll profile yet — ask your manager to set your salary & biometric ID."}
           </p>
         )}
+        </>}
       </main>
     </div>
   );

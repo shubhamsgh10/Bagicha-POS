@@ -34,6 +34,8 @@ export interface UnifiedOrder {
   customerName?: string | null;
   customerPhone?: string | null;
   totalAmount?: number;
+  /** Set when this pickup order came from a Quick-POS counter (e.g. South Indian) — drives the section badge + scoped POS routing. */
+  posSectionId?: string;
 
   startTime: string | null;
   items: UnifiedItem[];
@@ -141,6 +143,10 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
   const handleNavigateToPOS = useCallback(() => {
     if (order.tableId && order.orderId) {
       navigate(`/pos?tableId=${order.tableId}&orderId=${order.orderId}&tableName=${encodeURIComponent(order.tableName ?? "")}`);
+    } else if (order.orderId && order.posSectionId) {
+      // Section-counter order (e.g. South Indian) — reopen the scoped counter POS,
+      // matching SectionOrdersFlyout's own routing convention, not the full menu.
+      navigate(`/pos?orderId=${order.orderId}&section=${encodeURIComponent(order.posSectionId)}`);
     } else if (order.orderId) {
       navigate(`/pos?orderId=${order.orderId}&mode=${order.type}`);
     }
@@ -162,6 +168,10 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
       ? (order.tableName ?? "—")
       : (order.customerName ?? "Walk-in");
     const sectionTag = order.type === "dine-in" ? sectionLabel(order.section) : null;
+    // Section-counter order (e.g. South Indian) — a prominent badge, not the tiny
+    // inline dine-in section tag above, so it's easy to spot apart from a real
+    // customer pickup at a glance.
+    const counterSectionName = order.type !== "dine-in" ? order.section : null;
 
     const itemSummary = order.items.length === 0
       ? "No items"
@@ -203,6 +213,11 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
               )}
             </div>
           </div>
+          {counterSectionName && (
+            <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+              🍽 {counterSectionName}
+            </span>
+          )}
           {order.hasNewItems && (
             <span className="inline-flex items-center gap-1 mt-1.5 text-[8px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-px rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block" />
@@ -350,6 +365,11 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
               <>
                 <p className="text-[10px] font-bold text-gray-500 uppercase leading-tight">COD</p>
                 <p className={`text-[10px] font-bold ${cfg.labelColor}`}>{cfg.label}</p>
+                {order.section && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                    🍽 {order.section}
+                  </span>
+                )}
                 {order.currentStatus && (
                   <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
                     currentStatus === "preparing"  ? "bg-amber-100 text-amber-700"   :
@@ -378,7 +398,7 @@ export const OrderCard = forwardRef<HTMLDivElement, OrderCardProps>(function Ord
         )}
         {order.type === "pickup" && (
           <p className="text-[10px] text-gray-400 italic mb-1.5">
-            📦 Customer will pick up the order
+            {order.posSectionId ? "🍽 Counter order" : "📦 Customer will pick up the order"}
           </p>
         )}
 

@@ -96,6 +96,8 @@ export interface RestaurantSettings {
   printSettings: PrintConfigSettings;
   managerAllowedPages: string[] | null; // null = all pages allowed
   staffAllowedPages: string[] | null;   // null = all pages allowed
+  /** Admin-controlled: lets manager-tier sessions use My Attendance's "view another member" picker. Off by default. */
+  managerCanViewAllAttendance: boolean;
   // Per-person page visibility for staff-tier people. Key "sm:<id>" (staff member) / "u:<id>" (staff
   // account) → allowed page hrefs. Absent key falls back to the person's role default (shared/pageAccess).
   staffPageAccess: Record<string, string[]>;
@@ -162,6 +164,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   printSettings: DEFAULT_PRINT_SETTINGS,
   managerAllowedPages: null,
   staffAllowedPages: null,
+  managerCanViewAllAttendance: false,
   staffPageAccess: {},
   cartPermissions: DEFAULT_CART_PERMISSIONS,
   billCounter: 0,
