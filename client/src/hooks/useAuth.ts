@@ -6,6 +6,8 @@ interface AuthUser {
   username: string;
   role: string;
   createdAt: string;
+  /** Set on a staff-member PIN session — `id` refers to `staffMembers.id`, not `users.id`. */
+  _isStaffMember?: boolean;
 }
 
 export function useAuth() {

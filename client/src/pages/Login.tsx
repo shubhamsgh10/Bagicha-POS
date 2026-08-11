@@ -88,6 +88,19 @@ function PinPad({
   onDelete: () => void;
   disabled?: boolean;
 }) {
+  useEffect(() => {
+    if (disabled) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key >= "0" && e.key <= "9") {
+        onDigit(e.key);
+      } else if (e.key === "Backspace") {
+        onDelete();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [disabled, onDigit, onDelete]);
+
   const keyStyle: React.CSSProperties = {
     background:     "rgba(255,255,255,0.68)",
     backdropFilter: "blur(10px)",

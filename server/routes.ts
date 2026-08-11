@@ -2138,6 +2138,18 @@ export async function registerRoutes(
           console.error("[payment] table free error (non-fatal):", tableErr);
         }
       }
+
+      // Non-fatal: the order is already settled above. If the kitchen KOT screen was
+      // never used (or a ticket was left pending/in-progress), it would otherwise sit
+      // in Active/Pending/Cooking forever even though the order is fully served.
+      // Runs for BOTH full payment and Pay-Later/due, since `status` is set to
+      // "served" unconditionally above — the food left the kitchen either way.
+      try {
+        await storage.completeKotTicketsForOrder(id);
+      } catch (kotErr) {
+        console.error("[payment] KOT auto-complete error (non-fatal):", kotErr);
+      }
+
       broadcast({ type: "ORDER_UPDATE", order });
 
       logAudit(req, "order.payment", "order", id, {
@@ -2367,6 +2379,15 @@ export async function registerRoutes(
         await storage.reconcileOrderInventory(id, [], actorRefFromReq(req));
       } catch (invErr) {
         console.error("[order] inventory reconciliation error (non-fatal):", invErr);
+      }
+      // Non-fatal: the order is already marked cancelled above. Same reasoning as
+      // settlement above — a cancelled order's printed-but-unstarted KOT ticket
+      // would otherwise sit in Active forever with no way to resolve it, since the
+      // order it belongs to no longer needs cooking.
+      try {
+        await storage.completeKotTicketsForOrder(id);
+      } catch (kotErr) {
+        console.error("[order] KOT auto-complete error on cancel (non-fatal):", kotErr);
       }
       logAudit(req, "order.cancel", "order", id, {
         orderNumber: (order as any).orderNumber,
@@ -3393,7 +3414,8 @@ export async function registerRoutes(
         broadcast({
           type: "ATTENDANCE_UPDATE",
           dates: Array.from(new Set(result.affected.map(a => a.date))),
-          userIds: Array.from(new Set(result.affected.map(a => a.userId))),
+          userIds: Array.from(new Set(result.affected.map(a => a.userId).filter((x): x is number => x != null))),
+          staffMemberIds: Array.from(new Set(result.affected.map(a => a.staffMemberId).filter((x): x is number => x != null))),
         });
       }
       res.json(result);
@@ -3420,6 +3442,57 @@ export async function registerRoutes(
       const row = all.find((r: any) => u?._isStaffMember
         ? r.kind === "staff" && r.staffMemberId === u.id
         : r.kind === "user"  && r.userId === u.id);
+      res.json(row ?? null);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/attendance/person?kind=user|staff&id=<n>&month=YYYY-MM — an ARBITRARY person's
+  // records, for the My Attendance page's admin/manager "view another member" picker.
+  // Manager-or-admin, gated further by the admin-controlled managerCanViewAllAttendance toggle
+  // (admins always allowed; managers only when the toggle is on). `getPayrollPeople()` excludes
+  // admins/owner by construction, so a caller can never target another admin/owner account.
+  app.get("/api/attendance/person", requireManagerOrAdmin, async (req, res) => {
+    try {
+      const role = (req.user as any)?.role;
+      if (role === "manager" && !getSettings().managerCanViewAllAttendance) {
+        return res.status(403).json({ message: "Manager attendance viewing is disabled" });
+      }
+      const kind = req.query.kind as string;
+      const id = parseInt(req.query.id as string);
+      const month = (req.query.month as string) || undefined;
+      if ((kind !== "user" && kind !== "staff") || !Number.isFinite(id)) {
+        return res.status(400).json({ message: "kind and id are required" });
+      }
+      const people = await storage.getPayrollPeople();
+      if (!people.some(p => p.kind === kind && p.id === id)) {
+        return res.status(404).json({ message: "Person not found" });
+      }
+      const filter = kind === "staff" ? { staffMemberId: id, month } : { userId: id, month };
+      res.json(await storage.getAttendance(filter));
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  // GET /api/payroll/person/:month?kind=user|staff&id=<n> — same "arbitrary person" shape as
+  // above, for the Net Pay card. Same gating.
+  app.get("/api/payroll/person/:month", requireManagerOrAdmin, async (req, res) => {
+    try {
+      const role = (req.user as any)?.role;
+      if (role === "manager" && !getSettings().managerCanViewAllAttendance) {
+        return res.status(403).json({ message: "Manager attendance viewing is disabled" });
+      }
+      const kind = req.query.kind as string;
+      const id = parseInt(req.query.id as string);
+      if ((kind !== "user" && kind !== "staff") || !Number.isFinite(id)) {
+        return res.status(400).json({ message: "kind and id are required" });
+      }
+      const people = await storage.getPayrollPeople();
+      if (!people.some(p => p.kind === kind && p.id === id)) {
+        return res.status(404).json({ message: "Person not found" });
+      }
+      const all = await storage.getPayrollReport(req.params.month);
+      const row = all.find((r: any) => kind === "staff"
+        ? r.kind === "staff" && r.staffMemberId === id
+        : r.kind === "user"  && r.userId === id);
       res.json(row ?? null);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });

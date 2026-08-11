@@ -448,6 +448,7 @@ function RolePermissionsTab({
   managerPages, setManagerPages, saveManagerPages,
   staffPages, setStaffPages, saveStaffPages,
   savingManager, savingStaff,
+  managerCanViewAllAttendance, onToggleManagerAttendance,
 }: {
   managerPages: Record<string, boolean>;
   setManagerPages: (v: Record<string, boolean>) => void;
@@ -457,6 +458,8 @@ function RolePermissionsTab({
   saveStaffPages: () => void;
   savingManager?: boolean;
   savingStaff?: boolean;
+  managerCanViewAllAttendance: boolean;
+  onToggleManagerAttendance: (v: boolean) => void;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -475,6 +478,17 @@ function RolePermissionsTab({
           ))}
         </div>
         <Button className="w-full mt-4" size="sm" onClick={saveManagerPages} disabled={savingManager}>Save Manager Access</Button>
+
+        <div className="flex items-center justify-between mt-5 pt-4 border-t border-blue-100">
+          <div>
+            <span className="text-sm text-gray-700">View other members' attendance</span>
+            <p className="text-xs text-gray-400">Lets managers use the picker on My Attendance to view any staff member/manager's records.</p>
+          </div>
+          <Switch
+            checked={managerCanViewAllAttendance}
+            onCheckedChange={onToggleManagerAttendance}
+          />
+        </div>
       </div>
 
       {/* Staff — per person (seeded from their role default; overridable). */}
@@ -774,6 +788,21 @@ export default function Admin() {
     },
   });
 
+  // Manager access to the My Attendance page's "view another member" picker — off by default.
+  const managerCanViewAllAttendance: boolean = settingsData?.managerCanViewAllAttendance ?? false;
+  const saveManagerAttendanceMutation = useMutation({
+    mutationFn: async (value: boolean) =>
+      apiRequest("PUT", "/api/settings", { managerCanViewAllAttendance: value }),
+    onSuccess: () => {
+      refetchSettings();
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Manager attendance viewing updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to save", description: parseError(err), variant: "destructive" });
+    },
+  });
+
   const usernameForm = useForm<UsernameForm>({
     resolver: zodResolver(usernameSchema),
     defaultValues: { username: user?.username ?? "" },
@@ -856,6 +885,8 @@ export default function Admin() {
               saveStaffPages={() => saveStaffPagesMutation.mutate(staffPages)}
               savingManager={saveManagerPagesMutation.isPending}
               savingStaff={saveStaffPagesMutation.isPending}
+              managerCanViewAllAttendance={managerCanViewAllAttendance}
+              onToggleManagerAttendance={(v) => saveManagerAttendanceMutation.mutate(v)}
             />
           </TabsContent>
         )}

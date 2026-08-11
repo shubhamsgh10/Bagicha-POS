@@ -80,9 +80,13 @@ export default function LiveTablesDashboard() {
 
   // ── Data hooks ────────────────────────────────────────────────────────────
   const { tables, isLoading: tablesLoading, connectionStatus, soundEnabled, setSoundEnabled, refresh } = useLiveTableOperations();
-  const { deliveryOrders, pickupOrders, isLoading: ordersLoading, refresh: refreshOrders } = useLiveOrders();
+  const { deliveryOrders, pickupOrders, sectionOrders, isLoading: ordersLoading, refresh: refreshOrders } = useLiveOrders();
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"], staleTime: 60_000 });
   const restaurantName = settings?.restaurantName ?? "Bagicha";
+  const posSectionNames: Record<string, string> = useMemo(() => {
+    const sections: Array<{ id: string; name: string }> = settings?.posSections ?? [];
+    return Object.fromEntries(sections.map(s => [s.id, s.name]));
+  }, [settings]);
 
   // ── Status maps (delivery + pickup) ───────────────────────────────────────
   const [dlvMap, setDlvMap] = useState<Record<number, DeliveryStatus>>(() => readMap<DeliveryStatus>(DLV_LS));
@@ -107,9 +111,14 @@ export default function LiveTablesDashboard() {
       for (const o of pickupOrders) {
         if (!(o.id in next) && savedPku[o.id]) { next[o.id] = savedPku[o.id]; changed = true; }
       }
+      for (const orders of Object.values(sectionOrders)) {
+        for (const o of orders) {
+          if (!(o.id in next) && savedPku[o.id]) { next[o.id] = savedPku[o.id]; changed = true; }
+        }
+      }
       return changed ? next : prev;
     });
-  }, [pickupOrders]);
+  }, [pickupOrders, sectionOrders]);
 
   const handleStatusChange = useCallback((orderId: number, orderType: string, status: string) => {
     if (orderType === "delivery") {
@@ -216,6 +225,32 @@ export default function LiveTablesDashboard() {
       });
     }
 
+    // Quick-POS section-counter orders (e.g. South Indian) — excluded from
+    // `pickupOrders` above by design (they surface separately on the Tables page's
+    // section flyout), but folded into the Pickup channel here too so admins see
+    // them on this dashboard. Tagged via `section`/`posSectionId` so OrderCard can
+    // render a distinguishing badge and route back to the scoped counter POS.
+    for (const [sectionId, orders] of Object.entries(sectionOrders)) {
+      for (const o of orders) {
+        result.push({
+          key:           `sec-${o.id}`,
+          orderId:       o.id,
+          orderNumber:   o.orderNumber,
+          type:          "pickup",
+          section:       posSectionNames[sectionId] ?? sectionId,
+          posSectionId:  sectionId,
+          customerName:  o.customerName,
+          customerPhone: o.customerPhone,
+          totalAmount:   o.totalAmount,
+          startTime:     o.createdAt,
+          items:         o.items.map(i => ({ id: i.id, name: i.name, quantity: i.quantity, size: i.size, specialInstructions: i.specialInstructions })),
+          hasNewItems:   o.hasNewItems,
+          lastUpdated:   o.lastUpdated,
+          currentStatus: pkuMap[o.id] ?? "preparing",
+        });
+      }
+    }
+
     // Sort: new-items first → newest first
     return result.sort((a, b) => {
       if (a.hasNewItems !== b.hasNewItems) return a.hasNewItems ? -1 : 1;
@@ -223,7 +258,7 @@ export default function LiveTablesDashboard() {
       const tb = b.startTime ? new Date(b.startTime).getTime() : 0;
       return tb - ta;
     });
-  }, [tables, deliveryOrders, pickupOrders, dlvMap, pkuMap]);
+  }, [tables, deliveryOrders, pickupOrders, sectionOrders, posSectionNames, dlvMap, pkuMap]);
 
   // ── Channel counts (tab badges) ───────────────────────────────────────────
   const channelCounts = useMemo(() => ({

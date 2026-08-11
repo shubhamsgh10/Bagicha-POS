@@ -13,7 +13,7 @@ import {
   type StaffMember, type InsertStaffMember,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, sql, asc, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql, asc, inArray, ne } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
@@ -160,6 +160,7 @@ export interface IStorage {
   getKotTicketsByStatus(status: string): Promise<KotTicket[]>;
   createKotTicket(ticket: InsertKotTicket): Promise<KotTicket>;
   updateKotTicket(id: number, ticket: Partial<InsertKotTicket>): Promise<KotTicket>;
+  completeKotTicketsForOrder(orderId: number): Promise<KotTicket[]>;
 
   // Delivery Integrations
   getDeliveryIntegrations(): Promise<DeliveryIntegration[]>;
@@ -960,6 +961,14 @@ export class DatabaseStorage implements IStorage {
     }
     const [updated] = await db.update(kotTickets).set(updateData).where(eq(kotTickets.id, id)).returning();
     return updated;
+  }
+
+  async completeKotTicketsForOrder(orderId: number): Promise<KotTicket[]> {
+    return await db
+      .update(kotTickets)
+      .set({ status: "completed", completedAt: new Date() })
+      .where(and(eq(kotTickets.orderId, orderId), ne(kotTickets.status, "completed")))
+      .returning();
   }
 
   // Delivery Integrations
