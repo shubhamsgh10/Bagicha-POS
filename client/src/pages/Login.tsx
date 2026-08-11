@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Delete, ChevronLeft, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { Loader2, Delete, ChevronLeft, ChevronsUp, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import bgImage from "@assets/Login Page Background.png";
 import pizzaBgImage from "@assets/Wood-Fire-Pizza.png";
 
@@ -59,7 +59,7 @@ function PinDots({ value, shake }: { value: string; shake: boolean }) {
     <motion.div
       animate={shake ? { x: [0, -9, 9, -7, 7, -4, 4, 0] } : {}}
       transition={{ duration: 0.38 }}
-      className="flex gap-3.5 justify-center my-5"
+      className="flex gap-3.5 justify-center my-3"
     >
       {Array.from({ length: 6 }).map((_, i) => (
         <motion.div
@@ -116,7 +116,7 @@ function PinPad({
         if (k === "⌫") return (
           <motion.button key={i} whileTap={{ scale: 0.86 }} disabled={disabled}
             onClick={onDelete}
-            className="h-[62px] flex items-center justify-center text-gray-500 disabled:opacity-40 active:bg-red-50 transition-colors"
+            className="h-14 flex items-center justify-center text-gray-500 disabled:opacity-40 active:bg-red-50 transition-colors"
             style={keyStyle}
           >
             <Delete className="w-5 h-5" />
@@ -125,7 +125,7 @@ function PinPad({
         return (
           <motion.button key={i} whileTap={{ scale: 0.86 }} disabled={disabled}
             onClick={() => onDigit(k)}
-            className="h-[62px] text-[1.5rem] font-semibold text-gray-800 disabled:opacity-40 transition-colors"
+            className="h-14 text-[1.5rem] font-semibold text-gray-800 disabled:opacity-40 transition-colors"
             style={keyStyle}
           >
             {k}
@@ -213,6 +213,11 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
   const [showPw, setShowPw]   = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
+  // Shows once per page load (never reset on logout — re-showing the splash every
+  // shift-change on a shared device would be disruptive). StaffSelector is never
+  // unmounted across login/logout (App.tsx just translates it off-screen), so a plain
+  // useState correctly persists this for the life of the tab without any storage.
+  const [revealed, setRevealed] = useState(false);
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -262,83 +267,134 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
     }
   }
 
-  /* ── Shared two-zone layout: illustration top, login panel bottom ── */
-  const twoZoneWrap = (children: React.ReactNode) => (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-white">
-      {/* Top zone: illustration — fixed 48% height, anchored top */}
-      <div className="shrink-0 overflow-hidden" style={{ height: "48%" }}>
-        <img
-          src={pizzaBgImage}
-          alt=""
-          className="w-full h-full object-cover"
-          style={{ objectPosition: "top center", display: "block" }}
+  /* ── Splash: the illustration's one appearance, shown full-viewport and
+     uncropped before the first screen. Swipe up to reveal the login card. ── */
+  const splash = (
+    <motion.div
+      key="splash"
+      className="fixed inset-0 bg-white overflow-hidden"
+      style={{ touchAction: "none" }}
+      drag="y"
+      dragDirectionLock
+      dragConstraints={{ top: 0, bottom: 0 }}
+      dragElastic={{ top: 0.55, bottom: 0 }}
+      dragMomentum={false}
+      onDragEnd={(_, info) => {
+        if (info.offset.y < -70 || info.velocity.y < -500) setRevealed(true);
+      }}
+      exit={{ y: "-100%" }}
+      transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <img src={pizzaBgImage} alt="" className="w-full h-full object-contain" draggable={false} />
+      {/* No card/background block — just the chevron + label, colored to match the
+          Bagicha logo's own navy + green (sampled directly from the logo asset:
+          #084890 navy for the "B" mark, #40C040 green for its leaf accent), with a
+          soft white shadow so it stays legible sitting directly over the
+          illustration. Plain CSS `animation` (see .swipe-up-hint in index.css)
+          instead of framer-motion's `animate` prop — guaranteed to keep running
+          regardless of React re-renders or being nested inside the splash's
+          drag-enabled parent. */}
+      <div className="swipe-up-hint absolute bottom-10 inset-x-0 flex flex-col items-center gap-1 pointer-events-none">
+        <ChevronsUp
+          className="w-7 h-7"
+          strokeWidth={2.75}
+          style={{ color: "#084890", filter: "drop-shadow(0 1px 4px rgba(255,255,255,0.9))" }}
         />
+        <span
+          className="font-bold text-sm tracking-wide"
+          style={{ color: "#6FD16F", textShadow: "0 1px 4px rgba(255,255,255,0.9), 0 0 10px rgba(255,255,255,0.7)" }}
+        >
+          Swipe up
+        </span>
       </div>
-      {/* Bottom zone: login panel — remaining height, scrollable */}
-      <div className="flex-1 overflow-y-auto bg-white border-t border-gray-100">
-        <div className="w-full max-w-[22rem] mx-auto px-5 pt-4 pb-8">
-          {children}
+    </motion.div>
+  );
+
+  /* ── Shared compact layout for every post-splash screen: small logo + content,
+     vertically centered on the screen. No illustration — that's the splash's job
+     now. Takes a `viewKey` so AnimatePresence (below) can track which screen this
+     is. `m-auto` (not `justify-center`) centers when content fits the viewport but
+     falls back to normal top-anchored scrolling when it doesn't — `justify-center`
+     on a scrollable flex container lets you scroll "above" the content too, which
+     m-auto avoids. */
+  const compactWrap = (children: React.ReactNode, viewKey: string) => (
+    <div key={viewKey} className="fixed inset-0 overflow-y-auto bg-white">
+      <div className="min-h-full flex flex-col items-center px-5 py-8">
+        <div className="m-auto w-full max-w-[22rem] flex flex-col items-center">
+          <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-4" style={{ width: 56, height: 56 }} />
+          <div className="w-full">
+            {children}
+          </div>
         </div>
       </div>
     </div>
   );
 
-  /* ── Admin login ── */
-  if (showAdmin) return twoZoneWrap(
-    showTotp
-      ? <TotpStep glassCard={{ background: "transparent", border: "none", borderRadius: "0", boxShadow: "none" }} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
-      : (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-          <button onClick={() => setShowAdmin(false)}
-            className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors">
-            <ChevronLeft className="w-3.5 h-3.5" /> Back to staff
-          </button>
-          <div>
-            <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager / Admin Login</h2>
-            <p className="text-xs text-gray-600 mt-0.5">Restricted access — credentials required</p>
-          </div>
-          <form onSubmit={handleSubmit(onAdminSubmit)} className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-900">Username</label>
-              <input {...register("username")} placeholder="admin" autoComplete="username"
-                className="login-input w-full h-11 px-3 text-sm" />
-              {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-900">Password</label>
-              <div className="relative">
-                <input {...register("password")}
-                  type={showPw ? "text" : "password"}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  className="login-input w-full h-11 px-3 pr-10 text-sm" />
-                <button type="button" onClick={() => setShowPw(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800">
-                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
-            </div>
-            <button type="submit" disabled={adminLoading}
-              className="login-btn w-full h-11 flex items-center justify-center gap-2 mt-1">
-              {adminLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</> : "Sign in"}
+  // One AnimatePresence spans every screen so the splash's exit animation actually
+  // plays when `revealed` flips — swapping between separate top-level returns would
+  // unmount the whole tree instantly instead of animating the hand-off. Only the
+  // splash has an `exit` (see above); the other screens are removed instantly on
+  // navigation, same as before this change.
+  let content: React.ReactNode;
+  if (!revealed) {
+    content = splash;
+  } else if (showAdmin) {
+    /* ── Admin login ── */
+    content = compactWrap(
+      showTotp
+        ? <TotpStep glassCard={{ background: "transparent", border: "none", borderRadius: "0", boxShadow: "none" }} onSuccess={onLoginSuccess} onBack={() => setShowTotp(false)} />
+        : (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <button onClick={() => setShowAdmin(false)}
+              className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 transition-colors">
+              <ChevronLeft className="w-3.5 h-3.5" /> Back to staff
             </button>
-          </form>
-        </motion.div>
-      )
-  );
-
-  /* ── PIN entry ── */
-  if (selected) {
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 tracking-tight">Manager / Admin Login</h2>
+              <p className="text-xs text-gray-600 mt-0.5">Restricted access — credentials required</p>
+            </div>
+            <form onSubmit={handleSubmit(onAdminSubmit)} className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-900">Username</label>
+                <input {...register("username")} placeholder="admin" autoComplete="username"
+                  className="login-input w-full h-11 px-3 text-sm" />
+                {errors.username && <p className="text-xs text-red-500">{errors.username.message}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-900">Password</label>
+                <div className="relative">
+                  <input {...register("password")}
+                    type={showPw ? "text" : "password"}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    className="login-input w-full h-11 px-3 pr-10 text-sm" />
+                  <button type="button" onClick={() => setShowPw(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800">
+                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
+              </div>
+              <button type="submit" disabled={adminLoading}
+                className="login-btn w-full h-11 flex items-center justify-center gap-2 mt-1">
+                {adminLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</> : "Sign in"}
+              </button>
+            </form>
+          </motion.div>
+        ),
+      "admin"
+    );
+  } else if (selected) {
+    /* ── PIN entry ── */
     const [from, to] = getAvatarColors(selected.name);
-    return twoZoneWrap(
+    content = compactWrap(
       <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
         transition={{ type: "spring", stiffness: 280, damping: 26 }}
-        className="flex flex-col items-center pt-2">
+        className="flex flex-col items-center pt-1">
         <motion.div
           initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", stiffness: 320, damping: 22 }}
-          className="w-[68px] h-[68px] rounded-full mb-2.5 flex items-center justify-center text-white font-bold text-xl"
+          className="w-14 h-14 rounded-full mb-2 flex items-center justify-center text-white font-bold text-lg"
           style={{
             background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
             boxShadow: `0 6px 20px ${from}55, 0 2px 6px rgba(0,0,0,0.12)`,
@@ -361,73 +417,74 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
           />
         )}
         <button onClick={() => { setSelected(null); setPin(""); }}
-          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 mt-4 transition-colors">
+          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 mt-2.5 transition-colors">
           <ChevronLeft className="w-3.5 h-3.5" /> Back
         </button>
-      </motion.div>
+      </motion.div>,
+      "pin"
+    );
+  } else {
+    /* ── Staff grid ── */
+    content = compactWrap(
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+        <p className="text-[11px] text-gray-500 uppercase tracking-[0.12em] text-center mb-3 font-medium">
+          Who are you?
+        </p>
+
+        {staff.length === 0 ? (
+          <div className="text-center py-8 space-y-1">
+            <p className="text-sm text-gray-700">No staff accounts found.</p>
+            <p className="text-xs text-gray-500">Ask admin to create accounts.</p>
+          </div>
+        ) : (
+          <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
+            {staff.map((s, idx) => {
+              const [from, to] = getAvatarColors(s.name);
+              return (
+                <motion.button
+                  key={s.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
+                  whileTap={{ scale: 0.91 }}
+                  onClick={() => { setSelected(s); setPin(""); }}
+                  className="group flex flex-col items-center gap-2.5 py-4 px-2 rounded-2xl transition-all duration-200 active:brightness-95"
+                  style={{
+                    background: "#F9FAFB",
+                    border: "1px solid #E5E7EB",
+                    boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
+                  }}
+                >
+                  <div
+                    className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-[1.1rem] transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
+                    style={{
+                      background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
+                      boxShadow: `0 4px 14px ${from}44`,
+                    }}
+                  >
+                    {getInitials(s.name)}
+                  </div>
+                  <span className="text-[11.5px] font-semibold text-gray-700 text-center leading-tight px-1">
+                    {s.name}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mt-4 pt-3.5 border-t border-gray-100 text-center">
+          <button onClick={() => setShowAdmin(true)}
+            className="text-[11px] text-gray-600 hover:text-gray-900 transition-colors font-medium">
+            Manager / Admin Login →
+          </button>
+        </div>
+      </motion.div>,
+      "grid"
     );
   }
 
-  /* ── Staff grid ── */
-  return twoZoneWrap(
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex flex-col items-center mb-3">
-        <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-1" />
-        <p className="text-[11px] text-gray-500 uppercase tracking-[0.12em] mt-1 font-medium">
-          Who are you?
-        </p>
-      </div>
-
-      {staff.length === 0 ? (
-        <div className="text-center py-8 space-y-1">
-          <p className="text-sm text-gray-700">No staff accounts found.</p>
-          <p className="text-xs text-gray-500">Ask admin to create accounts.</p>
-        </div>
-      ) : (
-        <div className={`grid gap-2.5 ${staff.length > 4 ? "grid-cols-3" : "grid-cols-2"}`}>
-          {staff.map((s, idx) => {
-            const [from, to] = getAvatarColors(s.name);
-            return (
-              <motion.button
-                key={s.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
-                whileTap={{ scale: 0.91 }}
-                onClick={() => { setSelected(s); setPin(""); }}
-                className="group flex flex-col items-center gap-2.5 py-4 px-2 rounded-2xl transition-all duration-200 active:brightness-95"
-                style={{
-                  background: "#F9FAFB",
-                  border: "1px solid #E5E7EB",
-                  boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
-                }}
-              >
-                <div
-                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-[1.1rem] transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
-                  style={{
-                    background: `linear-gradient(135deg, ${from} 0%, ${to} 100%)`,
-                    boxShadow: `0 4px 14px ${from}44`,
-                  }}
-                >
-                  {getInitials(s.name)}
-                </div>
-                <span className="text-[11.5px] font-semibold text-gray-700 text-center leading-tight px-1">
-                  {s.name}
-                </span>
-              </motion.button>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="mt-4 pt-3.5 border-t border-gray-100 text-center">
-        <button onClick={() => setShowAdmin(true)}
-          className="text-[11px] text-gray-600 hover:text-gray-900 transition-colors font-medium">
-          Manager / Admin Login →
-        </button>
-      </div>
-    </motion.div>
-  );
+  return <AnimatePresence initial={false} mode="sync">{content}</AnimatePresence>;
 }
 
 /* ─── Root Login ─── */
