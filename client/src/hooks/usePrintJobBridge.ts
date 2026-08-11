@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { useRealtime, type RealtimeMessage } from "@/hooks/useRealtime";
 import {
   claimAndExecute,
@@ -32,6 +33,7 @@ async function electronExecutor(job: RemotePrintJob): Promise<void> {
  * whenever the realtime connection (re)opens, for jobs broadcast while offline.
  */
 export function usePrintJobBridge(): void {
+  const { isAuthenticated } = useAuth();
   const { lastMessage, connectionStatus } = useRealtime();
   const lastStatusRef = useRef<string>(connectionStatus);
 
@@ -39,8 +41,12 @@ export function usePrintJobBridge(): void {
   // for (e.g. a phone/RawBT-routed printer registered with a blank Windows queue name) —
   // without this, an Electron host races the owning phone station for every such job,
   // wins often, then deterministically fails (see desktop/print/usbSend.ts).
+  // Gated on isAuthenticated: this hook is mounted unconditionally at the App root, so
+  // without the gate it fires on the login screen too — /api/settings is requireAuth and
+  // just 401s pre-login (handled gracefully, but it's a pointless request and log noise).
   const { data: settings } = useQuery<{ printSettings?: PrintConfigSettings }>({
     queryKey: ["/api/settings"],
+    enabled: isAuthenticated,
   });
   const printersRef = useRef(settings?.printSettings?.printers);
   printersRef.current = settings?.printSettings?.printers;
@@ -60,7 +66,7 @@ export function usePrintJobBridge(): void {
   // recovery forever — catching up on jobs missed while offline matters more than the gate.
   const didInitialPollRef = useRef(false);
   useEffect(() => {
-    if (!window.electronAPI?.isElectron) return;
+    if (!window.electronAPI?.isElectron || !isAuthenticated) return;
     if (didInitialPollRef.current) return;
     if (settings !== undefined) {
       didInitialPollRef.current = true;
@@ -73,18 +79,18 @@ export function usePrintJobBridge(): void {
       void pollPendingJobs(electronExecutor, canClaim);
     }, 5_000);
     return () => clearTimeout(timer);
-  }, [settings]);
+  }, [settings, isAuthenticated]);
 
   useEffect(() => {
-    if (!window.electronAPI?.isElectron) return;
+    if (!window.electronAPI?.isElectron || !isAuthenticated) return;
     if (connectionStatus === "Open" && lastStatusRef.current !== "Open") {
       void pollPendingJobs(electronExecutor, canClaim);
     }
     lastStatusRef.current = connectionStatus;
-  }, [connectionStatus]);
+  }, [connectionStatus, isAuthenticated]);
 
   useEffect(() => {
-    if (!window.electronAPI?.isElectron) return;
+    if (!window.electronAPI?.isElectron || !isAuthenticated) return;
     if (!lastMessage || lastMessage.type !== "PRINT_JOB") return;
     const msg = lastMessage as RealtimeMessage & RemotePrintJob;
     void claimAndExecute(

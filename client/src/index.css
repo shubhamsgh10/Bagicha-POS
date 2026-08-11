@@ -352,6 +352,16 @@
     0%   { transform: translateX(-100%); }
     100% { transform: translateX(100%); }
   }
+
+  /* ── Login splash "swipe up" hint — plain CSS animation, not framer-motion, so it
+     can't be affected by React re-renders or nesting inside a drag-enabled parent. ── */
+  .swipe-up-hint {
+    animation: swipe-up-hint 1.4s ease-in-out infinite;
+  }
+  @keyframes swipe-up-hint {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-14px); }
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
