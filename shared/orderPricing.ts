@@ -9,6 +9,8 @@
  * the ₹500-item-for-₹1 attack). The aggregate is always recomputed here from the
  * validated line prices, the configured tax rate, and a discount clamped to
  * [0, subtotal] — so totals/tax/discount can never be forged by the client.
+ * Open items (negative menuItemId, no menu row — see shared/schema.ts) have no
+ * DB floor to check against, so their client price is trusted directly instead.
  */
 
 export interface PricingItemInput {
@@ -90,17 +92,29 @@ export function priceResolved(
     if (!Number.isFinite(mid) || !Number.isFinite(qty) || qty <= 0) {
       throw new Error(`Invalid line item (menuItemId=${it.menuItemId}, qty=${it.quantity})`);
     }
-    const menu = menuById.get(mid);
-    if (!menu) throw new Error(`Unknown menu item ${mid}`);
+    let unitPrice: number;
+    if (mid < 0) {
+      // Open item (staff-typed, no menu row — see shared/schema.ts's menuItemId
+      // doc). No DB floor exists, so the client price is the ONLY source of
+      // truth for this line; require it strictly positive (mirrors POS.tsx's
+      // openItemValid gate) since there's no floor to fall back to on a bad value.
+      const clientUnit = Number(it.price);
+      if (!Number.isFinite(clientUnit) || clientUnit <= 0) {
+        throw new Error(`Invalid open item price (menuItemId=${mid}, price=${it.price})`);
+      }
+      unitPrice = clientUnit;
+    } else {
+      const menu = menuById.get(mid);
+      if (!menu) throw new Error(`Unknown menu item ${mid}`);
 
-    let floor = parseFloat(String(menu.price));
-    if (it.size && Array.isArray(menu.sizes)) {
-      const s = menu.sizes.find((x) => x.size === it.size);
-      if (s) floor = Number(s.price);
+      let floor = parseFloat(String(menu.price));
+      if (it.size && Array.isArray(menu.sizes)) {
+        const s = menu.sizes.find((x) => x.size === it.size);
+        if (s) floor = Number(s.price);
+      }
+      const clientUnit = Number(it.price);
+      unitPrice = Number.isFinite(clientUnit) && clientUnit >= floor - EPS ? clientUnit : floor;
     }
-    const clientUnit = Number(it.price);
-    const unitPrice =
-      Number.isFinite(clientUnit) && clientUnit >= floor - EPS ? clientUnit : floor;
 
     subtotal += unitPrice * qty;
 

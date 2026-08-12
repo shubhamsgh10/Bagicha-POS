@@ -59,6 +59,19 @@ const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
   checks.push(["unknown menu item throws", threw]);
 }
 
+// 7b. Open item (negative id, no menu row) — client price trusted directly, no floor lookup.
+{
+  const r = priceResolved([{ menuItemId: -1, quantity: 2, price: 123 }], menu, rates, 0);
+  checks.push(["open item trusts client price (2×123=246)", near(r.subtotal, 246) && near(r.lines[0].unitPrice, 123)]);
+}
+
+// 7c. Open item with a zero/invalid price still throws (no floor to fall back to).
+{
+  let threw = false;
+  try { priceResolved([{ menuItemId: -1, quantity: 1, price: 0 }], menu, rates, 0); } catch { threw = true; }
+  checks.push(["open item with bad price throws", threw]);
+}
+
 // 8. computeTotals clamps discount and recomputes tax.
 {
   const t = computeTotals([200, 300], 99999, 0.18);
