@@ -42,6 +42,8 @@ function toPunch(r: any, fallback?: Date): RawPunch | null {
   return { biometricId: String(id), date, time, ts: d.getTime() };
 }
 
+const CONNECT_TIMEOUT_MS = 10_000;
+
 export class ZkAdapter {
   private zk: any = null;
 
@@ -51,8 +53,28 @@ export class ZkAdapter {
     const mod: any = await import("node-zklib");
     const ZKLib: any = mod?.default ?? mod;
     // new ZKLib(ip, port, timeout, inport)
-    this.zk = new ZKLib(this.ip, this.port, 10_000, 4000);
-    await this.zk.createSocket();
+    this.zk = new ZKLib(this.ip, this.port, CONNECT_TIMEOUT_MS, 4000);
+    // node-zklib's own `timeout` param is NOT reliably enforced here: zklibtcp.js
+    // calls socket.setTimeout() but never listens for the resulting 'timeout' event,
+    // so a connect attempt to an unreachable IP (wrong/stale config, device on a
+    // different subnet after a router change) hangs on the OS's own default TCP
+    // connect timeout instead of ours — which can be much longer than 10s, or
+    // effectively indefinite if the network silently drops the packets. Separately,
+    // node-zklib's built-in TCP→UDP fallback (zklib.js) only triggers on an
+    // ECONNREFUSED error code, which an unreachable host never produces (that's
+    // ETIMEDOUT/EHOSTUNREACH) — so the fallback never even gets a chance to run.
+    // Racing our own timeout here means a bad IP fails fast with a clear, actionable
+    // error instead of leaving the agent (and the UI's status badge) stuck on
+    // "Connecting" with no error surfaced at all.
+    await Promise.race([
+      this.zk.createSocket(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Timed out connecting to ${this.ip}:${this.port} — device unreachable, check its IP/network`)),
+          CONNECT_TIMEOUT_MS,
+        ),
+      ),
+    ]);
   }
 
   async getInfo(): Promise<DeviceInfo> {

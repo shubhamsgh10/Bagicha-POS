@@ -1946,7 +1946,19 @@ export async function registerRoutes(
       const lineItems = Array.isArray(items) ? items : [];
 
       // Recompute all money server-side from DB prices — never trust client totals.
-      const priced = await priceOrder(lineItems, discountAmount);
+      // Same shape as POST /api/orders: a genuine pricing rejection (unknown item /
+      // bad qty / bad open-item price) is a client-data problem, not a server fault —
+      // report it as 400 with the real reason instead of falling through to the
+      // generic 500 below.
+      let priced;
+      try {
+        priced = await priceOrder(lineItems, discountAmount);
+      } catch (pricingErr) {
+        console.warn("[order] rejected invalid line items:", pricingErr);
+        return res.status(400).json({
+          error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
+        });
+      }
 
       // Applying a discount is a privileged action; a bare staff session may not.
       if (priced.discount > 0 && !hasElevation(req, "manager")) {
