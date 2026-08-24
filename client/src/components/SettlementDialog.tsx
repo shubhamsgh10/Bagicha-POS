@@ -92,7 +92,12 @@ export function SettlementDialog({
   const remaining    = grandTotal - totalEntered;
   const changeDue    = remaining < 0 ? Math.abs(remaining) : 0;
   const balanceDue   = remaining > 0 ? remaining : 0;
-  const canSettle    = isDue || Math.round(totalEntered * 100) >= Math.round(grandTotal * 100);
+  // ₹1 tolerance matches the server's own settle guard (routes.ts POST /:id/payment:
+  // "paidAmt < orderTotal - 1" is rejected) — grandTotal is the paisa-precise stored
+  // total (tax math routinely leaves a fractional remainder), but real cash/UPI amounts
+  // are always whole rupees, so a strict/exact comparison here would silently block a
+  // payment the server would happily accept. Must stay in sync with that server check.
+  const canSettle    = isDue || totalEntered >= grandTotal - 1;
 
   useEffect(() => {
     if (!open) {
@@ -335,7 +340,7 @@ export function SettlementDialog({
             </div>
           ) : (
             <div className={`rounded-lg px-3 py-2 text-sm flex justify-between items-center ${
-              balanceDue > 0
+              !canSettle
                 ? "bg-red-50 text-red-700"
                 : changeDue > 0
                 ? "bg-blue-50 text-blue-700"
@@ -343,7 +348,7 @@ export function SettlementDialog({
             }`}>
               <span>Total entered <strong>₹{totalEntered.toFixed(0)}</strong></span>
               <span className="font-bold">
-                {balanceDue > 0
+                {!canSettle
                   ? `Balance due ₹${balanceDue.toFixed(0)}`
                   : changeDue > 0
                   ? `Change ₹${changeDue.toFixed(0)}`
