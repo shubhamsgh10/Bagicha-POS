@@ -46,6 +46,10 @@ interface Props {
   orderLabel?: string;             // e.g. "#110"
   initialCustomerName?: string;
   initialCustomerPhone?: string;
+  // When provided, shows a "Cancel Order" link that hands off to the caller's own
+  // cancel-confirm flow (with its reason box) — undefined hides the link entirely,
+  // e.g. for a cart that hasn't been saved as a real order yet.
+  onCancelOrder?: () => void;
 }
 
 const METHODS: { key: "cash" | "upi"; label: string; icon: string }[] = [
@@ -58,7 +62,7 @@ interface CustomerSuggestion { name: string; phone: string | null; }
 export function SettlementDialog({
   open, onOpenChange, grandTotal, onSettle, isLoading,
   items, subtotal, taxAmount, discountAmount, orderLabel,
-  initialCustomerName, initialCustomerPhone,
+  initialCustomerName, initialCustomerPhone, onCancelOrder,
 }: Props) {
   const [cash,  setCash]  = useState(0);
   const [upi,   setUpi]   = useState(0);
@@ -235,6 +239,18 @@ export function SettlementDialog({
             Collect Payment{orderLabel ? ` · ${orderLabel}` : ""} · {inr(grandTotal)}
           </DialogTitle>
         </DialogHeader>
+
+        {onCancelOrder && (
+          <div className="flex justify-end -mt-1">
+            <button
+              type="button"
+              onClick={onCancelOrder}
+              className="text-xs font-medium text-red-600 hover:text-red-700 hover:underline"
+            >
+              ✕ Cancel Order instead
+            </button>
+          </div>
+        )}
 
         <div className="space-y-3">
           {/* Order summary — customer + itemized list + totals (shown when order context is passed) */}

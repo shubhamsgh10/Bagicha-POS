@@ -13,7 +13,7 @@ import {
   type StaffMember, type InsertStaffMember,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, sql, asc, inArray, ne } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql, asc, inArray, ne, getTableColumns } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
@@ -156,8 +156,8 @@ export interface IStorage {
   deleteOrderItemsByOrderId(orderId: number): Promise<void>;
 
   // KOT Tickets
-  getKotTickets(): Promise<KotTicket[]>;
-  getKotTicketsByStatus(status: string): Promise<KotTicket[]>;
+  getKotTickets(): Promise<Array<KotTicket & { orderStatus: string | null }>>;
+  getKotTicketsByStatus(status: string): Promise<Array<KotTicket & { orderStatus: string | null }>>;
   createKotTicket(ticket: InsertKotTicket): Promise<KotTicket>;
   updateKotTicket(id: number, ticket: Partial<InsertKotTicket>): Promise<KotTicket>;
   completeKotTicketsForOrder(orderId: number): Promise<KotTicket[]>;
@@ -933,12 +933,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   // KOT Tickets
-  async getKotTickets(): Promise<KotTicket[]> {
-    return await db.select().from(kotTickets).orderBy(desc(kotTickets.printedAt));
+  // orderStatus lets the KOT page tell a ticket apart from a normally-completed one
+  // when its order was actually cancelled — completeKotTicketsForOrder reuses the
+  // existing "completed" ticket status for both cases (see CLAUDE.md), so this join
+  // is the only way to distinguish them without a second ticket status value.
+  async getKotTickets(): Promise<Array<KotTicket & { orderStatus: string | null }>> {
+    return await db.select({ ...getTableColumns(kotTickets), orderStatus: orders.status })
+      .from(kotTickets)
+      .leftJoin(orders, eq(kotTickets.orderId, orders.id))
+      .orderBy(desc(kotTickets.printedAt));
   }
 
-  async getKotTicketsByStatus(status: string): Promise<KotTicket[]> {
-    return await db.select().from(kotTickets).where(eq(kotTickets.status, status)).orderBy(desc(kotTickets.printedAt));
+  async getKotTicketsByStatus(status: string): Promise<Array<KotTicket & { orderStatus: string | null }>> {
+    return await db.select({ ...getTableColumns(kotTickets), orderStatus: orders.status })
+      .from(kotTickets)
+      .leftJoin(orders, eq(kotTickets.orderId, orders.id))
+      .where(eq(kotTickets.status, status))
+      .orderBy(desc(kotTickets.printedAt));
   }
 
   async createKotTicket(ticket: InsertKotTicket): Promise<KotTicket> {

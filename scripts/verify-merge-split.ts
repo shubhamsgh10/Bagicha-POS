@@ -1,50 +1,31 @@
 /**
  * Verifies the pure math backing merge/split (server/routes.ts's /api/orders/merge and
- * /api/orders/:id/split): container charge is computed correctly over a combined/split
- * item set (ceil-per-line, not sum-then-ceil), and the taxable base is conserved across
- * a split (source discount left in place, new order gets none — CLAUDE.md documents
- * this as aggregate-neutral by design). Route wiring itself (storage.mergeOrders/
- * splitOrder, the atomic transactions, item field copying) needs a live DB and is out
- * of scope for a pure script — this locks the arithmetic those routes depend on.
+ * /api/orders/:id/split): the taxable base is conserved across a split (source discount
+ * left in place, new order gets none — CLAUDE.md documents this as aggregate-neutral by
+ * design), and the manually-entered container charge is combined/preserved correctly —
+ * merge sums the two orders' existing charges, split keeps the full charge on the
+ * source/remaining order and starts the new split-out order at 0 (same aggregate-neutral
+ * treatment as discount). Route wiring itself (storage.mergeOrders/splitOrder, the
+ * atomic transactions, item field copying) needs a live DB and is out of scope for a
+ * pure script — this locks the arithmetic those routes depend on.
  * Run: npx tsx scripts/verify-merge-split.ts
  */
-import { computeContainerCharge, computeTotals } from "../shared/orderPricing";
+import { computeTotals } from "../shared/orderPricing";
 
 const checks: Array<[string, boolean]> = [];
 const approx = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
 
-// 1. computeContainerCharge: ceil-per-line, not sum-then-ceil.
+// 1. Merge: container charge is the SUM of the two orders' existing manually-entered
+//    charges (not recomputed from items — previously computeTotalsFromLines had no
+//    container term at all, so merging two orders silently dropped both charges).
 {
-  const items = [
-    { quantity: 0.5, serviceMode: "pickup" },
-    { quantity: 0.5, serviceMode: "pickup" },
-  ];
-  // Two separate 0.5-qty parcel lines need two containers (ceil(0.5)+ceil(0.5)=2), not
-  // one that a naive ceil(0.5+0.5) would give.
-  checks.push(["two 0.5-qty pickup lines need 2 containers, not 1", computeContainerCharge(items, 15) === 30]);
-}
-{
-  const items = [
-    { quantity: 3, serviceMode: "dinein" },
-    { quantity: 1, serviceMode: null, parcelLeftover: true },
-    { quantity: 2, serviceMode: "delivery" },
-  ];
-  // dinein contributes 0; parcelLeftover is a flat charge regardless of qty; delivery is ceil(qty).
-  checks.push(["mixed dinein/parcelLeftover/delivery sums correctly", computeContainerCharge(items, 15) === 15 + 30]);
-}
-
-// 2. Merge: container charge from the COMBINED item set is preserved in the recomputed
-//    total (previously computeTotalsFromLines had no container term at all — merging two
-//    orders with parcel items silently dropped the charge from the merged total).
-{
-  const targetItems = [{ quantity: 2, serviceMode: "dinein" }];
-  const sourceItems = [{ quantity: 1, serviceMode: "pickup" }];
-  const combined = [...targetItems, ...sourceItems];
-  const containerCharge = computeContainerCharge(combined, 15);
+  const targetContainerCharge = 15; // target order already had a manually-entered charge
+  const sourceContainerCharge = 10; // source order had its own
+  const containerCharge = targetContainerCharge + sourceContainerCharge;
   const lineTotals = [200, 100]; // target subtotal 200, source subtotal 100
   const merged = computeTotals(lineTotals, "0", 0.18, containerCharge);
-  checks.push(["merge preserves the source order's container charge", merged.containerCharge === 15]);
-  checks.push(["merge total includes the container charge", approx(merged.total, 300 * 1.18 + 15)]);
+  checks.push(["merge sums both orders' container charges (25)", merged.containerCharge === 25]);
+  checks.push(["merge total includes the combined container charge", approx(merged.total, 300 * 1.18 + 25)]);
 }
 
 // 3. Split: taxable base is conserved. Source subtotal S=1000, discount D=150, split into
@@ -61,15 +42,18 @@ const approx = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
   checks.push(["split combined total equals pre-split total", approx(newOrder.total + remaining.total, preSplit.total)]);
 }
 
-// 4. Split: each half's OWN container charge is computed and preserved (previously both
-//    halves always got containerCharge=0 regardless of what was on the split items).
+// 4. Split: container charge gets the SAME aggregate-neutral treatment as discount —
+//    the source/remaining order keeps its full existing manually-entered charge, and
+//    the new split-out order starts at 0 (staff can enter one manually if that portion
+//    needs its own container).
 {
-  const splitItems = [{ quantity: 1, serviceMode: "pickup" }];
-  const remainingItems = [{ quantity: 1, serviceMode: "dinein", parcelLeftover: true }];
-  const newContainer = computeContainerCharge(splitItems, 15);
-  const srcContainer = computeContainerCharge(remainingItems, 15);
-  checks.push(["split new order gets its own container charge", newContainer === 15]);
-  checks.push(["split source order keeps its own remaining container charge", srcContainer === 15]);
+  const sourceExistingContainerCharge = 15;
+  const newContainerCharge = 0; // new split-out order always starts at 0
+  const srcContainerCharge = sourceExistingContainerCharge; // stays entirely on the source
+  const newOrder = computeTotals([300], "0", 0.18, newContainerCharge);
+  const remaining = computeTotals([700], "0", 0.18, srcContainerCharge);
+  checks.push(["split new order starts with no container charge", newOrder.containerCharge === 0]);
+  checks.push(["split source order keeps its full existing container charge", remaining.containerCharge === 15]);
 }
 
 // 5. Discount-guard boundary: the route refuses a split when the source's existing

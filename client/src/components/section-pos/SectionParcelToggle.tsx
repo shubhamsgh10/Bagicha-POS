@@ -3,17 +3,16 @@ import { UtensilsCrossed, ShoppingBag } from "lucide-react";
 
 /**
  * Big two-option segmented control for the quick-POS section counter. Sets the
- * mode NEW items are added as: "Eating Here" (no container charge) vs "Parcel"
- * (container charge per item). Items keep their own mode, so orders can mix both —
- * purely presentational; POS.tsx owns the state (activeItemMode).
+ * mode NEW items are added as: "Eating Here" vs "Parcel" (takeaway). Items keep
+ * their own mode, so orders can mix both — purely presentational; POS.tsx owns
+ * the state (activeItemMode). Container charge itself is a separate manually
+ * staff-entered amount, not tied to this toggle.
  */
 export function SectionParcelToggle({
   parcel,
-  containerRate,
   onChange,
 }: {
   parcel: boolean;
-  containerRate: number;
   onChange: (parcel: boolean) => void;
 }) {
   return (
@@ -42,17 +41,12 @@ export function SectionParcelToggle({
         <button
           type="button"
           onClick={() => onChange(true)}
-          className={`relative z-10 flex-1 h-14 rounded-lg flex flex-col items-center justify-center leading-tight transition-colors ${
+          className={`relative z-10 flex-1 h-14 rounded-lg flex items-center justify-center gap-2 text-base font-bold transition-colors ${
             parcel ? "text-white" : "text-gray-500"
           }`}
         >
-          <span className="flex items-center gap-2 text-base font-bold">
-            <ShoppingBag className="w-5 h-5" />
-            Parcel
-          </span>
-          <span className={`text-[11px] font-semibold ${parcel ? "text-amber-100" : "text-gray-400"}`}>
-            +₹{containerRate}/item
-          </span>
+          <ShoppingBag className="w-5 h-5" />
+          Parcel
         </button>
       </div>
     </div>

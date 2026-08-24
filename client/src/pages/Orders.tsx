@@ -177,7 +177,22 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
               </SelectTrigger>
               <SelectContent>
                 {["pending","preparing","ready","served","delivered","cancelled"].map(s => (
-                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                  <SelectItem
+                    key={s}
+                    value={s}
+                    // "cancelled" is picked from here so the item still exists (an
+                    // already-cancelled order needs a matching item to display its
+                    // current value correctly) — but it's unselectable, since setting
+                    // it via this generic status field skips the manager PIN, the
+                    // required reason, freeing the table, restoring inventory, and
+                    // closing out the kitchen ticket. Use the Cancel Order button
+                    // (Settlement dialog or table Actions menu) instead.
+                    disabled={s === "cancelled"}
+                    title={s === "cancelled" ? "Use the Cancel Order button instead — this only changes the label" : undefined}
+                    className="text-xs capitalize"
+                  >
+                    {s}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -212,10 +227,11 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   { label: "Type",      value: order.orderType?.replace("-", " ") || "—" },
                   { label: "Payment",   value: order.paymentStatus === "paid" ? (order.paymentMethod || "cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
                   ...(order.createdByName ? [{ label: "Served By", value: order.createdByName }] : []),
+                  ...(order.status === "cancelled" && order.cancelReason ? [{ label: "Cancel Reason", value: order.cancelReason }] : []),
                 ].map(({ label, value }) => (
-                  <div key={label} className="bg-[var(--paper-100)] rounded-xl px-3 py-2">
+                  <div key={label} className={`bg-[var(--paper-100)] rounded-xl px-3 py-2 ${label === "Cancel Reason" ? "col-span-2 sm:col-span-5" : ""}`}>
                     <p className="text-gray-400 font-medium uppercase tracking-wide text-[10px] mb-0.5">{label}</p>
-                    <p className={`font-semibold capitalize truncate ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : "text-gray-700"}`}>{value}</p>
+                    <p className={`font-semibold truncate ${label === "Cancel Reason" ? "text-red-600 normal-case" : "capitalize"} ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : label === "Cancel Reason" ? "" : "text-gray-700"}`}>{value}</p>
                   </div>
                 ))}
               </div>

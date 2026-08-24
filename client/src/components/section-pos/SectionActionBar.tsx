@@ -13,8 +13,7 @@ export function SectionActionBar({
   tax,
   taxRatePct,
   containerCharge,
-  containerRate,
-  containerCount,
+  onContainerChargeChange,
   grandTotal,
   hasItems,
   isPending,
@@ -28,8 +27,7 @@ export function SectionActionBar({
   tax: number;
   taxRatePct: number;
   containerCharge: number;
-  containerRate: number;
-  containerCount: number;
+  onContainerChargeChange: (v: number) => void;
   grandTotal: number;
   hasItems: boolean;
   isPending: boolean;
@@ -51,12 +49,22 @@ export function SectionActionBar({
           <span>GST ({taxRatePct}%)</span>
           <span className="tabular-nums">{fmt(tax)}</span>
         </div>
-        {containerCharge > 0 && (
-          <div className="flex justify-between text-amber-600 font-medium">
-            <span>Container ({containerCount} × ₹{containerRate})</span>
-            <span className="tabular-nums">{fmt(containerCharge)}</span>
+        {/* Manually entered by staff, like a delivery charge — not computed from items */}
+        <div className="flex items-center justify-between">
+          <span>Container</span>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-400">₹</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={containerCharge || ""}
+              onChange={(e) => onContainerChargeChange(Math.max(0, parseFloat(e.target.value) || 0))}
+              placeholder="0"
+              className="w-14 text-right border border-gray-200 rounded px-1 py-0.5 outline-none focus:border-amber-400"
+            />
           </div>
-        )}
+        </div>
         <div className="flex justify-between pt-1 mt-1 border-t border-dashed border-gray-200 text-sm font-bold text-gray-900">
           <span>Total</span>
           <span className="tabular-nums">{fmt(grandTotal)}</span>

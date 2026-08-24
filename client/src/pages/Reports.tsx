@@ -341,6 +341,12 @@ export default function Reports() {
     queryFn: () => apiJson(`/api/reports/staff-tables${params}`),
   });
 
+  const { data: cancelledReport } = useQuery<any>({
+    queryKey: ["/api/reports/cancelled", dateRange.start, dateRange.end],
+    queryFn: () => apiJson(`/api/reports/cancelled${params}`),
+  });
+  const [cancelledModeFilter, setCancelledModeFilter] = useState<"all" | "dine-in" | "takeaway" | "delivery">("all");
+
   const { toast } = useToast();
   // Outstanding tabs are "current," not date-bound — no date params.
   const { data: dues } = useQuery<any>({
@@ -376,12 +382,13 @@ export default function Reports() {
   }));
 
   const tabs = [
-    { id: "sales",    label: "Sales Chart" },
-    { id: "items",    label: "Top Items" },
-    { id: "orders",   label: "Order Details" },
-    { id: "payments", label: "Payments" },
-    { id: "staff",    label: "Staff & Tables" },
-    { id: "dues",     label: "Dues / Pay-Later" },
+    { id: "sales",     label: "Sales Chart" },
+    { id: "items",     label: "Top Items" },
+    { id: "orders",    label: "Order Details" },
+    { id: "payments",  label: "Payments" },
+    { id: "staff",     label: "Staff & Tables" },
+    { id: "cancelled", label: "Cancelled Orders" },
+    { id: "dues",      label: "Dues / Pay-Later" },
   ];
 
   if (isLoading) {
@@ -455,6 +462,21 @@ export default function Reports() {
       filename = `sales-chart_${range}`;
       header = ["Period", "Sales", "Orders"];
       rows = salesData.map((d: any) => [d.name, d.sales ?? 0, d.orders ?? 0]);
+    } else if (activeTab === "cancelled") {
+      filename = `cancelled-orders_${range}`;
+      header = ["Order #", "Date", "Customer", "Mode", "Amount", "Reason"];
+      const cancelledOrders: any[] = cancelledReport?.orders ?? [];
+      const filtered = cancelledModeFilter === "all"
+        ? cancelledOrders
+        : cancelledOrders.filter((o: any) => o.orderType === cancelledModeFilter);
+      rows = filtered.map((o: any) => [
+        serialNum(o.id),
+        new Date(o.createdAt).toLocaleString("en-IN"),
+        o.customerName || "Walk-in",
+        o.orderType || "",
+        parseFloat(o.totalAmount || 0).toFixed(2),
+        o.cancelReason || "",
+      ]);
     } else {
       filename = `orders_${range}`;
       header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Amount"];
@@ -863,6 +885,117 @@ export default function Reports() {
             </div>
           </motion.div>
         )}
+
+        {/* ── Cancelled Orders ── */}
+        {activeTab === "cancelled" && (() => {
+          const modeFilters: { id: "all" | "dine-in" | "takeaway" | "delivery"; label: string }[] = [
+            { id: "all", label: "All" },
+            { id: "dine-in", label: "Dine-in" },
+            { id: "takeaway", label: "Pickup" },
+            { id: "delivery", label: "Delivery" },
+          ];
+          const cancelledOrders: any[] = cancelledReport?.orders ?? [];
+          const filtered = cancelledModeFilter === "all"
+            ? cancelledOrders
+            : cancelledOrders.filter(o => o.orderType === cancelledModeFilter);
+          const filteredTotal = filtered.reduce((s, o) => s + parseFloat(o.totalAmount || "0"), 0);
+          return (
+          <motion.div
+            key={`cancelled-${dateRange.start}-${dateRange.end}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5 flex items-center gap-4">
+                <X className="w-7 h-7 text-red-500 shrink-0" />
+                <div>
+                  <p className="text-2xl font-bold text-gray-800">{cancelledReport?.totalCancelled ?? 0}</p>
+                  <p className="text-xs text-gray-400">Cancelled orders in range</p>
+                </div>
+              </div>
+              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5 flex items-center gap-4">
+                <DollarSign className="w-7 h-7 text-red-500 shrink-0" />
+                <div>
+                  <p className="text-2xl font-bold text-gray-800">{formatCurrency(cancelledReport?.wouldBeTotal ?? 0)}</p>
+                  <p className="text-xs text-gray-400">Would-be revenue lost</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="font-semibold text-gray-800">
+                    Cancelled Orders
+                    <span className="ml-2 text-xs font-normal text-gray-400">
+                      ({filtered.length} shown{cancelledModeFilter !== "all" ? ` · ${formatCurrency(filteredTotal)}` : ""})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">{formatRangeLabel(dateRange.start, dateRange.end)}</p>
+                </div>
+                <div className="flex gap-1.5">
+                  {modeFilters.map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => setCancelledModeFilter(m.id)}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        cancelledModeFilter === m.id
+                          ? "bg-red-500 text-white border-red-500"
+                          : "bg-[var(--paper-0)] text-gray-600 border-[var(--line)] hover:bg-red-50"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {filtered.length === 0 ? (
+                <div className="p-10 text-center">
+                  <X className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-medium">No cancelled orders</p>
+                  <p className="text-sm text-gray-400 mt-1">Nothing was cancelled in this period{cancelledModeFilter !== "all" ? " for this mode" : ""}</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-[var(--paper-100)] text-left">
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Time</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Mode</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right">Amount</th>
+                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/20">
+                      {filtered.map((order: any) => (
+                        <tr key={order.id} className="hover:bg-[var(--paper-100)] transition-colors">
+                          <td className="px-5 py-3 font-medium text-gray-800 whitespace-nowrap">{serialNum(order.id)}</td>
+                          <td className="px-5 py-3 text-gray-500 whitespace-nowrap">
+                            {new Date(order.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          </td>
+                          <td className="px-5 py-3 text-gray-600">{order.customerName || "Walk-in"}</td>
+                          <td className="px-5 py-3">
+                            <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 text-xs font-medium capitalize">
+                              {order.orderType?.replace("-", " ") || "—"}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 text-right font-semibold text-gray-700">{formatCurrency(parseFloat(order.totalAmount || "0"))}</td>
+                          <td className="px-5 py-3 text-gray-600 max-w-xs truncate" title={order.cancelReason || ""}>
+                            {order.cancelReason || <span className="text-gray-300">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </motion.div>
+          );
+        })()}
 
         {/* ── Dues / Pay-Later ── */}
         {activeTab === "dues" && (
