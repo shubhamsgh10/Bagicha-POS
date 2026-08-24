@@ -24,7 +24,6 @@ interface PrinterConfig {
 
 interface KOTPrintSettings {
   enabled: boolean;
-  printOnBill: boolean;
   printModifiedKOT: boolean;
   printModifiedItemsOnly: boolean;
   printCancelledKOT: boolean;
@@ -79,7 +78,7 @@ interface PrintConfigSettings {
 }
 
 const DEFAULT_KOT: KOTPrintSettings = {
-  enabled: true, printOnBill: true, printModifiedKOT: true,
+  enabled: true, printModifiedKOT: true,
   printModifiedItemsOnly: true, printCancelledKOT: true, printAddons: true,
   showDuplicateWatermark: true, printDeletedItems: true, printDeletedSeparate: false,
   printOnTableMove: false, kotPrinterId: null,
@@ -1070,11 +1069,6 @@ export function PrintSettingsPanel({
                   </select>
                 </div>
               )}
-              <ToggleRow
-                label="Print KOT on Print Bill"
-                description="This setting will only work when the print bill action is initiated for the first time. For reprint of KOT, use the KOT listing page."
-                checked={ps.kot.printOnBill} onChange={v => setKot('printOnBill', v)}
-              />
               <ToggleRow
                 label="Print Only Modified KOT"
                 description="When enabled, prints only the KOT where modification (i.e. item change or item deletion) occurred, with the label 'Modified' at the top of the KOT."

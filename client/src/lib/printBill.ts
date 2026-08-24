@@ -1,4 +1,5 @@
 import bagichaLogoImg from "@assets/Bagicha Logo.png";
+import { deriveBillTotals } from "@shared/orderPricing";
 
 /**
  * Render an HTML document to the printer.
@@ -160,9 +161,14 @@ export async function printOrderBill(order: any, items: any[], settings: any): P
   const upiId          = settings?.upiId          || "";
   const footerNote     = settings?.footerNote     || "Thank you for dining with us!";
 
-  const discount   = parseFloat(order.discountAmount || "0");
-  const tax        = parseFloat(order.taxAmount || "0");
-  const grandTotal = parseFloat(order.totalAmount);
+  // Read subtotal/discount/container/tax straight off the persisted order — this used
+  // to independently re-derive container charge from item quantities (₹15/item,
+  // hardcoded, no ceil-per-line, no leftover-parcel handling, and dropped `discount`
+  // from the subtotal formula entirely), which drifted from the real saved/printed
+  // total the moment the rate changed or an order had a discount or a parcel-leftover
+  // item. Container charge is a manually staff-entered amount now — there is nothing
+  // to derive it from except the order's own persisted value.
+  const { subtotal, discount, containerCharge, tax, total: grandTotal } = deriveBillTotals(order);
 
   const orderDate = new Date(order.createdAt || Date.now());
   const dateStr   = orderDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
@@ -181,12 +187,6 @@ export async function printOrderBill(order: any, items: any[], settings: any): P
     });
     logoHtml = `<img src="${base64}" class="logo-img" alt="Logo" />`;
   } catch { /* keep placeholder */ }
-
-  // Derive container charge from pickup/delivery items (₹15 per item qty)
-  const containerItemQty = items.filter((i: any) => i.serviceMode === 'pickup' || i.serviceMode === 'delivery')
-    .reduce((s: number, i: any) => s + Number(i.quantity), 0);
-  const containerCharge = containerItemQty * 15;
-  const subtotal = grandTotal - tax - containerCharge;
 
   const hasMixedModes = items.some((i: any) => i.serviceMode && i.serviceMode !== 'dinein');
   const modeLabel: Record<string, string> = { dinein: '🍽 Dine-In', pickup: '📦 Pickup', delivery: '🛵 Delivery' };

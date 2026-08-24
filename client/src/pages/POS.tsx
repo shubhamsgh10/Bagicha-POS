@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock, User, Phone, Clock, MapPin } from "lucide-react";
@@ -159,6 +160,9 @@ export default function POS() {
   const [selectedCategory, setSelectedCategory] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [discountPercent, setDiscountPercent] = useState(0);
+  // Manually staff-entered container charge (₹) — a flat amount typed in on the cart,
+  // like a delivery charge, not computed from item quantities/serviceMode.
+  const [containerCharge, setContainerCharge] = useState(0);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
   // Unified modifier modal state (handles both add-new and edit-existing)
@@ -193,6 +197,12 @@ export default function POS() {
   const settlementDataRef = useRef<SettlementData | null>(null);
   // Settle two-phase loading state
   const [settlePhase, setSettlePhase] = useState<"idle" | "processing" | "printing">("idle");
+  // True from click until the post-save print step (triggerKOTPrint/triggerBillPrint,
+  // called un-awaited from mutation onSuccess) actually finishes. isPending alone isn't
+  // enough — it flips false as soon as the PUT/POST resolves, before the print fetch
+  // inside onSuccess has completed, which is the real window where a second click can
+  // race the first click's own print request.
+  const [isPrinting, setIsPrinting] = useState(false);
   // Auto-KOT debounce refs
   const autoKotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoKotReadyRef = useRef(false);
@@ -256,6 +266,7 @@ export default function POS() {
   const [showHoldConfirm, setShowHoldConfirm]       = useState(false);
   const [showRecallDialog, setShowRecallDialog]     = useState(false);
   const [showCancelConfirm, setShowCancelConfirm]   = useState(false);
+  const [cancelReason, setCancelReason]             = useState("");
   const [splitSelectedIds, setSplitSelectedIds]     = useState<number[]>([]);
   const [actionLoading, setActionLoading]           = useState(false);
 
@@ -339,12 +350,20 @@ export default function POS() {
 
   const handleCancelOrder = async () => {
     if (!activeOrderId) return;
+    const reason = cancelReason.trim();
+    if (!reason) return; // confirm button is already disabled for this, belt-and-suspenders
     setActionLoading(true);
     try {
-      await apiRequest("PUT", `/api/orders/${activeOrderId}/cancel`, {});
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/cancel`, { reason });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
       toast({ title: "Order cancelled" });
       setShowCancelConfirm(false);
+      setCancelReason("");
       navigate("/tables");
     } catch {
       toast({ title: "Failed to cancel order", variant: "destructive" });
@@ -422,7 +441,7 @@ export default function POS() {
       totalAmount: parseFloat(order.totalAmount ?? '0'),
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       discountAmount: parseFloat(order.discountAmount ?? '0'),
-      containerCharge: appliedContainerCharge,
+      containerCharge: order.containerCharge != null ? parseFloat(order.containerCharge) : containerCharge,
       paymentMethod: order.paymentMethod ?? null,
       createdAt: order.createdAt ?? new Date(),
       items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode })),
@@ -437,7 +456,7 @@ export default function POS() {
     setPrintPreview({ title: 'Bill Preview', lines });
   };
 
-  const triggerKOTPrint = async (orderId: number, order?: any) => {
+  const triggerKOTPrint = async (orderId: number, order?: any, silent = false) => {
     try {
       const res = await fetch(apiUrl('/api/print/kot'), {
         method: 'POST',
@@ -470,7 +489,11 @@ export default function POS() {
         },
       });
       if (outcome === 'skipped') {
-        toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
+        // silent: called as triggerBillPrint's quiet pre-bill catch-up check — a
+        // no-op here just means "nothing new," which should feel like plain bill
+        // printing, not surface irrelevant KOT chatter. A genuine manual KOT click
+        // (silent=false) still tells the user so.
+        if (!silent) toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
       } else if (outcome === 'hardware') {
         // data.message carries a partial-failure note when one routed printer failed
         // but at least one other printer (direct or dispatched) still got the ticket —
@@ -505,6 +528,19 @@ export default function POS() {
   };
 
   const triggerBillPrint = async (orderId: number, order?: any, skipKOT = false) => {
+    // Kitchen-first, always: every bill print first runs the same KOT delta-check
+    // the KOT button uses, silently (silent=true) — no longer a toggleable setting,
+    // so it can't be switched off. If there's nothing new, this no-ops with no
+    // toast, so an already-KOT'd order's bill click feels like "just the bill." If
+    // there IS something new (a never-KOT'd order clicked straight to Bill, or an
+    // item added after the last KOT that staff forgot to re-send), it's sent to the
+    // kitchen first — with its own normal toast, since that's genuinely useful
+    // information — before the bill prints. This is the safety net: nothing added
+    // to the order can silently miss the kitchen's notice just because Bill was
+    // clicked instead of KOT.
+    if (!skipKOT) {
+      await triggerKOTPrint(orderId, order, true);
+    }
     try {
       const res = await fetch(apiUrl('/api/print/bill'), {
         method: 'POST',
@@ -534,22 +570,12 @@ export default function POS() {
           const printed = await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
           // Popup + iframe both blocked (rare) — show the in-page preview so the user isn't stuck.
           if (!printed) showBillPreview(freshOrder ?? order);
-          if (!skipKOT) {
-            const kotSettings = freshSettings?.printSettings?.kot;
-            if (kotSettings?.printOnBill) {
-              triggerKOTPrint(orderId, order);
-            }
-          }
+          // (no trailing KOT call here — the silent delta-check already ran BEFORE
+          // the bill fetch above, see triggerBillPrint's own comment)
         },
       });
       if (outcome === 'hardware' || outcome === 'browser' || outcome === 'dispatched') {
         toast({ title: 'Bill sent to printer!' });
-        if (!skipKOT) {
-          const kotSettings = (settings as any)?.printSettings?.kot;
-          if (kotSettings?.printOnBill && (outcome === 'hardware' || outcome === 'dispatched')) {
-            triggerKOTPrint(orderId, order);
-          }
-        }
       } else if (outcome === 'noop' && data.printJob) {
         toast({
           title: 'Print job ready',
@@ -636,6 +662,10 @@ export default function POS() {
     });
     setCartItems(loadedItems);
     setDiscountPercent(0);
+    // Restore the order's already-saved manual container charge — unlike discount
+    // above, this must NOT reset to 0, or reopening a running order and saving again
+    // without touching this field would silently wipe out a charge already applied.
+    setContainerCharge(Number(existingOrder.containerCharge) || 0);
     // Section counter: point the add-mode toggle at the mode of the last saved item
     // (staff usually keep adding more of the same kind); items keep their own modes.
     if (isSectionMode && loadedItems.length > 0) {
@@ -674,6 +704,7 @@ export default function POS() {
     const delay: number = kotSettings.autoKOTDebounceMs ?? 1500;
 
     autoKotTimerRef.current = setTimeout(async () => {
+      if (busyRef.current) return; // a manual submit/print is already in flight — don't race it
       try {
         // /api/print/kot computes its delta strictly from persisted order_items — it has
         // no knowledge of this tab's in-memory cart. Without syncing first, this timer
@@ -688,6 +719,10 @@ export default function POS() {
             orderId: activeOrderId,
             items: buildItemsPayload(cartItems),
             discountAmount: discountAmt.toFixed(2),
+            // Must be re-sent on every sync, same as discountAmount — the server only
+            // preserves what's explicitly re-sent, so omitting this would silently
+            // reset an already-entered manual container charge back to 0.
+            containerCharge: containerCharge.toFixed(2),
           }),
           credentials: 'include',
         });
@@ -720,6 +755,17 @@ export default function POS() {
     };
   }, [cartItems, activeOrderId]); // settings intentionally omitted — read via closure at fire time
 
+  // Cancel a pending Auto-KOT timer before any manual submit/print action — otherwise
+  // a background auto-KOT fetch armed by a recent edit can race the manual action's
+  // own print request. Every manual path already re-syncs the full cart itself, a
+  // strict superset of what the debounced timer would have sent.
+  const cancelPendingAutoKot = () => {
+    if (autoKotTimerRef.current) {
+      clearTimeout(autoKotTimerRef.current);
+      autoKotTimerRef.current = null;
+    }
+  };
+
   // ── Create order mutation ────────────────────────────────────────────────────
 
   const createOrderMutation = useMutation({
@@ -744,26 +790,38 @@ export default function POS() {
         toast({ title: "KOT sent!" });
         setActiveOrderId(order.id);
         setCartLoaded(false);
-        triggerKOTPrint(order.id, order);
+        triggerKOTPrint(order.id, order).finally(() => setIsPrinting(false));
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
-        triggerBillPrint(order.id, order);
+        triggerBillPrint(order.id, order).finally(() => setIsPrinting(false));
         if (isSectionMode) {
           // Stay on screen so Settle can follow the same print (print now, settle after).
           setActiveOrderId(order.id);
           setCartLoaded(false);
         } else {
-          setCartItems([]); setDiscountPercent(0);
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
         navigate("/tables");
+      } else if (mode === "bill-print") {
+        // First-ever submit for this cart — Bill created the order itself (same as
+        // kot-print above). Stay on screen, mirroring updateOrderMutation's existing
+        // "bill-print" branch: plain Bill is a mid-service action, not "finish and leave".
+        setActiveOrderId(order.id);
+        setCartLoaded(false);
+        triggerBillPrint(order.id, order).finally(() => setIsPrinting(false));
+        apiRequest("POST", `/api/orders/${order.id}/bill-requested`, {})
+          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
+          .catch(() => {
+            // non-critical — bill is printed even if status update fails
+          });
       } else if (mode === "settle") {
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
@@ -775,6 +833,7 @@ export default function POS() {
     onError: (error: any) => {
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
+      setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
     },
   });
 
@@ -798,26 +857,26 @@ export default function POS() {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
         toast({ title: "KOT sent!" });
-        triggerKOTPrint(vars.orderId, order);
+        triggerKOTPrint(vars.orderId, order).finally(() => setIsPrinting(false));
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
-        triggerBillPrint(vars.orderId, order);
+        triggerBillPrint(vars.orderId, order).finally(() => setIsPrinting(false));
         if (!isSectionMode) {
-          setCartItems([]); setDiscountPercent(0);
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
         navigate("/tables");
       } else if (mode === "bill-print") {
         // Stays on screen (unlike save-print) — plain Bill is a mid-service
         // reprint/preview, not a "finish and leave" action.
-        triggerBillPrint(vars.orderId, order);
+        triggerBillPrint(vars.orderId, order).finally(() => setIsPrinting(false));
         apiRequest("POST", `/api/orders/${vars.orderId}/bill-requested`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
           .catch(() => {
@@ -834,6 +893,7 @@ export default function POS() {
     onError: (error: any) => {
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
+      setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
     },
   });
 
@@ -1045,23 +1105,10 @@ export default function POS() {
   const currentOrderType = form.watch("orderType");
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
   const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
-  // In table sessions (and quick-POS sections), container charge applies only to
-  // pickup/delivery items (not dine-in items) — same per-item logic either way.
   const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId || isSectionMode);
-  // A container is a physical unit — a 0.5 qty still needs one whole container, so
-  // each line rounds up individually (ceil-then-sum, not sum-then-ceil: two separate
-  // 0.5-qty lines need two containers, not one).
-  const containerQty = isTableSession
-    ? cartItems.filter(i => i.serviceMode === "pickup" || i.serviceMode === "delivery").reduce((s, i) => s + Math.ceil(i.quantity), 0)
-    : (isDeliveryOrPickup ? cartItems.reduce((s, i) => s + Math.ceil(i.quantity), 0) : 0);
-  // Dine-in items flagged as a leftover parcel get a flat container charge each (not multiplied by qty).
-  // Never applied to pickup/delivery orders — those already charge a container per item.
-  const containerRate = Number(settings?.containerCharge ?? 15);
-  const parcelCount = isDeliveryOrPickup ? 0 : cartItems.filter(
-    i => i.parcelLeftover && i.serviceMode !== "pickup" && i.serviceMode !== "delivery"
-  ).length;
-  const appliedContainerCharge = containerQty * containerRate + parcelCount * containerRate;
-  const grandTotal = total + appliedContainerCharge;
+  // Container charge is a manually staff-entered flat amount (containerCharge state),
+  // not computed from item quantities/serviceMode.
+  const grandTotal = total + containerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
 
@@ -1099,6 +1146,7 @@ export default function POS() {
     if (cartItems.length === 0) {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
       setSettlePhase("idle"); // a settle attempt on an unloaded/empty cart must not freeze the buttons
+      setIsPrinting(false); // ditto for a KOT/Bill attempt on an unloaded/empty cart
       return;
     }
 
@@ -1109,6 +1157,7 @@ export default function POS() {
         orderId: activeOrderId,
         items: itemsPayload,
         discountAmount: discountAmt.toFixed(2),
+        containerCharge: containerCharge.toFixed(2),
         customerName: data.customerName || "",
         customerPhone: data.customerPhone || "",
       });
@@ -1118,6 +1167,7 @@ export default function POS() {
         totalAmount: grandTotal.toFixed(2),
         taxAmount: tax.toFixed(2),
         discountAmount: discountAmt.toFixed(2),
+        containerCharge: containerCharge.toFixed(2),
         ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
         // Section counter orders carry their section id — separates them from generic pickup
         ...(isSectionMode ? { posSectionId: sectionId } : {}),
@@ -1126,14 +1176,18 @@ export default function POS() {
     }
   };
 
-  const isPending = createOrderMutation.isPending || updateOrderMutation.isPending || settleMutation.isPending;
+  const isPending = createOrderMutation.isPending || updateOrderMutation.isPending || settleMutation.isPending || isPrinting;
   const isEditMode = !!activeOrderId;
 
   // Tell the Electron main process whether a transaction is active so the
-  // auto-updater won't restart the app mid-order.
+  // auto-updater won't restart the app mid-order. Also mirrored into a ref so the
+  // Auto-KOT timer callback (which fires from a setTimeout, not a render) can check
+  // "is a manual submit/print already in flight" without racing it.
+  const busyRef = useRef(false);
   useEffect(() => {
     const active = isPending || settlePhase !== "idle";
     window.electronAPI?.setPosActive(active);
+    busyRef.current = active;
   }, [isPending, settlePhase]);
 
   // ── Submit action handlers ───────────────────────────────────────────────────
@@ -1151,15 +1205,19 @@ export default function POS() {
     }));
   };
 
-  const handleKOT     = () => { capturePreKOTItems(); submitModeRef.current = "kot-print"; triggerSubmit(); };
+  const handleKOT     = () => { cancelPendingAutoKot(); capturePreKOTItems(); submitModeRef.current = "kot-print"; setIsPrinting(true); triggerSubmit(); };
   const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
   const handleBillPrint = () => {
-    if (!activeOrderId) return;
     // Sync the current cart first — /api/print/bill reads order_items straight
     // from the DB, so anything added to the cart after the last save/KOT (e.g.
     // an item added right before printing) would otherwise be silently missing
-    // from the printed bill.
+    // from the printed bill. No longer requires activeOrderId — Bill can now
+    // create the order itself, same as KOT does, via the generic
+    // createOrderMutation/updateOrderMutation routing in triggerSubmit/onSubmit.
+    cancelPendingAutoKot();
+    capturePreKOTItems();
     submitModeRef.current = "bill-print";
+    setIsPrinting(true);
     triggerSubmit();
   };
 
@@ -1194,10 +1252,11 @@ export default function POS() {
     setPrintPreview({ title: 'KOT Preview', lines });
   };
 
-  const handleSave = () => { submitModeRef.current = "save"; triggerSubmit(); };
-  const handleSaveAndPrint = () => { submitModeRef.current = "save-print"; triggerSubmit(); };
+  const handleSave = () => { cancelPendingAutoKot(); submitModeRef.current = "save"; triggerSubmit(); };
+  const handleSaveAndPrint = () => { cancelPendingAutoKot(); submitModeRef.current = "save-print"; setIsPrinting(true); triggerSubmit(); };
   const handleSaveEBill = () => {
     const go = () => {
+      cancelPendingAutoKot();
       // Build and open WhatsApp URL right here — synchronous with user click, browser never blocks it
       const formData = form.getValues();
       const rawPhone = formData.customerPhone?.replace(/\D/g, "");
@@ -1222,7 +1281,7 @@ export default function POS() {
         discountAmt > 0 ? `Discount: -₹${discountAmt.toFixed(0)}` : null,
         `Tax: ₹${tax.toFixed(0)}`,
 
-        appliedContainerCharge > 0 ? `Container Charge: ₹${appliedContainerCharge.toFixed(0)}` : null,
+        containerCharge > 0 ? `Container Charge: ₹${containerCharge.toFixed(0)}` : null,
         `*TOTAL: ₹${grandTotal.toFixed(0)}*`,
         ``,
         settings?.footerNote || "Thank you for dining with us!",
@@ -1572,7 +1631,10 @@ export default function POS() {
       </Dialog>
 
       {/* ── Cancel Order Confirm ─────────────────────────────────────────────── */}
-      <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+      <Dialog
+        open={showCancelConfirm}
+        onOpenChange={(v) => { setShowCancelConfirm(v); if (!v) setCancelReason(""); }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Cancel Order?</DialogTitle>
@@ -1580,9 +1642,26 @@ export default function POS() {
               This will permanently cancel the order and free the table. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-gray-600">
+              Reason for cancellation <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="e.g. Customer changed their mind, ordered by mistake…"
+              rows={3}
+              className="text-sm resize-none"
+              autoFocus
+            />
+          </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setShowCancelConfirm(false)}>Keep Order</Button>
-            <Button variant="destructive" onClick={handleCancelOrder} disabled={actionLoading}>
+            <Button
+              variant="destructive"
+              onClick={handleCancelOrder}
+              disabled={actionLoading || !cancelReason.trim()}
+            >
               Cancel Order
             </Button>
           </div>
@@ -1668,7 +1747,7 @@ export default function POS() {
             {/* New Order — hidden on mobile */}
             <button
               disabled={isOff("clearCart")}
-              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); })}
+              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
               + New Order
@@ -1888,7 +1967,6 @@ export default function POS() {
       {isSectionMode && (
         <SectionParcelToggle
           parcel={activeItemMode === "pickup"}
-          containerRate={containerRate}
           onChange={(parcel) => setActiveItemMode(parcel ? "pickup" : "dinein")}
         />
       )}
@@ -2330,7 +2408,7 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); })}
+                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); })}
                   className="text-[10px] text-[var(--text-3)] hover:text-[var(--danger)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
                 >
                   Clear all
@@ -2373,7 +2451,7 @@ export default function POS() {
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
                       {item.parcelLeftover && (
-                        <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel (+{fmt(containerRate)})</div>
+                        <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel</div>
                       )}
                     </div>
                     {/* Quantity is display-only here — direct inline edits bypassed the deliberate
@@ -2558,13 +2636,22 @@ export default function POS() {
               <span className="font-medium text-gray-700">{fmt(tax)}</span>
             </div>
 
-            {/* Container Charge — pickup/delivery items + dine-in leftover parcels */}
-            {appliedContainerCharge > 0 && (
-              <div className="flex justify-between text-xs text-gray-500">
-                <span>Container Charge <span className="text-gray-400">({fmt(containerRate)} × {containerQty + parcelCount})</span></span>
-                <span className="font-medium text-gray-700">{fmt(appliedContainerCharge)}</span>
+            {/* Container Charge — manually entered by staff, like a delivery charge */}
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-gray-500 flex-1">Container Charge</span>
+              <div className="flex items-center gap-1">
+                <span className="text-gray-400 text-[10px]">₹</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={containerCharge || ""}
+                  onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="0"
+                  className="w-16 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
+                />
               </div>
-            )}
+            </div>
             <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1.5 mt-0.5">
               <span className="text-gray-800">Total</span>
               <span className="text-green-600 text-base">{fmt(grandTotal)}</span>
@@ -2590,6 +2677,14 @@ export default function POS() {
               submitModeRef.current = "settle";
               triggerSubmit();
             }}
+            // Only offered once the order actually exists — a never-saved cart has
+            // nothing to cancel server-side (use Clear Cart instead). Hands off to the
+            // same PIN-gated cancel-confirm dialog the "more actions" menu already uses,
+            // rather than a second reason-collecting flow living inside this dialog.
+            onCancelOrder={activeOrderId ? () => go("cancelOrder", "Cancel Order", () => {
+              setShowSettleDialog(false);
+              setShowCancelConfirm(true);
+            }) : undefined}
           />
 
           {/* Action buttons */}
@@ -2601,9 +2696,8 @@ export default function POS() {
                 subtotal={subtotal}
                 tax={tax}
                 taxRatePct={settings?.taxRate ?? 18}
-                containerCharge={appliedContainerCharge}
-                containerRate={containerRate}
-                containerCount={containerQty + parcelCount}
+                containerCharge={containerCharge}
+                onContainerChargeChange={setContainerCharge}
                 grandTotal={grandTotal}
                 hasItems={hasItems}
                 isPending={isPending}
@@ -2646,7 +2740,7 @@ export default function POS() {
                 {isOff("printKot") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
               <button
-                disabled={!activeOrderId || isPending || isOff("printBill")}
+                disabled={!hasItems || isPending || isOff("printBill")}
                 onClick={() => go("printBill", "Print Bill", handleBillPrint)}
                 className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
               >

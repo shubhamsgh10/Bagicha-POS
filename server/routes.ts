@@ -67,8 +67,7 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
-import { priceOrder, computeTotalsFromLines, pricingRates } from "./services/orderPricing";
-import { computeContainerCharge } from "@shared/orderPricing";
+import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
 import { buildSpecialInstructions } from "@shared/orderItemText";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
@@ -1805,7 +1804,7 @@ export async function registerRoutes(
       // 400 "Invalid order data" is what hid the orderNumber collision bug.
       let priced;
       try {
-        priced = await priceOrder(lineItems, orderInfo.discountAmount);
+        priced = await priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge);
       } catch (pricingErr) {
         console.warn("[order] rejected invalid line items:", pricingErr);
         return res.status(400).json({
@@ -1835,6 +1834,7 @@ export async function registerRoutes(
         const costResult = costResults[idx];
         return {
           menuItemId: Number(item.menuItemId),
+          name: item.name ?? null,
           quantity: Number(item.quantity),
           price: String(priced.lines[idx].unitPrice),
           // orderItems has no addons column — fold addon names into the same free-text
@@ -1942,7 +1942,7 @@ export async function registerRoutes(
   app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { items, discountAmount, customerName, customerPhone } = req.body;
+      const { items, discountAmount, containerCharge, customerName, customerPhone } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
 
       // Recompute all money server-side from DB prices — never trust client totals.
@@ -1952,7 +1952,7 @@ export async function registerRoutes(
       // generic 500 below.
       let priced;
       try {
-        priced = await priceOrder(lineItems, discountAmount);
+        priced = await priceOrder(lineItems, discountAmount, containerCharge);
       } catch (pricingErr) {
         console.warn("[order] rejected invalid line items:", pricingErr);
         return res.status(400).json({
@@ -2267,18 +2267,14 @@ export async function registerRoutes(
   app.get("/api/reports/payment-summary", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      let allOrders: any[];
-      if (startDate && endDate) {
-        allOrders = await storage.getOrdersByDateRange(
-          new Date(startDate as string),
-          new Date(endDate as string)
-        );
-      } else {
-        // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — not a naive
-        // local-midnight calendar day.
-        const { start, end } = businessDayRange(todayBusinessDate());
-        allOrders = await storage.getOrdersByDateRange(start, end);
-      }
+      // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — the previous
+      // `new Date(startDate)` here parsed a bare "YYYY-MM-DD" as UTC midnight, i.e.
+      // 5:30am IST, so any order placed later that same IST day (the common case —
+      // most orders happen in the afternoon/evening) fell outside the requested range's
+      // upper bound and silently vanished from "today"'s report.
+      const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
+      const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
+      const allOrders: any[] = await storage.getOrdersByDateRange(start, end);
 
       // Only count paid orders for revenue; due orders counted separately
       const paid = allOrders.filter((o: any) => o.paymentStatus === "paid");
@@ -2371,9 +2367,13 @@ export async function registerRoutes(
   app.put("/api/orders/:id/cancel", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      // A reason is required — this is the whole point of the box: an accountable
+      // record of WHY an order was voided, surfaced later in Order History/Reports.
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      await storage.updateOrder(id, { status: "cancelled" } as any);
+      await storage.updateOrder(id, { status: "cancelled", cancelReason: reason } as any);
       // Non-fatal — the order is already marked cancelled above; a failure here must not
       // report "Failed to cancel order" for an order that genuinely IS cancelled now
       // (same reasoning as the settlement/creation table-status fixes elsewhere in this
@@ -2405,6 +2405,7 @@ export async function registerRoutes(
         orderNumber: (order as any).orderNumber,
         tableNumber: (order as any).tableNumber,
         totalAmount: (order as any).totalAmount,
+        reason,
       });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
@@ -2498,12 +2499,11 @@ export async function registerRoutes(
       const targetExistingItems = await storage.getOrderItems(targetOrderId);
       const allItems = [...targetExistingItems, ...sourceItems];
 
-      // Recalculate target order totals using the configured tax rate AND container
-      // charge — computeTotalsFromLines previously had no container term at all, so a
-      // merge silently dropped any parcel container charge baked into either order's
-      // totalAmount. Also persists subtotalAmount/containerCharge (see CLAUDE.md).
-      const { containerRate } = pricingRates();
-      const containerCharge = computeContainerCharge(allItems, containerRate);
+      // Container charge is a manually-entered flat amount per order (not computed
+      // from item quantities/serviceMode) — a merge simply combines whatever the two
+      // orders already had, so the combined charge isn't silently dropped.
+      const containerCharge = (Number((targetOrder as any).containerCharge) || 0)
+        + (Number((sourceOrder as any).containerCharge) || 0);
       const merged = computeTotalsFromLines(
         allItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (targetOrder as any).discountAmount,
@@ -2563,8 +2563,6 @@ export async function registerRoutes(
       if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
       const remainingItems = allItems.filter((i) => !itemIds.includes(i.id));
 
-      const { taxRate, containerRate } = pricingRates();
-
       // The source order's existing discount is left entirely on the source (see
       // CLAUDE.md — this is aggregate-neutral by design, not a bug), UNLESS it now
       // exceeds what remains after the split-out items leave — computeTotals' clamp
@@ -2579,19 +2577,19 @@ export async function registerRoutes(
         });
       }
 
-      // Calculate the new order's total using the configured tax rate + its own
-      // container charge (previously always 0 — computeTotalsFromLines had no
-      // container term).
-      const newContainerCharge = computeContainerCharge(splitItems, containerRate);
+      // Container charge is now a manually-entered flat amount per order, not computed
+      // from item quantities — same treatment as the existing discount above: it stays
+      // entirely on the source/remaining order (aggregate-neutral), and the new
+      // split-out order starts at 0 (staff can enter one manually for that order if
+      // it needs its own container).
+      const newContainerCharge = 0;
       const splitTotals = computeTotalsFromLines(
         splitItems.map((i) => parseFloat(i.price as any) * i.quantity),
         "0",
         newContainerCharge,
       );
 
-      // Recalculate the source order's totals over what remains, same container-charge
-      // fix.
-      const srcContainerCharge = computeContainerCharge(remainingItems, containerRate);
+      const srcContainerCharge = Number((sourceOrder as any).containerCharge) || 0;
       const srcTotals = computeTotalsFromLines(
         remainingItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (sourceOrder as any).discountAmount,
@@ -2811,8 +2809,12 @@ export async function registerRoutes(
   app.get("/api/reports/top-items", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      const start = startDate ? new Date(startDate as string) : undefined;
-      const end   = endDate   ? new Date(endDate   as string) : undefined;
+      // Business day (5am IST cutoff) when a bound is given — see payment-summary's
+      // comment above for why raw `new Date("YYYY-MM-DD")` silently dropped today's
+      // later orders. Genuinely open-ended (no date at all) stays undefined, matching
+      // storage.getTopSellingItems' own "all time" behavior for a missing bound.
+      const start = startDate ? businessDayRange((startDate as string).slice(0, 10)).start : undefined;
+      const end   = endDate   ? businessDayRange((endDate as string).slice(0, 10)).end     : undefined;
       const topItems = await storage.getTopSellingItems(10, start, end);
       res.json(topItems);
     } catch (error) {
@@ -2823,17 +2825,18 @@ export async function registerRoutes(
   app.get("/api/reports/sales", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
-      let orders;
-      if (startDate && endDate) {
-        orders = await storage.getOrdersByDateRange(
-          new Date(startDate as string),
-          new Date(endDate as string)
-        );
-      } else {
-        // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx.
-        const { start, end } = businessDayRange(todayBusinessDate());
-        orders = await storage.getOrdersByDateRange(start, end);
-      }
+      // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — a bare
+      // "YYYY-MM-DD" parsed as raw UTC midnight (the previous `new Date(startDate)`)
+      // is 5:30am IST, so any order placed later that same IST day silently fell
+      // outside the range and vanished from "today"'s report.
+      const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
+      const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
+      const allOrders = await storage.getOrdersByDateRange(start, end);
+      // A cancelled order isn't a sale — it used to count toward Total Sales/Total
+      // Orders/Avg Order Value here (getOrdersByDateRange has no status filter), which
+      // inflated every one of those figures by however much got cancelled in the range.
+      // See the dedicated Cancelled Orders report for cancelled-specific figures.
+      const orders = allOrders.filter((o: any) => o.status !== "cancelled");
 
       const totalSales = orders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0);
       res.json({
@@ -2844,6 +2847,26 @@ export async function registerRoutes(
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to generate sales report" });
+    }
+  });
+
+  // ── Reports: Cancelled Orders ─────────────────────────────────────────────────
+  // Separate from /api/reports/sales (which now excludes cancelled orders entirely)
+  // — this is the dedicated view for reviewing what got cancelled and why, filterable
+  // by mode (dine-in/pickup/delivery) client-side same as the Sales tab's own filters.
+  app.get("/api/reports/cancelled", requireAuth, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      // Business day (5am IST cutoff) — see /api/reports/sales' identical comment for
+      // why a raw `new Date("YYYY-MM-DD")` here silently excluded today's later orders.
+      const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
+      const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
+      const allOrders = await storage.getOrdersByDateRange(start, end);
+      const orders = allOrders.filter((o: any) => o.status === "cancelled");
+      const wouldBeTotal = orders.reduce((sum: number, o: any) => sum + parseFloat(o.totalAmount), 0);
+      res.json({ totalCancelled: orders.length, wouldBeTotal, orders });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to generate cancelled orders report" });
     }
   });
 

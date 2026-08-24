@@ -106,6 +106,7 @@ export const orders = pgTable("orders", {
   paymentStatus: text("payment_status").notNull().default("pending"),
   paymentMethod: text("payment_method"),
   notes: text("notes"),
+  cancelReason: text("cancel_reason"), // set by PUT /api/orders/:id/cancel; null unless status="cancelled"
   paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
   changeAmount: decimal("change_amount", { precision: 10, scale: 2 }).default("0"),
   paymentBreakdown: json("payment_breakdown").$type<Record<string, string>>(),

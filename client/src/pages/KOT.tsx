@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Header } from "@/components/Header";
-import { FileText, Printer, Clock, CheckCircle, ChefHat } from "lucide-react";
+import { FileText, Printer, Clock, CheckCircle, ChefHat, XCircle } from "lucide-react";
 import { KOT_STATUS } from "@/lib/constants";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -121,13 +121,18 @@ export default function KOT() {
     }
   };
 
-  const KOTCard = ({ ticket, idx }: { ticket: any; idx: number }) => (
+  const KOTCard = ({ ticket, idx }: { ticket: any; idx: number }) => {
+    // completeKotTicketsForOrder reuses the existing "completed" ticket status for both
+    // a normally-finished order AND a cancelled one (see CLAUDE.md) — orderStatus (from
+    // the server's join to the parent order) is the only way to tell them apart here.
+    const isCancelled = ticket.orderStatus === "cancelled";
+    return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: idx * 0.04, duration: 0.2 }}
       className={`rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md
-                  border-l-4 ${statusAccent[ticket.status] || "border-l-gray-300"}
+                  border-l-4 ${isCancelled ? "border-l-gray-400 bg-gray-50/40" : statusAccent[ticket.status] || "border-l-gray-300"}
                   hover:shadow-xl hover:bg-[var(--paper-0)] transition-all duration-200`}
     >
       <div className="px-4 pt-3 pb-2 flex justify-between items-start">
@@ -135,10 +140,17 @@ export default function KOT() {
           <p className="font-bold text-gray-800">{ticket.kotNumber}</p>
           <p className="text-xs text-gray-400 mt-0.5">{formatTime(ticket.printedAt)}</p>
         </div>
-        <span className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg ${statusBadge[ticket.status] || "bg-gray-100/80 text-gray-600"}`}>
-          {getStatusIcon(ticket.status)}
-          <span className="capitalize">{ticket.status.replace("-", " ")}</span>
-        </span>
+        {isCancelled ? (
+          <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg bg-gray-200/80 text-gray-600">
+            <XCircle className="w-3 h-3" />
+            <span>Cancelled</span>
+          </span>
+        ) : (
+          <span className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg ${statusBadge[ticket.status] || "bg-gray-100/80 text-gray-600"}`}>
+            {getStatusIcon(ticket.status)}
+            <span className="capitalize">{ticket.status.replace("-", " ")}</span>
+          </span>
+        )}
       </div>
 
       <div className="px-4 pb-2 space-y-1.5">
@@ -201,7 +213,8 @@ export default function KOT() {
         )}
       </div>
     </motion.div>
-  );
+    );
+  };
 
   if (isLoading) {
     return (

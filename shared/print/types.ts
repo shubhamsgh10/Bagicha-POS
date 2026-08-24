@@ -13,7 +13,6 @@ export interface PrinterConfig {
 
 export interface KOTPrintSettings {
   enabled: boolean;
-  printOnBill: boolean;
   printModifiedKOT: boolean;
   printModifiedItemsOnly: boolean;
   printCancelledKOT: boolean;

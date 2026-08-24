@@ -113,7 +113,6 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
   printers: [],
   kot: {
     enabled: true,
-    printOnBill: true,
     printModifiedKOT: true,
     printModifiedItemsOnly: true,
     printCancelledKOT: true,

@@ -1,6 +1,6 @@
 /**
  * Verifies server-side order pricing: DB-floor validation (anti-under-ring),
- * discount clamping, tax recompute, and container charge.
+ * discount clamping, tax recompute, and the manually-entered container charge.
  * Run: npx tsx scripts/verify-order-pricing.ts
  */
 import { priceResolved, computeTotals, type ResolvedMenuItem } from "../shared/orderPricing";
@@ -9,7 +9,7 @@ const menu = new Map<number, ResolvedMenuItem>([
   [1, { id: 1, price: "500", sizes: null }],
   [2, { id: 2, price: "200", sizes: [{ size: "Large", price: 350 }] }],
 ]);
-const rates = { taxRate: 0.18, containerRate: 15 };
+const rates = { taxRate: 0.18 };
 
 const checks: Array<[string, boolean]> = [];
 const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
@@ -45,11 +45,26 @@ const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
   checks.push(["tax/total recomputed (472)", near(r.tax, 72) && near(r.total, 472)]);
 }
 
-// 6. Container charge added for pickup lines.
+// 6. Container charge is a manually staff-entered flat amount, passed through as its
+//    own argument — not derived from item quantities/serviceMode.
 {
-  const r = priceResolved([{ menuItemId: 1, quantity: 2, price: 500, serviceMode: "pickup" }], menu, rates, 0);
-  // subtotal 1000, tax 180, container 2×15=30 → 1210
-  checks.push(["pickup container charge (1210)", near(r.total, 1210)]);
+  const r = priceResolved([{ menuItemId: 1, quantity: 2, price: 500, serviceMode: "pickup" }], menu, rates, 0, 30);
+  // subtotal 1000, tax 180, manual container charge 30 → 1210
+  checks.push(["manual container charge added to total (1210)", near(r.total, 1210) && near(r.containerCharge, 30)]);
+}
+
+// 6b. Container charge is unaffected by item serviceMode/quantity — plain dine-in
+//     items with no container charge argument still contribute 0.
+{
+  const r = priceResolved([{ menuItemId: 1, quantity: 2, price: 500, serviceMode: "dinein" }], menu, rates, 0);
+  checks.push(["no container charge argument defaults to 0", near(r.containerCharge, 0)]);
+}
+
+// 6c. A negative/garbage container charge is clamped to 0, never allowed to reduce
+//     the total (there's no floor to validate it against, unlike menu prices).
+{
+  const r = priceResolved([{ menuItemId: 1, quantity: 1, price: 500 }], menu, rates, 0, -50);
+  checks.push(["negative container charge clamped to 0", near(r.containerCharge, 0)]);
 }
 
 // 7. Unknown menu item rejected.

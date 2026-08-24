@@ -17,19 +17,20 @@ import {
 
 export type { PricingItemInput, PricedOrder, PricedLine, ResolvedMenuItem } from "@shared/orderPricing";
 
-/** Rates from the settings singleton (tax as a fraction, container as ₹/unit). */
-export function pricingRates(): { taxRate: number; containerRate: number } {
+/** Rates from the settings singleton (tax as a fraction). */
+export function pricingRates(): { taxRate: number } {
   const settings = getSettings() as any;
   return {
     taxRate: Number(settings?.taxRate ?? 18) / 100,
-    containerRate: Number(settings?.containerCharge ?? 15),
   };
 }
 
-/** DB-backed pricing for POST /orders and PUT /orders/:id/items. */
+/** DB-backed pricing for POST /orders and PUT /orders/:id/items. `containerChargeRaw`
+ * is the staff-typed manual container charge for this order (see shared/orderPricing.ts). */
 export async function priceOrder(
   items: PricingItemInput[],
   discountAmountRaw: unknown,
+  containerChargeRaw: unknown = 0,
 ): Promise<PricedOrder> {
   const list = Array.isArray(items) ? items : [];
   const ids = Array.from(
@@ -41,13 +42,14 @@ export async function priceOrder(
   const byId = new Map<number, ResolvedMenuItem>(
     rows.map((r) => [r.id, { id: r.id, price: r.price, sizes: r.sizes ?? null }]),
   );
-  return priceResolved(list, byId, pricingRates(), discountAmountRaw);
+  return priceResolved(list, byId, pricingRates(), discountAmountRaw, containerChargeRaw);
 }
 
 /**
  * Recompute totals for an order whose items already live in the DB (merge/split),
- * using the configured tax rate and a clamped discount. Pass `containerCharge`
- * (from computeContainerCharge over the same item rows) or it defaults to 0.
+ * using the configured tax rate and a clamped discount. `containerCharge` is a
+ * manually-entered flat amount, not derived from the items — pass through whatever
+ * value should apply to the recomputed order (defaults to 0).
  */
 export function computeTotalsFromLines(
   lineTotals: number[],
