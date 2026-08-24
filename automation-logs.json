@@ -385,5 +385,16 @@
     "sentAt": "2026-07-21T19:51:21.626Z",
     "status": "sent",
     "campaign": "DUE_REMINDER"
+  },
+  {
+    "id": "e9ff5f99-e95d-4033-882f-6ed9bdbf4dff",
+    "customerId": "8319526008",
+    "customerName": "Adhish Rateria",
+    "phone": "918319526008",
+    "trigger": "WIN_BACK",
+    "message": "Hi Adhish! 🌿 We've been missing you at *Bagicha*! It's been 33 days since your last visit (especially your favourite *Chilli*). Come back and enjoy *10% off your next order* — just show this message. Valid for 7 days. See you soon! 🍽️",
+    "sentAt": "2026-08-24T10:05:33.848Z",
+    "status": "sent",
+    "campaign": "WIN_BACK"
   }
 ]

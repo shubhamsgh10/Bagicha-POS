@@ -287,22 +287,26 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
     >
       <img src={pizzaBgImage} alt="" className="w-full h-full object-contain" draggable={false} />
       {/* No card/background block — just the chevron + label, colored to match the
-          Bagicha logo's own navy + green (sampled directly from the logo asset:
-          #084890 navy for the "B" mark, #40C040 green for its leaf accent), with a
-          soft white shadow so it stays legible sitting directly over the
-          illustration. Plain CSS `animation` (see .swipe-up-hint in index.css)
-          instead of framer-motion's `animate` prop — guaranteed to keep running
-          regardless of React re-renders or being nested inside the splash's
-          drag-enabled parent. */}
+          pen-and-ink sketch palette of `Login Page Background.png` (sampled directly
+          from that asset, not guessed — see CLAUDE.md): #1b233c is its dominant
+          linework ink (a desaturated navy-charcoal, NOT the logo's brighter #084890),
+          #5b6c44 its muted sage/olive foliage (NOT the logo's brighter #40C040).
+          Keeps the two-tone ink+foliage structure the illustration itself uses. Both
+          clear WCAG AA over the near-white splash (≈15:1 and ≈5.6:1), so the white
+          halo behind them is only insurance for the rare case the hint overlaps a
+          dark sketch element — kept soft so it reads as paper glow, not a hard
+          outline. Plain CSS `animation` (see .swipe-up-hint in index.css) instead of
+          framer-motion's `animate` prop — guaranteed to keep running regardless of
+          React re-renders or being nested inside the splash's drag-enabled parent. */}
       <div className="swipe-up-hint absolute bottom-10 inset-x-0 flex flex-col items-center gap-1 pointer-events-none">
         <ChevronsUp
           className="w-7 h-7"
           strokeWidth={2.75}
-          style={{ color: "#084890", filter: "drop-shadow(0 1px 4px rgba(255,255,255,0.9))" }}
+          style={{ color: "#1b233c", filter: "drop-shadow(0 1px 3px rgba(255,255,255,0.85))" }}
         />
         <span
-          className="font-bold text-sm tracking-wide"
-          style={{ color: "#6FD16F", textShadow: "0 1px 4px rgba(255,255,255,0.9), 0 0 10px rgba(255,255,255,0.7)" }}
+          className="font-semibold text-sm tracking-[0.14em] uppercase"
+          style={{ color: "#5b6c44", textShadow: "0 1px 3px rgba(255,255,255,0.85), 0 0 8px rgba(255,255,255,0.6)" }}
         >
           Swipe up
         </span>
