@@ -11,6 +11,8 @@ import {
   Star, LayoutGrid, Calendar, ChevronDown, Check,
 } from "lucide-react";
 import { serialNum } from "@/lib/orderDisplay";
+import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
+import { businessDayRange, todayBusinessDate } from "@shared/businessDay";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -329,7 +331,16 @@ export default function LiveAnalytics() {
   });
 
   const { data: allOrders = [] } = useQuery<any[]>({
-    queryKey: ["/api/orders"],
+    queryKey: ["/api/orders", "today", todayBusinessDate()],
+    queryFn: async () => {
+      const { start, end } = businessDayRange(todayBusinessDate());
+      const r = await fetch(
+        apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`),
+        { credentials: "include" }
+      );
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
     staleTime: 0,
     refetchInterval: 5000,
   });
@@ -342,7 +353,7 @@ export default function LiveAnalytics() {
 
   const todayStr = now.toDateString();
   const todayOrders    = allOrders.filter((o: any) => new Date(o.createdAt).toDateString() === todayStr);
-  const activeOrdersList = allOrders.filter((o: any) => o.status === "pending" || o.status === "preparing");
+  const activeOrdersList = allOrders.filter((o: any) => ACTIVE_ORDER_STATUSES.includes(o.status));
   const innerTables    = allTables.filter((t: any) => t.section?.toLowerCase() === "inner" && t.status === "occupied");
   const outerTables    = allTables.filter((t: any) => t.section?.toLowerCase() === "outer" && t.status === "occupied");
 
@@ -369,7 +380,7 @@ export default function LiveAnalytics() {
       id: "active-orders",
       label: "Active Orders",
       value: String(stats?.activeOrders || 0),
-      sub: "Pending / preparing",
+      sub: "Pending / preparing / ready",
       icon: Clock,
       gradient: "from-amber-500 to-orange-500",
       bg: "bg-amber-500/10",
@@ -482,7 +493,7 @@ export default function LiveAnalytics() {
     if (id === "active-orders") {
       return (
         <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Orders — Pending &amp; Preparing</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Active Orders — Pending, Preparing &amp; Ready</p>
           {activeOrdersList.length === 0 ? (
             <p className="text-sm text-muted-foreground">No active orders right now.</p>
           ) : (

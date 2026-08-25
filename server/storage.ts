@@ -19,6 +19,7 @@ import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
 import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
+import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
 import { getSettings } from "./settingsStore";
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
@@ -1120,7 +1121,11 @@ export class DatabaseStorage implements IStorage {
     const [activeResult] = await db.select({
       count: sql<number>`count(*)`
     }).from(orders).where(
-      sql`${orders.status} NOT IN ('served', 'cancelled')`
+      and(
+        inArray(orders.status, [...ACTIVE_ORDER_STATUSES]),
+        gte(orders.createdAt, today),
+        lte(orders.createdAt, tomorrow),
+      )
     );
 
     const [revenueResult] = await db.select({
@@ -1143,7 +1148,7 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
       .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
-      .orderBy(sql`sum(${orderItems.quantity}) desc`)
+      .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`)
       .limit(1);
 
     const todayOrders = Number(todayResult?.count || 0);
@@ -1254,7 +1259,7 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
       .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
-      .orderBy(sql`sum(${orderItems.quantity}) desc`)
+      .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`)
       .limit(limit);
 
     return result.map(r => ({ name: r.name, qty: Number(r.qty) }));
