@@ -95,6 +95,33 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
+// Order-type tab icons — inline SVG, no emoji, matching the Bagicha design system's icon style.
+function DineInIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round">
+      <line x1="5" y1="3" x2="15" y2="17" />
+      <line x1="15" y1="3" x2="5" y2="17" />
+    </svg>
+  );
+}
+function TakeawayIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 7h10l-1 10H6L5 7z" />
+      <path d="M7 7a3 3 0 0 1 6 0" />
+    </svg>
+  );
+}
+function DeliveryIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" className={className} stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="15" r="3" />
+      <circle cx="15" cy="15" r="3" />
+      <path d="M5 15l4-8h4l2 4M9 7h3" />
+    </svg>
+  );
+}
+
 // Long-press (touch/mouse) + right-click handlers that fire `onLongPress` after ~500ms hold.
 function longPressHandlers(onLongPress: () => void) {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1030,8 +1057,24 @@ export default function POS() {
   };
 
   const removeFromCart = (cartKey: string) => setCartItems(prev => prev.filter(c => c.cartKey !== cartKey));
-  const toggleParcel = (cartKey: string) =>
-    setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, parcelLeftover: !c.parcelLeftover } : c));
+
+  // Quick +1/-1 quantity stepper (menu tiles + cart rows). Reuses the exact same
+  // "editItem" gate the Edit-Item modal's own qty input already sits behind, and
+  // "removeItem" when a decrement would empty the line — no new permission surface,
+  // just a faster path to what Edit Item and Remove already allow. See the removed
+  // inline stepper note elsewhere in this file for why quantity must never bypass
+  // go()/isOff() again.
+  const bumpCartQty = (cartKey: string, delta: number) => {
+    const current = cartItems.find(c => c.cartKey === cartKey);
+    if (!current) return;
+    if (delta < 0 && current.quantity + delta <= 0) {
+      go("removeItem", "Remove Item", () => removeFromCart(cartKey));
+      return;
+    }
+    go("editItem", "Edit Item", () => {
+      setCartItems(prev => prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + delta } : c));
+    });
+  };
 
   // Open item: off-menu line typed by staff. Always its own cart line (never merged),
   // under a fresh negative id so the server's menuItemId-keyed KOT delta stays correct.
@@ -1398,7 +1441,7 @@ export default function POS() {
               <label className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wide">Quantity *</label>
               <div className="flex items-center gap-3 mt-1">
                 <button
-                  onClick={() => { const next = Math.max(0.5, Math.round((openItemQty - 0.5) * 10) / 10); setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
+                  onClick={() => { const next = Math.max(1, openItemQty - 1); setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
                   className="w-9 h-9 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition-colors"
                 >
                   <Minus className="w-4 h-4 text-gray-700" />
@@ -1418,7 +1461,7 @@ export default function POS() {
                   className="text-lg font-bold text-gray-800 w-16 text-center border border-gray-200 rounded-lg outline-none focus:border-green-400 bg-white py-1"
                 />
                 <button
-                  onClick={() => { const next = Math.round((openItemQty + 0.5) * 10) / 10; setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
+                  onClick={() => { const next = openItemQty + 1; setOpenItemQty(next); setOpenItemQtyRaw(String(next)); }}
                   className="w-9 h-9 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center transition-colors"
                 >
                   <Plus className="w-4 h-4" />
@@ -1804,36 +1847,41 @@ export default function POS() {
               const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               if (isTableSession) {
                 // "Adding as:" strip — tab clicks change item mode, not order type
-                const modes: [ItemServiceMode, string, string][] = [
-                  ["dinein",   "🍽",  "Dine-In" ],
-                  ["pickup",   "📦",  "Pickup"  ],
-                  ["delivery", "🛵",  "Delivery"],
+                const modes: [ItemServiceMode, React.ComponentType<{ className?: string }>, string][] = [
+                  ["dinein",   DineInIcon,   "Dine-In" ],
+                  ["pickup",   TakeawayIcon, "Pickup"  ],
+                  ["delivery", DeliveryIcon, "Delivery"],
                 ];
                 return (
-                  <div className="flex items-center gap-1 bg-gray-100 rounded-lg px-1.5 py-1">
-                    <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide mr-1 whitespace-nowrap">Adding as</span>
-                    {modes.map(([mode, icon, label]) => (
-                      <button
-                        key={mode}
-                        onClick={() => setActiveItemMode(mode)}
-                        className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
-                          activeItemMode === mode
-                            ? mode === "dinein"   ? "bg-green-600 text-white shadow-sm"
-                            : mode === "pickup"   ? "bg-blue-600 text-white shadow-sm"
-                            :                       "bg-amber-500 text-white shadow-sm"
-                            : "text-gray-500 hover:text-gray-800 hover:bg-gray-200"
-                        }`}
-                      >
-                        <span>{icon}</span>
-                        <span>{label}</span>
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] font-bold uppercase tracking-wide mr-1 whitespace-nowrap" style={{ color: "var(--text-3)" }}>Adding as</span>
+                    <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
+                      {modes.map(([mode, Icon, label]) => {
+                        const active = activeItemMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            onClick={() => setActiveItemMode(mode)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold transition-all duration-150"
+                            style={active
+                              ? { background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }
+                              : { color: "var(--text-2)" }}
+                          >
+                            <Icon className="w-3 h-3" />
+                            <span>{label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               }
               // Normal order type tabs (standalone pickup/delivery or new dine-in without table)
+              const orderTypeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+                "dine-in": DineInIcon, takeaway: TakeawayIcon, delivery: DeliveryIcon,
+              };
               return (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
                   {([["dine-in","Dine In"],["delivery","Delivery"],["takeaway","Pick Up"]] as const)
                     .filter(([val]) =>
                       posMode === "delivery" ? val === "delivery" :
@@ -1842,16 +1890,17 @@ export default function POS() {
                     )
                     .map(([val, label]) => {
                     const active = form.watch("orderType") === val;
+                    const Icon = orderTypeIcons[val];
                     return (
                       <button
                         key={val}
                         onClick={() => { if (!posMode) form.setValue("orderType", val); }}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${
-                          active
-                            ? "bg-green-600 text-white shadow-sm"
-                            : posMode ? "text-gray-400 cursor-default" : "text-gray-500 hover:text-gray-800"
-                        }`}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-all duration-150 ${posMode ? "cursor-default" : ""}`}
+                        style={active
+                          ? { background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }
+                          : { color: posMode ? "var(--text-3)" : "var(--text-2)" }}
                       >
+                        <Icon className="w-3.5 h-3.5" />
                         {label}
                       </button>
                     );
@@ -2112,7 +2161,7 @@ export default function POS() {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => {
-                      const next = Math.max(0.5, Math.round((modal.qty - 0.5) * 10) / 10);
+                      const next = Math.max(1, modal.qty - 1);
                       setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
                     }}
                     className="w-9 h-9 rounded-full bg-white border-2 border-[var(--green-700)] hover:bg-[var(--success-bg)] flex items-center justify-center transition-colors"
@@ -2137,7 +2186,7 @@ export default function POS() {
                   />
                   <button
                     onClick={() => {
-                      const next = Math.round((modal.qty + 0.5) * 10) / 10;
+                      const next = modal.qty + 1;
                       setModal(m => m ? { ...m, qty: next, qtyRaw: String(next) } : m);
                     }}
                     className="w-9 h-9 rounded-full bg-white border-2 border-[var(--green-700)] hover:bg-[var(--success-bg)] flex items-center justify-center transition-colors"
@@ -2230,23 +2279,25 @@ export default function POS() {
       {(!posMode && !isSectionMode && (!!preselectedTableId || isEditMode)) && (
         <div className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-100/60"
           style={{ background: "var(--paper-0)" }}>
-          <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Adding as</span>
-          {([["dinein", "🍽", "Dine-In"], ["pickup", "📦", "Pickup"], ["delivery", "🛵", "Delivery"]] as [ItemServiceMode, string, string][]).map(([mode, icon, label]) => (
-            <button
-              key={mode}
-              onClick={() => setActiveItemMode(mode)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
-                activeItemMode === mode
-                  ? mode === "dinein"   ? "bg-green-600 text-white shadow-sm"
-                  : mode === "pickup"   ? "bg-blue-600 text-white shadow-sm"
-                  :                       "bg-amber-500 text-white shadow-sm"
-                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}
-            >
-              <span>{icon}</span>
-              <span>{label}</span>
-            </button>
-          ))}
+          <span className="text-[9px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: "var(--text-3)" }}>Adding as</span>
+          <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
+            {([["dinein", DineInIcon, "Dine-In"], ["pickup", TakeawayIcon, "Pickup"], ["delivery", DeliveryIcon, "Delivery"]] as [ItemServiceMode, React.ComponentType<{ className?: string }>, string][]).map(([mode, Icon, label]) => {
+              const active = activeItemMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setActiveItemMode(mode)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold transition-all duration-150"
+                  style={active
+                    ? { background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }
+                    : { color: "var(--text-2)" }}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -2288,7 +2339,7 @@ export default function POS() {
         </div>
 
         {/* ── CENTER: Items grid ──────────────────────────────────────────────── */}
-        <div className={`flex-1 flex-col overflow-hidden ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}
+        <div className={`flex-1 min-w-0 flex-col overflow-hidden ${mobileTab === "cart" ? "hidden md:flex" : "flex"}`}
           style={{ background: "var(--paper-50)" }}>
 
           {/* Mobile category pills — horizontal scroll, mobile only */}
@@ -2322,54 +2373,133 @@ export default function POS() {
           <ScrollArea className="flex-1">
             <div className="p-3">
               {filteredItems?.length === 0 && (
-                <div className="text-center text-gray-400 py-16 text-sm">No items found</div>
+                <div className="text-center py-16 text-sm" style={{ color: "var(--text-3)" }}>No items found</div>
               )}
-              <div className={isSectionMode
-                ? "grid grid-cols-2 md:grid-cols-3 gap-3"
-                : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2"}>
-                {filteredItems?.map((item: any) => {
+              {(() => {
+                const gridCls = isSectionMode
+                  ? "grid grid-cols-2 md:grid-cols-3 gap-3"
+                  : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2";
+                const renderTile = (item: any) => {
                   const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
                   const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
                   const hasVariants = Array.isArray(item.variants) && item.variants.length > 0;
                   const needsPicker = hasSizes || hasAddons || hasVariants || item.notesAllowed;
                   const isAvailable = item.isAvailable !== false;
+                  const activate = () => isAvailable && (needsPicker ? openPicker(item) : directAddItem(item));
+
+                  // Which single cart line does the pill target? For a plain item this is always
+                  // the one directAddItem merges into. For a configurable item (size/addons/variants/
+                  // notes) there can be MULTIPLE simultaneous lines for the same item.id — only show
+                  // a working pill when there's exactly one, so +/- never has to guess which line to
+                  // touch; otherwise fall back to the existing plain "+" (opens the picker, as today).
+                  const plainCartKey = `${item.id}-${activeItemMode}`;
+                  const matchingLines = needsPicker ? cartItems.filter(c => c.id === item.id) : [];
+                  const singleLine = matchingLines.length === 1 ? matchingLines[0] : null;
+                  const pillCartKey = needsPicker ? (singleLine ? singleLine.cartKey : null) : plainCartKey;
+                  const pillQty = needsPicker
+                    ? (singleLine ? singleLine.quantity : 0)
+                    : (cartItems.find(c => c.cartKey === plainCartKey)?.quantity ?? 0);
+                  const showPill = pillQty > 0 && pillCartKey !== null;
+
                   return (
-                    <button
+                    <div
                       key={item.id}
-                      disabled={!isAvailable}
-                      onClick={() => isAvailable && (needsPicker ? openPicker(item) : directAddItem(item))}
-                      className={`text-left bg-white rounded-lg ${isSectionMode ? "p-4 min-h-[92px]" : "p-2.5"} shadow-sm transition-all border border-transparent ${
-                        isAvailable
-                          ? "hover:border-green-500 hover:bg-green-50 hover:shadow-md cursor-pointer active:scale-95"
-                          : "opacity-40 cursor-not-allowed"
+                      role="button"
+                      tabIndex={isAvailable ? 0 : -1}
+                      aria-disabled={!isAvailable}
+                      onClick={activate}
+                      onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && isAvailable) { e.preventDefault(); activate(); } }}
+                      className={`text-left rounded-lg ${isSectionMode ? "p-4 min-h-[92px]" : "p-2.5"} transition-all border ${
+                        isAvailable ? "cursor-pointer active:scale-[0.98]" : "opacity-40 cursor-not-allowed"
                       }`}
+                      style={{
+                        background: "var(--paper-0)",
+                        borderColor: showPill ? "var(--green-400)" : "var(--line)",
+                        boxShadow: showPill ? "0 0 0 1px var(--green-400), var(--shadow-sm)" : "var(--shadow-xs)",
+                      }}
                     >
-                      <div className={`font-semibold ${isSectionMode ? "text-base" : "text-xs"} mb-1 leading-tight line-clamp-2 text-gray-800`}>{item.name}</div>
-                      {hasSizes ? (
+                      <div className={`font-semibold ${isSectionMode ? "text-base" : "text-xs"} mb-1 leading-tight line-clamp-2`} style={{ color: "var(--text-strong)" }}>{item.name}</div>
+                      {hasSizes && (
                         <div className="flex flex-wrap gap-1 mt-1">
                           {item.sizes.map((s: SizeOption) => (
-                            <span key={s.size} className="text-[10px] bg-green-50 border border-green-200 px-1.5 py-0.5 rounded font-medium text-green-700">
+                            <span key={s.size} className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: "var(--green-50)", border: "1px solid var(--green-200)", color: "var(--green-700)" }}>
                               {s.size} {fmt(Number(s.price))}
                             </span>
                           ))}
                         </div>
-                      ) : (
-                        <div className={`font-bold text-green-700 ${isSectionMode ? "text-xl" : "text-sm"} mt-0.5`}>{fmt(parseFloat(item.price || "0"))}</div>
                       )}
-                      <div className="flex items-center gap-1 mt-1">
-                        {!isAvailable && <span className="text-[10px] text-green-500 font-medium">Unavailable</span>}
-                        {hasAddons && isAvailable && <span className="text-[10px] text-gray-400">Customizable</span>}
+                      <div className="flex items-center justify-between mt-1 gap-1">
+                        <div className={`font-bold ${isSectionMode ? "text-xl" : "text-sm"}`} style={{ color: "var(--text-strong)" }}>
+                          {!hasSizes && fmt(parseFloat(item.price || "0"))}
+                        </div>
+                        {showPill ? (
+                          <div className="flex items-center gap-1.5 rounded-full px-1 py-0.5 shrink-0" style={{ background: "var(--green-800)" }} onClick={(e) => e.stopPropagation()}>
+                            <button
+                              disabled={pillQty <= 1 ? isOff("removeItem") : isOff("editItem")}
+                              onClick={() => bumpCartQty(pillCartKey!, -1)}
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ background: "rgba(255,255,255,0.16)" }}
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="text-white text-xs font-bold min-w-[10px] text-center tabular-nums">
+                              {pillQty % 1 === 0 ? pillQty : pillQty.toFixed(1)}
+                            </span>
+                            <button
+                              disabled={needsPicker ? isOff("editItem") : false}
+                              onClick={() => needsPicker ? bumpCartQty(pillCartKey!, 1) : (isAvailable && directAddItem(item))}
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ background: "rgba(255,255,255,0.16)" }}
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); activate(); }}
+                            className="w-7 h-7 rounded-md flex items-center justify-center text-white shrink-0"
+                            style={{ background: "var(--green-800)", boxShadow: "var(--shadow-green)" }}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                    </button>
+                      <div className="flex items-center gap-1 mt-1">
+                        {!isAvailable && <span className="text-[10px] font-medium" style={{ color: "var(--green-500)" }}>Unavailable</span>}
+                        {hasAddons && isAvailable && <span className="text-[10px]" style={{ color: "var(--text-3)" }}>Customizable</span>}
+                      </div>
+                    </div>
                   );
-                })}
-              </div>
+                };
+
+                const catList = selectedCategory === "all"
+                  ? (visibleCategories ?? [])
+                  : (visibleCategories ?? []).filter((c: any) => c.id === selectedCategory);
+                const groups = catList
+                  .map((cat: any) => ({ cat, items: filteredItems?.filter((i: any) => i.categoryId === cat.id) ?? [] }))
+                  .filter((g: any) => g.items.length > 0);
+                const groupedIds = new Set(groups.flatMap((g: any) => g.items.map((i: any) => i.id)));
+                const leftover = filteredItems?.filter((i: any) => !groupedIds.has(i.id)) ?? [];
+                if (leftover.length) groups.push({ cat: { id: "uncategorized", name: "Other" }, items: leftover });
+
+                return groups.map(({ cat, items }: any) => (
+                  <div key={cat.id} className="mb-4 last:mb-0">
+                    <div className="flex items-baseline gap-2.5 mb-2.5">
+                      <h2 className="font-display font-semibold text-[1.375rem] leading-none" style={{ color: "var(--text-strong)" }}>{cat.name}</h2>
+                      <div className="flex-1 h-px" style={{ background: "var(--line)" }} />
+                    </div>
+                    <div className={gridCls}>
+                      {items.map((item: any) => renderTile(item))}
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           </ScrollArea>
         </div>
 
         {/* ── RIGHT: Billing panel — full width on mobile when cart tab active ── */}
-        <div className={`${isSectionMode ? "md:w-[340px]" : "md:w-[290px]"} w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
+        <div className={`${isSectionMode ? "md:w-[420px]" : "md:w-[390px]"} w-full shrink-0 flex-col overflow-hidden ${mobileTab === "menu" ? "hidden md:flex" : "flex"}`}
           style={{
             background: "var(--paper-0)",
             borderLeft: "1px solid var(--line)",
@@ -2409,8 +2539,10 @@ export default function POS() {
                 <button
                   disabled={isOff("clearCart")}
                   onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); })}
-                  className="text-[10px] text-[var(--text-3)] hover:text-[var(--danger)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5"
+                  className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
+                  style={{ color: "var(--danger)" }}
                 >
+                  <Trash2 className="w-3 h-3" />
                   Clear all
                   {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
                 </button>
@@ -2420,27 +2552,57 @@ export default function POS() {
 
           {/* Column headers — skipped at section counters (bigger rows carry their own layout) */}
           {hasItems && !isSectionMode && (
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 px-3 py-1 shrink-0"
+            <div className="grid grid-cols-[auto_1fr_auto] gap-2 px-3 py-1 shrink-0"
               style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-50)" }}>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-[52px]">Qty</span>
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase">Item</span>
-              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-14 text-center">Qty</span>
-              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-10 text-right">Rate</span>
-              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-12 text-right">Amt</span>
+              <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase text-right">Amount</span>
             </div>
           )}
-          <ScrollArea className="flex-1 min-h-0">
+          {/* Plain native-scroll div, not Radix ScrollArea — its Viewport wraps children in
+              a display:table-style box that preserves their natural intrinsic width for scroll
+              math, which silently defeats flex-shrink/min-w-0 on anything inside it. That let
+              cart rows render a few px wider than this panel's fixed width, clipped only at the
+              window edge instead of the panel boundary. Plain overflow-y-auto has no such quirk. */}
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
             {(() => {
               const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               const renderCartRow = (item: CartItem) => (
-                <div key={item.cartKey} className={`border rounded-lg ${isSectionMode ? "p-3" : "p-2.5"} bg-background`}>
-                  <div className="flex justify-between items-start gap-1">
+                <div key={item.cartKey} className={`rounded-lg overflow-hidden ${isSectionMode ? "p-3" : "p-2.5"}`}
+                  style={{ background: "var(--paper-0)", border: "1px solid var(--line)" }}>
+                  <div className="flex items-start gap-2">
+                    {/* Quantity stepper — reuses the exact same editItem/removeItem gates
+                        the Edit/Remove buttons below already sit behind (see bumpCartQty). */}
+                    <div className="flex items-center gap-1 rounded-full px-1 py-0.5 shrink-0" style={{ background: "var(--paper-100)" }}>
+                      <button
+                        disabled={item.quantity <= 1 ? isOff("removeItem") : isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, item.quantity <= 1 ? -item.quantity : -1)}
+                        className="w-5 h-5 rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: "var(--paper-0)", color: "var(--green-800)", boxShadow: "var(--shadow-xs)" }}
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="text-xs font-bold min-w-[18px] text-center tabular-nums">
+                        {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}
+                      </span>
+                      <button
+                        disabled={isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, 1)}
+                        className="w-5 h-5 rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: "var(--paper-0)", color: "var(--green-800)", boxShadow: "var(--shadow-xs)" }}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+
                     <div className="flex-1 min-w-0">
-                      <p className={`${isSectionMode ? "text-base" : "text-sm"} font-medium leading-tight`}>
+                      <p className={`${isSectionMode ? "text-base" : "text-sm"} font-semibold leading-tight truncate`} style={{ color: "var(--text-strong)" }}>
                         {item.name}{item.size ? ` (${item.size})` : ""}
                         {item.id < 0 && (
-                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[var(--green-700)] bg-green-50 border border-green-200 rounded px-1 py-px align-middle">Open</span>
+                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide rounded px-1 py-px align-middle" style={{ color: "var(--green-700)", background: "var(--green-50)", border: "1px solid var(--green-200)" }}>Open</span>
                         )}
                       </p>
+                      <p className="text-[10px]" style={{ color: "var(--text-2)" }}>{fmt(item.totalPrice)} each</p>
                       {item.addons.map(a => (
                         <p key={a.name} className="text-xs text-muted-foreground">+ {a.name}</p>
                       ))}
@@ -2450,26 +2612,21 @@ export default function POS() {
                       {item.notes && (
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
-                      {item.parcelLeftover && (
-                        <div className="text-[10px] text-amber-600 font-semibold">🥡 Leftover parcel</div>
-                      )}
                     </div>
-                    {/* Quantity is display-only here — direct inline edits bypassed the deliberate
-                        Edit-Item flow with no gating at all; change quantity via Edit instead. */}
-                    <div className={`flex items-center justify-center ${isSectionMode ? "w-24" : "w-16"}`}>
-                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold`}>
-                        {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1)}
-                      </span>
+
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold tabular-nums whitespace-nowrap`} style={{ color: "var(--text-strong)" }}>{fmt(item.totalPrice * item.quantity)}</span>
+                      <button
+                        disabled={isOff("removeItem")}
+                        onClick={() => go("removeItem", "Remove Item", () => removeFromCart(item.cartKey))}
+                        className="transition-colors hover:opacity-70 disabled:opacity-30 disabled:cursor-not-allowed"
+                        style={{ color: "var(--text-3)" }}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                    <div className={`w-10 text-right ${isSectionMode ? "text-xs" : "text-[10px]"} text-gray-500`}>{fmt(item.totalPrice)}</div>
-                    <div className="w-12 flex items-center justify-end gap-0.5">
-                      <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold text-gray-800`}>{fmt(item.totalPrice * item.quantity)}</span>
-                    </div>
-                    <button onClick={() => removeFromCart(item.cartKey)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-0.5">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5">
+                  <div className="flex items-center gap-2 mt-1 pl-1">
                     {/* Open items (id < 0) have no menu row for openEditPicker — the Open
                         Item dialog doubles as their editor instead. */}
                     {item.id > 0 ? (
@@ -2483,10 +2640,6 @@ export default function POS() {
                         {!isAdmin && !isOff("editItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
                       </button>
                     )}
-                    <button disabled={isOff("removeItem")} onClick={() => go("removeItem", "Remove Item", () => removeFromCart(item.cartKey))} className="text-[10px] text-green-400 hover:text-green-600 transition-colors flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Trash2 className="w-2.5 h-2.5" />Remove
-                      {!isAdmin && !isOff("removeItem") && <Lock className="w-2 h-2 ml-0.5 opacity-50" />}
-                    </button>
                     {/* Section counter: move this line between Eating Here ↔ Parcel (per-item, like tables) */}
                     {isSectionMode && (
                       <button
@@ -2498,17 +2651,6 @@ export default function POS() {
                         }`}
                       >
                         {(item.serviceMode ?? "dinein") === "pickup" ? "🍽 Make Eating Here" : "🥡 Make Parcel"}
-                      </button>
-                    )}
-                    {/* Parcel toggle only for dine-in items — pickup/delivery already add a container charge per item */}
-                    {!isDeliveryOrPickup && (item.serviceMode ?? "dinein") === "dinein" && (
-                      <button
-                        onClick={() => toggleParcel(item.cartKey)}
-                        className={`text-[10px] flex items-center gap-0.5 transition-colors ${
-                          item.parcelLeftover ? "text-amber-600 font-semibold" : "text-amber-400 hover:text-amber-600"
-                        }`}
-                      >
-                        🥡 {item.parcelLeftover ? "Parcel ✓" : "Parcel"}
                       </button>
                     )}
                   </div>
@@ -2564,7 +2706,7 @@ export default function POS() {
 
               return <div className="p-3 space-y-2">{cartItems.map(renderCartRow)}</div>;
             })()}
-          </ScrollArea>
+          </div>
 
           {/* ── Collapsible order-summary handle (mobile only) ── */}
           {hasItems && (
@@ -2597,20 +2739,26 @@ export default function POS() {
           >
            <div className="overflow-hidden">
           {/* Totals — section counters get their own breakdown inside SectionActionBar */}
-          {!isSectionMode && <div className="md:border-t px-3 py-2 space-y-1" style={{ background: "var(--paper-50)" }}>
-            <div className="flex justify-between text-xs text-gray-500">
+          {!isSectionMode && <div className="md:border-t px-3 py-2 space-y-1" style={{ borderColor: "var(--line)", background: "var(--paper-50)" }}>
+            <div className="flex justify-between text-xs" style={{ color: "var(--text-2)" }}>
               <span>Subtotal</span>
-              <span className="font-medium text-gray-700">{fmt(subtotal)}</span>
+              <span className="font-medium" style={{ color: "var(--text-1)" }}>{fmt(subtotal)}</span>
             </div>
+
+            {/* Discount + Container Charge — the "%" suffix and "₹" prefix sit on opposite
+                sides of their inputs, so a matching-width wrapper alone right-aligns the
+                CLUSTERS but not the input BOXES themselves. Both signs now sit after their
+                input, so the two boxes share the exact same shape and land at the same x
+                position with no spacer needed. */}
             <div className="flex items-center gap-1 text-xs">
-              <span className="text-gray-500 flex-1 flex items-center gap-1">
+              <span className="flex-1 flex items-center gap-1" style={{ color: "var(--text-2)" }}>
                 Discount
                 {isOff("discount") && <Lock className="w-2.5 h-2.5 opacity-40" />}
                 {discountAmt > 0 && (
-                  <span className="text-green-600 ml-1">(-{fmt(discountAmt)})</span>
+                  <span className="ml-1" style={{ color: "var(--green-600)" }}>(-{fmt(discountAmt)})</span>
                 )}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 justify-end">
                 <input
                   ref={discountInputRef}
                   type="number"
@@ -2626,21 +2774,16 @@ export default function POS() {
                   }}
                   onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                   placeholder="0"
-                  className="w-14 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400 disabled:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-14 text-right text-xs rounded px-1.5 py-0.5 outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ border: "1px solid var(--line-strong)", background: "var(--paper-0)", color: "var(--text-1)" }}
                 />
-                <span className="text-gray-400 text-[10px]">%</span>
+                <span className="w-3 text-[10px]" style={{ color: "var(--text-3)" }}>%</span>
               </div>
             </div>
-            <div className="flex justify-between text-xs text-gray-500">
-              <span>Tax ({settings?.taxRate ?? 18}%)</span>
-              <span className="font-medium text-gray-700">{fmt(tax)}</span>
-            </div>
 
-            {/* Container Charge — manually entered by staff, like a delivery charge */}
             <div className="flex items-center gap-1 text-xs">
-              <span className="text-gray-500 flex-1">Container Charge</span>
-              <div className="flex items-center gap-1">
-                <span className="text-gray-400 text-[10px]">₹</span>
+              <span className="flex-1" style={{ color: "var(--text-2)" }}>Container Charge</span>
+              <div className="flex items-center gap-1 justify-end">
                 <input
                   type="number"
                   min="0"
@@ -2648,13 +2791,21 @@ export default function POS() {
                   value={containerCharge || ""}
                   onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
                   placeholder="0"
-                  className="w-16 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 outline-none focus:border-green-400"
+                  className="w-14 text-right text-xs rounded px-1.5 py-0.5 outline-none"
+                  style={{ border: "1px solid var(--line-strong)", background: "var(--paper-0)", color: "var(--text-1)" }}
                 />
+                <span className="w-3 text-[10px]" style={{ color: "var(--text-3)" }}>₹</span>
               </div>
             </div>
-            <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1.5 mt-0.5">
-              <span className="text-gray-800">Total</span>
-              <span className="text-green-600 text-base">{fmt(grandTotal)}</span>
+
+            <div className="flex justify-between text-xs" style={{ color: "var(--text-2)" }}>
+              <span>Tax ({settings?.taxRate ?? 18}%)</span>
+              <span className="font-medium" style={{ color: "var(--text-1)" }}>{fmt(tax)}</span>
+            </div>
+
+            <div className="flex justify-between text-sm font-bold pt-1.5 mt-0.5" style={{ borderTop: "1px solid var(--line)" }}>
+              <span style={{ color: "var(--text-strong)" }}>Total</span>
+              <span className="text-base" style={{ color: "var(--green-700)" }}>{fmt(grandTotal)}</span>
             </div>
           </div>}
 
@@ -2714,7 +2865,8 @@ export default function POS() {
               <button
                 disabled={!activeOrderId || isPending || isOff("splitBill")}
                 onClick={() => go("splitBill", "Split Bill", () => { setSplitSelectedIds([]); setShowSplitDialog(true); })}
-                className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1 rounded text-[10px] font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--line-strong)", color: "var(--text-2)", background: "var(--paper-0)" }}
               >
                 Split
                 {isOff("splitBill") && <Lock className="w-2 h-2 opacity-50" />}
@@ -2722,7 +2874,8 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending || isOff("complimentary")}
                 onClick={handleComplimentary}
-                className="py-1 rounded text-[10px] font-medium border border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1 rounded text-[10px] font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--line-strong)", color: "var(--text-2)", background: "var(--paper-0)" }}
               >
                 Complimentary
                 {isOff("complimentary") && <Lock className="w-2 h-2 opacity-50" />}
@@ -2734,7 +2887,8 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending || isOff("printKot")}
                 onClick={() => go("printKot", "Print KOT", handleKOT)}
-                className="py-1.5 rounded text-[10px] font-semibold border border-orange-300 text-orange-600 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--ink-500)", color: "var(--ink-700)", background: "var(--info-bg)" }}
               >
                 KOT
                 {isOff("printKot") && <Lock className="w-2.5 h-2.5 opacity-50" />}
@@ -2742,7 +2896,8 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending || isOff("printBill")}
                 onClick={() => go("printBill", "Print Bill", handleBillPrint)}
-                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--clay-500)", color: "var(--clay-700)", background: "var(--paper-100)" }}
               >
                 <Printer className="w-3 h-3" />
                 Bill
@@ -2755,7 +2910,8 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending || isOff("saveOrder")}
                 onClick={() => go("saveOrder", "Save Order", handleSave)}
-                className="py-1.5 rounded text-[10px] font-semibold border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--line-strong)", color: "var(--text-1)", background: "var(--paper-0)" }}
               >
                 {(createOrderMutation.isPending || updateOrderMutation.isPending) && submitModeRef.current === "save" ? "Saving..." : "Save"}
                 {isOff("saveOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
@@ -2763,7 +2919,8 @@ export default function POS() {
               <button
                 disabled={!activeOrderId || isPending || isOff("holdOrder")}
                 onClick={() => go("holdOrder", "Hold Order", () => setShowHoldConfirm(true))}
-                className="py-1.5 rounded text-[10px] font-semibold border border-amber-300 text-amber-600 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--amber-500)", color: "var(--amber-600)", background: "var(--warning-bg)" }}
               >
                 Hold
                 {isOff("holdOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}
@@ -2771,7 +2928,8 @@ export default function POS() {
               <button
                 disabled={!hasItems || isPending || isOff("settleOrder")}
                 onClick={() => go("settleOrder", "Settle Order", handleSettle)}
-                className="py-1.5 rounded text-[10px] font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                className="py-1.5 rounded text-[10px] font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ background: "linear-gradient(180deg, var(--green-700), var(--green-800))", boxShadow: "var(--shadow-green)" }}
               >
                 {settlePhase === "printing" ? "Printing…" : (settleMutation.isPending || settlePhase === "processing") ? "…" : "Settle"}
                 {isOff("settleOrder") && <Lock className="w-2.5 h-2.5 opacity-50" />}

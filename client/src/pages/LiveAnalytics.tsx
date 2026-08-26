@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { serialNum } from "@/lib/orderDisplay";
 import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
-import { businessDayRange, todayBusinessDate } from "@shared/businessDay";
+import { businessDayRange, todayBusinessDate, shiftBusinessDate } from "@shared/businessDay";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -330,12 +330,16 @@ export default function LiveAnalytics() {
     refetchInterval: 10000,
   });
 
+  // Rolling 2-business-day window (see getDashboardStats' activeResult in storage.ts,
+  // which activeOrdersList below must stay in sync with) — wide enough to keep a real
+  // order still open from yesterday evening, but excludes long-abandoned orphaned
+  // orders that were simply never closed.
   const { data: allOrders = [] } = useQuery<any[]>({
-    queryKey: ["/api/orders", "today", todayBusinessDate()],
+    queryKey: ["/api/orders", "active-window", todayBusinessDate()],
     queryFn: async () => {
-      const { start, end } = businessDayRange(todayBusinessDate());
+      const start = businessDayRange(shiftBusinessDate(todayBusinessDate(), -1)).start;
       const r = await fetch(
-        apiUrl(`/api/orders?startDate=${start.toISOString()}&endDate=${end.toISOString()}`),
+        apiUrl(`/api/orders?startDate=${start.toISOString()}`),
         { credentials: "include" }
       );
       if (!r.ok) throw new Error(await r.text());

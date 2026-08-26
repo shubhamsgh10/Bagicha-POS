@@ -1118,12 +1118,21 @@ export class DatabaseStorage implements IStorage {
       and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow))
     );
 
+    // "Active" means "still genuinely open, not abandoned". A hard cutoff at today's
+    // business-day start wrongly excludes a real order still open from yesterday
+    // evening (spans the 5am rollover) — but no date bound at all lets month-old
+    // orphaned test/demo orders that were simply never closed count as "active"
+    // forever. A rolling 2-business-day window (yesterday's business-day start
+    // through today's business-day end) covers anything that could plausibly still
+    // be on the floor while automatically dropping genuinely stale orders — no
+    // manual cleanup ever required.
+    const activeWindowStart = businessDayRange(shiftBusinessDate(todayBusinessDate(), -1)).start;
     const [activeResult] = await db.select({
       count: sql<number>`count(*)`
     }).from(orders).where(
       and(
         inArray(orders.status, [...ACTIVE_ORDER_STATUSES]),
-        gte(orders.createdAt, today),
+        gte(orders.createdAt, activeWindowStart),
         lte(orders.createdAt, tomorrow),
       )
     );

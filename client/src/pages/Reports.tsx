@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
-  DollarSign, TrendingUp, ShoppingCart, Users, Download, Calendar,
+  IndianRupee, TrendingUp, ShoppingCart, Users, Download, Calendar,
   Banknote, CreditCard, Smartphone, Clock, AlertCircle, Wifi,
   ChevronDown, Check, X, Send, CheckCircle2, Wallet,
 } from "lucide-react";
@@ -409,7 +409,7 @@ export default function Reports() {
       label: "Total Sales",
       value: formatCurrency(salesReport?.totalSales || 0),
       sub: `${salesReport?.totalOrders || 0} orders in range`,
-      icon: <DollarSign className="w-7 h-7 text-emerald-500" />,
+      icon: <IndianRupee className="w-7 h-7 text-emerald-500" />,
       subColor: "text-emerald-600",
     },
     {
@@ -738,7 +738,7 @@ export default function Reports() {
                   { key: "card",   label: "Card",   icon: <CreditCard className="w-5 h-5" />, color: "from-[#34507A] to-[#243B5E]",     bg: "bg-blue-50/60",     text: "text-blue-700" },
                   { key: "upi",    label: "UPI",    icon: <Smartphone className="w-5 h-5" />, color: "from-[#CD6E3E] to-[#B85C38]", bg: "bg-purple-50/60",   text: "text-purple-700" },
                   { key: "online", label: "Online", icon: <Wifi className="w-5 h-5" />,       color: "from-orange-500 to-amber-500",  bg: "bg-orange-50/60",   text: "text-orange-700" },
-                  { key: "other",  label: "Other",  icon: <DollarSign className="w-5 h-5" />, color: "from-gray-500 to-slate-500",    bg: "bg-gray-50/60",     text: "text-gray-700" },
+                  { key: "other",  label: "Other",  icon: <IndianRupee className="w-5 h-5" />, color: "from-gray-500 to-slate-500",    bg: "bg-gray-50/60",     text: "text-gray-700" },
                 ].map(({ key, label, icon, color, bg, text }) => {
                   const d = paymentSummary?.breakdown?.[key] || { count: 0, amount: 0 };
                   return (
@@ -808,7 +808,7 @@ export default function Reports() {
             {(paymentSummary?.dueCount === 0) && (
               <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-8 text-center">
                 <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
-                  <DollarSign className="w-6 h-6 text-emerald-600" />
+                  <IndianRupee className="w-6 h-6 text-emerald-600" />
                 </div>
                 <p className="text-gray-600 font-medium">No pending payments</p>
                 <p className="text-sm text-gray-400">All orders have been settled</p>
@@ -915,7 +915,7 @@ export default function Reports() {
                 </div>
               </div>
               <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5 flex items-center gap-4">
-                <DollarSign className="w-7 h-7 text-red-500 shrink-0" />
+                <IndianRupee className="w-7 h-7 text-red-500 shrink-0" />
                 <div>
                   <p className="text-2xl font-bold text-gray-800">{formatCurrency(cancelledReport?.wouldBeTotal ?? 0)}</p>
                   <p className="text-xs text-gray-400">Would-be revenue lost</p>
