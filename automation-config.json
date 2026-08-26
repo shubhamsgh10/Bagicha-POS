@@ -27,7 +27,7 @@
   "attendanceSheetUrl": "",
   "attendanceColumnMapping": null,
   "attendanceAutoSyncHour": -1,
-  "whatsappDriver": "baileys",
+  "whatsappDriver": "none",
   "whatsappAutoSend": true,
   "maxPerDay": 100,
   "botEnabled": true,
