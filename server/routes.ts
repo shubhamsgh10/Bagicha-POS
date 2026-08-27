@@ -1282,6 +1282,7 @@ export async function registerRoutes(
     try {
       const categoryData = insertCategorySchema.parse(req.body);
       const category = await storage.createCategory(categoryData);
+      broadcast({ type: "MENU_UPDATE" });
       res.json(category);
     } catch (error) {
       res.status(400).json({ error: "Invalid category data" });
@@ -1296,6 +1297,10 @@ export async function registerRoutes(
       const { orderedIds } = req.body;
       if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
       await storage.reorderCategories(orderedIds.map(Number));
+      // An already-open POS/Menu session has no other trigger to refetch categories —
+      // no polling on this query, refetchOnWindowFocus is off, and staleTime is 30s
+      // with nothing to re-check it once elapsed. See MENU_UPDATE handling below.
+      broadcast({ type: "MENU_UPDATE" });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to reorder categories" });
@@ -1308,6 +1313,7 @@ export async function registerRoutes(
       const { name, description } = req.body;
       if (!name) return res.status(400).json({ error: "Name is required" });
       const updated = await storage.updateCategory(id, { name, description });
+      broadcast({ type: "MENU_UPDATE" });
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: "Failed to update category" });
@@ -1318,6 +1324,7 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       await storage.deleteCategory(id);
+      broadcast({ type: "MENU_UPDATE" });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete category" });
@@ -1515,6 +1522,7 @@ export async function registerRoutes(
         addons: addonsEnabled && Array.isArray(b.addons) ? b.addons : [],
         inventoryLinks: sanitizeInventoryLinks(b.inventoryLinks),
       } as any);
+      broadcast({ type: "MENU_UPDATE" });
       res.json(menuItem);
     } catch (error) {
       console.error("Create menu item error:", error);
@@ -1538,6 +1546,7 @@ export async function registerRoutes(
       updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
       if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = sanitizeInventoryLinks(b.inventoryLinks);
       const menuItem = await storage.updateMenuItem(id, updatePayload);
+      broadcast({ type: "MENU_UPDATE" });
       res.json(menuItem);
     } catch (error) {
       console.error("Update menu item error:", error);
@@ -1549,6 +1558,7 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       await storage.deleteMenuItem(id);
+      broadcast({ type: "MENU_UPDATE" });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete menu item" });
@@ -1580,7 +1590,7 @@ export async function registerRoutes(
           .map((a: any) => ({ name: String(a.name).trim(), price: Number(a.price) }));
       }
       await storage.bulkUpdateMenuItems(ids.map(Number), allowed);
-      queryClient_invalidate: await Promise.resolve();
+      broadcast({ type: "MENU_UPDATE" });
       res.json({ success: true, updated: ids.length });
     } catch (error) {
       console.error("Bulk update error:", error);
@@ -1594,6 +1604,7 @@ export async function registerRoutes(
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
       await storage.bulkDeleteMenuItems(ids.map(Number));
+      broadcast({ type: "MENU_UPDATE" });
       res.json({ success: true, deleted: ids.length });
     } catch (error) {
       console.error("Bulk delete error:", error);
