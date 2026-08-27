@@ -303,9 +303,9 @@ export default function Reports() {
   const canSeeCost = role === "admin" || role === "manager";
 
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
-    start: daysAgo(6),
+    start: today(),
     end:   today(),
-    label: "Last 7 Days",
+    label: "Today",
   }));
 
   const params = buildParams(dateRange);

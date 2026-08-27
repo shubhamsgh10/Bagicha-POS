@@ -20,3 +20,21 @@ export function buildSpecialInstructions(
     : "";
   return [specialInstructions, addonLines].filter(Boolean).join(" | ");
 }
+
+/**
+ * The customer-facing bill must never show kitchen-only prep notes. The combined
+ * `specialInstructions` string (built above, plus POS.tsx's own "Note: <text>" segment for
+ * free-text notes typed at order time) has no separate column per concern — variant
+ * selections, addon selections, and private kitchen notes are all pipe-joined into one
+ * field, because the KOT ticket legitimately wants all of it. The bill should only ever
+ * show what's visible/billable to the customer (variant + addon segments), so this strips
+ * any "Note: ..." segment before the bill renders the line — call this at BILL render time
+ * only, never at persist time and never for the KOT, which must keep showing the full text.
+ */
+export function stripKitchenNotes(specialInstructions: string | null | undefined): string {
+  if (!specialInstructions) return "";
+  return specialInstructions
+    .split(" | ")
+    .filter((part) => !part.startsWith("Note: "))
+    .join(" | ");
+}

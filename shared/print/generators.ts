@@ -2,6 +2,7 @@ import * as E from "./escpos";
 import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, KOTPrintSettings } from "./types";
 import { deriveBillTotals } from "../orderPricing";
+import { stripKitchenNotes } from "../orderItemText";
 
 export interface KOTItem {
   name: string;
@@ -273,8 +274,9 @@ export function generateBillBuffer(params: {
       }
     });
 
-    if (billSettings.showAddons && item.specialInstructions) {
-      parts.push(bodyLine(`  [${item.specialInstructions}]`));
+    const billInstructions = stripKitchenNotes(item.specialInstructions);
+    if (billSettings.showAddons && billInstructions) {
+      parts.push(bodyLine(`  [${billInstructions}]`));
     }
     totalQty += item.quantity;
   }

@@ -13,6 +13,7 @@ import {
 } from "./printService";
 import { toPrintJob } from "@shared/print/generators";
 import { deriveBillTotals } from "@shared/orderPricing";
+import { stripKitchenNotes } from "@shared/orderItemText";
 import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { publishRealtime } from "./realtime/publisher";
@@ -234,7 +235,8 @@ function billTextLines(params: {
         lines.push(body(chunk));
       }
     });
-    if (billSettings.showAddons && item.specialInstructions) lines.push(body(`  [${item.specialInstructions}]`));
+    const billInstructions = stripKitchenNotes(item.specialInstructions);
+    if (billSettings.showAddons && billInstructions) lines.push(body(`  [${billInstructions}]`));
     totalQty += item.quantity;
   }
   lines.push(div("-"));

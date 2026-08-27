@@ -9,7 +9,7 @@
  * ever showed which addons a customer picked, even with "Show Addons" enabled.
  * Run: npx tsx scripts/verify-order-item-text.ts
  */
-import { buildSpecialInstructions } from "../shared/orderItemText";
+import { buildSpecialInstructions, stripKitchenNotes } from "../shared/orderItemText";
 
 const checks: Array<[string, boolean]> = [];
 
@@ -41,6 +41,38 @@ checks.push([
 checks.push([
   "empty addons array (addon UI opened but nothing picked) behaves like no addons",
   buildSpecialInstructions("Note: less spicy", []) === "Note: less spicy",
+]);
+
+// stripKitchenNotes: the bill must never show the "Note: ..." segment (private kitchen
+// prep instructions, prefixed by POS.tsx's buildInstructions) — only the KOT should.
+checks.push([
+  "a bare kitchen note is stripped entirely for the bill",
+  stripKitchenNotes("Note: Extra Cheese") === "",
+]);
+
+checks.push([
+  "a note alongside a variant selection: variant survives, note is stripped",
+  stripKitchenNotes("Chicken: Spicy | Note: less spicy") === "Chicken: Spicy",
+]);
+
+checks.push([
+  "a note alongside an addon selection: addon survives, note is stripped",
+  stripKitchenNotes("Note: no onion | + Extra Cheese") === "+ Extra Cheese",
+]);
+
+checks.push([
+  "variant + note + addon together: only the note is stripped, order preserved",
+  stripKitchenNotes("Chicken: Spicy | Note: less spicy | + Extra Cheese") === "Chicken: Spicy | + Extra Cheese",
+]);
+
+checks.push([
+  "no note present -> unchanged",
+  stripKitchenNotes("Chicken: Spicy | + Extra Cheese") === "Chicken: Spicy | + Extra Cheese",
+]);
+
+checks.push([
+  "null/empty input -> empty string",
+  stripKitchenNotes(null) === "" && stripKitchenNotes(undefined) === "" && stripKitchenNotes("") === "",
 ]);
 
 let failed = 0;

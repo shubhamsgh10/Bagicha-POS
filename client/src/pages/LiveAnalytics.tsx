@@ -273,9 +273,9 @@ export default function LiveAnalytics() {
   }, []);
 
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
-    start: daysAgo(6),
+    start: today(),
     end:   today(),
-    label: "Last 7 Days",
+    label: "Today",
   }));
 
   const params = `?startDate=${dateRange.start}&endDate=${dateRange.end}`;
