@@ -13,6 +13,12 @@ npm run db:push    # Push Drizzle schema changes to the database
 npm run seed       # Seed the database with initial data
 ```
 
+**`npm run dev`'s server half does not hot-reload.** `tsx server/index.ts` has no `--watch` —
+only the Vite/client side hot-reloads on save. A server-side edit (`routes.ts`, `storage.ts`,
+any `server/*` file) needs a manual restart before it's actually live; testing "live" without
+restarting silently exercises stale code. Restarting also wipes the in-memory session store
+(`MemoryStore`), so every logged-in session has to log back in.
+
 There is no test framework (no vitest/jest/playwright) — but this is not "no automated tests":
 `npm run test:pure` runs a growing set of hand-rolled, DB-free `scripts/verify-*.ts` scripts (plain
 `tsx` programs, `PASS`/`FAIL` per assertion, nonzero exit on failure) that lock in the security/money
@@ -44,6 +50,7 @@ This is a monorepo restaurant POS system. All dependencies live in the root `pac
 - **`useLiveOrders.ts`'s pickup/delivery cards (`hasNewItems` yellow ring) must diff, not assume.** Its `ORDER_UPDATE` handler used to hardcode `updated.hasNewItems = true` on every WebSocket order-update message — a status flip, a `bill-requested` stamp, a discount edit with unchanged items, anything — so the "new items" highlight effectively never turned off during active service. `useLiveTableOperations.ts`'s equivalent handler already did this correctly (a real `diffItems` keyed on `menuItemId|size`, snapshotting the pre-update baseline before the async `/api/orders/:id` re-fetch to avoid a race with a concurrent `loadAll()`). `useLiveOrders.ts` now has the same shape (`hasGenuinelyNewItems`, order-level only — no per-item `isNew` bookkeeping needed since these cards don't highlight individual lines): true only when a menuItemId+size pair is genuinely new or its quantity increased since the pre-fetch snapshot.
 - `components/ui/` — shadcn/ui components (do not edit these manually).
 - **Horizontal-scroll tab rows** (e.g. Customers page tabs in `CustomerDashboard.tsx`): use `shrink-0 sm:flex-1` on the buttons, never `flex-1 min-w-0` — `min-w-0` lets nowrap labels collapse below content width and visually overlap on mobile instead of scrolling.
+- **Don't put a width-constrained flex/grid layout inside shadcn's `<ScrollArea>`.** Radix's `ScrollAreaPrimitive.Viewport` wraps children in an internal box that lets them size to their own intrinsic width instead of the visible viewport — this silently defeats `flex-shrink`/`min-w-0` on content inside it (bit the POS cart panel: rows overflowed past the panel edge instead of shrinking). Use a plain `overflow-y-auto` div + the existing `.custom-scrollbar` utility class instead.
 - `hooks/` — Custom hooks:
   - `useAuth` — Auth session state via React Query (`/api/auth/me`)
   - `useRole` — Reads login role from auth session (`admin | manager | staff`)
@@ -65,6 +72,11 @@ Restricted actions (admin-only without PIN override): `discount`, `complimentary
 PIN verification endpoint: `POST /api/auth/verify-pin` accepts `{ pin, requiredRole }`. `requiredRole="admin"` only accepts admin PINs; `requiredRole="manager"` accepts manager or admin PINs.
 
 The `RoleSwitcher` component in the POS top bar lets any logged-in user temporarily elevate their role via PIN. Switching to a higher role than the current **active** role (not login role) triggers a PIN prompt.
+
+POS.tsx's menu-tile/cart-row quantity +/- steppers and the cart row's × remove icon
+deliberately reuse the existing `editItem`/`removeItem` `CartAction` gates rather than a new
+permission — route any future quick-action UI through `go("editItem"|"removeItem", ...)` the
+same way, don't add a dedicated "quantity" or "quick remove" CartAction.
 
 ## Mobile Login (staff PIN flow)
 
@@ -102,6 +114,12 @@ Client-side PIN gates are UX only; the server enforces the following independent
 - **Observability**: `client/src/components/ErrorBoundary.tsx` wraps the whole render tree in `main.tsx` (there was no ErrorBoundary anywhere before — a single render-phase throw white-screened the app with no fallback and no report). `main.tsx` also adds `window.onerror`/`unhandledrejection` listeners for errors outside React's render cycle (event handlers, timers, promise rejections), which an ErrorBoundary can't catch. `client/src/lib/queryClient.ts`'s `QueryClient` now has a `queryCache.onError` (console.error + `Sentry.captureException`, no toast — most queries poll every 5s and a toast per failed poll would spam) and a `mutationCache.onError` that shows a fallback toast **only** when the specific mutation has no local `onError` (checked via `mutation.options.onError`) — closes several previously-silent mutations (`useConversations.ts`'s reply/takeover/returnToBot/markRead, `Menu.tsx`'s delete, `Staff.tsx`'s remove) without double-toasting the ~45 mutations that already handle their own error. `GET /api/health` + `GET /api/version` (both unauthenticated, `routes.ts`) — no liveness/diagnostic probe existed before. `vite.config.ts` and both `esbuild` build commands (`build`, `build:api`) now emit source maps — without them a production/Sentry stack trace only pointed at minified bundle offsets. `server/index.ts`'s global error middleware now always `console.error`s (previously only reported to Sentry when `SENTRY_DSN` was set, so a 500 with no DSN configured was invisible in any log); the request logger's truncation is 500 chars for non-2xx responses (was a blanket 80, which cut off the one thing that showed what failed). `SENTRY_DSN`/`VITE_SENTRY_DSN` are installed and initialized (`server/index.ts`, `client/src/main.tsx`, and now `server-fn.ts` too — it previously had no `Sentry.init`/`process.on` guards at all, so the Vercel path got zero error tracking even with a DSN set) but were undocumented in `.env.example` — now listed there; Sentry stays a no-op until a real DSN is set in the deployment's environment.
 - **CI** (`.github/workflows/ci.yml`): `npm run check` + `npm run test:pure` on every push/PR. `test:pure` runs the two DB-free verify scripts; the DB/settings-touching `verify-*.ts` stay manual.
 - **PINs are still plaintext** (known residual, not in this pass) — hashing them is a tracked follow-up.
+- **Known bug, not fixed:** `PUT /api/orders/:id/cancel` unconditionally frees whatever table
+  the cancelled order's `tableId` points to, with no check for whether that table has since
+  been reassigned to a different, still-active order (two orders sharing a table id via
+  reuse). Cancelling an old/abandoned order can incorrectly mark a currently-occupied table
+  "free". `PUT /api/orders/:id/move-table`'s old-table-freeing step has the identical
+  unconditional-free pattern.
 - **`server/services/totpService.ts`'s `verifyToken` was verifying with zero clock-drift tolerance, despite the comment claiming ±30s.** `otplib` was upgraded to v13 at some point, which renamed the tolerance option from `window` (v11/v12-era) to `epochTolerance` (seconds, default `0`) — the call site still passed `window: 1`, silently ignored as an unrecognized property (only caught by an `as Parameters<typeof verifySync>[0]` cast that was masking the resulting TypeScript error). Fixed to `epochTolerance: 30`, the real equivalent of "±1 step," and removed the cast now that the option is genuine.
 
 ## WhatsApp Automation
@@ -237,6 +255,71 @@ Mitigated (not fully closed — see limitation below) by `canExecuteLocallyVerif
 **Reports page date picker: no exit animation on the dropdown panel — this is deliberate.** `Reports.tsx`'s `DateRangePicker` used to close via `AnimatePresence` + a 150ms `exit` transition. Picking a preset calls `onChange(range)` (parent `dateRange` state → every `key={`sales-${dateRange.start}-${dateRange.end}`}`-keyed chart section below remounts) and `setOpen(false)` in the same handler — React batches these, but `AnimatePresence` still keeps the panel mounted and animating out for that 150ms *after* the batch commits, so the still-visible, `position:absolute` panel and the data-driven reflow happening underneath it were racing. Real bug this caused: picking **Today** specifically (near-empty data, so the remounting chart/cards collapse to a much shorter height than whatever was showing before) made the closing panel visibly jump/displace during its exit animation — other presets rarely showed it because their content heights were closer to each other. Fixed by dropping the exit animation (plain `{open && (...)}` instead of `AnimatePresence` + `exit`) so the panel unmounts in the same render as the data change, before any reflow can happen underneath it. Don't re-add an exit transition here without also decoupling the panel from the reflowing content (e.g. a portal), or this comes back. The nested `showCustom` sub-panel inside it keeps its own `AnimatePresence` — that one's fine, it's a pure local UI toggle with no data refetch tied to it.
 
 **A `useQuery`/fetch that feeds a list must use `apiJson()`, never a hand-rolled `fetch(...).then(r => r.json())`.** `packages/api-client`'s `apiJson<T>(path, init?)` (re-exported from `@/lib/api`) calls `apiFetch`, which throws a descriptive error if `!res.ok` *before* parsing the body — matching what the app's default React Query `queryFn` (`getQueryFn` in `client/src/lib/queryClient.ts`) already does for any `useQuery` that doesn't specify its own `queryFn`. A **custom** `queryFn` that instead does `fetch(apiUrl(url), {credentials:'include'}).then(r => r.json())` skips that check entirely — a non-2xx response (session hiccup, a genuine 500, a dev-server restart) still has a JSON body (`{"message":"..."}` / `{"error":"..."}`), which is not an array, and that error object then flows into React Query's `data` as if it were real data. Any consumer that calls `.map()`/`.filter()`/`.reduce()` on it, or accesses a property without `?.`, throws at runtime — a real production incident: `Orders.tsx`'s Order History page white-screened this way. `Orders.tsx`, `Billing.tsx`, `Reports.tsx`, `POS.tsx`, `App.tsx`, and `Login.tsx`'s two `StaffSelector`/staff-card fetches all had this exact pattern and are now fixed to use `apiJson`. When adding a new page-level list query, use `apiJson` (or omit `queryFn` entirely and let the default one handle it) — never hand-roll the fetch.
+
+## Live Analytics ("Active Orders" semantics)
+
+`shared/orderStatus.ts`'s `ACTIVE_ORDER_STATUSES` (`pending|preparing|ready`) is the single
+source of truth for "active" — used by both `getDashboardStats()` (`server/storage.ts`) and
+`LiveAnalytics.tsx`'s order list, so they can't disagree. Scoped to a **rolling 48-hour
+window** (yesterday's business-day start → today's business-day end), not "today" alone and
+not unbounded: a hard "today only" cutoff wrongly drops a real order still open from
+yesterday evening (spans the 5am rollover), while no bound at all lets long-abandoned
+test/demo orders that were never closed count as active forever. `hold` (parked, table
+already freed) is deliberately excluded — it isn't a floor order.
+
+**"Top Item Today" ranks by revenue, not quantity — deliberately, and only on this
+dashboard.** `getDashboardStats()`'s inline `topItemRows` query and `getDashboardTopItems()`
+(both `server/storage.ts`, feeding `LiveAnalytics.tsx`'s stat card and its "Top Items" chart)
+sort by `SUM(price * quantity)`. They used to sort by raw unit count, which meant a
+near-universal cheap add-on (e.g. Mineral Water, added to almost every order) always won over
+genuinely popular dishes. **`Reports.tsx`'s separate "Top Items" tab / `getTopSellingItems()`
+is untouched and still ranks by quantity** — these are two different, intentionally-diverged
+functions; don't "fix" one to match the other.
+
+## POS Page (`POS.tsx`) — visual redesign, cart mechanics unchanged
+
+The whole page was reskinned to the Bagicha Design System tokens (`var(--green-800)`,
+`var(--paper-*)`, `var(--text-*)`, etc. — already defined globally in `client/src/index.css`)
+without touching cart/order/pricing logic. Worth knowing before touching this page again:
+
+- **`client/index.html` now actually loads the Google Fonts** (Cormorant Garamond, Plus
+  Jakarta Sans, JetBrains Mono) that `index.css`'s `--font-display`/`--font-sans`/`--font-mono`
+  reference. They were referenced everywhere via CSS vars but never `<link>`ed, so the whole
+  app silently fell back to system fonts the entire time — this was a latent, app-wide gap,
+  not something introduced by the redesign.
+- **Menu tiles show a live quantity pill** (green `− n +`) once an item is in the cart,
+  replacing the plain "+" — but only when there's exactly one matching cart line for that
+  `menuItemId`. An item needing the size/addon/variant/notes picker can have several
+  simultaneous lines (different sizes, etc.); with 0 or 2+ matching lines the tile falls back
+  to the plain "+" (opens the picker) rather than guessing which line to target. The pill's
+  "+" for a picker-item still increments that one unambiguous line directly (no picker
+  reopen); its "−" and the plain-item pill both route through `bumpCartQty` (see the
+  Role/PIN System note above on which gate this uses).
+- **Cart row layout**: stepper pill · name/meta (addons/variants/notes, `truncate`d) · amount
+  · a single gated **×** remove icon. The old top-right trash icon (fully ungated) and the
+  separate "Remove" text link have both been removed — × is the only remove control now,
+  gated identically to the old "Remove" button. The per-item **Parcel toggle** and "🥡
+  Leftover parcel" note are also removed from the row UI (container charge is a manual flat
+  amount now, see Printing section above — the toggle was redundant); the underlying
+  `parcelLeftover` field/column and `CartItem.parcelLeftover` type are untouched, just no
+  longer reachable from this UI.
+- **Quantity only steps by whole `1` via any +/- button** — menu tile pill, cart row stepper,
+  the Edit-Item modal's stepper, and the Open Item dialog's stepper (two independent stepper
+  implementations, fixed separately — check both if this regresses again). Manual number entry
+  in the Edit-Item/Open-Item text inputs still accepts fractionals (`step="any" min="0.5"`) for
+  a genuine half-portion order; only the +/- buttons were restricted to integers.
+- **Cart panel is wider** (`390px` normal / `420px` section mode, was `290px`/`340px`) so most
+  real menu item names display without truncating.
+- **"All" category tab now groups items under category headers** (font-display headings + a
+  divider line), matching single-category selection's look — previously "All" rendered one
+  flat, ungrouped grid.
+- **Order-type tabs** (the table-session "Adding as" strip, both desktop and mobile, and the
+  standalone Dine-In/Delivery/Pickup tabs) now use inline SVG icons instead of emoji, in a
+  unified segmented-pill style (dark green active, muted beige inactive) — previously each
+  mode had its own ad-hoc color (green/blue/amber) and raw emoji glyphs.
+- **`Reports.tsx` uses `IndianRupee`, not `DollarSign`, for every currency icon** — four spots
+  (Total Sales, the "Other" payment-method icon, the no-pending-payments checkmark, and
+  "Would-be revenue lost") were showing a $ glyph in an INR-only app.
 
 ## Path Aliases
 

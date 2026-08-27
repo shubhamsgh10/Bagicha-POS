@@ -13,6 +13,14 @@ const MAX_DELAY = 30_000;
 function handleMessage(msg: RealtimeMessage, setLastMessage: (m: RealtimeMessage | null) => void) {
   if (msg.type === "CACHE_BUST") {
     queryClient.invalidateQueries();
+  } else if (msg.type === "MENU_UPDATE") {
+    // Category/menu-item CRUD (incl. drag-reorder) has no other freshness signal for an
+    // already-open session — no polling on these queries, refetchOnWindowFocus is off,
+    // and staleTime (30s) has nothing to re-check it once elapsed once mounted. Scoped
+    // invalidation (not a blanket CACHE_BUST) so it doesn't also refetch orders/tables
+    // mid-service.
+    queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/menu"] });
   } else {
     setLastMessage(msg);
   }
@@ -60,6 +68,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       "NEW_DELIVERY_ORDER",
       "ATTENDANCE_UPDATE",
       "CACHE_BUST",
+      "MENU_UPDATE",
       "WA_MESSAGE",
       "WA_STATUS",
       "WA_CONVERSATION_UPDATE",
