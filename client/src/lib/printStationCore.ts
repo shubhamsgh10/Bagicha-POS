@@ -107,6 +107,7 @@ export function setStationEnabled(enabled: boolean): void {
   } catch {
     /* ignore quota/private-mode errors */
   }
+  persistToDurableStoreAsync();
 }
 
 const OWNED_PRINTERS_KEY = "printStation.ownedPrinterIds";
@@ -127,6 +128,50 @@ export function setOwnedPrinterIds(ids: string[]): void {
     localStorage.setItem(OWNED_PRINTERS_KEY, JSON.stringify(ids));
   } catch {
     /* ignore quota/private-mode errors */
+  }
+  persistToDurableStoreAsync();
+}
+
+/**
+ * Best-effort durable mirror of the two settings above — Electron only, fire-and-forget.
+ * localStorage stays the source of truth for every SYNCHRONOUS read in this module (job
+ * claiming is on a hot, real-time path and can't await IPC) — this just keeps a durable,
+ * file-backed (userData/print-station-config.json, see desktop/main.ts) copy current so
+ * hydrateFromDurableStore() below has something correct to restore from.
+ */
+function persistToDurableStoreAsync(): void {
+  if (!window.electronAPI?.isElectron) return;
+  void window.electronAPI
+    .setPrintStationConfig({ enabled: isStationEnabled(), ownedPrinterIds: getOwnedPrinterIds() })
+    .catch(() => { /* best-effort */ });
+}
+
+/**
+ * Self-heal for a reverted/stale localStorage value: pulls this device's durable,
+ * file-backed config and — if one exists — overwrites localStorage to match, so whatever
+ * caused a value to silently revert (a user reported "RP3160" re-checking itself days after
+ * being unchecked, with no code path that re-adds an id — pointing at a browser-storage
+ * durability gap under Electron's file:// thin-client origin, not application logic) gets
+ * corrected on the next load instead of persisting indefinitely. No-ops outside Electron.
+ * Idempotent — safe to call from multiple mount points (both PrintStation.tsx and
+ * usePrintJobBridge.ts do, since the latter's job-claiming can run without the settings
+ * page ever having been opened this session).
+ */
+export async function hydrateFromDurableStore(): Promise<{ enabled: boolean; ownedPrinterIds: string[] } | null> {
+  if (!window.electronAPI?.isElectron) return null;
+  try {
+    const durable = await window.electronAPI.getPrintStationConfig();
+    if (!durable) {
+      // No durable file yet (first run on this install since this fix shipped) — seed it
+      // from whatever localStorage already has, so it becomes authoritative from here on.
+      persistToDurableStoreAsync();
+      return null;
+    }
+    localStorage.setItem(STATION_ENABLED_KEY, durable.enabled ? "1" : "0");
+    localStorage.setItem(OWNED_PRINTERS_KEY, JSON.stringify(durable.ownedPrinterIds));
+    return durable;
+  } catch {
+    return null;
   }
 }
 

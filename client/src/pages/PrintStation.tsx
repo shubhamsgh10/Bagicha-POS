@@ -11,6 +11,7 @@ import {
   setOwnedPrinterIds,
   isStationEnabled,
   setStationEnabled,
+  hydrateFromDurableStore,
   type RemotePrintJob,
 } from "@/lib/printStationCore";
 
@@ -70,6 +71,19 @@ export default function PrintStation() {
   const addLog = useCallback((entry: JobLogEntry) => {
     setLog((prev) => [entry, ...prev].slice(0, 20));
   }, []);
+
+  // Self-heal on mount: the initial useState above already read localStorage synchronously
+  // (so first paint isn't blocked on IPC), but Electron's durable, file-backed copy is the
+  // one that survives whatever silently reverted localStorage — correct the UI (and
+  // localStorage itself) the moment it resolves, which is near-instant (local file read).
+  useEffect(() => {
+    if (!isElectron) return;
+    hydrateFromDurableStore().then((durable) => {
+      if (!durable) return;
+      setEnabled(durable.enabled);
+      setOwnedIds(durable.ownedPrinterIds);
+    });
+  }, [isElectron]);
 
   /** RawBT executor: hand off → ack (ack failure is logged, never released — RawBT already has the bytes). */
   const rawbtExecutor = useCallback(

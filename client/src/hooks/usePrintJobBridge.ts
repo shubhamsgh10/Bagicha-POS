@@ -6,6 +6,7 @@ import {
   claimAndExecute,
   canExecuteLocallyVerified,
   pollPendingJobs,
+  hydrateFromDurableStore,
   type RemotePrintJob,
 } from "@/lib/printStationCore";
 import type { PrintConfigSettings } from "@shared/print/types";
@@ -36,6 +37,20 @@ export function usePrintJobBridge(): void {
   const { isAuthenticated } = useAuth();
   const { lastMessage, connectionStatus } = useRealtime();
   const lastStatusRef = useRef<string>(connectionStatus);
+
+  // Self-heal ownedPrinterIds/enabled from the durable, file-backed store before any
+  // job-claiming below runs — this hook drives real claiming decisions on every mount
+  // regardless of whether the Print Station settings page (PrintStation.tsx, which does
+  // the same hydrate) was ever opened this session, so a stale localStorage value here
+  // has a real consequence (wrongly claiming/printing a job this device shouldn't). Fired
+  // as early as possible (first effect, unconditional on auth) — a local IPC + file read
+  // is fast enough that it wins the race against the initial poll's own settings-load gate
+  // in the overwhelming common case; even on the rare loss it's still bounded to a few ms
+  // of staleness, not the "persists for days" gap this replaces.
+  useEffect(() => {
+    if (!window.electronAPI?.isElectron) return;
+    void hydrateFromDurableStore();
+  }, []);
 
   // Printer configs, to skip claiming jobs this desktop host has no local execution path
   // for (e.g. a phone/RawBT-routed printer registered with a blank Windows queue name) —

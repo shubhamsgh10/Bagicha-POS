@@ -12,6 +12,7 @@ import {
   type AttendanceDeviceConfig,
   type AttendanceTestResult,
   type AttendanceStatus,
+  type PrintStationConfig,
 } from "../shared/electron/ipc.js";
 
 const electronAPI = {
@@ -56,6 +57,14 @@ const electronAPI = {
   }>> => ipcRenderer.invoke(IPC.PRINT_LOGS, n),
 
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
+
+  // ── Print Station config (durable file, not localStorage — see desktop/main.ts) ────
+
+  getPrintStationConfig: (): Promise<PrintStationConfig | null> =>
+    ipcRenderer.invoke(IPC.PRINT_STATION_CONFIG_GET),
+
+  setPrintStationConfig: (cfg: PrintStationConfig): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PRINT_STATION_CONFIG_SET, cfg),
 
   // ── Biometric attendance device (K30 Pro) ────────────────────────────────────
 

@@ -10,6 +10,7 @@ import type {
   AttendanceDeviceConfig,
   AttendanceTestResult,
   AttendanceStatus,
+  PrintStationConfig,
 } from "@shared/electron/ipc";
 
 export interface ElectronAPI {
@@ -21,6 +22,10 @@ export interface ElectronAPI {
   printTest: (payload: PrintTestPayload) => Promise<PrintExecuteResult>;
   scanUsbDevices: () => Promise<UsbScanResult>;
   getVersion: () => Promise<string>;
+
+  // ── Print Station config (durable file, not localStorage) ────────────────
+  getPrintStationConfig: () => Promise<PrintStationConfig | null>;
+  setPrintStationConfig: (cfg: PrintStationConfig) => Promise<boolean>;
 
   refreshPrinters: () => Promise<{ ok: boolean; error?: string }>;
   checkPrinterQueueExists: (queueName: string) => Promise<boolean>;
