@@ -2112,8 +2112,20 @@ export async function registerRoutes(
       const changeDue = isDue ? 0 : Math.max(0, paidAmt - orderTotal);
 
       // A non-due settlement must actually cover the bill (₹1 tolerance for rounding).
+      // Include the actual numbers — a bare "less than the bill total" gives staff (and
+      // whoever debugs it later) no way to tell a genuine underpayment apart from the
+      // order's total having silently changed server-side since it was last displayed
+      // (e.g. a menu item's price was edited while this order sat open — priceResolved's
+      // per-line floor check pulls a stale client price up to the new one on every save,
+      // but the POS cart never re-syncs an already-added line's price against the live
+      // menu, so staff can retry with "the right" amount indefinitely and it will never
+      // match what the server now believes the bill is).
       if (!isDue && paidAmt < orderTotal - 1) {
-        return res.status(400).json({ error: "Amount paid is less than the bill total" });
+        return res.status(400).json({
+          error: `Amount paid (₹${paidAmt.toFixed(2)}) is less than the bill total (₹${orderTotal.toFixed(2)})`,
+          paidAmt,
+          orderTotal,
+        });
       }
 
       const updateData: any = {

@@ -2822,6 +2822,11 @@ export default function POS() {
             initialCustomerName={form.watch("customerName") || ""}
             initialCustomerPhone={form.watch("customerPhone") || ""}
             onSettle={(data) => {
+              // Every other manual submit path (KOT/Save/Bill) cancels a pending Auto-KOT
+              // timer before its own save — this one didn't, so a debounced Auto-KOT sync
+              // armed by a recent edit could still fire its own PUT after Settle's save
+              // completed, potentially landing between it and the payment check.
+              cancelPendingAutoKot();
               settlementDataRef.current = data;
               setShowSettleDialog(false);
               setSettlePhase("processing");
