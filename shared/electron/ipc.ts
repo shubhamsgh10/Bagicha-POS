@@ -25,7 +25,18 @@ export const IPC = {
   ATTENDANCE_TEST: "attendance:test",       // renderer → main: test a device connection
   ATTENDANCE_STATUS: "attendance:status",   // renderer → main: agent status
   ATTENDANCE_REFRESH: "attendance:refresh", // renderer → main: re-read config + restart agent
+
+  // ── Print Station config (durable, file-backed — see printStationConfig.ts) ──
+  PRINT_STATION_CONFIG_GET: "print-station-config:get",
+  PRINT_STATION_CONFIG_SET: "print-station-config:set",
 } as const;
+
+// ── Print Station config ────────────────────────────────────────────────────
+
+export interface PrintStationConfig {
+  enabled: boolean;
+  ownedPrinterIds: string[];
+}
 
 // ── Update payload types ──────────────────────────────────────────────────────
 

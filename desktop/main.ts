@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as E from "../shared/print/escpos.js";
-import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig } from "../shared/electron/ipc.js";
+import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig, type PrintStationConfig } from "../shared/electron/ipc.js";
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
@@ -74,6 +74,53 @@ function resolveHostConfig(): { DATABASE_URL?: string; SESSION_SECRET?: string }
     console.warn("[electron] host-config.json read failed:", e);
   }
   return fromBuild;
+}
+
+/**
+ * Which printers THIS device's Print Station should claim jobs for — durable, file-backed
+ * (userData/print-station-config.json), not browser localStorage.
+ *
+ * Why: localStorage is what client/src/lib/printStationCore.ts used exclusively before this
+ * — and on a thin-client Electron install (renderer loaded via `loadFile`, i.e. a `file://`
+ * origin — see the isDev/IS_EMBEDDED branch in createWindow below) this codebase has already
+ * hit one prior class of file://-origin storage bug (see git history: "Fix file:// origin
+ * logout/asset paths and stale per-instance settings cache"). A user reported the printer
+ * checklist here silently re-checking a printer they'd explicitly unchecked, days after
+ * unchecking it — every write to that setting is user-click-driven (no code auto-re-adds an
+ * id), so the only explanation is the browser-storage write not durably surviving. A plain
+ * JSON file write is categorically more durable (synchronous fs write, inspectable, immune to
+ * origin-partitioning/eviction quirks) — the renderer now treats this file as authoritative
+ * and resyncs its localStorage cache to match on every load (see printStationCore.ts).
+ */
+function printStationConfigPath(): string {
+  return path.join(app.getPath("userData"), "print-station-config.json");
+}
+
+function readPrintStationConfig(): PrintStationConfig | null {
+  try {
+    const p = printStationConfigPath();
+    if (!fs.existsSync(p)) return null;
+    const file = JSON.parse(fs.readFileSync(p, "utf-8"));
+    return {
+      enabled: !!file.enabled,
+      ownedPrinterIds: Array.isArray(file.ownedPrinterIds)
+        ? file.ownedPrinterIds.filter((x: unknown): x is string => typeof x === "string")
+        : [],
+    };
+  } catch (e) {
+    console.warn("[electron] print-station-config.json read failed:", e);
+    return null;
+  }
+}
+
+function writePrintStationConfig(cfg: PrintStationConfig): boolean {
+  try {
+    fs.writeFileSync(printStationConfigPath(), JSON.stringify(cfg, null, 2), "utf-8");
+    return true;
+  } catch (e) {
+    console.warn("[electron] print-station-config.json write failed:", e);
+    return false;
+  }
 }
 
 function waitForServer(maxMs = 120_000): Promise<void> {
@@ -479,6 +526,19 @@ ipcMain.handle(IPC.PRINT_LOGS, (_e, n?: number) => printLog?.getRecent(n) ?? [])
 ipcMain.handle(IPC.PRINTER_QUEUE_EXISTS, async (_e, queueName: unknown) => {
   if (typeof queueName !== "string" || !queueName.trim()) return false;
   return windowsPrinterQueueExists(queueName).catch(() => false);
+});
+
+ipcMain.handle(IPC.PRINT_STATION_CONFIG_GET, (): PrintStationConfig | null => readPrintStationConfig());
+
+ipcMain.handle(IPC.PRINT_STATION_CONFIG_SET, (_e, cfg: unknown): boolean => {
+  if (!cfg || typeof cfg !== "object") return false;
+  const c = cfg as Partial<PrintStationConfig>;
+  return writePrintStationConfig({
+    enabled: !!c.enabled,
+    ownedPrinterIds: Array.isArray(c.ownedPrinterIds)
+      ? c.ownedPrinterIds.filter((x): x is string => typeof x === "string")
+      : [],
+  });
 });
 
 ipcMain.handle(IPC.REFRESH_PRINTERS, async () => {
