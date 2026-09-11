@@ -599,6 +599,7 @@ const CART_ACTION_LIST: { key: CartAction; label: string }[] = [
   { key: "saveOrder",     label: "Save Order" },
   { key: "settleOrder",   label: "Settle / Checkout" },
   { key: "openItem",      label: "Add Open Item" },
+  { key: "writeOff",      label: "Settle Short (Write-off)" },
 ];
 
 const PERM_OPTIONS: { value: CartActionPermission; label: string; cls: string }[] = [

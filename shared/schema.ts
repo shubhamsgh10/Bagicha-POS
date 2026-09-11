@@ -109,6 +109,13 @@ export const orders = pgTable("orders", {
   cancelReason: text("cancel_reason"), // set by PUT /api/orders/:id/cancel; null unless status="cancelled"
   paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }),
   changeAmount: decimal("change_amount", { precision: 10, scale: 2 }).default("0"),
+  // Amount the customer was short by on a settled bill, deliberately written off by staff
+  // (e.g. ₹1200 collected on a ₹1230 bill). Only ever written by POST /api/orders/:id/payment,
+  // and only when that request explicitly carries allowShortfall — a short settle is otherwise
+  // still rejected outright. Revenue is reported as `totalAmount - shortfallAmount`, so a
+  // normal order (0 here) reads identically to before this column existed. Never a "due":
+  // a due order owes its full total and is tracked by paymentStatus, not by this column.
+  shortfallAmount: decimal("shortfall_amount", { precision: 10, scale: 2 }).default("0"),
   paymentBreakdown: json("payment_breakdown").$type<Record<string, string>>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
