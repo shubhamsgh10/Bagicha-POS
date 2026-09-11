@@ -633,9 +633,16 @@ export default function Billing() {
                       </Button>
                     )}
                     {order.paymentStatus === "paid" && (
-                      <div className="flex-1 flex items-center gap-1.5 text-green-600 text-xs font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Paid via {order.paymentMethod}
+                      <div className="flex-1 flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5 text-green-600 text-xs font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Paid via {order.paymentMethod}
+                        </div>
+                        {parseFloat(order.shortfallAmount || 0) > 0 && (
+                          <div className="text-[11px] text-red-600">
+                            Paid {formatCurrency(parseFloat(order.paidAmount || 0))} of {formatCurrency(parseFloat(order.totalAmount))} · {formatCurrency(parseFloat(order.shortfallAmount))} written off
+                          </div>
+                        )}
                       </div>
                     )}
                     <Button

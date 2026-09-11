@@ -227,11 +227,12 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   { label: "Type",      value: order.orderType?.replace("-", " ") || "—" },
                   { label: "Payment",   value: order.paymentStatus === "paid" ? (order.paymentMethod || "cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
                   ...(order.createdByName ? [{ label: "Served By", value: order.createdByName }] : []),
+                  ...(parseFloat(order.shortfallAmount || 0) > 0 ? [{ label: "Written Off", value: fmt(parseFloat(order.shortfallAmount)) }] : []),
                   ...(order.status === "cancelled" && order.cancelReason ? [{ label: "Cancel Reason", value: order.cancelReason }] : []),
                 ].map(({ label, value }) => (
                   <div key={label} className={`bg-[var(--paper-100)] rounded-xl px-3 py-2 ${label === "Cancel Reason" ? "col-span-2 sm:col-span-5" : ""}`}>
                     <p className="text-gray-400 font-medium uppercase tracking-wide text-[10px] mb-0.5">{label}</p>
-                    <p className={`font-semibold truncate ${label === "Cancel Reason" ? "text-red-600 normal-case" : "capitalize"} ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : label === "Cancel Reason" ? "" : "text-gray-700"}`}>{value}</p>
+                    <p className={`font-semibold truncate ${label === "Cancel Reason" ? "text-red-600 normal-case" : "capitalize"} ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : label === "Written Off" ? "text-red-600" : label === "Cancel Reason" ? "" : "text-gray-700"}`}>{value}</p>
                   </div>
                 ))}
               </div>

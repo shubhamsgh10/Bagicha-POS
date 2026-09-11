@@ -29,6 +29,7 @@ export const ORDER_CREATE_FORCED_DEFAULTS = {
   paymentStatus: "pending" as const,
   paidAmount: null,
   changeAmount: "0",
+  shortfallAmount: "0",
   paymentMethod: null,
   paymentBreakdown: null,
 };

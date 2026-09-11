@@ -17,6 +17,7 @@ import { stripKitchenNotes } from "@shared/orderItemText";
 import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { publishRealtime } from "./realtime/publisher";
+import { logAudit } from "./services/auditService";
 import * as E from "./escpos";
 
 /** Claims older than this are considered abandoned (station crashed mid-print) and become reclaimable. */
@@ -366,6 +367,12 @@ export function registerPrintRoutes(app: Express): void {
               lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
             })
             .where(eq(orders.id, orderId));
+        } else {
+          // A genuine KOT reprint — deliberately NOT counted by kotPrintCount (that
+          // increment is skipped above `if (!reprint)`), so this audit row is the ONLY
+          // durable trace a reprint happened here, with actor+timestamp for Reports.tsx's
+          // KOT & Bill Activity tab.
+          logAudit(req, "kot.reprint", "order", orderId, { kotNumber: browserKotNum });
         }
         return res.json({
           browserPrint: true,
@@ -511,6 +518,13 @@ export function registerPrintRoutes(app: Express): void {
       // Commit even on a partial direct failure: the printers that DID succeed already
       // printed this delta, so a retry must not re-send it to them.
       await commitKotState();
+      if (reprint) {
+        // Same reasoning as the browser-fallback branch above — kotPrintCount's
+        // increment inside commitKotState() is skipped on reprint, so this is the only
+        // durable trace. One row per tap (not per routed printer) — the ticket is the
+        // same reprinted KOT regardless of how many physical printers it fans out to.
+        logAudit(req, "kot.reprint", "order", orderId, { kotNumber: kotNumStr });
+      }
 
       const failureMessage = directFailures.length > 0
         ? `Printer error on ${directFailures.map((f) => f.printer.name ?? f.printer.id).join(", ")}: ${directFailures[0].error}`
@@ -556,6 +570,14 @@ export function registerPrintRoutes(app: Express): void {
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Order not found" });
 
+      // Bills have no client-supplied `reprint` flag (unlike /api/print/kot) — every
+      // request sends an identical {orderId} body. billPrintCount>0 (read BEFORE this
+      // request's own increment) is the only signal for "has this bill already gone
+      // out" — the exact same signal billTextLines/generateBillBuffer already use for
+      // the "** DUPLICATE **" watermark, so this new audit signal and that watermark can
+      // never disagree.
+      const isReprint = (order.billPrintCount ?? 0) > 0;
+
       const rawItems = await db
         .select({
           name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
@@ -593,6 +615,7 @@ export function registerPrintRoutes(app: Express): void {
           .update(orders)
           .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
           .where(eq(orders.id, orderId));
+        if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
         return res.json({ browserPrint: true });
       }
 
@@ -630,6 +653,11 @@ export function registerPrintRoutes(app: Express): void {
           .update(orders)
           .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
           .where(eq(orders.id, orderId));
+        // Covers all 3 dispatch branches below that call this closure (hardware,
+        // non-ESC-POS browser fallback, remote-to-desktop) in one place — the 4th branch
+        // (no printer configured at all, above) logs it inline since it commits before
+        // this closure is even defined.
+        if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
       };
 
       const escPosOk = supportsRawEscPos(printer);

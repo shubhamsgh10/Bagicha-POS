@@ -289,12 +289,10 @@ export default function POS() {
   const [showActionsMenu, setShowActionsMenu]       = useState(false);
   const [showMoveDialog, setShowMoveDialog]         = useState(false);
   const [showMergeDialog, setShowMergeDialog]       = useState(false);
-  const [showSplitDialog, setShowSplitDialog]       = useState(false);
   const [showHoldConfirm, setShowHoldConfirm]       = useState(false);
   const [showRecallDialog, setShowRecallDialog]     = useState(false);
   const [showCancelConfirm, setShowCancelConfirm]   = useState(false);
   const [cancelReason, setCancelReason]             = useState("");
-  const [splitSelectedIds, setSplitSelectedIds]     = useState<number[]>([]);
   const [actionLoading, setActionLoading]           = useState(false);
 
   // Tables list (for move + merge)
@@ -397,35 +395,6 @@ export default function POS() {
     } finally {
       setActionLoading(false);
     }
-  };
-
-  const handleSplitBill = async () => {
-    if (!activeOrderId || splitSelectedIds.length === 0) return;
-    setActionLoading(true);
-    try {
-      const result = await apiRequest("POST", `/api/orders/${activeOrderId}/split`, {
-        itemIds: splitSelectedIds,
-      });
-      const data = await result.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
-      toast({
-        title: "Bill split successfully",
-        description: `New order #${data.newOrderId} created for selected items`,
-      });
-      setShowSplitDialog(false);
-      setSplitSelectedIds([]);
-      window.location.reload();
-    } catch {
-      toast({ title: "Failed to split bill", variant: "destructive" });
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const toggleSplitItem = (id: number) => {
-    setSplitSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
   };
 
   const { toast } = useToast();
@@ -927,7 +896,7 @@ export default function POS() {
   // ── Settle / payment mutation ─────────────────────────────────────────────
 
   const settleMutation = useMutation({
-    mutationFn: async ({ orderId, paymentMethod, notes, payments, totalPaid, changeAmount, isDue, customerName, customerPhone }: {
+    mutationFn: async ({ orderId, paymentMethod, notes, payments, totalPaid, changeAmount, isDue, customerName, customerPhone, allowShortfall }: {
       orderId: number;
       order?: any;
       paymentMethod?: string;
@@ -938,9 +907,10 @@ export default function POS() {
       isDue?: boolean;
       customerName?: string;
       customerPhone?: string;
+      allowShortfall?: boolean;
     }) => {
       const body = payments
-        ? { payments, totalPaid, changeAmount, isDue, customerName, customerPhone }
+        ? { payments, totalPaid, changeAmount, isDue, customerName, customerPhone, allowShortfall }
         : { paymentMethod: paymentMethod || "cash", notes };
       const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, body);
       return res.json();
@@ -1337,9 +1307,6 @@ export default function POS() {
     go();
   };
 
-
-  const handleComplimentary = () => go("complimentary", "Complimentary (100% Discount)", () => setDiscountPercent(100));
-
   const handleShortCode = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || !shortCode.trim()) return;
     const q = shortCode.trim().toLowerCase();
@@ -1537,54 +1504,6 @@ export default function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Split Bill Dialog ────────────────────────────────────────────────── */}
-      <Dialog open={showSplitDialog} onOpenChange={setShowSplitDialog}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Split Bill</DialogTitle>
-            <DialogDescription>Select items to split into a separate order.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 max-h-64 overflow-y-auto py-1">
-            {(existingOrder?.items || []).length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-6">No saved items to split</p>
-            )}
-            {(existingOrder?.items || []).map((item: any) => {
-              const menuItem = menuItems?.find((m: any) => m.id === item.menuItemId);
-              const name = menuItem?.name || `Item #${item.menuItemId}`;
-              const checked = splitSelectedIds.includes(item.id);
-              return (
-                <label
-                  key={item.id}
-                  className={`flex items-center justify-between px-4 py-3 rounded-xl border cursor-pointer transition-colors ${
-                    checked ? "border-primary bg-primary/5" : "hover:border-primary/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSplitItem(item.id)}
-                      className="accent-primary w-4 h-4"
-                    />
-                    <span className="text-sm font-medium">{name}{item.size ? ` (${item.size})` : ""}</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground">×{item.quantity} · ₹{parseFloat(item.price) * item.quantity}</span>
-                </label>
-              );
-            })}
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setShowSplitDialog(false)}>Cancel</Button>
-            <Button
-              disabled={splitSelectedIds.length === 0 || actionLoading}
-              onClick={handleSplitBill}
-            >
-              Split {splitSelectedIds.length > 0 ? `(${splitSelectedIds.length})` : ""}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       {/* ── Hold Order Confirm ───────────────────────────────────────────────── */}
       <Dialog open={showHoldConfirm} onOpenChange={setShowHoldConfirm}>
         <DialogContent className="max-w-sm">
@@ -1682,7 +1601,7 @@ export default function POS() {
           <DialogHeader>
             <DialogTitle>Cancel Order?</DialogTitle>
             <DialogDescription>
-              This will permanently cancel the order and free the table. This cannot be undone.
+              This will permanently cancel the order{isTableSession ? " and free the table" : ""}. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -1969,8 +1888,13 @@ export default function POS() {
             />
 
             {/* Table Actions — outside overflow so dropdown renders above content. Not shown
-                for quick-POS sections (no table workflow — just order, print, settle). */}
-            {!posMode && !isSectionMode && <div className="relative" onClick={(e) => e.stopPropagation()}>
+                for quick-POS sections (no table workflow — just order, print, settle).
+                Shown for pickup/delivery (posMode) too now, but with Move Table/Merge
+                Table/Recall Held filtered out below — those are table-specific concepts
+                that don't apply to a standalone pickup/delivery order; only Cancel Order
+                (which the server-side route already handles generically, no table
+                assumptions) carries over. */}
+            {!isSectionMode && <div className="relative" onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => setShowActionsMenu((v) => !v)}
                 className="flex items-center gap-1 text-xs text-gray-600 border border-gray-200 px-2.5 py-1.5 rounded hover:bg-gray-50 transition-colors font-medium"
@@ -1982,10 +1906,11 @@ export default function POS() {
               {showActionsMenu && (
                 <div className="absolute right-0 top-full mt-1 z-50 w-44 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
                   {[
-                    { label: "Move Table",   action: () => openAction(() => go("moveTable",   "Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
-                    { label: "Merge Table",  action: () => openAction(() => go("mergeTable",  "Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
-                    { label: "Split Bill",   action: () => openAction(() => go("splitBill",   "Split Bill",    () => { setSplitSelectedIds([]); setShowSplitDialog(true); })), icon: "⊘", permKey: "splitBill"   as const },
-                    { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                                   icon: "↩", permKey: null },
+                    ...(!posMode ? [
+                      { label: "Move Table",   action: () => openAction(() => go("moveTable",   "Move Table",    () => setShowMoveDialog(true))),                              icon: "→", permKey: "moveTable"   as const },
+                      { label: "Merge Table",  action: () => openAction(() => go("mergeTable",  "Merge Tables",  () => setShowMergeDialog(true))),                             icon: "⊕", permKey: "mergeTable"  as const },
+                      { label: "Recall Held",  action: () => openAction(() => { refetchHeld(); setShowRecallDialog(true); }),                                                   icon: "↩", permKey: null },
+                    ] : []),
                     { label: "Cancel Order", action: () => openAction(() => go("cancelOrder", "Cancel Order",  () => setShowCancelConfirm(true))),                            icon: "✕", permKey: "cancelOrder" as const, danger: true },
                   ].map((item) => {
                     const allowed = item.permKey === null ? true : !isOff(item.permKey);
@@ -2822,11 +2747,27 @@ export default function POS() {
             initialCustomerName={form.watch("customerName") || ""}
             initialCustomerPhone={form.watch("customerPhone") || ""}
             onSettle={(data) => {
-              settlementDataRef.current = data;
-              setShowSettleDialog(false);
-              setSettlePhase("processing");
-              submitModeRef.current = "settle";
-              triggerSubmit();
+              // Every other manual submit path (KOT/Save/Bill) cancels a pending Auto-KOT
+              // timer before its own save — this one didn't, so a debounced Auto-KOT sync
+              // armed by a recent edit could still fire its own PUT after Settle's save
+              // completed, potentially landing between it and the payment check.
+              const proceed = () => {
+                cancelPendingAutoKot();
+                settlementDataRef.current = data;
+                setShowSettleDialog(false);
+                setSettlePhase("processing");
+                submitModeRef.current = "settle";
+                triggerSubmit();
+              };
+              // A short settle (data.allowShortfall) writes real money off as a loss — same
+              // class of deviation as a discount, gated the same way (usePermission's go(),
+              // manager PIN unless already elevated/admin). The server independently
+              // re-checks elevation regardless of what the client sends.
+              if (data.allowShortfall) {
+                go("writeOff", `Write off ${fmt(data.shortfallAmount)}`, proceed);
+              } else {
+                proceed();
+              }
             }}
             // Only offered once the order actually exists — a never-saved cart has
             // nothing to cancel server-side (use Clear Cart instead). Hands off to the
@@ -2860,28 +2801,6 @@ export default function POS() {
               />
             ) : (
               <>
-            {/* Split + Complimentary */}
-            <div className="grid grid-cols-2 gap-1">
-              <button
-                disabled={!activeOrderId || isPending || isOff("splitBill")}
-                onClick={() => go("splitBill", "Split Bill", () => { setSplitSelectedIds([]); setShowSplitDialog(true); })}
-                className="py-1 rounded text-[10px] font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-                style={{ border: "1px solid var(--line-strong)", color: "var(--text-2)", background: "var(--paper-0)" }}
-              >
-                Split
-                {isOff("splitBill") && <Lock className="w-2 h-2 opacity-50" />}
-              </button>
-              <button
-                disabled={!hasItems || isPending || isOff("complimentary")}
-                onClick={handleComplimentary}
-                className="py-1 rounded text-[10px] font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-                style={{ border: "1px solid var(--line-strong)", color: "var(--text-2)", background: "var(--paper-0)" }}
-              >
-                Complimentary
-                {isOff("complimentary") && <Lock className="w-2 h-2 opacity-50" />}
-              </button>
-            </div>
-
             {/* KOT / Bill row */}
             <div className="grid grid-cols-2 gap-1">
               <button
