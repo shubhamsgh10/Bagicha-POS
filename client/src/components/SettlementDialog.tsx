@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api";
+import { resolveSettlement, type SettlementMode } from "@shared/settlement";
 
 export interface SettlementPayment {
   method: "cash" | "upi";
@@ -18,6 +19,13 @@ export interface SettlementData {
   payments: SettlementPayment[];
   totalPaid: number;
   changeAmount: number;
+  // Money the bill was short by, written off as a loss. 0 unless the staff explicitly
+  // confirmed a short settle — see the confirm footer below and shared/settlement.ts.
+  shortfallAmount: number;
+  // True only when this settle is carrying a real write-off — the caller (POS.tsx) gates
+  // this behind the "writeOff" CartAction (manager PIN) before sending the request; the
+  // server independently re-checks elevation regardless of what this flag says.
+  allowShortfall: boolean;
   isDue: boolean;
   customerName?: string;
   customerPhone?: string;
@@ -52,9 +60,11 @@ interface Props {
   onCancelOrder?: () => void;
 }
 
-const METHODS: { key: "cash" | "upi"; label: string; icon: string }[] = [
-  { key: "cash",  label: "Cash", icon: "💵" },
-  { key: "upi",   label: "UPI",  icon: "📱" },
+const MODES: { key: SettlementMode; label: string; icon: string }[] = [
+  { key: "cash", label: "Cash", icon: "💵" },
+  { key: "upi",  label: "UPI",  icon: "📱" },
+  { key: "due",  label: "Due",  icon: "🕒" },
+  { key: "part", label: "Part", icon: "➗" },
 ];
 
 interface CustomerSuggestion { name: string; phone: string | null; }
@@ -64,23 +74,35 @@ export function SettlementDialog({
   items, subtotal, taxAmount, discountAmount, orderLabel,
   initialCustomerName, initialCustomerPhone, onCancelOrder,
 }: Props) {
-  const [cash,  setCash]  = useState(0);
-  const [upi,   setUpi]   = useState(0);
-  const [isDue, setIsDue] = useState(false);
+  const [mode, setMode] = useState<SettlementMode>("cash");
+  const [cash, setCash] = useState(0);
+  const [upi,  setUpi]  = useState(0);
   const [customerName,  setCustomerName]  = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  // A short settle needs an explicit second tap naming the exact write-off amount before
+  // it's sent — see the confirm footer below. Reset any time the mode/amounts change so an
+  // edit after confirming re-requires confirmation.
+  const [confirmingShortfall, setConfirmingShortfall] = useState(false);
 
   const inr = (n: number) => `₹${Math.round(n)}`;
 
-  // Prefill customer fields from the order each time the dialog opens.
+  // Prefill customer fields from the order + reset to a clean Cash state each time the
+  // dialog opens — Cash-at-full-total is the common case (Petpooja's own default tab).
   useEffect(() => {
     if (open) {
       setCustomerName(initialCustomerName ?? "");
       setCustomerPhone(initialCustomerPhone ?? "");
+      setMode("cash");
+      setCash(Math.round(grandTotal));
+      setUpi(0);
+      setConfirmingShortfall(false);
     }
+    // grandTotal deliberately excluded — it can tick slightly on re-render (e.g. live cart
+    // edits) and re-running this on every such change would stomp whatever staff already typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialCustomerName, initialCustomerPhone]);
 
-  // Customer autocomplete (phone-first)
+  // Customer autocomplete (phone-first) — shown in Due mode
   const [suggestions, setSuggestions]     = useState<CustomerSuggestion[]>([]);
   const [showSuggest, setShowSuggest]     = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -88,23 +110,15 @@ export function SettlementDialog({
   const abortCtrlRef  = useRef<AbortController | null>(null);
   const phoneRef      = useRef<HTMLDivElement>(null);
 
-  const totalEntered = cash + upi;
-  const remaining    = grandTotal - totalEntered;
-  const changeDue    = remaining < 0 ? Math.abs(remaining) : 0;
-  const balanceDue   = remaining > 0 ? remaining : 0;
-  // ₹1 tolerance matches the server's own settle guard (routes.ts POST /:id/payment:
-  // "paidAmt < orderTotal - 1" is rejected) — grandTotal is the paisa-precise stored
-  // total (tax math routinely leaves a fractional remainder), but real cash/UPI amounts
-  // are always whole rupees, so a strict/exact comparison here would silently block a
-  // payment the server would happily accept. Must stay in sync with that server check.
-  const canSettle    = isDue || totalEntered >= grandTotal - 1;
+  const settlement = resolveSettlement({ mode, cash, upi, orderTotal: grandTotal });
 
   useEffect(() => {
     if (!open) {
       if (searchTimer.current) clearTimeout(searchTimer.current);
       if (abortCtrlRef.current) abortCtrlRef.current.abort();
-      setCash(0); setUpi(0);
-      setIsDue(false); setCustomerName(""); setCustomerPhone("");
+      setMode("cash"); setCash(0); setUpi(0);
+      setCustomerName(""); setCustomerPhone("");
+      setConfirmingShortfall(false);
       setSuggestions([]); setShowSuggest(false);
     }
   }, [open]);
@@ -120,32 +134,46 @@ export function SettlementDialog({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const amounts: Record<"cash" | "upi", number> = { cash, upi };
-  const setters: Record<"cash" | "upi", (v: number) => void> = {
-    cash: setCash, upi: setUpi,
-  };
-
-  // Running balance per row
-  const rowRemaining: number[] = [];
-  let balance = grandTotal;
-  for (const m of METHODS) {
-    balance = Math.max(0, balance - amounts[m.key]);
-    rowRemaining.push(balance);
-  }
-
   const parse = (v: string) => Math.max(0, parseFloat(v) || 0);
 
-  // Auto-fill UPI with the remaining balance (grandTotal - cash) the moment its own
-  // field gains focus — covers both "cash entered, tab/click into UPI" (remaining
-  // splits in) and "click UPI first" (cash is still 0, so the whole bill lands in).
-  // Deliberately keyed off UPI's OWN focus event, not a blur on some other field —
-  // the previous implementation cascaded on *any* field's blur, so clicking anything
-  // else on screen (e.g. the Pay Later checkbox) blurred whatever was last focused
-  // and silently dropped the remaining amount into the next box.
-  const handleUpiFocus = () => {
-    if (upi !== 0) return; // never clobber an amount the staff already typed/edited
-    const rem = grandTotal - cash;
-    if (rem > 0) setUpi(Math.round(rem));
+  // Selecting a mode prefills its amount(s) with sensible defaults — the whole bill for a
+  // single method, split-ready (cash = full, upi = 0) for Part — same "just works" feel as
+  // Petpooja's own settlement box. Any prior edit-in-progress confirm step is cleared, since
+  // switching modes changes what would actually be settled.
+  const selectMode = (m: SettlementMode) => {
+    setMode(m);
+    setConfirmingShortfall(false);
+    if (m === "cash") { setCash(Math.round(grandTotal)); setUpi(0); }
+    else if (m === "upi") { setUpi(Math.round(grandTotal)); setCash(0); }
+    else if (m === "part") { setCash(Math.round(grandTotal)); setUpi(0); }
+    else { setCash(0); setUpi(0); }
+  };
+
+  const setSingleAmount = (v: string) => {
+    const val = parse(v);
+    if (mode === "cash") setCash(val); else if (mode === "upi") setUpi(val);
+    setConfirmingShortfall(false);
+  };
+  // Part mode auto-fills the OTHER box with whatever's left of the bill, live, as the
+  // staff types — editing Cash drives UPI to (total - cash) and vice versa, so entering
+  // one amount is normally enough to complete a two-way split. This is deliberately an
+  // onChange-driven complement on the field actually being edited, not an onBlur cascade
+  // across fields — the earlier single-amount box's onFocus auto-fill was removed for
+  // exactly that "any blur anywhere stomps a box" failure mode (see git history); keying
+  // this off the edited field's own onChange has no such cross-field trigger to misfire.
+  // A staff member who wants a genuinely uneven split (not summing to the total) can
+  // still get there by editing whichever field they set second, last.
+  const setPartCash = (v: string) => {
+    const val = parse(v);
+    setCash(val);
+    setUpi(Math.max(0, Math.round(grandTotal - val)));
+    setConfirmingShortfall(false);
+  };
+  const setPartUpi = (v: string) => {
+    const val = parse(v);
+    setUpi(val);
+    setCash(Math.max(0, Math.round(grandTotal - val)));
+    setConfirmingShortfall(false);
   };
 
   // Phone-first customer search with debounce + AbortController
@@ -187,32 +215,37 @@ export function SettlementDialog({
     setSuggestions([]);
   };
 
+  const dueReady = customerName.trim().length > 0 && customerPhone.trim().length > 0;
+
+  // Shared by both the main Settle button and the confirm footer's "Yes, write off" button —
+  // the first tap on a short settle only arms the confirm step; the second (identical) call,
+  // now with confirmingShortfall already true, actually sends it.
   const handleSettle = () => {
-    // Pay Later means nothing was collected right now — the whole bill goes on the
-    // tab. Force an empty breakdown here regardless of what's in the boxes (belt and
-    // suspenders alongside resetting them when the checkbox is ticked, see below):
-    // the server marks paymentStatus "pending" purely off isDue, but it still stores
-    // whatever paidAmount/paymentBreakdown comes through — a leftover auto-filled
-    // amount would otherwise record a phantom "already paid" total on a due order.
-    if (isDue) {
+    if (mode === "due") {
+      if (!dueReady) return;
       onSettle({
         payments: [],
         totalPaid: 0,
         changeAmount: 0,
+        shortfallAmount: 0,
+        allowShortfall: false,
         isDue: true,
         customerName,
         customerPhone,
       });
       return;
     }
-    const payments: SettlementPayment[] = METHODS
-      .filter(m => amounts[m.key] > 0)
-      .map(m => ({ method: m.key, amount: amounts[m.key] }));
-    if (payments.length === 0) return;
+    if (settlement.payments.length === 0) return;
+    if (settlement.isShort && !confirmingShortfall) {
+      setConfirmingShortfall(true);
+      return;
+    }
     onSettle({
-      payments,
-      totalPaid: totalEntered,
-      changeAmount: changeDue,
+      payments: settlement.payments,
+      totalPaid: settlement.totalPaid,
+      changeAmount: settlement.changeAmount,
+      shortfallAmount: settlement.shortfallAmount,
+      allowShortfall: settlement.isShort,
       isDue: false,
       customerName: undefined,
       customerPhone: undefined,
@@ -221,20 +254,15 @@ export function SettlementDialog({
 
   const handleOpenChange = (v: boolean) => {
     if (!v) {
-      setCash(0); setUpi(0);
-      setIsDue(false); setCustomerName(""); setCustomerPhone("");
+      setMode("cash"); setCash(0); setUpi(0);
+      setCustomerName(""); setCustomerPhone("");
+      setConfirmingShortfall(false);
       setSuggestions([]); setShowSuggest(false);
     }
     onOpenChange(v);
   };
 
-  // Ticking Pay Later clears any amounts already in the boxes (e.g. from the UPI
-  // auto-fill above) so the summary/table can't keep showing "✓ Settled" for an
-  // order that's actually going on the customer's tab.
-  const handleDueToggle = (checked: boolean) => {
-    setIsDue(checked);
-    if (checked) { setCash(0); setUpi(0); }
-  };
+  const canSettle = mode === "due" ? dueReady : settlement.payments.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -297,88 +325,103 @@ export function SettlementDialog({
             </div>
           )}
 
-          {/* Payment table — disabled while Pay Later is on, since nothing is being
-              collected right now and any leftover amount would be misleading. */}
-          <table className={`w-full text-sm ${isDue ? "opacity-40 pointer-events-none" : ""}`}>
-            <thead>
-              <tr className="text-xs text-muted-foreground border-b">
-                <th className="text-left pb-2 font-medium">Method</th>
-                <th className="text-right pb-2 font-medium pr-2">Amount (₹)</th>
-                <th className="text-right pb-2 font-medium w-20">Remaining</th>
-              </tr>
-            </thead>
-            <tbody>
-              {METHODS.map((m, i) => (
-                <tr key={m.key} className="border-b last:border-0">
-                  <td className="py-2 font-medium text-sm">{m.icon} {m.label}</td>
-                  <td className="py-2 text-right pr-2">
-                    <Input
-                      type="number"
-                      min={0}
-                      disabled={isDue}
-                      value={amounts[m.key] || ""}
-                      onChange={e => setters[m.key](parse(e.target.value))}
-                      onFocus={m.key === "upi" ? handleUpiFocus : undefined}
-                      placeholder="0"
-                      className="w-28 text-right h-8 text-sm ml-auto"
-                    />
-                  </td>
-                  <td className={`py-2 text-right font-semibold text-sm ${
-                    rowRemaining[i] > 0 ? "text-red-600" : "text-green-600"
-                  }`}>
-                    ₹{rowRemaining[i].toFixed(0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* Mode pills — Cash / UPI / Due / Part, Petpooja-style single-select. The area
+              below swaps to match whichever is active. */}
+          <div className={`grid grid-cols-4 rounded-lg overflow-hidden border border-[var(--line)] ${confirmingShortfall ? "opacity-40 pointer-events-none" : ""}`}>
+            {MODES.map(m => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => selectMode(m.key)}
+                className={`py-2 text-xs font-semibold transition-colors ${
+                  mode === m.key
+                    ? "bg-[var(--green-800)] text-white"
+                    : "bg-[var(--paper-100)] text-gray-600 hover:bg-[var(--paper-200)]"
+                }`}
+              >
+                <div className="text-sm">{m.icon}</div>
+                {m.label}
+              </button>
+            ))}
+          </div>
 
-          {/* Summary bar */}
-          {isDue ? (
+          {/* Cash / UPI — one editable "Settlement Amount" box, prefilled with the bill total */}
+          {(mode === "cash" || mode === "upi") && (
+            <div className={confirmingShortfall ? "opacity-40 pointer-events-none" : ""}>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Settlement Amount</label>
+              <Input
+                type="number"
+                min={0}
+                value={(mode === "cash" ? cash : upi) || ""}
+                onChange={e => setSingleAmount(e.target.value)}
+                placeholder="0"
+                className="text-right h-10 text-base font-semibold"
+                autoFocus
+              />
+            </div>
+          )}
+
+          {/* Part — split across both methods */}
+          {mode === "part" && (
+            <div className={`space-y-2 ${confirmingShortfall ? "opacity-40 pointer-events-none" : ""}`}>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-gray-500 w-14 shrink-0">💵 Cash</label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={cash || ""}
+                  onChange={e => setPartCash(e.target.value)}
+                  placeholder="0"
+                  className="text-right h-9 text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-gray-500 w-14 shrink-0">📱 UPI</label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={upi || ""}
+                  onChange={e => setPartUpi(e.target.value)}
+                  placeholder="0"
+                  className="text-right h-9 text-sm"
+                />
+              </div>
+              <div className="text-right text-xs text-gray-500">
+                Remaining {inr(Math.max(0, grandTotal - cash - upi))}
+              </div>
+            </div>
+          )}
+
+          {/* Summary bar — covered / change / short / due */}
+          {mode === "due" ? (
             <div className="rounded-lg px-3 py-2 text-sm bg-amber-50 text-amber-700 font-medium">
-              Marked as Due — ₹{grandTotal.toFixed(0)} will be added to the customer's tab
+              Marked as Due — {inr(grandTotal)} will be added to the customer's tab
             </div>
           ) : (
             <div className={`rounded-lg px-3 py-2 text-sm flex justify-between items-center ${
-              !canSettle
+              settlement.isShort
                 ? "bg-red-50 text-red-700"
-                : changeDue > 0
+                : settlement.changeAmount > 0
                 ? "bg-blue-50 text-blue-700"
                 : "bg-green-50 text-green-700"
             }`}>
-              <span>Total entered <strong>₹{totalEntered.toFixed(0)}</strong></span>
+              <span>Total entered <strong>{inr(settlement.totalPaid)}</strong></span>
               <span className="font-bold">
-                {!canSettle
-                  ? `Balance due ₹${balanceDue.toFixed(0)}`
-                  : changeDue > 0
-                  ? `Change ₹${changeDue.toFixed(0)}`
+                {settlement.isShort
+                  ? `Short by ${inr(settlement.shortfallAmount)} — will be written off`
+                  : settlement.changeAmount > 0
+                  ? `Change ${inr(settlement.changeAmount)}`
                   : "✓ Settled"}
               </span>
             </div>
           )}
 
-          {/* Mark Due toggle */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isDue}
-              onChange={e => handleDueToggle(e.target.checked)}
-              className="accent-amber-500 w-4 h-4"
-            />
-            <span className="text-sm font-medium text-amber-700">
-              Pay Later — add to customer's tab
-            </span>
-          </label>
-
-          {/* Customer details — phone-first with autocomplete */}
-          {isDue && (
+          {/* Due mode — phone-first customer details, both fields mandatory */}
+          {mode === "due" && (
             <div className="space-y-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
               <p className="text-xs text-amber-700 font-medium">
-                Customer details for due tracking:
+                Customer name and phone are required to add this to a tab:
               </p>
-              {!customerPhone.trim() && (
-                <p className="text-[11px] text-amber-600/80">Add a phone to send payment reminders later.</p>
-              )}
 
               {/* Phone with autocomplete dropdown */}
               <div className="relative" ref={phoneRef}>
@@ -422,25 +465,63 @@ export function SettlementDialog({
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex gap-2 pt-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleOpenChange(false)}
-              className="flex-1 text-xs"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSettle}
-              disabled={!canSettle || isLoading}
-              className="flex-[2] bg-green-600 hover:bg-green-700 text-white text-xs font-bold"
-            >
-              {isLoading ? "Settling…" : "✓ Settle Now"}
-            </Button>
-          </div>
+          {/* Action buttons — replaced by an explicit write-off confirm when settling short */}
+          {confirmingShortfall ? (
+            <div className="space-y-2 pt-1">
+              <div className="rounded-lg px-3 py-2 text-xs bg-red-50 text-red-700 border border-red-200">
+                Bill {inr(grandTotal)} · Collecting {inr(settlement.totalPaid)} · {inr(settlement.shortfallAmount)} will be recorded as a loss
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmingShortfall(false)}
+                  className="flex-1 text-xs"
+                >
+                  Go back
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSettle}
+                  disabled={isLoading}
+                  className="flex-[2] bg-red-600 hover:bg-red-700 text-white text-xs font-bold"
+                >
+                  {isLoading ? "Settling…" : `Yes, write off ${inr(settlement.shortfallAmount)}`}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-2 pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenChange(false)}
+                className="flex-1 text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSettle}
+                disabled={!canSettle || isLoading}
+                className={`flex-[2] text-white text-xs font-bold ${
+                  mode === "due"
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : settlement.isShort
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}
+              >
+                {isLoading
+                  ? "Settling…"
+                  : mode === "due"
+                  ? "Mark as Due"
+                  : settlement.isShort
+                  ? `Settle Short · ${inr(settlement.totalPaid)}`
+                  : "✓ Settle Now"}
+              </Button>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

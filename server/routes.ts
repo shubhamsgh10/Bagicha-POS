@@ -9,6 +9,8 @@ import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, ins
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
+import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
+import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -73,7 +75,7 @@ import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./el
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
-import { logAudit, getAuditLogs } from "./services/auditService";
+import { logAudit, getAuditLogs, getKotBillActivitySummary } from "./services/auditService";
 import { ingestDevicePunches, recomputeShiftSessions } from "./services/deviceAttendanceService";
 import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
@@ -1424,6 +1426,11 @@ export async function registerRoutes(
       const toTable = await storage.getTableById(Number(toTableId));
       if (!toTable) return res.status(400).json({ error: "Target table not found" });
       if (toTable.status !== "free") return res.status(400).json({ error: "Target table is not free" });
+      // Needed only for the audit-log metadata below — the shift itself never reads the
+      // order row (only tables), which is exactly how this route ended up with no
+      // logAudit call at all despite having "the same effect" as
+      // PUT /api/orders/:id/move-table (which does log one) — see CLAUDE.md.
+      const shiftedOrder = await storage.getOrderById(fromTable.currentOrderId);
       // Move order to new table. This is the authoritative write — order.tableId is
       // what other reads (order detail, bill routing) key off. The two table-status
       // flips below are best-effort display bookkeeping on top of it: previously
@@ -1443,6 +1450,15 @@ export async function registerRoutes(
       } catch (tableErr) {
         console.error("[table] shift: source table status update error (non-fatal):", tableErr);
       }
+      // Reuses PUT /api/orders/:id/move-table's exact action string ("order.move_table")
+      // and metadata shape — deliberate, so both routes' shifts count together under one
+      // "Shifted" metric on Reports.tsx's KOT & Bill Activity tab, entityId is the
+      // ORDER id (matching that route's convention), not the table id.
+      logAudit(req, "order.move_table", "order", fromTable.currentOrderId, {
+        orderNumber: (shiftedOrder as any)?.orderNumber,
+        fromTable: fromTable.name,
+        toTable: toTable.name,
+      });
       broadcast({ type: 'TABLE_UPDATE' });
       res.json({ success: true });
     } catch (error) {
@@ -1894,6 +1910,17 @@ export async function registerRoutes(
         { kotNumber, items: kotItems as any },
       );
 
+      // A discount applied at order-creation time is the same class of deviation as one
+      // applied later via an edit — see the identical logAudit call in
+      // PUT /api/orders/:id/items. Plain order creation itself stays unlogged (it's the
+      // baseline, not a post-generation edit — logging every order would swamp the trail).
+      if (priced.discount > 0) {
+        logAudit(req, "order.discount_applied", "order", order.id, {
+          discountBefore: 0,
+          discountAfter: priced.discount,
+        });
+      }
+
       // Deduct inventory based on inventoryLinks for each menu item. Non-fatal at this
       // layer (the order already committed) — reconcileOrderInventory's own transaction
       // means a failure here can't leave a half-deducted state, only a fully-skipped one.
@@ -1976,8 +2003,10 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Manager approval required to apply a discount" });
       }
 
-      // Snapshot existing items BEFORE replacing (for delta KOT)
+      // Snapshot existing items + order totals BEFORE replacing — used for both the delta
+      // KOT below and the before/after audit trail (see the logAudit call after the replace).
       const existingItems = await storage.getOrderItems(id);
+      const existingOrderRow = await storage.getOrderById(id);
       const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
 
       // Replace all order items with server-validated unit prices. unitCost is a
@@ -2018,6 +2047,61 @@ export async function registerRoutes(
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);
+
+      // Bill-edit audit trail — the before/after half of CLAUDE.md's "immutable audit log"
+      // invariant. This route (item add/remove/re-quantify on a running order) previously
+      // logged nothing at all. Deliberately NOT unconditional: the POS Auto-KOT timer PUTs
+      // the unchanged cart on a debounce every few minutes for every open order, and logging
+      // every one of those no-op syncs would bury genuine edits under thousands of rows.
+      try {
+        const beforeLines: AuditLine[] = existingItems.map((i: any) => ({
+          menuItemId: i.menuItemId,
+          name: i.name || "Item",
+          size: i.size ?? null,
+          serviceMode: i.serviceMode ?? null,
+          quantity: Number(i.quantity),
+          price: parseFloat(String(i.price)),
+        }));
+        const afterLines: AuditLine[] = itemsToInsert.map((i: any) => ({
+          menuItemId: i.menuItemId,
+          name: i.name || "Item",
+          size: i.size ?? null,
+          serviceMode: i.serviceMode ?? null,
+          quantity: Number(i.quantity),
+          price: parseFloat(String(i.price)),
+        }));
+        const diff = diffOrderLines(beforeLines, afterLines);
+
+        const discountBefore = parseFloat(String((existingOrderRow as any)?.discountAmount ?? 0));
+        const discountAfter = priced.discount;
+        const containerBefore = parseFloat(String((existingOrderRow as any)?.containerCharge ?? 0));
+        const containerAfter = priced.containerCharge;
+        const totalBefore = parseFloat(String((existingOrderRow as any)?.totalAmount ?? 0));
+        const totalAfter = priced.total;
+        const moneyChanged = discountBefore !== discountAfter || containerBefore !== containerAfter || totalBefore !== totalAfter;
+
+        if (!diff.isEmpty || moneyChanged) {
+          logAudit(req, "order.items_edit", "order", id, {
+            added: diff.added.map((l) => ({ name: l.name, size: l.size, quantity: l.quantity })),
+            removed: diff.removed.map((l) => ({ name: l.name, size: l.size, quantity: l.quantity })),
+            changed: diff.changed,
+            totalBefore,
+            totalAfter,
+            discountBefore,
+            discountAfter,
+            containerBefore,
+            containerAfter,
+          });
+        }
+        // A discount is a deviation and worth its own independently-filterable row, not just
+        // buried inside the item-edit payload above — same reasoning as order.write_off.
+        if (discountBefore !== discountAfter) {
+          logAudit(req, "order.discount_applied", "order", id, { discountBefore, discountAfter });
+        }
+      } catch (auditErr) {
+        // Never let an audit-trail bug block a genuinely successful order edit.
+        console.error("[order] items_edit audit error (non-fatal):", auditErr);
+      }
 
       // Reconcile inventory to the new line items — this is what makes editing a running
       // table (adding/removing/re-quantifying items across rounds) actually touch stock;
@@ -2081,18 +2165,34 @@ export async function registerRoutes(
         isDue: explicitDue,
         customerName,
         customerPhone,
+        allowShortfall,
       } = req.body;
 
       const isDue = explicitDue || paymentMethod === "due";
+      const isSplitPath = Boolean(payments && Array.isArray(payments));
 
       const existingOrder = await storage.getOrderById(id);
       if (!existingOrder) return res.status(404).json({ error: "Order not found" });
       const orderTotal = parseFloat(String((existingOrder as any).totalAmount ?? 0));
 
+      // A due settle on the rich payments[] path must always carry a reachable customer —
+      // this is the path SettlementDialog's new Due mode uses, and an open tab with no name
+      // or phone can never be chased for payment or shown as anything but "Walk-in" on the
+      // Dues report. The legacy {paymentMethod:"due"} path (Billing.tsx's simpler dialog) is
+      // deliberately exempt — CLAUDE.md documents that flow as relying on whatever the order
+      // already has from creation, and Billing.tsx is out of scope for this change.
+      if (isSplitPath && isDue) {
+        const nameOk = (customerName ?? (existingOrder as any).customerName ?? "").trim().length > 0;
+        const phoneOk = (customerPhone ?? (existingOrder as any).customerPhone ?? "").trim().length > 0;
+        if (!nameOk || !phoneOk) {
+          return res.status(400).json({ error: "Customer name and phone are required to mark an order as due" });
+        }
+      }
+
       let breakdown: Record<string, number> = {};
       let primaryMethod = "cash";
 
-      if (payments && Array.isArray(payments)) {
+      if (isSplitPath) {
         // Rich split-payment path — amounts come from the entered breakdown.
         for (const p of payments) {
           if (Number(p.amount) > 0) {
@@ -2102,18 +2202,42 @@ export async function registerRoutes(
         const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
         primaryMethod = sorted[0]?.[0] ?? "cash";
       } else {
-        // Legacy single-method path — a paid settle covers the full bill.
+        // Legacy single-method path — a paid settle covers the full bill. No shortfall
+        // concept exists here — Billing.tsx's own dialog never sends payments[], so it
+        // can't reach the write-off branch below regardless.
         primaryMethod = paymentMethod || "cash";
         if (!isDue) breakdown = { [primaryMethod]: orderTotal };
       }
 
-      // Paid amount and change are derived server-side — never trusted from the client.
+      // Paid amount, change, and shortfall are all derived server-side from the DB's own
+      // orderTotal — never trusted from the client. See shared/settlement.ts for why this
+      // is a shared function rather than a hand-rolled comparison on each side.
       const paidAmt = Object.values(breakdown).reduce((a, b) => a + b, 0);
       const changeDue = isDue ? 0 : Math.max(0, paidAmt - orderTotal);
+      const shortfall = isDue ? 0 : Math.max(0, orderTotal - paidAmt);
+      const isShort = shortfall > SETTLE_TOLERANCE;
 
-      // A non-due settlement must actually cover the bill (₹1 tolerance for rounding).
-      if (!isDue && paidAmt < orderTotal - 1) {
-        return res.status(400).json({ error: "Amount paid is less than the bill total" });
+      if (isShort) {
+        if (!isSplitPath || !allowShortfall) {
+          // Same rejection as before this feature existed — a short settle is refused
+          // outright unless the caller explicitly opted into writing off the gap.
+          return res.status(400).json({
+            error: `Amount paid (₹${paidAmt.toFixed(2)}) is less than the bill total (₹${orderTotal.toFixed(2)})`,
+            paidAmt,
+            orderTotal,
+          });
+        }
+        // Writing off money is a deviation from the bill, same class of action as applying
+        // a discount (routes.ts's priceOrder discount check above uses the identical guard)
+        // — a bare staff session may not do this even with allowShortfall set client-side.
+        if (!hasElevation(req, "manager")) {
+          return res.status(403).json({ error: "Manager approval required to settle short and write off the balance" });
+        }
+        // A ₹0 "payment" is a comp, not a write-off — refuse it outright rather than let a
+        // manager PIN silently turn into a free-meal path with no money changing hands at all.
+        if (paidAmt <= 0) {
+          return res.status(400).json({ error: "At least some payment must be collected to write off a shortfall" });
+        }
       }
 
       const updateData: any = {
@@ -2122,6 +2246,7 @@ export async function registerRoutes(
         status: "served",
         paidAmount: String(paidAmt),
         changeAmount: String(changeDue),
+        shortfallAmount: String(shortfall),
         paymentBreakdown: Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, String(v)])),
       };
       if (notes) updateData.notes = notes;
@@ -2180,8 +2305,19 @@ export async function registerRoutes(
         paymentStatus: isDue ? "pending" : "paid",
         paidAmount: paidAmt,
         changeAmount: changeDue,
+        shortfallAmount: shortfall,
         paymentBreakdown: breakdown,
       });
+      // A separate, independently filterable audit entry for the write-off itself — the
+      // whole point of a "deviation" control is that a manager can review just these, not
+      // hunt for them inside every ordinary payment row.
+      if (shortfall > 0) {
+        logAudit(req, "order.write_off", "order", id, {
+          orderTotal,
+          paidAmount: paidAmt,
+          shortfallAmount: shortfall,
+        });
+      }
 
       if (!isDue) {
         const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
@@ -2291,19 +2427,27 @@ export async function registerRoutes(
       const paid = allOrders.filter((o: any) => o.paymentStatus === "paid");
       const due  = allOrders.filter((o: any) => o.paymentStatus === "pending" && o.status === "served");
 
+      // This is the cash-drawer view — it must show what was actually collected, not the
+      // billed total. `paidAmount` is the amount genuinely received (falls back to
+      // totalAmount for legacy rows written before that column existed); a short-settled
+      // order's write-off is excluded here and reported separately as totalShortfall.
+      const collected = (o: any) => parseFloat(o.paidAmount ?? o.totalAmount ?? "0");
+
       const breakdown: Record<string, { count: number; amount: number }> = {};
       for (const o of paid) {
         const method = o.paymentMethod || "cash";
         if (!breakdown[method]) breakdown[method] = { count: 0, amount: 0 };
         breakdown[method].count++;
-        breakdown[method].amount += parseFloat(o.totalAmount || "0");
+        breakdown[method].amount += collected(o);
       }
 
       const dueTotal = due.reduce((s: number, o: any) => s + parseFloat(o.totalAmount || "0"), 0);
+      const totalShortfall = paid.reduce((s: number, o: any) => s + parseFloat(o.shortfallAmount ?? "0"), 0);
 
       res.json({
         breakdown,                        // { cash: {count, amount}, upi: {...}, ... }
-        totalPaid: paid.reduce((s: number, o: any) => s + parseFloat(o.totalAmount || "0"), 0),
+        totalPaid: paid.reduce((s: number, o: any) => s + collected(o), 0),
+        totalShortfall,
         totalDue: dueTotal,
         dueCount: due.length,
         dueOrders: due,
@@ -2351,6 +2495,10 @@ export async function registerRoutes(
           console.error("[order] table free error on hold (non-fatal):", tableErr);
         }
       }
+      logAudit(req, "order.hold", "order", id, {
+        orderNumber: (order as any).orderNumber,
+        tableNumber: (order as any).tableNumber,
+      });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
@@ -2455,6 +2603,11 @@ export async function registerRoutes(
       } catch (tableErr) {
         console.error("[table] move: new table status update error (non-fatal):", tableErr);
       }
+      logAudit(req, "order.move_table", "order", id, {
+        orderNumber: (order as any).orderNumber,
+        fromTable: (order as any).tableNumber,
+        toTable: newTableName || String(newTableId),
+      });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true });
@@ -2551,6 +2704,13 @@ export async function registerRoutes(
         } as any,
       });
 
+      logAudit(req, "order.merge", "order", targetOrderId, {
+        targetOrderNumber: (targetOrder as any).orderNumber,
+        sourceOrderNumber: (sourceOrder as any).orderNumber,
+        sourceOrderId,
+        totalBefore: (targetOrder as any).totalAmount,
+        totalAfter: merged.total.toFixed(2),
+      });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE", order: updatedTarget });
       res.json({ success: true });
@@ -2652,6 +2812,13 @@ export async function registerRoutes(
         } as any,
       });
 
+      logAudit(req, "order.split", "order", id, {
+        sourceOrderNumber: (sourceOrder as any).orderNumber,
+        newOrderNumber,
+        newOrderId: newOrder.id,
+        itemCount: splitItems.length,
+        splitTotal: splitTotals.total.toFixed(2),
+      });
       broadcast({ type: "ORDER_UPDATE" });
       res.json({ success: true, newOrderId: newOrder.id });
     } catch (error) {
@@ -2802,6 +2969,45 @@ export async function registerRoutes(
     }
   });
 
+  // Petpooja-style channel-stacked sales chart — same day-bucketing as /api/reports/weekly
+  // above, but split by orders.orderType (dine-in/takeaway/delivery) for Reports.tsx's
+  // Sales tab. Replaces that tab's old single-series consumption of /api/reports/weekly
+  // (left in place, untouched, for any other/future caller) — this endpoint's totals
+  // reconcile with /api/reports/sales' "Total Sales" figure (cancelled orders excluded,
+  // shortfallAmount netted out), which the old weekly endpoint does not do.
+  app.get("/api/reports/sales-by-type", requireAuth, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = startDate ? (startDate as string).slice(0, 10) : undefined;
+      const end = endDate ? (endDate as string).slice(0, 10) : undefined;
+      const days = await storage.getSalesChartByOrderType(start, end);
+      res.json(days);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to generate sales-by-type report" });
+    }
+  });
+
+  // Petpooja's "Leakage Alert" — KOTs Cancelled/Modified/Shifted, Bills
+  // Modified/Re-printed/Waived-off, built on the auditLogs trail. requireManagerOrAdmin
+  // (stricter than every other /api/reports/* endpoint above, all requireAuth-only) —
+  // this is the one report tab that reveals who cancelled/modified/waived off money, so
+  // it gets the same access tier as payroll/salary data elsewhere in this file. Note:
+  // /reports itself is currently hardcoded admin-only at the client route-permission
+  // layer (client/src/lib/routePermissions.ts), so today only an admin session can reach
+  // this in practice — this gate is forward-compatible defense-in-depth for if that ever
+  // opens to managers, not a live gap being closed.
+  app.get("/api/reports/kot-bill-activity", requireAuth, requireManagerOrAdmin, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
+      const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
+      const summary = await getKotBillActivitySummary(start, end);
+      res.json(summary);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to generate KOT/bill activity report" });
+    }
+  });
+
   app.get("/api/reports/staff-tables", requireAuth, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
@@ -2849,10 +3055,19 @@ export async function registerRoutes(
       // See the dedicated Cancelled Orders report for cancelled-specific figures.
       const orders = allOrders.filter((o: any) => o.status !== "cancelled");
 
-      const totalSales = orders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0);
+      // Revenue nets out any deliberately-written-off shortfall (a short settle recorded
+      // via the settlement box's "Yes, write off" confirm — see shared/settlement.ts).
+      // billedTotal is what the bills actually added up to; totalSales is what was really
+      // collected. A normal order has shortfallAmount=0, so this is byte-identical to the
+      // old totalSales for every order that never went through a short settle.
+      const billedTotal = orders.reduce((sum, order) => sum + parseFloat(order.totalAmount), 0);
+      const totalShortfall = orders.reduce((sum, order) => sum + parseFloat((order as any).shortfallAmount ?? "0"), 0);
+      const totalSales = billedTotal - totalShortfall;
       res.json({
         totalOrders: orders.length,
         totalSales,
+        totalShortfall,
+        billedTotal,
         avgOrderValue: orders.length > 0 ? totalSales / orders.length : 0,
         orders,
       });

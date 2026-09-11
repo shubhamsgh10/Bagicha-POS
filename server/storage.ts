@@ -201,6 +201,15 @@ export interface IStorage {
 
   // Dashboard Charts
   getSalesChart(startDate?: string, endDate?: string): Promise<Array<{ date: string; total: number }>>;
+  // Same day-bucketing as getSalesChart, but split by orders.orderType so a channel-
+  // stacked bar chart can render dine-in/pickup/delivery separately (Reports.tsx's Sales
+  // tab). Deliberately reconciles with /api/reports/sales' "Total Sales" figure in ways
+  // getSalesChart itself does not: cancelled orders are excluded and each order nets out
+  // its own shortfallAmount (a deliberately-written-off short settle, see
+  // shared/settlement.ts) before being bucketed.
+  getSalesChartByOrderType(startDate?: string, endDate?: string): Promise<Array<{
+    date: string; dineIn: number; takeaway: number; delivery: number;
+  }>>;
   getCategorySales(startDate?: string, endDate?: string): Promise<Array<{ category: string; total: number }>>;
   getDashboardTopItems(limit?: number, startDate?: string, endDate?: string): Promise<Array<{ name: string; qty: number }>>;
 
@@ -1111,9 +1120,13 @@ export class DatabaseStorage implements IStorage {
     // comment above for why this must not be a naive local-midnight calendar day.
     const { start: today, end: tomorrow } = businessDayRange(todayBusinessDate());
 
+    // Revenue nets out any deliberately-written-off shortfall from a short settle (see
+    // shared/settlement.ts) — a normal order has shortfallAmount=0, so this is
+    // byte-identical to the pre-shortfall figure for every order that never went through
+    // a short settle. Must agree with /api/reports/sales' identical netting.
     const [todayResult] = await db.select({
       count: sql<number>`count(*)`,
-      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0)`
+      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
     }).from(orders).where(
       and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow))
     );
@@ -1138,7 +1151,7 @@ export class DatabaseStorage implements IStorage {
     );
 
     const [revenueResult] = await db.select({
-      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0)`
+      total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
     }).from(orders);
 
     const [lowStockResult] = await db.select({
@@ -1223,6 +1236,61 @@ export class DatabaseStorage implements IStorage {
     }
 
     return days.map(({ date, total }) => ({ date, total }));
+  }
+
+  // Same business-day bucketing as getSalesChart, split by orders.orderType so
+  // Reports.tsx's Sales tab can render a Petpooja-style dine-in/pickup/delivery stacked
+  // bar chart. Two deliberate divergences from getSalesChart, both needed so this
+  // chart's per-day totals reconcile with the page's own "Total Sales" stat card
+  // (/api/reports/sales, routes.ts): cancelled orders are excluded, and each order's
+  // contribution nets out its own shortfallAmount (a deliberately-written-off short
+  // settle — see shared/settlement.ts — never a "due", always 0 for a normal order).
+  // Bucketing stays a JS loop over raw rows, not SQL GROUP BY DATE(created_at) — a plain
+  // calendar-day GROUP BY would reintroduce the 5am-IST business-day cutoff bug this
+  // file's other date-math fixes exist to prevent.
+  async getSalesChartByOrderType(startDate?: string, endDate?: string): Promise<Array<{
+    date: string; dineIn: number; takeaway: number; delivery: number;
+  }>> {
+    const startKey = startDate ?? shiftBusinessDate(todayBusinessDate(), -6);
+    const endKey = endDate ?? todayBusinessDate();
+    const start = businessDayRange(startKey).start;
+    const end = businessDayRange(endKey).end;
+
+    const allOrders = await db.select({
+      createdAt: orders.createdAt,
+      totalAmount: orders.totalAmount,
+      shortfallAmount: orders.shortfallAmount,
+      orderType: orders.orderType,
+      status: orders.status,
+    }).from(orders).where(
+      and(gte(orders.createdAt, start), lte(orders.createdAt, end))
+    );
+
+    const days: Array<{ date: string; dateKey: string; dineIn: number; takeaway: number; delivery: number }> = [];
+    let cursorKey = startKey;
+    while (cursorKey <= endKey) {
+      const labelDate = businessDayRange(cursorKey).start;
+      days.push({
+        date: labelDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }),
+        dateKey: cursorKey,
+        dineIn: 0, takeaway: 0, delivery: 0,
+      });
+      cursorKey = shiftBusinessDate(cursorKey, 1);
+    }
+
+    for (const order of allOrders) {
+      // A cancelled order isn't a sale — matches /api/reports/sales' own exclusion.
+      if (order.status === "cancelled") continue;
+      const dateKey = businessDateOf(new Date(order.createdAt!));
+      const day = days.find(d => d.dateKey === dateKey);
+      if (!day) continue;
+      const net = parseFloat(order.totalAmount) - (parseFloat(order.shortfallAmount ?? "0") || 0);
+      if (order.orderType === "dine-in") day.dineIn += net;
+      else if (order.orderType === "takeaway") day.takeaway += net;
+      else if (order.orderType === "delivery") day.delivery += net;
+    }
+
+    return days.map(({ date, dineIn, takeaway, delivery }) => ({ date, dineIn, takeaway, delivery }));
   }
 
   // startDate/endDate are business-day date strings (YYYY-MM-DD) — see getSalesChart's

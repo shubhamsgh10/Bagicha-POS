@@ -4,17 +4,20 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/Header";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
   IndianRupee, TrendingUp, ShoppingCart, Users, Download, Calendar,
   Banknote, CreditCard, Smartphone, Clock, AlertCircle, Wifi,
-  ChevronDown, Check, X, Send, CheckCircle2, Wallet,
+  ChevronDown, Check, X, Send, CheckCircle2, Wallet, AlertTriangle,
+  ShieldCheck, Edit3, ArrowLeftRight, Printer, MinusCircle,
 } from "lucide-react";
 import { serialNum } from "@/lib/orderDisplay";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRole } from "@/hooks/useRole";
+import { ORDER_TYPE_STYLES } from "@/lib/orderTypeColors";
+import { actionLabel, metaSummary } from "@/lib/auditFormat";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -222,6 +225,16 @@ function buildParams(range: DateRange) {
   return `?startDate=${range.start}&endDate=${range.end}`;
 }
 
+// Category-slice colors for the Sales-by-Category donut — same literal hex array
+// LiveAnalytics.tsx's own PALETTE uses (that file independently duplicates its own
+// copy too — tolerated small-helper duplication, same as this page's already-duplicated
+// DateRangePicker). Unrelated to ORDER_TYPE_STYLES above, which colors the 3-series
+// dine-in/pickup/delivery chart, not the category breakdown.
+const CATEGORY_PALETTE = [
+  "#1B4D33", "#34507A", "#B85C38", "#D89A3E",
+  "#2E8B57", "#9E4A28", "#6FBF73", "#243B5E",
+];
+
 // ── Dues: one customer's open tabs (expandable), with e-bill + settle-all actions ──
 function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }: {
   c: any;
@@ -301,6 +314,12 @@ export default function Reports() {
   // Cost/margin is sensitive business data (same tier as payroll) — never shown to staff.
   const role = useRole();
   const canSeeCost = role === "admin" || role === "manager";
+  // The KOT & Bill Activity tab reveals who cancelled/modified/waived off money — same
+  // access tier as cost/margin. /reports itself is currently hardcoded admin-only at the
+  // route-permission layer (client/src/lib/routePermissions.ts), so in practice only an
+  // admin session reaches this today — this is forward-compatible defense-in-depth for if
+  // that ever opens to managers, matching the server route's own requireManagerOrAdmin gate.
+  const canSeeKotBillActivity = role === "admin" || role === "manager";
 
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
     start: today(),
@@ -319,9 +338,35 @@ export default function Reports() {
     queryFn: () => apiJson(`/api/reports/sales${params}`),
   });
 
-  const { data: weeklyData = [] } = useQuery<any[]>({
-    queryKey: ["/api/reports/weekly", dateRange.start, dateRange.end],
-    queryFn: () => apiJson<any[]>(`/api/reports/weekly${params}`),
+  // Petpooja-style channel-stacked sales chart — replaces the old single-series
+  // /api/reports/weekly consumption (that endpoint is left in place, untouched, in case
+  // of another/future caller — see CLAUDE.md-style history). Reconciles with the
+  // "Total Sales" stat card above (cancelled orders excluded, shortfall netted out).
+  const { data: salesByTypeData = [] } = useQuery<any[]>({
+    queryKey: ["/api/reports/sales-by-type", dateRange.start, dateRange.end],
+    queryFn: () => apiJson<any[]>(`/api/reports/sales-by-type${params}`),
+  });
+
+  // Already-existing endpoint (LiveAnalytics.tsx's own dashboard used to consume this) —
+  // no backend change, just a new consumer, ported here alongside the sales chart.
+  const { data: categorySalesData = [] } = useQuery<any[]>({
+    queryKey: ["/api/dashboard/category-sales", dateRange.start, dateRange.end],
+    queryFn: () => apiJson<any[]>(`/api/dashboard/category-sales${params}`),
+  });
+
+  // Not date-range scoped, matching how this worked on LiveAnalytics.tsx before.
+  const { data: lowStockItems = [] } = useQuery<any[]>({
+    queryKey: ["/api/inventory/low-stock"],
+    queryFn: () => apiJson<any[]>(`/api/inventory/low-stock`),
+    refetchInterval: 10000,
+  });
+
+  // Manager+admin only — see canSeeKotBillActivity above. `enabled` so a bare staff
+  // session never fires a request the server would just 403 anyway.
+  const { data: kotBillActivity } = useQuery<any>({
+    queryKey: ["/api/reports/kot-bill-activity", dateRange.start, dateRange.end],
+    queryFn: () => apiJson(`/api/reports/kot-bill-activity${params}`),
+    enabled: canSeeKotBillActivity,
   });
 
   const { data: topItemsData = [] } = useQuery<any[]>({
@@ -375,10 +420,14 @@ export default function Reports() {
     onError: (err: any) => toast({ title: "Failed to settle", description: err.message, variant: "destructive" }),
   });
 
-  const salesData = weeklyData.map((d: any) => ({ name: d.name, sales: d.sales, orders: d.orders ?? 0 }));
   const topItems  = topItemsData.map((d: any) => ({
     name: d.name, sold: d.totalSold, revenue: d.revenue,
     cost: d.cost, margin: d.margin, costCoverageQty: d.costCoverageQty ?? 0,
+  }));
+  // Total per day-bar, for the stacked chart's implicit "sum of the 3 series" reading —
+  // used only by handleExport's CSV (the chart itself renders the 3 series directly).
+  const salesByType = salesByTypeData.map((d: any) => ({
+    name: d.date, dineIn: d.dineIn ?? 0, takeaway: d.takeaway ?? 0, delivery: d.delivery ?? 0,
   }));
 
   const tabs = [
@@ -389,6 +438,8 @@ export default function Reports() {
     { id: "staff",     label: "Staff & Tables" },
     { id: "cancelled", label: "Cancelled Orders" },
     { id: "dues",      label: "Dues / Pay-Later" },
+    { id: "lowstock",  label: "Low Stock" },
+    ...(canSeeKotBillActivity ? [{ id: "kotbill", label: "KOT & Bill Activity" }] : []),
   ];
 
   if (isLoading) {
@@ -434,6 +485,15 @@ export default function Reports() {
       icon: <Users className="w-7 h-7 text-purple-500" />,
       subColor: "text-purple-500",
     },
+    // Only shown when a short settle actually happened in range — a restaurant that never
+    // writes off a balance sees the same 4-card dashboard as before this feature existed.
+    ...((salesReport?.totalShortfall || 0) > 0 ? [{
+      label: "Shortfall / Loss",
+      value: formatCurrency(salesReport.totalShortfall),
+      sub: "written off on short-settled bills",
+      icon: <IndianRupee className="w-7 h-7 text-red-500" />,
+      subColor: "text-red-600",
+    }] : []),
   ];
 
   // Export the currently-active tab's data as a CSV for the selected date range.
@@ -459,9 +519,22 @@ export default function Reports() {
       header = ["Date", "Staff", "Tables", "Orders", "Revenue"];
       rows = staffTableReport.map((s) => [s.date, s.staff, (s.tables ?? []).join(" "), s.orderCount ?? 0, s.revenue ?? 0]);
     } else if (activeTab === "sales") {
-      filename = `sales-chart_${range}`;
-      header = ["Period", "Sales", "Orders"];
-      rows = salesData.map((d: any) => [d.name, d.sales ?? 0, d.orders ?? 0]);
+      filename = `sales-by-type_${range}`;
+      header = ["Period", "Dine-in", "Pickup", "Delivery", "Total"];
+      rows = salesByType.map((d: any) => [d.name, d.dineIn, d.takeaway, d.delivery, d.dineIn + d.takeaway + d.delivery]);
+    } else if (activeTab === "lowstock") {
+      filename = `low-stock_${range}`;
+      header = ["Item", "Current Stock", "Min Stock", "Unit"];
+      rows = lowStockItems.map((i: any) => [i.itemName, i.currentStock, i.minStock, i.unit]);
+    } else if (activeTab === "kotbill") {
+      filename = `kot-bill-activity_${range}`;
+      header = ["Time", "Actor", "Action", "Details"];
+      rows = (kotBillActivity?.recentEvents ?? []).map((e: any) => [
+        new Date(e.createdAt).toLocaleString("en-IN"),
+        e.actorName ?? "",
+        actionLabel(e.action).label,
+        metaSummary(e.action, e.metadata),
+      ]);
     } else if (activeTab === "cancelled") {
       filename = `cancelled-orders_${range}`;
       header = ["Order #", "Date", "Customer", "Mode", "Amount", "Reason"];
@@ -479,7 +552,7 @@ export default function Reports() {
       ]);
     } else {
       filename = `orders_${range}`;
-      header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Amount"];
+      header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Amount", "Short"];
       rows = (salesReport?.orders ?? []).map((o: any) => [
         serialNum(o.id),
         new Date(o.createdAt).toLocaleString("en-IN"),
@@ -488,6 +561,7 @@ export default function Reports() {
         o.orderType || "",
         o.paymentMethod || "",
         parseFloat(o.totalAmount || 0).toFixed(2),
+        parseFloat(o.shortfallAmount || 0).toFixed(2),
       ]);
     }
 
@@ -573,52 +647,114 @@ export default function Reports() {
           ))}
         </div>
 
-        {/* ── Sales Chart ── */}
-        {activeTab === "sales" && (
+        {/* ── Sales Chart (Petpooja-style: channel-stacked dine-in/pickup/delivery) ── */}
+        {activeTab === "sales" && (() => {
+          const hasSales = salesByType.some((d: any) => d.dineIn + d.takeaway + d.delivery > 0);
+          return (
           <motion.div
             key={`sales-${dateRange.start}-${dateRange.end}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5"
+            className="space-y-5"
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-gray-800">Sales Performance</h3>
-              <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-base font-semibold text-gray-800">Sales Performance</h3>
+                <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
+              </div>
+              {/* Manual 3-swatch legend — matches the category donut's own manual legend
+                  style below, rather than recharts' built-in <Legend>. */}
+              <div className="flex items-center gap-4 mb-3">
+                {(["dine-in", "takeaway", "delivery"] as const).map((k) => (
+                  <span key={k} className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: ORDER_TYPE_STYLES[k].hex }} />
+                    {ORDER_TYPE_STYLES[k].label}
+                  </span>
+                ))}
+              </div>
+              {!hasSales ? (
+                <div className="h-80 flex items-center justify-center text-gray-400 text-sm">
+                  No sales data for this period
+                </div>
+              ) : (
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={salesByType} margin={{ right: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: salesByType.length > 14 ? 9 : 11 }}
+                        interval={salesByType.length > 20 ? Math.floor(salesByType.length / 10) : 0}
+                      />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
+                      <Tooltip
+                        formatter={(value, name) => [
+                          formatCurrency(value as number),
+                          name === "dineIn" ? ORDER_TYPE_STYLES["dine-in"].label
+                            : name === "takeaway" ? ORDER_TYPE_STYLES["takeaway"].label
+                            : ORDER_TYPE_STYLES["delivery"].label,
+                        ]}
+                      />
+                      {/* stackId shared across all 3 series — each day-group's total bar
+                          height reconciles with the "Total Sales" stat card above. */}
+                      <Bar dataKey="dineIn" name="dineIn" stackId="a" fill={ORDER_TYPE_STYLES["dine-in"].hex} />
+                      <Bar dataKey="takeaway" name="takeaway" stackId="a" fill={ORDER_TYPE_STYLES["takeaway"].hex} />
+                      <Bar dataKey="delivery" name="delivery" stackId="a" fill={ORDER_TYPE_STYLES["delivery"].hex} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
-            {salesData.length === 0 ? (
-              <div className="h-80 flex items-center justify-center text-gray-400 text-sm">
-                No sales data for this period
+
+            {/* Sales by Category — ported from LiveAnalytics.tsx's own donut chart, same
+                data (/api/dashboard/category-sales), no backend change. */}
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-base font-semibold text-gray-800">Sales by Category</h3>
+                <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
               </div>
-            ) : (
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={salesData} margin={{ right: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                    <XAxis
-                      dataKey="name"
-                      tick={{ fontSize: salesData.length > 14 ? 9 : 11 }}
-                      interval={salesData.length > 20 ? Math.floor(salesData.length / 10) : 0}
-                    />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip
-                      formatter={(value, name) => [
-                        name === "sales" ? formatCurrency(value as number) : value,
-                        name === "sales" ? "Revenue" : "Orders",
-                      ]}
-                    />
-                    <Bar dataKey="sales" fill="url(#barGradient)" radius={[4, 4, 0, 0]} />
-                    <defs>
-                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#2E8B57" />
-                        <stop offset="100%" stopColor="#22c55e" />
-                      </linearGradient>
-                    </defs>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+              {categorySalesData.length === 0 ? (
+                <div className="h-[200px] flex items-center justify-center text-gray-400 text-sm">
+                  No sales in range
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={categorySalesData}
+                        dataKey="total"
+                        nameKey="category"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        innerRadius={40}
+                        paddingAngle={3}
+                      >
+                        {categorySalesData.map((_: any, idx: number) => (
+                          <Cell key={idx} fill={CATEGORY_PALETTE[idx % CATEGORY_PALETTE.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => formatCurrency(value as number)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-1.5">
+                    {categorySalesData.slice(0, 5).map((c: any, idx: number) => (
+                      <div key={c.category} className="flex items-center justify-between text-xs">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: CATEGORY_PALETTE[idx % CATEGORY_PALETTE.length] }} />
+                          <span className="text-gray-500 truncate">{c.category}</span>
+                        </span>
+                        <span className="font-semibold text-gray-700 ml-2 flex-shrink-0">{formatCurrency(c.total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </motion.div>
-        )}
+          );
+        })()}
 
         {/* ── Top Items ── */}
         {activeTab === "items" && (
@@ -709,6 +845,11 @@ export default function Reports() {
                     <span className="text-[11px] font-medium bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 px-2 py-0.5 rounded-lg">
                       {order.paymentMethod}
                     </span>
+                    {parseFloat(order.shortfallAmount || 0) > 0 && (
+                      <p className="text-[11px] font-medium text-red-600 mt-0.5">
+                        {formatCurrency(parseFloat(order.shortfallAmount))} short
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1051,6 +1192,137 @@ export default function Reports() {
                 <p className="text-sm text-gray-400">Everyone's settled up</p>
               </div>
             )}
+          </motion.div>
+        )}
+
+        {/* ── Low Stock — ported from LiveAnalytics.tsx's own Low Stock Alerts card,
+             same data (/api/inventory/low-stock), no backend change, not date-scoped
+             (matches how this worked there). ── */}
+        {activeTab === "lowstock" && (
+          <motion.div
+            key="lowstock"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                {lowStockItems.length > 0 && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                Low Stock Alerts
+              </h3>
+              {lowStockItems.length > 0 && (
+                <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
+                  {lowStockItems.length} item{lowStockItems.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {lowStockItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                </div>
+                <p className="text-gray-600 font-medium">All items in stock</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {lowStockItems.map((item: any) => (
+                  <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-red-50/60 border border-red-200/50">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{item.itemName}</p>
+                      <p className="text-xs text-gray-500">Min: {item.minStock} {item.unit}</p>
+                    </div>
+                    <span className="text-sm font-bold text-red-500 ml-2 shrink-0">{item.currentStock} {item.unit}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ── KOT & Bill Activity (Petpooja's "Leakage Alert") — manager+admin only ── */}
+        {activeTab === "kotbill" && canSeeKotBillActivity && (
+          <motion.div
+            key={`kotbill-${dateRange.start}-${dateRange.end}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+          >
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <ShieldCheck className="w-5 h-5 text-gray-500" />
+                <h3 className="text-base font-semibold text-gray-800">KOT & Bill Activity</h3>
+                <span className="text-xs text-gray-400 ml-auto">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">KOTs</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><X className="w-4 h-4 text-red-500" /> Cancelled</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.kotCancelled ?? 0}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><Edit3 className="w-4 h-4 text-amber-500" /> Modified</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.kotModified ?? 0}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><ArrowLeftRight className="w-4 h-4 text-blue-500" /> Shifted</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.kotShifted ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Bills</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><Edit3 className="w-4 h-4 text-amber-500" /> Modified</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.billModified ?? 0}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><Printer className="w-4 h-4 text-sky-500" /> Re-printed</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.billReprinted ?? 0}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><MinusCircle className="w-4 h-4 text-red-500" /> Waived off</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.billWaivedOff ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-[var(--line)]">
+                <h3 className="font-semibold text-gray-800">Recent Activity</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Most recent 20 events in range</p>
+              </div>
+              {(kotBillActivity?.recentEvents?.length ?? 0) === 0 ? (
+                <div className="p-10 text-center">
+                  <ShieldCheck className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-medium">No activity in this period</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-[var(--line)]">
+                  {kotBillActivity.recentEvents.map((e: any) => {
+                    const badge = actionLabel(e.action);
+                    return (
+                      <div key={e.id} className="flex items-center justify-between px-5 py-3 text-sm">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.label}</span>
+                            <span className="text-gray-500 text-xs">{e.actorName}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5 truncate">{metaSummary(e.action, e.metadata)}</p>
+                        </div>
+                        <span className="text-xs text-gray-400 shrink-0 ml-3">
+                          {new Date(e.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
       </main>

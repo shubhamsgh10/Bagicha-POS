@@ -24,7 +24,7 @@ export type CartAction =
   | "discount" | "complimentary" | "clearCart" | "cancelOrder"
   | "editItem" | "removeItem" | "splitBill" | "moveTable" | "mergeTable"
   | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder"
-  | "openItem";
+  | "openItem" | "writeOff";
 
 export type CartActionPermission = "off" | "pin" | "allowed";
 
@@ -37,19 +37,26 @@ const CART_ACTIONS: CartAction[] = [
   "discount", "complimentary", "clearCart", "cancelOrder",
   "editItem", "removeItem", "splitBill", "moveTable", "mergeTable",
   "holdOrder", "printKot", "printBill", "saveOrder", "settleOrder",
-  "openItem",
+  "openItem", "writeOff",
 ];
 
+// "writeOff" (settling short and recording the gap as a loss — see shared/settlement.ts)
+// defaults to "pin" alongside editItem/removeItem, not into the "off" list: unlike
+// discount/cancelOrder/etc, a bare staff session settling a short payment is a normal
+// end-of-shift occurrence, not something to fully lock out — but it's still money leaving
+// the books uncollected, so it needs the same PIN gate an item edit gets. The server
+// independently enforces this too (POST /api/orders/:id/payment's hasElevation check) —
+// this default only controls the client-side prompt.
 export const DEFAULT_CART_PERMISSIONS: CartPermissions = {
   manager: Object.fromEntries(CART_ACTIONS.map(a => [
     a,
-    (["editItem", "removeItem"] as CartAction[]).includes(a) ? "pin" :
+    (["editItem", "removeItem", "writeOff"] as CartAction[]).includes(a) ? "pin" :
     (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
     "allowed",
   ])) as Record<CartAction, CartActionPermission>,
   staff: Object.fromEntries(CART_ACTIONS.map(a => [
     a,
-    (["editItem", "removeItem"] as CartAction[]).includes(a) ? "pin" :
+    (["editItem", "removeItem", "writeOff"] as CartAction[]).includes(a) ? "pin" :
     (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
     "allowed",
   ])) as Record<CartAction, CartActionPermission>,
