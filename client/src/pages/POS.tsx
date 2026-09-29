@@ -295,6 +295,34 @@ export default function POS() {
   const [cancelReason, setCancelReason]             = useState("");
   const [actionLoading, setActionLoading]           = useState(false);
 
+  // ── Per-item cancel-after-KOT state ────────────────────────────────────────────
+  // Mirrors the whole-order Cancel Order dialog above, scoped to one cart line.
+  const [pendingCancelTarget, setPendingCancelTarget] = useState<CartItem | null>(null);
+  const [cancelItemReason, setCancelItemReason]       = useState("");
+  // Plain ref, not state — same pattern as preKOTItemsRef elsewhere in this file: a
+  // stash for the next save, never itself rendered, so mutating it shouldn't trigger
+  // a re-render (removing the item from cartItems already does that).
+  const pendingKotCancellationsRef = useRef<Record<string, {
+    itemId: number; size: string | null; serviceMode: string | null; reason: string; name: string;
+  }>>({});
+  const kotItemKey = (itemId: number, size: string | null | undefined, serviceMode: string | null | undefined) =>
+    `${itemId}:${size ?? ""}:${serviceMode ?? ""}`;
+  const buildCancelledKotItemsPayload = () =>
+    Object.values(pendingKotCancellationsRef.current).map(({ itemId, size, serviceMode, reason }) => ({ itemId, size, serviceMode, reason }));
+  // If a cancelled-with-reason item reappears in the cart before the next save (undo,
+  // re-add), drop its stashed reason — nothing was actually dropped, so it shouldn't be
+  // sent as a cancellation. Safe even without this (the server only ever validates
+  // against what's ACTUALLY missing from the sent item list), but avoids a stale reason
+  // silently lingering in memory. Mutates the ref directly — no setState, so this can't
+  // loop back into itself.
+  useEffect(() => {
+    const stash = pendingKotCancellationsRef.current;
+    for (const key of Object.keys(stash)) {
+      const stillInCart = cartItems.some(c => kotItemKey(c.id, c.size ?? null, c.serviceMode ?? null) === key);
+      if (stillInCart) delete stash[key];
+    }
+  }, [cartItems]);
+
   // Tables list (for move + merge)
   const { data: allTables = [] } = useQuery<any[]>({
     queryKey: ["/api/tables"],
@@ -518,6 +546,15 @@ export default function POS() {
         });
         if (order) showKOTPreview(order, data?.kotNumber);
       }
+      // Refetch the order so existingOrder.lastKotSnapshot reflects what was just
+      // printed — nothing previously refetched this AFTER a print (only before, via
+      // updateOrderMutation's own onSuccess). Without this, the per-item cancel-after-
+      // KOT dialog (POS.tsx's requestRemoveFromCart) could miss a same-session
+      // "add item → KOT it → remove it" sequence until something else happened to
+      // refetch. The server-side guard in PUT /api/orders/:id/items still catches it
+      // correctly either way — this is purely so the UI prompts for a reason when it
+      // should, rather than the save failing with a confusing error.
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(orderId)] });
     } catch {
       if (order) showKOTPreview(order);
     }
@@ -719,6 +756,10 @@ export default function POS() {
             // preserves what's explicitly re-sent, so omitting this would silently
             // reset an already-entered manual container charge back to 0.
             containerCharge: containerCharge.toFixed(2),
+            // Same "must be resent every save" rule — a reason given at removal time
+            // (requestRemoveFromCart) is stashed in pendingKotCancellationsRef until a
+            // save actually carries it through; this Auto-KOT sync is one of the saves.
+            cancelledKotItems: buildCancelledKotItemsPayload(),
           }),
           credentials: 'include',
         });
@@ -789,7 +830,7 @@ export default function POS() {
         triggerKOTPrint(order.id, order).finally(() => setIsPrinting(false));
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
@@ -799,12 +840,12 @@ export default function POS() {
           setActiveOrderId(order.id);
           setCartLoaded(false);
         } else {
-          setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "bill-print") {
         // First-ever submit for this cart — Bill created the order itself (same as
@@ -856,18 +897,18 @@ export default function POS() {
         triggerKOTPrint(vars.orderId, order).finally(() => setIsPrinting(false));
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         triggerBillPrint(vars.orderId, order).finally(() => setIsPrinting(false));
         if (!isSectionMode) {
-          setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0);
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "bill-print") {
         // Stays on screen (unlike save-print) — plain Bill is a mid-service
@@ -1028,17 +1069,50 @@ export default function POS() {
 
   const removeFromCart = (cartKey: string) => setCartItems(prev => prev.filter(c => c.cartKey !== cartKey));
 
+  // Was this exact cart line (menuItemId:size:serviceMode) already PERSISTED for this
+  // order (i.e. present in existingOrder.items, the DB state as of the last save) —
+  // NOT existingOrder.lastKotSnapshot. Found live: the server auto-creates a
+  // kitchen-visible kot_tickets row for any item the FIRST time it's ever saved (order
+  // creation or the PUT that first adds it), completely independent of whether it was
+  // ever actually PRINTED — lastKotSnapshot only reflects the print pipeline and can
+  // stay null indefinitely (no printer configured, Auto-KOT never fires) while the
+  // kitchen already has a real ticket. existingOrder.items is refreshed by
+  // updateOrderMutation's own onSuccess after every save, same as the server's own
+  // existingItems read, so this stays accurate without depending on a print ever
+  // happening. The server independently re-verifies the same way regardless (PUT
+  // /api/orders/:id/items), so a stale client check here can only ever be overly
+  // permissive for a moment, never let something slip through undetected.
+  const wasItemKotd = (item: CartItem): boolean => {
+    const persistedItems: any[] = existingOrder?.items ?? [];
+    return persistedItems.some((s) =>
+      s.menuItemId === item.id
+      && (s.size ?? null) === (item.size ?? null)
+      && (s.serviceMode ?? null) === (item.serviceMode ?? null));
+  };
+
+  // Gate for removing a cart line ENTIRELY (not a quantity decrease — that stays plain
+  // "editItem", see bumpCartQty below). A line already on a sent KOT is a real
+  // cancellation of kitchen-sent work — routes through the new "cancelKotItem"
+  // reason+PIN dialog instead of the plain "removeItem" PIN-only gate.
+  const requestRemoveFromCart = (item: CartItem) => {
+    if (wasItemKotd(item)) {
+      go("cancelKotItem", "Cancel Item", () => setPendingCancelTarget(item));
+    } else {
+      go("removeItem", "Remove Item", () => removeFromCart(item.cartKey));
+    }
+  };
+
   // Quick +1/-1 quantity stepper (menu tiles + cart rows). Reuses the exact same
   // "editItem" gate the Edit-Item modal's own qty input already sits behind, and
-  // "removeItem" when a decrement would empty the line — no new permission surface,
-  // just a faster path to what Edit Item and Remove already allow. See the removed
-  // inline stepper note elsewhere in this file for why quantity must never bypass
-  // go()/isOff() again.
+  // "removeItem"/"cancelKotItem" (via requestRemoveFromCart) when a decrement would
+  // empty the line — no new permission surface beyond that, just a faster path to what
+  // Edit Item and Remove already allow. See the removed inline stepper note elsewhere
+  // in this file for why quantity must never bypass go()/isOff() again.
   const bumpCartQty = (cartKey: string, delta: number) => {
     const current = cartItems.find(c => c.cartKey === cartKey);
     if (!current) return;
     if (delta < 0 && current.quantity + delta <= 0) {
-      go("removeItem", "Remove Item", () => removeFromCart(cartKey));
+      requestRemoveFromCart(current);
       return;
     }
     go("editItem", "Edit Item", () => {
@@ -1173,6 +1247,10 @@ export default function POS() {
         containerCharge: containerCharge.toFixed(2),
         customerName: data.customerName || "",
         customerPhone: data.customerPhone || "",
+        // Reasons for any items removed after their KOT was sent — stashed at removal
+        // time (requestRemoveFromCart), must travel with every save, same as
+        // discountAmount/containerCharge above (see the Auto-KOT sync's identical field).
+        cancelledKotItems: buildCancelledKotItemsPayload(),
       });
     } else {
       createOrderMutation.mutate({
@@ -1630,6 +1708,63 @@ export default function POS() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Cancel Item (already sent to kitchen) Confirm — mirrors Cancel Order
+           above, scoped to one cart line. Confirming stashes the reason in
+           pendingKotCancellationsRef (carried on every subsequent save, see
+           buildCancelledKotItemsPayload) and removes the line from the cart
+           immediately; the server independently re-verifies and requires this
+           reason before accepting the save (PUT /api/orders/:id/items). ── */}
+      <Dialog
+        open={!!pendingCancelTarget}
+        onOpenChange={(v) => { if (!v) { setPendingCancelTarget(null); setCancelItemReason(""); } }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Cancel "{pendingCancelTarget?.name}"?</DialogTitle>
+            <DialogDescription>
+              This item was already sent to the kitchen. Removing it now requires a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-gray-600">
+              Reason for cancellation <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              value={cancelItemReason}
+              onChange={(e) => setCancelItemReason(e.target.value)}
+              placeholder="e.g. Customer changed their mind, kitchen ran out of an ingredient…"
+              rows={3}
+              className="text-sm resize-none"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => { setPendingCancelTarget(null); setCancelItemReason(""); }}>Keep Item</Button>
+            <Button
+              variant="destructive"
+              disabled={!cancelItemReason.trim()}
+              onClick={() => {
+                const item = pendingCancelTarget;
+                if (!item) return;
+                const key = kotItemKey(item.id, item.size ?? null, item.serviceMode ?? null);
+                pendingKotCancellationsRef.current[key] = {
+                  itemId: item.id,
+                  size: item.size ?? null,
+                  serviceMode: item.serviceMode ?? null,
+                  reason: cancelItemReason.trim(),
+                  name: item.name,
+                };
+                removeFromCart(item.cartKey);
+                setPendingCancelTarget(null);
+                setCancelItemReason("");
+              }}
+            >
+              Cancel Item
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
@@ -1709,7 +1844,7 @@ export default function POS() {
             {/* New Order — hidden on mobile */}
             <button
               disabled={isOff("clearCart")}
-              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); })}
+              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {}; })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
               + New Order
@@ -2463,7 +2598,7 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); })}
+                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {}; })}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >
@@ -2500,7 +2635,7 @@ export default function POS() {
                         the Edit/Remove buttons below already sit behind (see bumpCartQty). */}
                     <div className="flex items-center gap-1 rounded-full px-1 py-0.5 shrink-0" style={{ background: "var(--paper-100)" }}>
                       <button
-                        disabled={item.quantity <= 1 ? isOff("removeItem") : isOff("editItem")}
+                        disabled={item.quantity <= 1 ? isOff(wasItemKotd(item) ? "cancelKotItem" : "removeItem") : isOff("editItem")}
                         onClick={() => bumpCartQty(item.cartKey, item.quantity <= 1 ? -item.quantity : -1)}
                         className="w-5 h-5 rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{ background: "var(--paper-0)", color: "var(--green-800)", boxShadow: "var(--shadow-xs)" }}
@@ -2542,8 +2677,8 @@ export default function POS() {
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold tabular-nums whitespace-nowrap`} style={{ color: "var(--text-strong)" }}>{fmt(item.totalPrice * item.quantity)}</span>
                       <button
-                        disabled={isOff("removeItem")}
-                        onClick={() => go("removeItem", "Remove Item", () => removeFromCart(item.cartKey))}
+                        disabled={isOff(wasItemKotd(item) ? "cancelKotItem" : "removeItem")}
+                        onClick={() => requestRemoveFromCart(item)}
                         className="transition-colors hover:opacity-70 disabled:opacity-30 disabled:cursor-not-allowed"
                         style={{ color: "var(--text-3)" }}
                       >

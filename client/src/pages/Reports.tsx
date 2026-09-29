@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import {
   IndianRupee, TrendingUp, ShoppingCart, Users, Download, Calendar,
-  Banknote, CreditCard, Smartphone, Clock, AlertCircle, Wifi,
+  Banknote, Smartphone, Clock, AlertCircle,
   ChevronDown, Check, X, Send, CheckCircle2, Wallet, AlertTriangle,
   ShieldCheck, Edit3, ArrowLeftRight, Printer, MinusCircle,
 } from "lucide-react";
@@ -239,11 +239,17 @@ const CATEGORY_PALETTE = [
 function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }: {
   c: any;
   onEbill: (key: string) => void;
-  onSettle: (key: string) => void;
+  onSettle: (key: string, paymentMethod: "cash" | "upi") => void;
   ebillPending: boolean;
   settlePending: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // "Mark all paid" used to settle immediately on a plain window.confirm, with no way
+  // to record which method the money actually came in via — it silently defaulted to
+  // "cash" server-side (and even that default was unreliable, see settleCustomerTabs'
+  // fix). Clicking now reveals this inline Cash/UPI choice instead; picking one both
+  // confirms AND records the real method in one step.
+  const [pickingMethod, setPickingMethod] = useState(false);
   const inr = (n: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(n);
   return (
     <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-sm overflow-hidden">
@@ -295,13 +301,41 @@ function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }:
         >
           <Send className="w-3.5 h-3.5" /> Send e-bill
         </button>
-        <button
-          onClick={() => { if (window.confirm(`Mark all ${c.orderCount} order(s) for ${c.name || "this customer"} as PAID?`)) onSettle(c.key); }}
-          disabled={settlePending}
-          className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-xs font-semibold bg-[var(--paper-0)] border border-[var(--line)] text-gray-700 hover:bg-[var(--paper-100)] disabled:opacity-40 transition-colors"
-        >
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Mark all paid
-        </button>
+        {pickingMethod ? (
+          <div className="flex-1 flex items-center gap-1.5">
+            <span className="text-[11px] text-gray-500 shrink-0">Paid via</span>
+            <button
+              onClick={() => { onSettle(c.key, "cash"); setPickingMethod(false); }}
+              disabled={settlePending}
+              className="flex-1 h-9 rounded-xl text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+            >
+              Cash
+            </button>
+            <button
+              onClick={() => { onSettle(c.key, "upi"); setPickingMethod(false); }}
+              disabled={settlePending}
+              className="flex-1 h-9 rounded-xl text-xs font-semibold bg-[var(--paper-0)] border border-[var(--line)] text-gray-700 hover:bg-[var(--paper-100)] disabled:opacity-40 transition-colors"
+            >
+              UPI
+            </button>
+            <button
+              onClick={() => setPickingMethod(false)}
+              disabled={settlePending}
+              title="Cancel"
+              className="w-9 h-9 shrink-0 rounded-xl border border-[var(--line)] text-gray-400 hover:bg-gray-50 disabled:opacity-40 transition-colors flex items-center justify-center"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setPickingMethod(true)}
+            disabled={settlePending}
+            className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-xs font-semibold bg-[var(--paper-0)] border border-[var(--line)] text-gray-700 hover:bg-[var(--paper-100)] disabled:opacity-40 transition-colors"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Mark all paid
+          </button>
+        )}
       </div>
     </div>
   );
@@ -415,8 +449,12 @@ export default function Reports() {
   });
 
   const settleCustomerMutation = useMutation({
-    mutationFn: async (key: string) => apiRequest("POST", "/api/dues/settle-customer", { key }),
-    onSuccess: (_res, _key) => { toast({ title: "Tabs marked paid" }); invalidateDues(); },
+    mutationFn: async ({ key, paymentMethod }: { key: string; paymentMethod: "cash" | "upi" }) =>
+      apiRequest("POST", "/api/dues/settle-customer", { key, paymentMethod }),
+    onSuccess: (_res, vars) => {
+      toast({ title: `Tabs marked paid via ${vars.paymentMethod === "cash" ? "Cash" : "UPI"}` });
+      invalidateDues();
+    },
     onError: (err: any) => toast({ title: "Failed to settle", description: err.message, variant: "destructive" }),
   });
 
@@ -437,7 +475,6 @@ export default function Reports() {
     { id: "payments",  label: "Payments" },
     { id: "staff",     label: "Staff & Tables" },
     { id: "cancelled", label: "Cancelled Orders" },
-    { id: "dues",      label: "Dues / Pay-Later" },
     { id: "lowstock",  label: "Low Stock" },
     ...(canSeeKotBillActivity ? [{ id: "kotbill", label: "KOT & Bill Activity" }] : []),
   ];
@@ -510,7 +547,7 @@ export default function Reports() {
     } else if (activeTab === "payments") {
       filename = `payments_${range}`;
       header = ["Method", "Count", "Amount"];
-      rows = ["cash", "card", "upi", "online", "other"].map((k) => {
+      rows = ["cash", "upi"].map((k) => {
         const d = paymentSummary?.breakdown?.[k] || { count: 0, amount: 0 };
         return [k, d.count ?? 0, d.amount ?? 0];
       });
@@ -873,13 +910,16 @@ export default function Reports() {
                 <h3 className="text-base font-semibold text-gray-800">Payment Summary</h3>
                 <span className="text-xs text-gray-400">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                {/* Only Cash and UPI are real payment modes at this restaurant — the
+                    backend breakdown is keyed by whatever orders.paymentMethod values
+                    exist (Billing.tsx's legacy "Mark as Paid" dropdown still technically
+                    offers Card/Online too), but any such stray amount still counts
+                    toward "Total Collected" below, so nothing is silently hidden from
+                    the actual total, just not broken out into its own tile here. */}
                 {[
-                  { key: "cash",   label: "Cash",   icon: <Banknote className="w-5 h-5" />,   color: "from-[#226B43] to-[#1B4D33]", bg: "bg-emerald-50/60",  text: "text-emerald-700" },
-                  { key: "card",   label: "Card",   icon: <CreditCard className="w-5 h-5" />, color: "from-[#34507A] to-[#243B5E]",     bg: "bg-blue-50/60",     text: "text-blue-700" },
-                  { key: "upi",    label: "UPI",    icon: <Smartphone className="w-5 h-5" />, color: "from-[#CD6E3E] to-[#B85C38]", bg: "bg-purple-50/60",   text: "text-purple-700" },
-                  { key: "online", label: "Online", icon: <Wifi className="w-5 h-5" />,       color: "from-orange-500 to-amber-500",  bg: "bg-orange-50/60",   text: "text-orange-700" },
-                  { key: "other",  label: "Other",  icon: <IndianRupee className="w-5 h-5" />, color: "from-gray-500 to-slate-500",    bg: "bg-gray-50/60",     text: "text-gray-700" },
+                  { key: "cash", label: "Cash", icon: <Banknote className="w-5 h-5" />, color: "from-[#226B43] to-[#1B4D33]", bg: "bg-emerald-50/60", text: "text-emerald-700" },
+                  { key: "upi",  label: "UPI",  icon: <Smartphone className="w-5 h-5" />, color: "from-[#CD6E3E] to-[#B85C38]", bg: "bg-purple-50/60", text: "text-purple-700" },
                 ].map(({ key, label, icon, color, bg, text }) => {
                   const d = paymentSummary?.breakdown?.[key] || { count: 0, amount: 0 };
                   return (
@@ -955,6 +995,59 @@ export default function Reports() {
                 <p className="text-sm text-gray-400">All orders have been settled</p>
               </div>
             )}
+
+            {/* ── Dues / Pay-Later — merged into this tab (was its own tab) so the
+                 customer-grouped view of the same due orders above lives right next to
+                 them, instead of behind a separate click. ── */}
+            <div className="pt-2">
+              <h3 className="text-base font-semibold text-gray-800 mb-3">Dues / Pay-Later — by Customer</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                <div className="rounded-xl bg-red-50/60 border border-red-200/40 p-4">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center text-white mb-2">
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs text-gray-500">Total Outstanding</p>
+                  <p className="text-xl font-bold text-red-600">{formatCurrency(dues?.totalOutstanding || 0)}</p>
+                </div>
+                <div className="rounded-xl bg-amber-50/60 border border-amber-200/40 p-4">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white mb-2">
+                    <ShoppingCart className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs text-gray-500">Open Tabs (orders)</p>
+                  <p className="text-xl font-bold text-amber-700">{dues?.orderCount || 0}</p>
+                </div>
+                <div className="rounded-xl bg-blue-50/60 border border-blue-200/40 p-4">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white mb-2">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs text-gray-500">Customers with Dues</p>
+                  <p className="text-xl font-bold text-blue-700">{dues?.customerCount || 0}</p>
+                </div>
+              </div>
+
+              {(dues?.customers?.length > 0) ? (
+                <div className="space-y-3">
+                  {dues.customers.map((c: any) => (
+                    <DuesCustomerCard
+                      key={c.key}
+                      c={c}
+                      onEbill={(key) => ebillMutation.mutate(key)}
+                      onSettle={(key, paymentMethod) => settleCustomerMutation.mutate({ key, paymentMethod })}
+                      ebillPending={ebillMutation.isPending}
+                      settlePending={settleCustomerMutation.isPending}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-8 text-center">
+                  <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <p className="text-gray-600 font-medium">No open tabs</p>
+                  <p className="text-sm text-gray-400">Everyone's settled up</p>
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
 
@@ -1138,63 +1231,6 @@ export default function Reports() {
           );
         })()}
 
-        {/* ── Dues / Pay-Later ── */}
-        {activeTab === "dues" && (
-          <motion.div
-            key="dues"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-5"
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-xl bg-red-50/60 border border-red-200/40 p-4">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center text-white mb-2">
-                  <Wallet className="w-5 h-5" />
-                </div>
-                <p className="text-xs text-gray-500">Total Outstanding</p>
-                <p className="text-xl font-bold text-red-600">{formatCurrency(dues?.totalOutstanding || 0)}</p>
-              </div>
-              <div className="rounded-xl bg-amber-50/60 border border-amber-200/40 p-4">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white mb-2">
-                  <ShoppingCart className="w-5 h-5" />
-                </div>
-                <p className="text-xs text-gray-500">Open Tabs (orders)</p>
-                <p className="text-xl font-bold text-amber-700">{dues?.orderCount || 0}</p>
-              </div>
-              <div className="rounded-xl bg-blue-50/60 border border-blue-200/40 p-4">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white mb-2">
-                  <Users className="w-5 h-5" />
-                </div>
-                <p className="text-xs text-gray-500">Customers with Dues</p>
-                <p className="text-xl font-bold text-blue-700">{dues?.customerCount || 0}</p>
-              </div>
-            </div>
-
-            {(dues?.customers?.length > 0) ? (
-              <div className="space-y-3">
-                {dues.customers.map((c: any) => (
-                  <DuesCustomerCard
-                    key={c.key}
-                    c={c}
-                    onEbill={(key) => ebillMutation.mutate(key)}
-                    onSettle={(key) => settleCustomerMutation.mutate(key)}
-                    ebillPending={ebillMutation.isPending}
-                    settlePending={settleCustomerMutation.isPending}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-8 text-center">
-                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
-                  <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-                </div>
-                <p className="text-gray-600 font-medium">No open tabs</p>
-                <p className="text-sm text-gray-400">Everyone's settled up</p>
-              </div>
-            )}
-          </motion.div>
-        )}
-
         {/* ── Low Stock — ported from LiveAnalytics.tsx's own Low Stock Alerts card,
              same data (/api/inventory/low-stock), no backend change, not date-scoped
              (matches how this worked there). ── */}
@@ -1268,6 +1304,12 @@ export default function Reports() {
                     <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
                       <span className="flex items-center gap-2 text-sm text-gray-600"><ArrowLeftRight className="w-4 h-4 text-blue-500" /> Shifted</span>
                       <span className="font-bold text-gray-800">{kotBillActivity?.kotShifted ?? 0}</span>
+                    </div>
+                    {/* One line item removed after its KOT was already sent — distinct from
+                        "Cancelled" above, which is the whole order voided (order.cancel). */}
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><AlertTriangle className="w-4 h-4 text-orange-500" /> Item Cancelled</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.kotItemCancelled ?? 0}</span>
                     </div>
                   </div>
                 </div>

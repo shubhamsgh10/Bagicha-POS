@@ -717,9 +717,18 @@ export class DatabaseStorage implements IStorage {
     // flipped (via .returning()), which can be fewer than mine.length if one of them was
     // settled individually in that window — previously this returned the stale
     // read-time count regardless of what the UPDATE actually did.
+    // paymentMethod is set unconditionally to the passed-in value, NOT coalesced with
+    // the order's existing column — a due order's paymentMethod is never actually NULL
+    // by the time it gets here: POST /api/orders/:id/payment stamps it with a fallback
+    // ("cash" via the rich SettlementDialog Due path, or the literal string "due" via
+    // Billing.tsx's legacy {paymentMethod:"due"} path) even though nothing was
+    // collected yet. The old coalesce() therefore always resolved to that stale
+    // placeholder and silently ignored whatever method was actually passed in here —
+    // this bulk settle is a real payment event happening now, so the method chosen at
+    // settle time (Reports.tsx's Cash/UPI picker) must be authoritative.
     const settled = await db.update(orders).set({
       paymentStatus: "paid",
-      paymentMethod: sql`coalesce(${orders.paymentMethod}, ${paymentMethod})`,
+      paymentMethod,
       paidAmount: sql`coalesce(${orders.totalAmount}, '0')`,
     }).where(and(
       inArray(orders.id, mine.map((o) => o.id)),

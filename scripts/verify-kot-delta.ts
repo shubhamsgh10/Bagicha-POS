@@ -1,5 +1,5 @@
 /**
- * Verifies server/kotDelta.ts's computeDelta — specifically the parcel/service-mode
+ * Verifies shared/kotDelta.ts's computeDelta — specifically the parcel/service-mode
  * flip fix: snapKey includes serviceMode (needed so two concurrent lines of the same
  * dish in different modes, e.g. Section POS's per-item "eat here" vs "parcel" toggle,
  * track their quantities independently), but that meant a PURE serviceMode flip on an
@@ -9,7 +9,7 @@
  * computeDelta now nets out exactly this pair.
  * Run: npx tsx scripts/verify-kot-delta.ts
  */
-import { computeDelta, type SnapshotItem } from "../server/kotDelta";
+import { computeDelta, type SnapshotItem } from "../shared/kotDelta";
 
 const checks: Array<[string, boolean]> = [];
 

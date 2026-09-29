@@ -8,7 +8,7 @@ export type CartAction =
   | "discount" | "complimentary" | "clearCart" | "cancelOrder"
   | "editItem" | "removeItem" | "splitBill" | "moveTable" | "mergeTable"
   | "holdOrder" | "printKot" | "printBill" | "saveOrder" | "settleOrder"
-  | "openItem" | "writeOff";
+  | "openItem" | "writeOff" | "cancelKotItem";
 
 export type CartActionPermission = "off" | "pin" | "allowed";
 
@@ -21,25 +21,26 @@ const CART_ACTIONS: CartAction[] = [
   "discount", "complimentary", "clearCart", "cancelOrder",
   "editItem", "removeItem", "splitBill", "moveTable", "mergeTable",
   "holdOrder", "printKot", "printBill", "saveOrder", "settleOrder",
-  "openItem", "writeOff",
+  "openItem", "writeOff", "cancelKotItem",
 ];
 
 // "writeOff" (settling short and recording the gap as a loss — see shared/settlement.ts and
-// SettlementDialog's short-settle confirm) defaults to "pin" alongside editItem/removeItem —
-// mirrors server/settingsStore.ts's DEFAULT_CART_PERMISSIONS exactly, see the comment there
-// for why it's a PIN gate rather than a full "off" lock. The server independently enforces
-// this too (POST /api/orders/:id/payment's hasElevation check); this default only controls
-// the client-side prompt.
+// SettlementDialog's short-settle confirm) and "cancelKotItem" (removing a single item that
+// was already sent to the kitchen on a printed KOT — see the reason+PIN dialog in POS.tsx and
+// PUT /api/orders/:id/items' server-side guard) default to "pin" alongside editItem/removeItem
+// — mirrors server/settingsStore.ts's DEFAULT_CART_PERMISSIONS exactly, see the comment there
+// for why these are PIN gates rather than a full "off" lock. The server independently enforces
+// cancelKotItem too (that same route's hasElevation check, not just this client-side prompt).
 export const DEFAULT_CART_PERMISSIONS: CartPermissions = {
   manager: Object.fromEntries(CART_ACTIONS.map(a => [
     a,
-    (["editItem", "removeItem", "writeOff"] as CartAction[]).includes(a) ? "pin" :
+    (["editItem", "removeItem", "writeOff", "cancelKotItem"] as CartAction[]).includes(a) ? "pin" :
     (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
     "allowed",
   ])) as Record<CartAction, CartActionPermission>,
   staff: Object.fromEntries(CART_ACTIONS.map(a => [
     a,
-    (["editItem", "removeItem", "writeOff"] as CartAction[]).includes(a) ? "pin" :
+    (["editItem", "removeItem", "writeOff", "cancelKotItem"] as CartAction[]).includes(a) ? "pin" :
     (["discount","complimentary","clearCart","cancelOrder","splitBill","moveTable","mergeTable"] as CartAction[]).includes(a) ? "off" :
     "allowed",
   ])) as Record<CartAction, CartActionPermission>,

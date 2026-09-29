@@ -1,7 +1,7 @@
 /**
  * Verifies shared/orderAudit.ts's diffOrderLines — the before/after diffing used by
  * PUT /api/orders/:id/items to build the order.items_edit audit row. Deliberately checks
- * the specific ways this diverges from server/kotDelta.ts's computeDelta (see that file's
+ * the specific ways this diverges from shared/kotDelta.ts's computeDelta (see that file's
  * and this one's own comments for why): a serviceMode flip must be reported, not netted,
  * and a quantity change must read as a transition, not an increment.
  * Run: npx tsx scripts/verify-order-audit.ts
