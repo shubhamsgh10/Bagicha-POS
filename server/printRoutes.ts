@@ -4,7 +4,7 @@ import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/sc
 import { eq, asc, and, gt, or, lt, inArray, isNull, sql } from "drizzle-orm";
 import type { PrinterConfig } from "@shared/print/types";
 import { getSettings } from "./settingsStore";
-import { computeDelta, type SnapshotItem, type KotSnapshot } from "./kotDelta";
+import { computeDelta, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
 import {
   generateKOTBuffer,
   generateBillBuffer,

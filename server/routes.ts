@@ -11,6 +11,8 @@ import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
 import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
+import { computeDelta, type SnapshotItem } from "@shared/kotDelta";
+import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -1350,14 +1352,31 @@ export async function registerRoutes(
       const activeOrders = allOrders.filter(
         o => o.status !== "served" && o.status !== "cancelled"
       ).length;
-      const todaySales = allOrders
-        .filter(o => {
-          const d = new Date(o.createdAt);
-          return d >= today && d <= todayEnd && o.paymentStatus === 'paid';
-        })
-        .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
+      const paidToday = allOrders.filter(o => {
+        const d = new Date(o.createdAt);
+        return d >= today && d <= todayEnd && o.paymentStatus === 'paid';
+      });
+      // Sales nets out any written-off shortfall so it equals what was actually collected,
+      // i.e. exactly cashSales + upiSales (same rule as the Reports revenue figures).
+      const todaySales = paidToday.reduce(
+        (sum, o: any) => sum + parseFloat(o.totalAmount as string) - parseFloat(o.shortfallAmount ?? "0"), 0);
 
-      res.json({ runningTables, freeTables, activeOrders, todaySales });
+      // Per-method split from the entered breakdown, so a Part (cash + UPI) settle counts
+      // toward both. Cash entered above the bill is change handed back, so it's removed
+      // from cash. Legacy rows with no breakdown fall back to their single paymentMethod.
+      let cashSales = 0, upiSales = 0;
+      for (const o of paidToday as any[]) {
+        const bd = o.paymentBreakdown as Record<string, string> | null;
+        if (bd && (bd.cash !== undefined || bd.upi !== undefined)) {
+          cashSales += Math.max(0, parseFloat(bd.cash ?? "0") - parseFloat(o.changeAmount ?? "0"));
+          upiSales += parseFloat(bd.upi ?? "0");
+        } else {
+          const collected = parseFloat(o.paidAmount ?? o.totalAmount ?? "0");
+          if (o.paymentMethod === "upi") upiSales += collected; else cashSales += collected;
+        }
+      }
+
+      res.json({ runningTables, freeTables, activeOrders, todaySales, cashSales, upiSales });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch live status" });
     }
@@ -2009,6 +2028,59 @@ export async function registerRoutes(
       const existingOrderRow = await storage.getOrderById(id);
       const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
 
+      // ── Per-item KOT-cancellation guard ──────────────────────────────────────
+      // Deliberately compares against existingItems (this order's PERSISTED state
+      // immediately before this save), NOT orders.lastKotSnapshot. Found live: this
+      // route's own ticket-creation block below (search "newItems.length > 0")
+      // unconditionally creates a kitchen-visible kot_tickets row for any item the
+      // FIRST time it's ever saved — at order creation (storage.createOrderWithItems)
+      // or at the PUT that first adds it — completely independent of whether anyone
+      // ever actually PRINTS via /api/print/kot, which is the ONLY thing that writes
+      // lastKotSnapshot. A real order was observed with 2 items visibly on the
+      // Kitchen KOT screen (kot_tickets row existed) but lastKotSnapshot still null
+      // (no print had happened) — a lastKotSnapshot-based check let the removal
+      // through with no guard at all, the opposite of what this feature exists for.
+      // Since EVERY item ever persisted to order_items has, by construction, already
+      // triggered a kitchen-visible ticket at the moment it was first saved,
+      // "was this item in existingItems" is the strictly correct signal — a superset
+      // of "was it in lastKotSnapshot," and correct even when no printer is
+      // configured or Auto-KOT never fires. Reuses computeDelta directly
+      // (shared/kotDelta.ts) so the exact same identity key and flip-netting
+      // behavior (a pure dine-in<->parcel flip is never treated as a cancellation)
+      // apply here for free — see shared/kotItemCancel.ts's own comment on why this
+      // is a direct reuse, not a parallel diff (contrast with diffOrderLines below,
+      // which deliberately isn't).
+      const currentKotSnapshot: SnapshotItem[] = lineItems.map((item: any) => ({
+        itemId: Number(item.menuItemId),
+        name: item.name ?? "",
+        quantity: Number(item.quantity),
+        size: item.size || null,
+        serviceMode: item.serviceMode || null,
+      }));
+      const existingKotSnapshot: SnapshotItem[] = existingItems.map((i: any) => ({
+        itemId: i.menuItemId,
+        name: i.name || "",
+        quantity: Number(i.quantity),
+        size: i.size ?? null,
+        serviceMode: i.serviceMode ?? null,
+      }));
+      const droppedKotItems = computeDelta(currentKotSnapshot, existingKotSnapshot).cancelledItems;
+      const cancelledKotItemsInput: CancelledKotItemInput[] =
+        Array.isArray(req.body?.cancelledKotItems) ? req.body.cancelledKotItems : [];
+
+      if (droppedKotItems.length > 0) {
+        const missingReasons = findMissingKotCancelReasons(currentKotSnapshot, existingKotSnapshot, cancelledKotItemsInput);
+        if (missingReasons.length > 0) {
+          return res.status(400).json({
+            error: `A cancellation reason is required for: ${missingReasons.map((m) => m.name).join(", ")}`,
+            missingReasons: missingReasons.map((m) => ({ itemId: m.itemId, size: m.size, serviceMode: m.serviceMode, name: m.name })),
+          });
+        }
+        if (!hasElevation(req, "manager")) {
+          return res.status(403).json({ error: "Manager approval required to cancel an item already sent to the kitchen" });
+        }
+      }
+
       // Replace all order items with server-validated unit prices. unitCost is a
       // snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
       // storage.computeMenuItemCosts) — null when no full recipe cost is known,
@@ -2101,6 +2173,33 @@ export async function registerRoutes(
       } catch (auditErr) {
         // Never let an audit-trail bug block a genuinely successful order edit.
         console.error("[order] items_edit audit error (non-fatal):", auditErr);
+      }
+
+      // One order.item_cancel row per item dropped since the last KOT — kept deliberately
+      // distinct from order.cancel (whole-order cancellation, a different thing) and from
+      // the aggregate order.items_edit above, so Reports.tsx's KOT & Bill Activity tab can
+      // count it on its own (kotItemCancelled, not kotCancelled). Uses the LAST-KNOWN-GOOD
+      // name/quantity from lastKotSnapshot (droppedKotItems), never the client-sent reason
+      // payload's own itemId/size fields beyond the reason text itself — can't be spoofed.
+      if (droppedKotItems.length > 0) {
+        try {
+          const reasonByKey = new Map<string, string>();
+          for (const c of cancelledKotItemsInput) {
+            const r = typeof c?.reason === "string" ? c.reason.trim() : "";
+            if (r) reasonByKey.set(`${Number(c.itemId)}:${c.size ?? ""}:${c.serviceMode ?? ""}`, r);
+          }
+          for (const d of droppedKotItems) {
+            logAudit(req, "order.item_cancel", "order", id, {
+              itemName: d.name,
+              size: d.size,
+              serviceMode: d.serviceMode,
+              quantity: d.quantity,
+              reason: reasonByKey.get(`${d.itemId}:${d.size ?? ""}:${d.serviceMode ?? ""}`) ?? "",
+            });
+          }
+        } catch (auditErr) {
+          console.error("[order] item_cancel audit error (non-fatal):", auditErr);
+        }
       }
 
       // Reconcile inventory to the new line items — this is what makes editing a running

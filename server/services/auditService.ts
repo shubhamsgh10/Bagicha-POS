@@ -81,13 +81,16 @@ export async function getAuditLogs(opts: {
 // audit_logs' own data, not an operational-table query.
 const KOT_BILL_ACTIONS = [
   "order.cancel", "order.move_table", "order.write_off",
-  "kot.reprint", "bill.reprint", "order.items_edit",
+  "kot.reprint", "bill.reprint", "order.items_edit", "order.item_cancel",
 ] as const;
 
 export interface KotBillActivitySummary {
   kotCancelled: number;
   kotModified: number;
   kotShifted: number;
+  // A single line item removed after its KOT was already sent — deliberately distinct
+  // from kotCancelled (order.cancel = the WHOLE order voided). Never conflate the two.
+  kotItemCancelled: number;
   billModified: number;
   billReprinted: number;
   billWaivedOff: number;
@@ -108,6 +111,7 @@ export async function getKotBillActivitySummary(startDate: Date, endDate: Date):
   const [counts] = await db.select({
     kotCancelled: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.cancel')`,
     kotShifted:   sql<number>`count(*) filter (where ${auditLogs.action} = 'order.move_table')`,
+    kotItemCancelled: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.item_cancel')`,
     billWaivedOff: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.write_off')`,
     // Merged per the locked decision — matches the Petpooja reference's single
     // "Re-printed" tile under Bills. The drill-down list below still distinguishes
@@ -157,6 +161,7 @@ export async function getKotBillActivitySummary(startDate: Date, endDate: Date):
     kotCancelled: Number(counts?.kotCancelled ?? 0),
     kotModified: Number(counts?.kotModified ?? 0),
     kotShifted: Number(counts?.kotShifted ?? 0),
+    kotItemCancelled: Number(counts?.kotItemCancelled ?? 0),
     billModified: Number(counts?.billModified ?? 0),
     billReprinted: Number(counts?.billReprinted ?? 0),
     billWaivedOff: Number(counts?.billWaivedOff ?? 0),
