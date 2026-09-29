@@ -53,7 +53,8 @@
       "PowerShell(npm run check 2>&1)",
       "Bash(node scripts/migrate-print-jobs.mjs)",
       "Bash(npm run *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep -rn \"from [\\\\\"']@shared\\\\|from [\\\\\"']\\\\.\\\\./\\\\.\\\\./server\\\\|from [\\\\\"']server/\" client/src --include=*.tsx --include=*.ts -l)"
     ]
   },
   "enabledMcpjsonServers": []

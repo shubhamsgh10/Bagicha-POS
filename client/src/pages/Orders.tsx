@@ -16,6 +16,7 @@ import { billLines } from "@/lib/receiptText";
 import { serialNum, avatarNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
+import { deriveBillTotals } from "@shared/orderPricing";
 
 
 const fmt = (n: number) =>
@@ -49,6 +50,18 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
   });
 
   const items: any[] = detail?.items || [];
+
+  // Actual discount/tax rate applied to THIS bill, not the restaurant's currently-
+  // configured rate — a historical order may have been billed under a different tax
+  // rate or a manually-typed discount amount, so these are derived from the order's
+  // own persisted numbers. deriveBillTotals resolves subtotal correctly even for
+  // legacy rows written before subtotalAmount existed (falls back to total - tax) —
+  // never reconstruct subtotal as total - tax directly (see shared/orderPricing.ts).
+  const billTotals = deriveBillTotals(order);
+  const discountPct = billTotals.subtotal > 0 ? (billTotals.discount / billTotals.subtotal) * 100 : 0;
+  const taxableBase = billTotals.subtotal - billTotals.discount;
+  const taxPct = taxableBase > 0 ? (billTotals.tax / taxableBase) * 100 : 0;
+
   const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
@@ -294,16 +307,16 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
               {/* Totals */}
               <div className="flex justify-end">
                 <div className="text-xs space-y-1 w-48 bg-[var(--paper-100)] rounded-xl px-3 py-2">
-                  {parseFloat(order.discountAmount || "0") > 0 && (
+                  {billTotals.discount > 0 && (
                     <div className="flex justify-between text-gray-500">
-                      <span>Discount</span>
-                      <span className="text-red-500 font-medium">-{fmt(parseFloat(order.discountAmount))}</span>
+                      <span>Discount <span className="text-gray-400">({discountPct.toFixed(1)}%)</span></span>
+                      <span className="text-red-500 font-medium">-{fmt(billTotals.discount)}</span>
                     </div>
                   )}
-                  {parseFloat(order.taxAmount || "0") > 0 && (
+                  {billTotals.tax > 0 && (
                     <div className="flex justify-between text-gray-500">
-                      <span>Tax</span>
-                      <span>{fmt(parseFloat(order.taxAmount))}</span>
+                      <span>Tax <span className="text-gray-400">({taxPct.toFixed(1)}%)</span></span>
+                      <span>{fmt(billTotals.tax)}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold border-t border-[var(--line)] pt-1.5 mt-1 text-sm">
