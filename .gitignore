@@ -18,3 +18,6 @@ baileys-auth/
 .session-secret
 Front Page/
 .claude.local.md
+# Local DB backups (scripts/backup-full-db-local.mjs) — contain customer phone numbers,
+# plaintext staff PINs, and other sensitive data; never commit these.
+backups/

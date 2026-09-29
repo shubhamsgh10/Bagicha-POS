@@ -590,6 +590,7 @@ const CART_ACTION_LIST: { key: CartAction; label: string }[] = [
   { key: "cancelOrder",   label: "Cancel Order" },
   { key: "editItem",      label: "Edit Item" },
   { key: "removeItem",    label: "Remove Item" },
+  { key: "cancelKotItem", label: "Cancel Item (Already Sent to Kitchen)" },
   { key: "splitBill",     label: "Split Bill" },
   { key: "moveTable",     label: "Move Table" },
   { key: "mergeTable",    label: "Merge Tables" },

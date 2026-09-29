@@ -1,7 +1,7 @@
 import { apiUrl } from '@/lib/api';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,7 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer, UserRound, UtensilsCrossed,
+  Plus, Edit2, Trash2, Users, ArrowRightLeft, Printer, UserRound, UtensilsCrossed, ChevronRight,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -191,11 +191,30 @@ export default function Tables() {
   const { activeRole } = useActiveRoleContext();
   const { go, pinRequest, resolvePinSuccess, resolvePinCancel } = usePermission(activeRole, appSettings?.cartPermissions);
 
+  const [showSalesSplit, setShowSalesSplit] = useState(false);
+  const salesRef = useRef<HTMLButtonElement>(null);
+  const reduceMotion = useReducedMotion();
+  useEffect(() => {
+    if (!showSalesSplit) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!salesRef.current?.contains(e.target as Node)) setShowSalesSplit(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowSalesSplit(false); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showSalesSplit]);
+
   const { data: liveStatus } = useQuery<{
     runningTables: number;
     freeTables: number;
     activeOrders: number;
     todaySales: number;
+    cashSales: number;
+    upiSales: number;
   }>({
     queryKey: ["/api/live-status"],
     staleTime: 0,
@@ -330,7 +349,7 @@ export default function Tables() {
         }}
       >
         {/* Row 1: Status pills + desktop action buttons */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
 
           {/* Running Tables */}
           <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
@@ -362,32 +381,78 @@ export default function Tables() {
             </span>
           </div>
 
-          {/* Today Sales */}
-          <div className="flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl"
+          {/* Today Sales — click and the pill stretches right to show the Cash / UPI split */}
+          <button
+            ref={salesRef}
+            type="button"
+            onClick={() => setShowSalesSplit(v => !v)}
+            aria-expanded={showSalesSplit}
+            aria-controls="sales-split"
+            className="flex items-stretch shrink-0 rounded-xl cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
             style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
-            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-violet-500 shrink-0" />
-            <span className="text-[10px] sm:text-xs text-violet-600 font-semibold">Sales</span>
-            <span className="text-xs sm:text-sm font-bold text-violet-700">
-              ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
+            <span className={`flex items-center gap-1.5 pl-2 py-1 sm:pl-3 sm:py-1.5 ${showSalesSplit ? "" : "pr-2 sm:pr-0"}`}>
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-violet-500 shrink-0" />
+              <span className="text-[10px] sm:text-xs text-violet-600 font-semibold">Sales</span>
+              <span className="text-xs sm:text-sm font-bold text-violet-700">
+                ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
+              </span>
             </span>
-          </div>
 
-          {/* Desktop: spacer + action buttons */}
-          <div className="hidden sm:block flex-1" />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden sm:flex h-7 text-xs gap-1 shrink-0"
-            onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
-          >
-            <Plus className="w-3 h-3" /> Add Table
-          </Button>
-          <Button size="sm" className="hidden sm:flex h-7 text-xs gap-1 shrink-0 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => navigate("/pos?mode=delivery")}>
-            🛵 Delivery
-          </Button>
-          <Button size="sm" className="hidden sm:flex h-7 text-xs gap-1 shrink-0 bg-orange-500 hover:bg-orange-600 text-white" onClick={() => navigate("/pos?mode=pickup")}>
-            📦 Pick Up
-          </Button>
+            <AnimatePresence initial={false}>
+              {showSalesSplit && (
+                <motion.span
+                  id="sales-split"
+                  initial={reduceMotion ? false : { width: 0, opacity: 0 }}
+                  animate={{ width: "auto", opacity: 1 }}
+                  exit={reduceMotion ? { opacity: 0 } : { width: 0, opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className="flex items-stretch overflow-hidden whitespace-nowrap"
+                >
+                  <span className="w-px my-1.5 ml-2 sm:ml-3 shrink-0" style={{ background: "rgba(139,92,246,0.22)" }} />
+                  <span className="flex items-center gap-1.5 px-2 sm:px-3">
+                    <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span className="text-[10px] sm:text-xs text-emerald-700 font-semibold">Cash</span>
+                    <span className="text-xs sm:text-sm font-bold tabular-nums text-emerald-800">
+                      ₹{(liveStatus?.cashSales ?? 0).toFixed(0)}
+                    </span>
+                  </span>
+                  <span className="w-px my-1.5 shrink-0" style={{ background: "rgba(139,92,246,0.22)" }} />
+                  <span className="flex items-center gap-1.5 px-2 sm:px-3">
+                    <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-indigo-500 shrink-0" />
+                    <span className="text-[10px] sm:text-xs text-indigo-700 font-semibold">UPI</span>
+                    <span className="text-xs sm:text-sm font-bold tabular-nums text-indigo-800">
+                      ₹{(liveStatus?.upiSales ?? 0).toFixed(0)}
+                    </span>
+                  </span>
+                </motion.span>
+              )}
+            </AnimatePresence>
+
+            <span className={`${showSalesSplit ? "flex" : "hidden sm:flex"} items-center pl-1 pr-1.5 sm:pr-2`}>
+              <ChevronRight
+                className={`w-3 h-3 text-violet-500 transition-transform duration-200 motion-reduce:transition-none ${showSalesSplit ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+            </span>
+          </button>
+
+          {/* Desktop: action buttons, pushed to the right edge (stay right-aligned if the row wraps) */}
+          <div className="hidden sm:flex items-center gap-2 ml-auto">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs gap-1 shrink-0"
+              onClick={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
+            >
+              <Plus className="w-3 h-3" /> Add Table
+            </Button>
+            <Button size="sm" className="h-7 text-xs gap-1 shrink-0 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => navigate("/pos?mode=delivery")}>
+              🛵 Delivery
+            </Button>
+            <Button size="sm" className="h-7 text-xs gap-1 shrink-0 bg-orange-500 hover:bg-orange-600 text-white" onClick={() => navigate("/pos?mode=pickup")}>
+              📦 Pick Up
+            </Button>
+          </div>
         </div>
 
         {/* Row 2: Action buttons — mobile only */}

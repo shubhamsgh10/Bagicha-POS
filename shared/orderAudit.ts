@@ -4,7 +4,7 @@
  * to describe exactly what changed on a running order before writing an order.items_edit
  * audit row (server/services/auditService.ts's logAudit).
  *
- * Deliberately NOT a reuse of server/kotDelta.ts's computeDelta, even though both diff a
+ * Deliberately NOT a reuse of shared/kotDelta.ts's computeDelta, even though both diff a
  * before/after item list keyed the same way. They answer different questions:
  *   - kotDelta is kitchen-shaped: it nets out a pure dine-in<->parcel serviceMode flip (the
  *     kitchen doesn't care which box the food leaves in) and reports a quantity increase as
@@ -15,6 +15,10 @@
  *     an auditor reviewing "who changed what" needs the actual before/after values.
  * If a future change makes these look duplicative, that similarity is coincidental — keep
  * them separate.
+ *
+ * Contrast with shared/kotItemCancel.ts, which DOES reuse computeDelta directly (not a
+ * parallel diff) — it needs the kitchen-shaped "was this exact item on the last sent KOT"
+ * answer, flip-netting included, not this module's audit-shaped one.
  */
 
 export interface AuditLine {

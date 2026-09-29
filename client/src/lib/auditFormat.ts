@@ -16,6 +16,9 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   "order.cancel":         { label: "Cancellation",   color: "bg-red-100 text-red-800" },
   "order.items_edit":     { label: "Bill Edited",    color: "bg-amber-100 text-amber-800" },
+  // Deliberately a different color from "order.cancel" above — that's the whole order
+  // voided, this is one line item removed after its KOT was already sent. Never conflate.
+  "order.item_cancel":    { label: "Item Cancelled", color: "bg-orange-100 text-orange-800" },
   "order.discount_applied": { label: "Discount Applied", color: "bg-amber-100 text-amber-800" },
   "order.hold":           { label: "Order Held",     color: "bg-gray-100 text-gray-800" },
   "order.move_table":     { label: "Table Moved",    color: "bg-blue-100 text-blue-800" },
@@ -51,6 +54,7 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const changed = (meta.changed as unknown[])?.length ?? 0;
     return `+${added}/-${removed}/~${changed} · ₹${meta.totalBefore} → ₹${meta.totalAfter}`;
   }
+  if (action === "order.item_cancel") return `${meta.itemName ?? "Item"}${meta.size ? ` (${meta.size})` : ""} × ${meta.quantity ?? "?"} — ${meta.reason ?? ""}`;
   if (action === "order.discount_applied") return `₹${meta.discountBefore} → ₹${meta.discountAfter}`;
   if (action === "order.hold") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;
   if (action === "order.move_table") return `Order ${meta.orderNumber ?? ""}: ${meta.fromTable ?? "—"} → ${meta.toTable ?? "—"}`;
