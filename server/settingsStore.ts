@@ -295,6 +295,19 @@ export function getSettingsFresh(): Promise<RestaurantSettings> {
   return readSettingsFromDb();
 }
 
+/**
+ * BENCH ONLY (scripts/bench-print-latency.ts): swaps the in-memory settings snapshot so the
+ * print pipeline can run with fake printers WITHOUT reading or writing the restaurant's real
+ * settings. Hard-gated on PRINT_BENCH=1, which no server entry point ever sets — calling it
+ * from a request path throws.
+ */
+export function __setSettingsForBench(next: RestaurantSettings | null): void {
+  if (process.env.PRINT_BENCH !== "1") {
+    throw new Error("__setSettingsForBench is only available to bench scripts (PRINT_BENCH=1)");
+  }
+  settingsCache = next;
+}
+
 // Counter issuance is allocated by the DATABASE, not from the in-memory cache.
 //
 // The number must be unique across every process that can create an order, and

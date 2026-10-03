@@ -57,6 +57,9 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
+import { runPrintStep, instrumentJson } from "./services/printDispatch";
+import { parseSavePrintRequest } from "@shared/printRequest";
+import { createStageTimer } from "@shared/printPerf";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
 import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
@@ -1840,8 +1843,15 @@ export async function registerRoutes(
 
   app.post("/api/orders", requireAuth, async (req, res) => {
     try {
-      const { items, ...orderInfo } = req.body;
+      // `print`/`auto`/`markBilled` are print directives for the step AFTER the save — they must
+      // never reach createOrderWithItems as order columns.
+      const { items, print: _print, auto: _auto, markBilled: _markBilled, ...orderInfo } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
+      // Print instrumentation exists ONLY when a print was requested — a plain save keeps its
+      // exact pre-existing response (no Server-Timing header, no [print-perf] log line).
+      const printReq = parseSavePrintRequest(req.body);
+      const timer = printReq.mode ? createStageTimer() : null;
+      if (timer) instrumentJson(res, timer, `save+${printReq.mode} (new order)`);
 
       // Recompute all money server-side from DB prices — never trust client totals.
       // This is the ONLY genuine "invalid order data" case (unknown item / bad qty);
@@ -1989,6 +1999,22 @@ export async function registerRoutes(
         // NOT sent here. They fire at bill SETTLEMENT — see POST /api/orders/:id/payment.
       }
 
+      // One request per tap: when the client asked for a print, run it NOW — after the save has
+      // committed — and return its result on the same response. runPrintStep never rejects: a
+      // print failure comes back as `print.error`, so the committed order above stays a 200.
+      if (printReq.mode && timer) {
+        timer.add("save", timer.totalMs());
+        const print = await runPrintStep({
+          req,
+          orderId: order.id,
+          order,
+          mode: printReq.mode,
+          auto: printReq.auto,
+          markBilled: printReq.markBilled,
+          timer,
+        });
+        return res.json({ ...order, print });
+      }
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
@@ -2001,6 +2027,10 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const { items, discountAmount, containerCharge, customerName, customerPhone } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
+      // Same as POST /api/orders: instrumentation only when a print was requested.
+      const printReq = parseSavePrintRequest(req.body);
+      const timer = printReq.mode ? createStageTimer() : null;
+      if (timer) instrumentJson(res, timer, `save+${printReq.mode} order=${id}`);
 
       // Recompute all money server-side from DB prices — never trust client totals.
       // Same shape as POST /api/orders: a genuine pricing rejection (unknown item /
@@ -2232,6 +2262,21 @@ export async function registerRoutes(
       }
 
       broadcast({ type: "ORDER_UPDATE", order });
+      // One request per tap — see the identical block in POST /api/orders. Runs after the delta
+      // KOT ticket above exists, so the printed kotNumber is the one this save just created.
+      if (printReq.mode && timer) {
+        timer.add("save", timer.totalMs());
+        const print = await runPrintStep({
+          req,
+          orderId: id,
+          order,
+          mode: printReq.mode,
+          auto: printReq.auto,
+          markBilled: printReq.markBilled,
+          timer,
+        });
+        return res.json({ ...order, print });
+      }
       res.json(order);
     } catch (error) {
       console.error("Update order items error:", error);
