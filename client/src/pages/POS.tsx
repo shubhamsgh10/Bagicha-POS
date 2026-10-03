@@ -32,6 +32,8 @@ import { useLocation } from "wouter";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines, billLines } from "@/lib/receiptText";
 import { printKOT, printOrderBill } from "@/lib/printBill";
+import { startPrintTap, timePrintStage, endPrintTap } from "@/lib/printPerfClient";
+import { printFieldsForSubmitMode } from "@shared/printRequest";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -224,11 +226,11 @@ export default function POS() {
   const settlementDataRef = useRef<SettlementData | null>(null);
   // Settle two-phase loading state
   const [settlePhase, setSettlePhase] = useState<"idle" | "processing" | "printing">("idle");
-  // True from click until the post-save print step (triggerKOTPrint/triggerBillPrint,
-  // called un-awaited from mutation onSuccess) actually finishes. isPending alone isn't
-  // enough — it flips false as soon as the PUT/POST resolves, before the print fetch
-  // inside onSuccess has completed, which is the real window where a second click can
-  // race the first click's own print request.
+  // True from click until the print result that rides back on the save response has been
+  // handled (handleSavedPrint, called un-awaited from mutation onSuccess; its `finally`
+  // resets this). isPending alone isn't enough — it flips false as soon as the PUT/POST
+  // resolves, before that print result has been processed, which is the real window where a
+  // second click could race the first click's own print handling.
   const [isPrinting, setIsPrinting] = useState(false);
   // Auto-KOT debounce refs
   const autoKotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -480,26 +482,15 @@ export default function POS() {
     setPrintPreview({ title: 'Bill Preview', lines });
   };
 
-  const triggerKOTPrint = async (orderId: number, order?: any, silent = false) => {
-    try {
-      const res = await fetch(apiUrl('/api/print/kot'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
-        credentials: 'include',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast({
-          title: 'KOT print failed',
-          description: data?.message ?? 'Printer error — showing preview instead.',
-          variant: 'destructive',
-        });
-        if (order) showKOTPreview(order, data?.kotNumber);
-        return;
-      }
-      const { handlePrintResponse } = await import('@/lib/printGateway');
-      const outcome = await handlePrintResponse(data, {
+  // ── Print result handlers ───────────────────────────────────────────────────
+  // One handler per print kind, shared by EVERY path that can produce a result: the `print`
+  // result that rides back on an order save (handleSavedPrint below) and a bill result's
+  // `kotCatchUp` part.
+
+  const handleKotResult = async (data: any, orderId: number, order: any, silent: boolean) => {
+    const { handlePrintResponse } = await import('@/lib/printGateway');
+    const outcome = await timePrintStage('handle_kot', () =>
+      handlePrintResponse(data, {
         orderId,
         ackType: 'kot',
         pendingAck: data.pendingAck,
@@ -511,83 +502,81 @@ export default function POS() {
             );
           }
         },
+      }),
+    );
+    if (outcome === 'skipped') {
+      // silent: the KOT part of a bill print (the quiet catch-up check) — a no-op there just
+      // means "nothing new", which should feel like plain bill printing, not surface irrelevant
+      // KOT chatter. A genuine manual KOT click (silent=false) still tells the user so.
+      if (!silent) toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
+    } else if (outcome === 'hardware') {
+      // data.message carries a partial-failure note when one routed printer failed
+      // but at least one other printer (direct or dispatched) still got the ticket —
+      // "printed: true" is accurate for the ones that succeeded, but staff still need
+      // to know a specific printer needs attention, not silence.
+      toast(data.message
+        ? { title: 'KOT sent to printer!', description: data.message, variant: 'destructive' }
+        : { title: 'KOT sent to printer!' });
+    } else if (outcome === 'browser') {
+      toast({
+        title: data.reason === 'non_escpos_printer' ? 'Use KOT preview to print' : 'KOT ready',
+        description:
+          data.message ??
+          (data.reason === 'non_escpos_printer'
+            ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
+            : 'Use Print in the preview panel.'),
       });
-      if (outcome === 'skipped') {
-        // silent: called as triggerBillPrint's quiet pre-bill catch-up check — a
-        // no-op here just means "nothing new," which should feel like plain bill
-        // printing, not surface irrelevant KOT chatter. A genuine manual KOT click
-        // (silent=false) still tells the user so.
-        if (!silent) toast({ title: 'Nothing new to print', description: 'No new items added since last KOT' });
-      } else if (outcome === 'hardware') {
-        // data.message carries a partial-failure note when one routed printer failed
-        // but at least one other printer (direct or dispatched) still got the ticket —
-        // "printed: true" is accurate for the ones that succeeded, but staff still need
-        // to know a specific printer needs attention, not silence.
-        toast(data.message
-          ? { title: 'KOT sent to printer!', description: data.message, variant: 'destructive' }
-          : { title: 'KOT sent to printer!' });
-      } else if (outcome === 'browser') {
-        toast({
-          title: data.reason === 'non_escpos_printer' ? 'Use KOT preview to print' : 'KOT ready',
-          description:
-            data.message ??
-            (data.reason === 'non_escpos_printer'
-              ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
-              : 'Use Print in the preview panel.'),
-        });
-        if (order) showKOTPreview(order, data?.kotNumber);
-      } else if (outcome === 'dispatched') {
-        toast({ title: 'Sent to kitchen printer!' });
-      } else if (outcome === 'noop' && data.printJob) {
-        toast({
-          title: 'Print job ready',
-          description: 'Use the Electron app for thermal printing.',
-          variant: 'destructive',
-        });
-        if (order) showKOTPreview(order, data?.kotNumber);
+      if (order) showKOTPreview(order, data?.kotNumber);
+    } else if (outcome === 'dispatched') {
+      toast({ title: 'Sent to kitchen printer!' });
+    } else if (outcome === 'noop' && data.printJob) {
+      toast({
+        title: 'Print job ready',
+        description: 'Use the Electron app for thermal printing.',
+        variant: 'destructive',
+      });
+      if (order) showKOTPreview(order, data?.kotNumber);
+    }
+    // Refetch the order so existingOrder.lastKotSnapshot reflects what was just
+    // printed — nothing previously refetched this AFTER a print (only before, via
+    // updateOrderMutation's own onSuccess). Without this, the per-item cancel-after-
+    // KOT dialog (POS.tsx's requestRemoveFromCart) could miss a same-session
+    // "add item → KOT it → remove it" sequence until something else happened to
+    // refetch. The server-side guard in PUT /api/orders/:id/items still catches it
+    // correctly either way — this is purely so the UI prompts for a reason when it
+    // should, rather than the save failing with a confusing error.
+    queryClient.invalidateQueries({ queryKey: ["/api/orders", String(orderId)] });
+  };
+
+  // The KOT catch-up part of a bill response. The server ran the silent KOT catch-up inside the
+  // same request as the bill print — now the order save itself (kitchen-first safety net —
+  // anything added since the last KOT reaches the kitchen before the bill prints). Its result is handled exactly as a quiet KOT
+  // click used to be: silent on "nothing new", a normal toast on a genuine send, a failure toast
+  // + preview on error. Called for BOTH a successful bill response and a failed one — the
+  // catch-up commits before the bill part runs, so a bill failure can still carry a real KOT
+  // result that must not be dropped (otherwise items could silently never reach the kitchen).
+  // NEVER throws: a failure here (claim/release network blip, Electron print IPC rejecting, a
+  // failed dynamic import) must not skip the bill's own handling that runs right after it.
+  const handleKotCatchUpPart = async (kotCatchUp: any, orderId: number, order: any) => {
+    try {
+      if (!kotCatchUp) return;
+      if (kotCatchUp.error) {
+        toast({ title: 'KOT print failed', description: kotCatchUp.error, variant: 'destructive' });
+        if (order) showKOTPreview(order);
+      } else {
+        await handleKotResult(kotCatchUp, orderId, order, true);
       }
-      // Refetch the order so existingOrder.lastKotSnapshot reflects what was just
-      // printed — nothing previously refetched this AFTER a print (only before, via
-      // updateOrderMutation's own onSuccess). Without this, the per-item cancel-after-
-      // KOT dialog (POS.tsx's requestRemoveFromCart) could miss a same-session
-      // "add item → KOT it → remove it" sequence until something else happened to
-      // refetch. The server-side guard in PUT /api/orders/:id/items still catches it
-      // correctly either way — this is purely so the UI prompts for a reason when it
-      // should, rather than the save failing with a confusing error.
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(orderId)] });
-    } catch {
+    } catch (err) {
+      console.error('[print] KOT catch-up handling failed', err);
       if (order) showKOTPreview(order);
     }
   };
 
-  const triggerBillPrint = async (orderId: number, order?: any, skipKOT = false) => {
-    // Kitchen-first, always: every bill print first runs the same KOT delta-check
-    // the KOT button uses, silently (silent=true) — no longer a toggleable setting,
-    // so it can't be switched off. If there's nothing new, this no-ops with no
-    // toast, so an already-KOT'd order's bill click feels like "just the bill." If
-    // there IS something new (a never-KOT'd order clicked straight to Bill, or an
-    // item added after the last KOT that staff forgot to re-send), it's sent to the
-    // kitchen first — with its own normal toast, since that's genuinely useful
-    // information — before the bill prints. This is the safety net: nothing added
-    // to the order can silently miss the kitchen's notice just because Bill was
-    // clicked instead of KOT.
-    if (!skipKOT) {
-      await triggerKOTPrint(orderId, order, true);
-    }
-    try {
-      const res = await fetch(apiUrl('/api/print/bill'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
-        credentials: 'include',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (order) showBillPreview(order);
-        return;
-      }
-      const { handlePrintResponse } = await import('@/lib/printGateway');
-      const outcome = await handlePrintResponse(data, {
+  const handleBillResult = async (data: any, orderId: number, order: any, markBilled?: 'always' | 'on_send') => {
+    await handleKotCatchUpPart(data.kotCatchUp, orderId, order);
+    const { handlePrintResponse } = await import('@/lib/printGateway');
+    const outcome = await timePrintStage('handle_bill', () =>
+      handlePrintResponse(data, {
         orderId,
         ackType: 'bill',
         pendingAck: data.pendingAck,
@@ -595,7 +584,7 @@ export default function POS() {
           // apiJson() checks res.ok before parsing — a hand-rolled fetch(...).then(r =>
           // r.json()) here used to let a non-2xx response's error body flow straight into
           // printOrderBill as if it were real order/settings data instead of throwing
-          // (which triggerBillPrint's outer catch already handles via showBillPreview).
+          // (which the caller's catch already handles via showBillPreview).
           const [freshOrder, freshSettings] = await Promise.all([
             apiJson<any>(`/api/orders/${orderId}`),
             apiJson<any>('/api/settings'),
@@ -603,22 +592,50 @@ export default function POS() {
           const printed = await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
           // Popup + iframe both blocked (rare) — show the in-page preview so the user isn't stuck.
           if (!printed) showBillPreview(freshOrder ?? order);
-          // (no trailing KOT call here — the silent delta-check already ran BEFORE
-          // the bill fetch above, see triggerBillPrint's own comment)
         },
+      }),
+    );
+    if (outcome === 'hardware' || outcome === 'browser' || outcome === 'dispatched') {
+      toast({ title: 'Bill sent to printer!' });
+    } else if (outcome === 'noop' && data.printJob) {
+      toast({
+        title: 'Print job ready',
+        description: 'Use the Electron app for thermal printing.',
+        variant: 'destructive',
       });
-      if (outcome === 'hardware' || outcome === 'browser' || outcome === 'dispatched') {
-        toast({ title: 'Bill sent to printer!' });
-      } else if (outcome === 'noop' && data.printJob) {
+      if (order) showBillPreview(order);
+    }
+    // The server flipped the table to "billed" inside the print request — refresh the table list.
+    if (markBilled) queryClient.invalidateQueries({ queryKey: ['/api/tables'] });
+  };
+
+  // Handles the print result that rode back on the SAVE response (one request per tap). A missing
+  // or `{ error }` result gets today's failure treatment: a toast and the in-page preview.
+  // The server runs the KOT catch-up and (when markBilled is set) the table → "billed" flip
+  // inside that same save request, so there is no separate /api/print/* or bill-requested call.
+  const handleSavedPrint = async (mode: 'kot' | 'bill', orderId: number, order: any, print: any, markBilled?: 'always' | 'on_send') => {
+    try {
+      if (!print || print.error) {
+        // A bill that failed AFTER its KOT catch-up had already COMMITTED carries `kotCatchUp`
+        // on the error result. Process it first (never throws) so a genuine kitchen send — or a
+        // KOT failure — is never lost, then fall through to the bill failure handling.
+        if (print?.kotCatchUp) await handleKotCatchUpPart(print.kotCatchUp, orderId, order);
         toast({
-          title: 'Print job ready',
-          description: 'Use the Electron app for thermal printing.',
+          title: mode === 'kot' ? 'KOT print failed' : 'Bill print failed',
+          description: print?.error ?? 'Printer error — showing preview instead.',
           variant: 'destructive',
         });
-        if (order) showBillPreview(order);
+        if (order) { if (mode === 'kot') showKOTPreview(order); else showBillPreview(order); }
+        return;
       }
+      if (mode === 'kot') await handleKotResult(print, orderId, order, false);
+      else await handleBillResult(print, orderId, order, markBilled);
     } catch {
-      if (order) showBillPreview(order);
+      if (order) { if (mode === 'kot') showKOTPreview(order); else showBillPreview(order); }
+    } finally {
+      refreshSecondaryQueries();
+      setIsPrinting(false);
+      endPrintTap();
     }
   };
 
@@ -726,7 +743,7 @@ export default function POS() {
   }, [cartLoaded]);
 
   // Auto-KOT: debounced trigger when the user adds/modifies items in an existing order.
-  // Calls the same /api/print/kot endpoint as manual KOT — the backend's delta logic
+  // Runs the same server KOT print pipeline as manual KOT — the backend's delta logic
   // ensures only new/changed items are printed and prevents duplicate prints.
   useEffect(() => {
     if (!autoKotReadyRef.current || !activeOrderId || cartItems.length === 0) return;
@@ -745,7 +762,9 @@ export default function POS() {
         // anything typed since then was silently never sent to the kitchen: the server
         // saw no delta, returned reason:"no_delta", and this effect (like manual KOT)
         // treats that as a quiet no-op — the user believed Auto-KOT had it covered.
-        const syncRes = await fetch(apiUrl(`/api/orders/${activeOrderId}/items`), {
+        // ONE request: the PUT saves the cart AND (print:"kot", auto:true) runs the KOT delta
+        // print server-side. This used to be a PUT followed by a separate POST /api/print/kot.
+        const res = await fetch(apiUrl(`/api/orders/${activeOrderId}/items`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -760,24 +779,22 @@ export default function POS() {
             // (requestRemoveFromCart) is stashed in pendingKotCancellationsRef until a
             // save actually carries it through; this Auto-KOT sync is one of the saves.
             cancelledKotItems: buildCancelledKotItemsPayload(),
+            print: 'kot',
+            auto: true,
           }),
           credentials: 'include',
         });
-        if (!syncRes.ok) return;
-
-        const res = await fetch(apiUrl('/api/print/kot'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderId: activeOrderId, auto: true }),
-          credentials: 'include',
-        });
-        const data = await res.json();
         if (!res.ok) return;
+        const saved = await res.json();
+        const print = saved?.print;
+        // A print failure is ignored silently, as before (the user can always use manual KOT).
+        // print:"kot" requests no catch-up, so there is never a `kotCatchUp` to process here.
+        if (!print || print.error) return;
         const { handlePrintResponse } = await import('@/lib/printGateway');
-        const outcome = await handlePrintResponse(data, {
+        const outcome = await handlePrintResponse(print, {
           orderId: activeOrderId,
           ackType: 'kot',
-          pendingAck: data.pendingAck,
+          pendingAck: print.pendingAck,
         });
         if (outcome === 'hardware') {
           toast({ title: 'KOT sent!', description: 'Kitchen notified automatically' });
@@ -805,20 +822,27 @@ export default function POS() {
 
   // ── Create order mutation ────────────────────────────────────────────────────
 
+  // Dashboard / kitchen / live-status refetches nothing on the POS screen needs while a print is
+  // in flight — run them after the print result is handled so they don't compete with it.
+  const refreshSecondaryQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
+  };
+
   const createOrderMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/orders", data);
+      const res = await timePrintStage("save_http", () => apiRequest("POST", "/api/orders", data));
       return res.json();
     },
     onSuccess: (order: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
 
       const mode = submitModeRef.current;
+      const printing = mode === "kot-print" || mode === "save-print" || mode === "bill-print";
+      if (!printing) refreshSecondaryQueries();
       if (mode === "kot") {
         toast({ title: "KOT sent!", description: "Order created and sent to kitchen" });
         setActiveOrderId(order.id);
@@ -827,14 +851,14 @@ export default function POS() {
         toast({ title: "KOT sent!" });
         setActiveOrderId(order.id);
         setCartLoaded(false);
-        triggerKOTPrint(order.id, order).finally(() => setIsPrinting(false));
+        void handleSavedPrint("kot", order.id, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
         setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
-        triggerBillPrint(order.id, order).finally(() => setIsPrinting(false));
+        void handleSavedPrint("bill", order.id, order, order.print);
         if (isSectionMode) {
           // Stay on screen so Settle can follow the same print (print now, settle after).
           setActiveOrderId(order.id);
@@ -853,12 +877,7 @@ export default function POS() {
         // "bill-print" branch: plain Bill is a mid-service action, not "finish and leave".
         setActiveOrderId(order.id);
         setCartLoaded(false);
-        triggerBillPrint(order.id, order).finally(() => setIsPrinting(false));
-        apiRequest("POST", `/api/orders/${order.id}/bill-requested`, {})
-          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
-          .catch(() => {
-            // non-critical — bill is printed even if status update fails
-          });
+        void handleSavedPrint("bill", order.id, order, order.print, "always");
       } else if (mode === "settle") {
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
@@ -871,6 +890,7 @@ export default function POS() {
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
+      endPrintTap();
     },
   });
 
@@ -878,30 +898,28 @@ export default function POS() {
 
   const updateOrderMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("PUT", `/api/orders/${data.orderId}/items`, data);
+      const res = await timePrintStage("save_http", () => apiRequest("PUT", `/api/orders/${data.orderId}/items`, data));
       return res.json();
     },
     onSuccess: (order: any, vars: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders", String(vars.orderId)] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/kot/running"] });
       const mode = submitModeRef.current;
+      const printing = mode === "kot-print" || mode === "save-print" || mode === "bill-print";
+      if (!printing) refreshSecondaryQueries();
       if (mode === "kot") {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
         toast({ title: "KOT sent!" });
-        triggerKOTPrint(vars.orderId, order).finally(() => setIsPrinting(false));
+        void handleSavedPrint("kot", vars.orderId, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
         setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
-        triggerBillPrint(vars.orderId, order).finally(() => setIsPrinting(false));
+        void handleSavedPrint("bill", vars.orderId, order, order.print);
         if (!isSectionMode) {
           setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
           navigate("/tables");
@@ -913,12 +931,7 @@ export default function POS() {
       } else if (mode === "bill-print") {
         // Stays on screen (unlike save-print) — plain Bill is a mid-service
         // reprint/preview, not a "finish and leave" action.
-        triggerBillPrint(vars.orderId, order).finally(() => setIsPrinting(false));
-        apiRequest("POST", `/api/orders/${vars.orderId}/bill-requested`, {})
-          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tables"] }))
-          .catch(() => {
-            // non-critical — bill is printed even if status update fails
-          });
+        void handleSavedPrint("bill", vars.orderId, order, order.print, "always");
       } else if (mode === "settle") {
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
@@ -931,6 +944,7 @@ export default function POS() {
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
+      endPrintTap();
     },
   });
 
@@ -1234,6 +1248,7 @@ export default function POS() {
       toast({ title: "Cart is empty", description: "Add items before placing order", variant: "destructive" });
       setSettlePhase("idle"); // a settle attempt on an unloaded/empty cart must not freeze the buttons
       setIsPrinting(false); // ditto for a KOT/Bill attempt on an unloaded/empty cart
+      endPrintTap();
       return;
     }
 
@@ -1251,6 +1266,8 @@ export default function POS() {
         // time (requestRemoveFromCart), must travel with every save, same as
         // discountAmount/containerCharge above (see the Auto-KOT sync's identical field).
         cancelledKotItems: buildCancelledKotItemsPayload(),
+        // One request per tap: ask the server to run the KOT/Bill print right after this save.
+        ...printFieldsForSubmitMode(submitModeRef.current),
       });
     } else {
       createOrderMutation.mutate({
@@ -1263,6 +1280,8 @@ export default function POS() {
         // Section counter orders carry their section id — separates them from generic pickup
         ...(isSectionMode ? { posSectionId: sectionId } : {}),
         items: itemsPayload,
+        // One request per tap — see the update branch above.
+        ...printFieldsForSubmitMode(submitModeRef.current),
       });
     }
   };
@@ -1296,17 +1315,17 @@ export default function POS() {
     }));
   };
 
-  const handleKOT     = () => { cancelPendingAutoKot(); capturePreKOTItems(); submitModeRef.current = "kot-print"; setIsPrinting(true); triggerSubmit(); };
+  const handleKOT     = () => { cancelPendingAutoKot(); capturePreKOTItems(); startPrintTap("kot"); submitModeRef.current = "kot-print"; setIsPrinting(true); triggerSubmit(); };
   const handleSettle  = () => { if (hasItems) setShowSettleDialog(true); };
   const handleBillPrint = () => {
-    // Sync the current cart first — /api/print/bill reads order_items straight
-    // from the DB, so anything added to the cart after the last save/KOT (e.g.
-    // an item added right before printing) would otherwise be silently missing
-    // from the printed bill. No longer requires activeOrderId — Bill can now
+    // The Bill button sends the current cart with the save (`print: "bill"` rides on the save
+    // request), so there is no separate bill request that could read stale order_items — an
+    // item added right before printing is always on the printed bill. No longer requires activeOrderId — Bill can now
     // create the order itself, same as KOT does, via the generic
     // createOrderMutation/updateOrderMutation routing in triggerSubmit/onSubmit.
     cancelPendingAutoKot();
     capturePreKOTItems();
+    startPrintTap("bill");
     submitModeRef.current = "bill-print";
     setIsPrinting(true);
     triggerSubmit();
@@ -1344,7 +1363,7 @@ export default function POS() {
   };
 
   const handleSave = () => { cancelPendingAutoKot(); submitModeRef.current = "save"; triggerSubmit(); };
-  const handleSaveAndPrint = () => { cancelPendingAutoKot(); submitModeRef.current = "save-print"; setIsPrinting(true); triggerSubmit(); };
+  const handleSaveAndPrint = () => { cancelPendingAutoKot(); startPrintTap("save-print"); submitModeRef.current = "save-print"; setIsPrinting(true); triggerSubmit(); };
   const handleSaveEBill = () => {
     const go = () => {
       cancelPendingAutoKot();

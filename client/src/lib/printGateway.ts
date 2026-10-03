@@ -155,12 +155,13 @@ export async function handlePrintResponse(
 /** Direct bill print via API → thermal/Electron/server (no browser dialog unless fallback requested). */
 export async function printBillDirect(
   orderId: number,
-  options: Omit<PrintHandleOptions, "orderId" | "ackType"> = {},
+  options: Omit<PrintHandleOptions, "orderId" | "ackType"> & { markBilled?: "always" | "on_send" } = {},
 ): Promise<PrintHandleResult> {
+  const { markBilled, ...handleOptions } = options;
   const res = await fetch(apiUrl("/api/print/bill"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderId }),
+    body: JSON.stringify({ orderId, ...(markBilled ? { markBilled } : {}) }),
     credentials: "include",
   });
   const data = (await res.json()) as PrintApiResponse & {
@@ -172,7 +173,7 @@ export async function printBillDirect(
     throw new Error(data.message ?? "Bill print failed");
   }
   return handlePrintResponse(data, {
-    ...options,
+    ...handleOptions,
     orderId,
     ackType: "bill",
     pendingAck: data.pendingAck,

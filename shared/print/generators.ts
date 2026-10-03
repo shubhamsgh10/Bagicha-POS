@@ -142,6 +142,9 @@ export function generateBillBuffer(params: {
     containerCharge?: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
+    // NOT rendered. runBillPrint (server/services/printDispatch.ts) overlaps the bill's reads with the KOT
+    // catch-up, so this value may predate the catch-up's commit — don't print it on the bill without
+    // revisiting that overlap.
     kotPrintCount?: number;
     createdAt: Date | string;
   };

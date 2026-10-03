@@ -89,4 +89,10 @@ export interface PrintApiResponse {
   message?: string;
   /** True when the job was broadcast via PRINT_JOB for remote desktop printing (no local electronAPI). */
   dispatched?: boolean;
+  /**
+   * Bill requests sent with `withKotCatchUp`: the result of the silent KOT catch-up the server ran
+   * BEFORE the bill (same shape as a /api/print/kot response). Absent when the catch-up had nothing
+   * to send (no_delta / kot_disabled); `{ error }` when it failed.
+   */
+  kotCatchUp?: PrintApiResponse | { error: string };
 }
