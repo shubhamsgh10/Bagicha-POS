@@ -13,6 +13,12 @@ export const BOLD_ON = Buffer.from([ESC, 0x45, 0x01]);
 export const BOLD_OFF = Buffer.from([ESC, 0x45, 0x00]);
 export const DOUBLE_SIZE_ON  = Buffer.from([0x1B, 0x21, 0x30]); // ESC ! 0x30 — double-width + double-height
 export const DOUBLE_SIZE_OFF = Buffer.from([0x1B, 0x21, 0x00]); // ESC ! 0x00 — back to normal
+// ESC ! 0x18 — double-height + emphasized in one command. Doubles glyph height only (so a line still
+// holds the full column count and nothing re-wraps), and the extra weight is what makes thin 12×24
+// thermal glyphs readable across a kitchen pass. ESC ! also resets font/underline, so it replaces any
+// prior BOLD_ON rather than stacking with it — always close with TALL_BOLD_OFF.
+export const TALL_BOLD_ON    = Buffer.from([0x1B, 0x21, 0x18]);
+export const TALL_BOLD_OFF   = Buffer.from([0x1B, 0x21, 0x00]); // ESC ! 0x00 — back to normal size + weight
 export const LOGO_NV_FLASH   = Buffer.from([0x1C, 0x70, 0x01, 0x00]); // FS p 1 0 — print NV bitmap slot 1
 export const CUT = Buffer.from([GS, 0x56, 0x41, 0x00]);
 
