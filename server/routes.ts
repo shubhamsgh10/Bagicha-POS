@@ -1379,7 +1379,15 @@ export async function registerRoutes(
         }
       }
 
-      res.json({ runningTables, freeTables, activeOrders, todaySales, cashSales, upiSales });
+      // Outstanding dues = every order settled in Due mode and not yet paid (served +
+      // pending), regardless of day — a due is owed until collected, same set as the
+      // Pay-Later tab / storage.getOpenTabsByCustomer. NOT part of todaySales (those are
+      // collected-only), so the Tables pill shows it as its own segment, only when > 0.
+      const dueAmount = (allOrders as any[])
+        .filter(o => o.status === "served" && o.paymentStatus === "pending")
+        .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
+
+      res.json({ runningTables, freeTables, activeOrders, todaySales, cashSales, upiSales, dueAmount });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch live status" });
     }
