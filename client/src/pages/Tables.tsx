@@ -1,5 +1,5 @@
 import { apiUrl } from '@/lib/api';
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -189,6 +189,16 @@ export default function Tables() {
   const [showSalesSplit, setShowSalesSplit] = useState(false);
   const salesRef = useRef<HTMLButtonElement>(null);
   const reduceMotion = useReducedMotion();
+  // Tailwind's `sm` (640px): at/above it the split stretches sideways inside the pill; below it
+  // there isn't room for 3-4 segments on one line, so it opens as a second row instead.
+  const [isWide, setIsWide] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 640px)");
+    const sync = () => setIsWide(mql.matches);
+    sync();
+    mql.addEventListener("change", sync);
+    return () => mql.removeEventListener("change", sync);
+  }, []);
   useEffect(() => {
     if (!showSalesSplit) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -210,6 +220,7 @@ export default function Tables() {
     todaySales: number;
     cashSales: number;
     upiSales: number;
+    dueAmount?: number;
   }>({
     queryKey: ["/api/live-status"],
     staleTime: 0,
@@ -376,60 +387,78 @@ export default function Tables() {
             </span>
           </div>
 
-          {/* Today Sales — click and the pill stretches right to show the Cash / UPI split */}
-          <button
-            ref={salesRef}
-            type="button"
-            onClick={() => setShowSalesSplit(v => !v)}
-            aria-expanded={showSalesSplit}
-            aria-controls="sales-split"
-            className="flex items-stretch shrink-0 rounded-xl cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
-            style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
-            <span className={`flex items-center gap-1.5 pl-2 py-1 sm:pl-3 sm:py-1.5 ${showSalesSplit ? "" : "pr-2 sm:pr-0"}`}>
-              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-violet-500 shrink-0" />
-              <span className="text-[10px] sm:text-xs text-violet-600 font-semibold">Sales</span>
-              <span className="text-xs sm:text-sm font-bold text-violet-700">
-                ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
-              </span>
-            </span>
-
-            <AnimatePresence initial={false}>
-              {showSalesSplit && (
-                <motion.span
-                  id="sales-split"
-                  initial={reduceMotion ? false : { width: 0, opacity: 0 }}
-                  animate={{ width: "auto", opacity: 1 }}
-                  exit={reduceMotion ? { opacity: 0 } : { width: 0, opacity: 0 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="flex items-stretch overflow-hidden whitespace-nowrap"
-                >
-                  <span className="w-px my-1.5 ml-2 sm:ml-3 shrink-0" style={{ background: "rgba(139,92,246,0.22)" }} />
-                  <span className="flex items-center gap-1.5 px-2 sm:px-3">
-                    <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 shrink-0" />
-                    <span className="text-[10px] sm:text-xs text-emerald-700 font-semibold">Cash</span>
-                    <span className="text-xs sm:text-sm font-bold tabular-nums text-emerald-800">
-                      ₹{(liveStatus?.cashSales ?? 0).toFixed(0)}
-                    </span>
+          {/* Today Sales — click and the pill stretches right (sm+) / opens a second row (phones)
+              to show the Cash / UPI split, plus Due when any bill is still unpaid. */}
+          {(() => {
+            const dueAmount = liveStatus?.dueAmount ?? 0;
+            const segments = [
+              { key: "cash", label: "Cash", amount: liveStatus?.cashSales ?? 0, dot: "bg-emerald-500", text: "text-emerald-700", num: "text-emerald-800" },
+              { key: "upi", label: "UPI", amount: liveStatus?.upiSales ?? 0, dot: "bg-indigo-500", text: "text-indigo-700", num: "text-indigo-800" },
+              ...(Math.round(dueAmount) > 0
+                ? [{ key: "due", label: "Due", amount: dueAmount, dot: "bg-amber-500", text: "text-amber-700", num: "text-amber-800" }]
+                : []),
+            ];
+            const line = "rgba(139,92,246,0.22)";
+            return (
+              <button
+                ref={salesRef}
+                type="button"
+                onClick={() => setShowSalesSplit(v => !v)}
+                aria-expanded={showSalesSplit}
+                aria-controls="sales-split"
+                className={`flex flex-wrap sm:flex-nowrap items-stretch shrink-0 rounded-xl cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500 ${showSalesSplit ? "w-full sm:w-auto" : ""}`}
+                style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", boxShadow: "0 1px 4px rgba(139,92,246,0.08)" }}>
+                <span className={`order-1 flex items-center gap-1.5 pl-2 py-1 sm:pl-3 sm:py-1.5 ${showSalesSplit ? "flex-1 sm:flex-none" : "pr-2 sm:pr-0"}`}>
+                  <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-violet-500 shrink-0" />
+                  <span className="text-[10px] sm:text-xs text-violet-600 font-semibold">Sales</span>
+                  <span className="text-xs sm:text-sm font-bold text-violet-700">
+                    ₹{(liveStatus?.todaySales ?? 0).toFixed(0)}
                   </span>
-                  <span className="w-px my-1.5 shrink-0" style={{ background: "rgba(139,92,246,0.22)" }} />
-                  <span className="flex items-center gap-1.5 px-2 sm:px-3">
-                    <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-indigo-500 shrink-0" />
-                    <span className="text-[10px] sm:text-xs text-indigo-700 font-semibold">UPI</span>
-                    <span className="text-xs sm:text-sm font-bold tabular-nums text-indigo-800">
-                      ₹{(liveStatus?.upiSales ?? 0).toFixed(0)}
-                    </span>
-                  </span>
-                </motion.span>
-              )}
-            </AnimatePresence>
+                </span>
 
-            <span className={`${showSalesSplit ? "flex" : "hidden sm:flex"} items-center pl-1 pr-1.5 sm:pr-2`}>
-              <ChevronRight
-                className={`w-3 h-3 text-violet-500 transition-transform duration-200 motion-reduce:transition-none ${showSalesSplit ? "rotate-180" : ""}`}
-                aria-hidden="true"
-              />
-            </span>
-          </button>
+                <AnimatePresence initial={false}>
+                  {showSalesSplit && (
+                    <motion.span
+                      id="sales-split"
+                      initial={reduceMotion ? false : { ...(isWide ? { width: 0 } : { height: 0 }), opacity: 0 }}
+                      animate={{ ...(isWide ? { width: "auto" } : { height: "auto" }), opacity: 1 }}
+                      exit={reduceMotion ? { opacity: 0 } : { ...(isWide ? { width: 0 } : { height: 0 }), opacity: 0 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="order-3 sm:order-2 basis-full sm:basis-auto grid grid-flow-col auto-cols-fr sm:flex sm:items-stretch overflow-hidden whitespace-nowrap border-t sm:border-t-0"
+                      style={{ borderColor: line }}
+                    >
+                      {segments.map((seg, i) => (
+                        <Fragment key={seg.key}>
+                          <span
+                            aria-hidden="true"
+                            className={`hidden sm:block w-px my-1.5 shrink-0 ${i === 0 ? "ml-3" : ""}`}
+                            style={{ background: line }}
+                          />
+                          <span
+                            className={`flex items-center justify-center sm:justify-start gap-1.5 px-1.5 py-1.5 sm:px-3 sm:py-0 min-w-0 ${i > 0 ? "border-l sm:border-l-0" : ""}`}
+                            style={{ borderColor: line }}
+                          >
+                            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0 ${seg.dot}`} />
+                            <span className={`text-[10px] sm:text-xs font-semibold ${seg.text}`}>{seg.label}</span>
+                            <span className={`text-xs sm:text-sm font-bold tabular-nums ${seg.num}`}>
+                              ₹{seg.amount.toFixed(0)}
+                            </span>
+                          </span>
+                        </Fragment>
+                      ))}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+
+                <span className={`order-2 sm:order-3 ${showSalesSplit ? "flex" : "hidden sm:flex"} items-center pl-1 pr-1.5 sm:pr-2`}>
+                  <ChevronRight
+                    className={`w-3 h-3 text-violet-500 transition-transform duration-200 motion-reduce:transition-none ${showSalesSplit ? "rotate-180" : ""}`}
+                    aria-hidden="true"
+                  />
+                </span>
+              </button>
+            );
+          })()}
 
           {/* Desktop: action buttons, pushed to the right edge (stay right-aligned if the row wraps) */}
           <div className="hidden sm:flex items-center gap-2 ml-auto">
