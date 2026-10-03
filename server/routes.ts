@@ -2026,6 +2026,12 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const { items, discountAmount, containerCharge, customerName, customerPhone } = req.body;
+      // Reject BEFORE any pricing/DB work: a missing/non-array `items` must never be read as
+      // "clear the order" (it used to replace the order's items with nothing, commit, then 500).
+      // An intentional clear sends `items: []`, which is still allowed.
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "items must be an array" });
+      }
       const lineItems = Array.isArray(items) ? items : [];
       // Same as POST /api/orders: instrumentation only when a print was requested.
       const printReq = parseSavePrintRequest(req.body);
@@ -2247,7 +2253,7 @@ export async function registerRoutes(
       }
 
       // Delta KOT — only print items newly added to this order
-      const newItems = items.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
+      const newItems = lineItems.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
       if (newItems.length > 0) {
         const next = await incrementKotCounter();
         const kotNumber = String(next).padStart(3, "0");
