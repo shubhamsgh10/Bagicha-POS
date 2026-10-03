@@ -756,6 +756,7 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         gte(orders.createdAt, startDate),
         lte(orders.createdAt, endDate),
+        ne(orders.status, "cancelled"),
         sql`${orders.tableNumber} IS NOT NULL`,
         sql`${orders.createdByName} IS NOT NULL`,
       ))
@@ -1133,11 +1134,14 @@ export class DatabaseStorage implements IStorage {
     // shared/settlement.ts) — a normal order has shortfallAmount=0, so this is
     // byte-identical to the pre-shortfall figure for every order that never went through
     // a short settle. Must agree with /api/reports/sales' identical netting.
+    // A cancelled order is not a sale: it is excluded from every figure below that counts
+    // orders, revenue or items (same rule as /api/reports/sales). Cancelled orders are
+    // reported on their own in Reports → Cancelled Orders.
     const [todayResult] = await db.select({
       count: sql<number>`count(*)`,
       total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
     }).from(orders).where(
-      and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow))
+      and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow), ne(orders.status, "cancelled"))
     );
 
     // "Active" means "still genuinely open, not abandoned". A hard cutoff at today's
@@ -1161,7 +1165,7 @@ export class DatabaseStorage implements IStorage {
 
     const [revenueResult] = await db.select({
       total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
-    }).from(orders);
+    }).from(orders).where(ne(orders.status, "cancelled"));
 
     const [lowStockResult] = await db.select({
       count: sql<number>`count(*)`
@@ -1177,7 +1181,7 @@ export class DatabaseStorage implements IStorage {
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow)))
+      .where(and(gte(orders.createdAt, today), lte(orders.createdAt, tomorrow), ne(orders.status, "cancelled")))
       .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
       .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`)
       .limit(1);
@@ -1322,7 +1326,7 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
       .leftJoin(categories, eq(menuItems.categoryId, categories.id))
-      .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
+      .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end), ne(orders.status, "cancelled")))
       .groupBy(sql`coalesce(${categories.id}, -1)`, sql`coalesce(${categories.name}, 'Uncategorized')`)
       .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`);
 
@@ -1359,7 +1363,9 @@ export class DatabaseStorage implements IStorage {
     name: string; totalSold: number; revenue: number;
     cost: number | null; costCoverageQty: number; margin: number | null;
   }>> {
-    const conditions = [];
+    // Items on a cancelled order were never sold — excluded so this tab agrees with the
+    // Sales figures on the same page (which already exclude cancelled orders).
+    const conditions = [ne(orders.status, "cancelled")];
     if (startDate) conditions.push(gte(orders.createdAt, startDate));
     if (endDate)   conditions.push(lte(orders.createdAt, endDate));
 
