@@ -441,7 +441,9 @@ export async function runBillPrint(p: {
   // Kitchen-first, always (when asked): anything added since the last KOT reaches the kitchen
   // in the same request as the bill — a safety net that now costs zero extra round trips.
   //
-  // The bill's own reads (order row + items) run CONCURRENTLY with the catch-up, not after it.
+  // The bill's own read (order row + items, ONE query — see readBillData) runs CONCURRENTLY with
+  // the catch-up, not after it, so a Bill-with-catch-up tap peaks at 4 DB connections (catch-up's
+  // 3 reads + the bill's 1) against the pool's max of 10.
   // Safe because the two touch disjoint data: the catch-up only writes print_jobs and the order's
   // kotPrintCount / lastKotSnapshot (and reads kot_tickets / order_items); the bill renders from
   // order_items (which the catch-up never writes) and from order columns the catch-up never
@@ -477,18 +479,56 @@ export async function runBillPrint(p: {
   }
 }
 
+/** One bill line, exactly as runBillAfterCatchUp consumes it. */
+type BillItem = {
+  name: string;
+  quantity: number;
+  price: string;
+  size: string | null;
+  specialInstructions: string | null;
+  categoryId: number | null;
+};
+
 /**
- * The bill's two reads (order row + items), in parallel. Started alongside the KOT catch-up.
- * A preloaded order row (from the save that precedes this print) replaces the db_order read;
- * the items are always read.
+ * The bill's reads. Started alongside the KOT catch-up.
+ *
+ * - No preloaded order (standalone /api/print/bill): ONE query — the order row LEFT JOINed to its
+ *   items (stage `db_bill`). One connection instead of two, which keeps a Bill-with-catch-up tap at
+ *   4 concurrent connections (catch-up 3 + this 1) against the pool's max of 10. An unknown id
+ *   returns no rows → `order` undefined → the caller's 404. An order with zero items returns ONE
+ *   row whose item columns are all null → filtered out by `itemId`, giving an empty items array
+ *   (never a phantom 'Item' from the coalesce).
+ * - Preloaded order row (the save that precedes this print): only the items are read (`db_items`).
  */
-async function readBillData(orderId: number, timer: StageTimer, preloaded?: OrderRow) {
-  const orderRead: Promise<OrderRow[]> = preloaded
-    ? Promise.resolve([preloaded])
-    : timer.time("db_order", () => db.select().from(orders).where(eq(orders.id, orderId)));
-  const itemsRead = timer.time("db_items", () =>
+async function readBillData(
+  orderId: number,
+  timer: StageTimer,
+  preloaded?: OrderRow,
+): Promise<{ order: OrderRow | undefined; rawItems: BillItem[] }> {
+  if (preloaded) {
+    const rawItems: BillItem[] = await timer.time("db_items", () =>
+      db
+        .select({
+          name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
+          quantity: orderItems.quantity,
+          price: orderItems.price,
+          size: orderItems.size,
+          specialInstructions: orderItems.specialInstructions,
+          categoryId: menuItems.categoryId,
+        })
+        .from(orderItems)
+        .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+        .where(eq(orderItems.orderId, orderId))
+        .orderBy(asc(orderItems.id)),
+    );
+    return { order: preloaded, rawItems };
+  }
+
+  const rows = await timer.time("db_bill", () =>
     db
       .select({
+        order: orders,
+        itemId: orderItems.id,
         name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         quantity: orderItems.quantity,
         price: orderItems.price,
@@ -496,12 +536,27 @@ async function readBillData(orderId: number, timer: StageTimer, preloaded?: Orde
         specialInstructions: orderItems.specialInstructions,
         categoryId: menuItems.categoryId,
       })
-      .from(orderItems)
+      .from(orders)
+      .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
       .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-      .where(eq(orderItems.orderId, orderId)),
+      .where(eq(orders.id, orderId))
+      .orderBy(asc(orderItems.id)),
   );
-  const [[order], rawItems] = await Promise.all([orderRead, itemsRead]);
-  return { order: order as OrderRow | undefined, rawItems };
+  const order: OrderRow | undefined = rows.length > 0 ? rows[0].order : undefined;
+  const rawItems: BillItem[] = [];
+  for (const r of rows) {
+    if (r.itemId === null) continue; // the single all-null row of an order with no items
+    // quantity/price are NOT NULL on order_items, so they are non-null whenever itemId is.
+    rawItems.push({
+      name: r.name,
+      quantity: r.quantity as number,
+      price: r.price as string,
+      size: r.size,
+      specialInstructions: r.specialInstructions,
+      categoryId: r.categoryId,
+    });
+  }
+  return { order, rawItems };
 }
 
 /** The bill half of runBillPrint — everything after the optional KOT catch-up and the reads. */

@@ -609,12 +609,74 @@ export default function POS() {
     if (markBilled) queryClient.invalidateQueries({ queryKey: ['/api/tables'] });
   };
 
-  // Handles the print result that rode back on the SAVE response (one request per tap). A missing
-  // or `{ error }` result gets today's failure treatment: a toast and the in-page preview.
+  // Release-order skew fallback. A NEW client (e.g. an auto-updated Electron thin client) can talk
+  // to an OLD server that predates "one request per tap": that server ignores the print request
+  // on the save and returns no `print` key at all. Rather than treating that as a failure (and
+  // printing nothing), reproduce the old chained behaviour with the standalone endpoints, which
+  // still exist on both old and new servers. ONLY reached when `print === undefined`.
+  // Runs inside handleSavedPrint's try/catch/finally, so errors thrown here fall to its preview.
+  const legacyPrintFallback = async (mode: 'kot' | 'bill', orderId: number, order: any, markBilled?: 'always' | 'on_send') => {
+    console.warn('[print] server did not return a print result — falling back to the legacy /api/print/* calls (old server?)');
+    const post = async (path: string, body: unknown) => {
+      const res = await fetch(apiUrl(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+      return { res, data };
+    };
+    const kotFailed = (data: any) => {
+      toast({
+        title: 'KOT print failed',
+        description: data?.message ?? 'Printer error — showing preview instead.',
+        variant: 'destructive',
+      });
+      if (order) showKOTPreview(order, data?.kotNumber);
+    };
+
+    // The KOT part: a plain KOT tap, or the silent kitchen catch-up before a bill. It must NEVER
+    // stop the bill from printing, so any throw (network, print-gateway IPC, non-JSON body) is
+    // contained here and shown as an ordinary KOT failure.
+    try {
+      const kot = await post('/api/print/kot', { orderId });
+      if (!kot.res.ok || !kot.data) kotFailed(kot.data);
+      else await handleKotResult(kot.data, orderId, order, mode === 'bill');
+    } catch (err) {
+      console.error('[print] legacy KOT step failed', err);
+      kotFailed(null);
+    }
+    if (mode === 'kot') return;
+
+    const bill = await post('/api/print/bill', { orderId });
+    if (!bill.res.ok) {
+      if (order) showBillPreview(order);
+      return;
+    }
+    await handleBillResult(bill.data, orderId, order, undefined);
+    if (markBilled) {
+      await fetch(apiUrl(`/api/orders/${orderId}/bill-requested`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ['/api/tables'] });
+    }
+  };
+
+  // Handles the print result that rode back on the SAVE response (one request per tap). An
+  // `{ error }` (or otherwise empty) result gets today's failure treatment: a toast and the
+  // in-page preview. An ABSENT result (`undefined`) means an old server — see legacyPrintFallback.
   // The server runs the KOT catch-up and (when markBilled is set) the table → "billed" flip
   // inside that same save request, so there is no separate /api/print/* or bill-requested call.
   const handleSavedPrint = async (mode: 'kot' | 'bill', orderId: number, order: any, print: any, markBilled?: 'always' | 'on_send') => {
     try {
+      if (print === undefined) {
+        await legacyPrintFallback(mode, orderId, order, markBilled);
+        return;
+      }
       if (!print || print.error) {
         // A bill that failed AFTER its KOT catch-up had already COMMITTED carries `kotCatchUp`
         // on the error result. Process it first (never throws) so a genuine kitchen send — or a
@@ -786,7 +848,19 @@ export default function POS() {
         });
         if (!res.ok) return;
         const saved = await res.json();
-        const print = saved?.print;
+        let print = saved?.print;
+        if (saved && print === undefined) {
+          // Release-order skew: an OLD server ignores `print` and returns no such key. Fall back
+          // to the old second step (standalone KOT print). Only for old servers; failures stay silent.
+          const legacy = await fetch(apiUrl('/api/print/kot'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ orderId: activeOrderId, auto: true }),
+          });
+          if (!legacy.ok) return;
+          print = await legacy.json();
+        }
         // A print failure is ignored silently, as before (the user can always use manual KOT).
         // print:"kot" requests no catch-up, so there is never a `kotCatchUp` to process here.
         if (!print || print.error) return;
