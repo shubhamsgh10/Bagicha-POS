@@ -822,9 +822,11 @@ export default function Reports() {
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-sm text-gray-800">{formatCurrency(item.revenue)}</p>
-                    <span className="text-[11px] font-medium bg-emerald-100/80 text-emerald-700 px-2 py-0.5 rounded-lg">
-                      {((item.revenue / (salesReport?.totalSales || 1)) * 100).toFixed(1)}%
-                    </span>
+                    {(salesReport?.totalSales ?? 0) > 0 && (
+                      <span className="text-[11px] font-medium bg-emerald-100/80 text-emerald-700 px-2 py-0.5 rounded-lg">
+                        {((item.revenue / salesReport.totalSales) * 100).toFixed(1)}%
+                      </span>
+                    )}
                     {canSeeCost && (
                       <p className="text-[11px] text-gray-400 mt-0.5">
                         {item.margin != null ? (
