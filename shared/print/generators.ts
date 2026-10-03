@@ -47,6 +47,13 @@ export function generateKOTBuffer(params: {
     const maxL = Math.max(1, iW - r.length - 1);
     return E.line(" ".repeat(M) + l.substring(0, maxL).padEnd(maxL) + " " + r);
   };
+  // Text too long for the line wraps at a word boundary and hangs under the text, instead of the printer
+  // hard-breaking it mid-word ("Veggi" / "es"). Double-height doesn't change glyph width, so the column
+  // count is still W.
+  const wrappedLines = (lead: string, text: string): Buffer[] => {
+    const indent = " ".repeat(lead.length);
+    return E.wrapWords(text, Math.max(1, W - M - lead.length)).map((l, i) => bodyLine((i === 0 ? lead : indent) + l));
+  };
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
@@ -68,21 +75,24 @@ export function generateKOTBuffer(params: {
   if (params.kotSettings.kotNumbering !== false) {
     const kotNum = String(params.kotNumber ?? 1).padStart(3, "0");
     const { dateStr, timeStr } = formatISTDateTime(new Date());
-    parts.push(bodyLine(`KOT#: ${kotNum}   ${dateStr}   ${timeStr}`));
+    parts.push(E.BOLD_ON, bodyLine(`KOT#: ${kotNum}   ${dateStr}   ${timeStr}`), E.BOLD_OFF);
   }
   parts.push(E.divider("-", W));
 
+  // Everything the kitchen has to act on (item rows, their notes, voids) prints tall + bold; headers and
+  // the footer stay normal height so the ticket doesn't grow any longer than the text itself requires.
   const renderKotItem = (item: KOTItem) => {
     const label = item.size ? `${item.name} (${item.size})` : item.name;
     const isIncrement = item.previousQty != null;
     const qty = isIncrement ? `[+${item.quantity}]` : `[ ${String(item.quantity).padStart(2, "0")} ]`;
-    parts.push(E.BOLD_ON, bodyLine(`${qty}  ${label}`), E.BOLD_OFF);
+    parts.push(E.TALL_BOLD_ON, ...wrappedLines(`${qty}  `, label));
     if (isIncrement) {
       parts.push(bodyLine(`       now ${item.previousQty! + item.quantity} (was ${item.previousQty})`));
     }
     if (params.kotSettings.printAddons && item.instructions) {
-      parts.push(bodyLine(`       >> ${item.instructions}`));
+      parts.push(...wrappedLines("       >> ", item.instructions));
     }
+    parts.push(E.TALL_BOLD_OFF);
   };
 
   const modeHeaders: Record<string, string> = { dinein: '[ DINE-IN ]', pickup: '[ PICKUP ]', delivery: '[ DELIVERY ]' };
@@ -92,7 +102,7 @@ export function generateKOTBuffer(params: {
       const group = params.newItems.filter(i => (i.serviceMode ?? 'dinein') === mode);
       if (group.length === 0) continue;
       const hdr = modeHeaders[mode] ?? `[ ${mode.toUpperCase()} ]`;
-      parts.push(E.ALIGN_CENTER, E.line(hdr), E.ALIGN_LEFT);
+      parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(hdr), E.BOLD_OFF, E.ALIGN_LEFT);
       group.forEach(renderKotItem);
     }
   } else {
@@ -103,10 +113,11 @@ export function generateKOTBuffer(params: {
     for (const item of params.modifiedItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-      parts.push(E.BOLD_ON, tw(`${qty}  ${label}`, `was ${item.previousQty}`), E.BOLD_OFF);
+      parts.push(E.TALL_BOLD_ON, tw(`${qty}  ${label}`, `was ${item.previousQty}`));
       if (params.kotSettings.printAddons && item.instructions) {
-        parts.push(bodyLine(`       >> ${item.instructions}`));
+        parts.push(...wrappedLines("       >> ", item.instructions));
       }
+      parts.push(E.TALL_BOLD_OFF);
     }
   }
 
@@ -115,7 +126,7 @@ export function generateKOTBuffer(params: {
     for (const item of params.cancelledItems) {
       const label = item.size ? `${item.name} (${item.size})` : item.name;
       const qty = `[ ${String(item.quantity).padStart(2, "0")} ]`;
-      parts.push(E.BOLD_ON, bodyLine(`** VOID **  ${qty}  ${label}`), E.BOLD_OFF);
+      parts.push(E.TALL_BOLD_ON, ...wrappedLines(`** VOID **  ${qty}  `, label), E.TALL_BOLD_OFF);
     }
   }
 
@@ -123,7 +134,8 @@ export function generateKOTBuffer(params: {
   parts.push(E.divider("=", W));
   parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line(`Total Items: ${totalItems}`), E.BOLD_OFF);
   parts.push(E.divider("=", W));
-  parts.push(E.feed(3));
+  // No explicit feed: CUT is GS V 65 0, which already feeds to the cutter before cutting, so an extra
+  // feed(3) here only added ~3 blank lines of dead paper below the last divider.
   parts.push(E.CUT);
 
   return E.build(...parts);
