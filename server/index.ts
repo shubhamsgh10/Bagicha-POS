@@ -5,7 +5,7 @@ import helmet from "helmet";
 import MemoryStore from "memorystore";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
-import { initSettings } from "./settingsStore";
+import { initSettings, settingsGuard } from "./settingsStore";
 import { resolveSessionSecret } from "./sessionSecret";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
@@ -131,6 +131,9 @@ app.use((req, res, next) => {
 
 (async () => {
   await initSettings();
+  // Refuse (503) rather than serve from built-in defaults if the real settings never loaded.
+  // Must precede every route. See server/settingsCache.ts.
+  app.use("/api", settingsGuard);
   const server = await registerRoutes(app, sessionMiddleware);
 
   // Sentry v8+ error handler must be registered after routes

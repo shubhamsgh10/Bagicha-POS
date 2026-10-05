@@ -1,9 +1,13 @@
 import fs from "fs";
 import { randomBytes } from "crypto";
+import type { Request, Response, NextFunction } from "express";
 import { eq, max, sql } from "drizzle-orm";
 import { db } from "./db";
 import { restaurantSettings, orders, kotTickets } from "@shared/schema";
 import { dataPath } from "./dataDir";
+import { createSettingsCache, SettingsUnavailableError } from "./settingsCache";
+
+export { SettingsUnavailableError } from "./settingsCache";
 
 const SETTINGS_FILE = dataPath("restaurant-settings.json");
 
@@ -184,8 +188,17 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
+//
+// The cache distinguishes REAL settings (read from / written to the DB — "live") from the
+// DEFAULT_SETTINGS / committed-file fallback. See settingsCache.ts for why: a cold instance whose
+// one-shot read failed used to serve the fallback (18% tax, no printers) indefinitely. Anything
+// that prices an order or decides where to print must use getLiveSettings(), and every /api
+// request passes settingsGuard first, which self-heals or refuses with 503.
 
-let settingsCache: RestaurantSettings | null = null;
+const cache = createSettingsCache<RestaurantSettings>({
+  load: loadFromDb,
+  fallback: loadFromFile,
+});
 
 function buildSettings(data: Record<string, any>): RestaurantSettings {
   return {
@@ -214,6 +227,24 @@ function loadFromFile(): RestaurantSettings {
   return { ...DEFAULT_SETTINGS };
 }
 
+// Reads the settings singleton from the DB. THROWS on any failure — retry, timeout and the
+// fallback policy all belong to the cache (settingsCache.ts), never to this function. A
+// returned value is, by construction, real DB state.
+async function loadFromDb(): Promise<RestaurantSettings> {
+  const rows = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
+  if (rows.length > 0) return buildSettings(rows[0].settings as Record<string, any>);
+
+  // The table is truly empty: first boot of a fresh database. Seed it from the committed JSON
+  // file so existing config is preserved. Loud on purpose — on a deployment with no file this
+  // seeds the built-in defaults, which is only right for a brand-new install.
+  console.warn("[settings] no settings row found — seeding from restaurant-settings.json / defaults");
+  const seeded = loadFromFile();
+  await db.insert(restaurantSettings).values({ id: 1, settings: seeded as any }).onConflictDoNothing();
+  // Another instance may have seeded first; read back whichever row actually won.
+  const again = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
+  return again.length > 0 ? buildSettings(again[0].settings as Record<string, any>) : seeded;
+}
+
 // Ensures a counter is never behind the actual max number already used in its
 // table — guards against counter reset, data import, or any out-of-sync scenario.
 // Necessary even with the atomic issueCounter() above: that only prevents the
@@ -228,71 +259,89 @@ async function syncCounterFromMax(
 ): Promise<void> {
   if (!maxValueRaw) return;
   const dbMax = parseInt(maxValueRaw.replace(/\D/g, ""), 10) || 0;
-  const cached = settingsCache![field] ?? 0;
+  const cached = cache.get()[field] ?? 0;
   if (dbMax <= cached) return;
-  settingsCache = { ...settingsCache!, [field]: dbMax };
+  // Only ever runs after a successful DB load (settingsCache.ts init()), so this blob is the
+  // DB's own settings plus the repaired counter — never the built-in fallback.
+  const repaired = { ...cache.get(), [field]: dbMax };
+  cache.patch(() => repaired);
   await db.insert(restaurantSettings)
-    .values({ id: 1, settings: settingsCache as any, updatedAt: new Date() })
+    .values({ id: 1, settings: repaired as any, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: restaurantSettings.id,
-      set: { settings: settingsCache as any, updatedAt: new Date() },
+      set: { settings: repaired as any, updatedAt: new Date() },
     })
     .catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
   console.log(`[settings] ${field} synced from DB max: ${dbMax}`);
 }
 
-// Call once at server startup — seeds in-memory cache from DB (falls back to file)
+// Call once at server startup. Never throws: if the DB can't be read the cache simply stays
+// NOT live, settingsGuard answers 503 until a read succeeds (it retries on every request), and
+// nothing ever prices or prints from the built-in defaults in the meantime.
 export async function initSettings(): Promise<void> {
-  try {
-    const rows = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
-    if (rows.length > 0) {
-      settingsCache = buildSettings(rows[0].settings as Record<string, any>);
-    } else {
-      // First boot: seed DB from the committed JSON file so existing config is preserved
-      const fileSettings = loadFromFile();
-      settingsCache = fileSettings;
-      await db.insert(restaurantSettings).values({ id: 1, settings: fileSettings as any });
-    }
+  const ok = await cache.init(async () => {
+    // Runs only after the settings loaded; a failure here is logged and must not discard them.
     const [[{ maxOrdNum }], [{ maxKotNum }]] = await Promise.all([
       db.select({ maxOrdNum: max(orders.orderNumber) }).from(orders),
       db.select({ maxKotNum: max(kotTickets.kotNumber) }).from(kotTickets),
     ]);
     await syncCounterFromMax("billCounter", maxOrdNum);
     await syncCounterFromMax("kotCounter", maxKotNum);
-  } catch (e) {
-    console.error("[settings] DB init failed, using file fallback:", e);
-    settingsCache = loadFromFile();
+  });
+  if (ok) {
+    const s = cache.get();
+    console.log(`[settings] loaded from DB (taxRate=${s.taxRate}%, printers=${s.printSettings.printers.length})`);
+  } else {
+    console.error("[settings] DB read failed at boot — /api requests are refused (503) until the settings load; retrying on each request");
   }
 }
 
-// Synchronous — reads from in-memory cache; falls back to file if cache not yet warm
+// Synchronous — never throws. Before the first successful load this is the file/defaults
+// FALLBACK, which must not be used for anything that prices an order or chooses a printer:
+// use getLiveSettings() there.
 export function getSettings(): RestaurantSettings {
-  return settingsCache ?? loadFromFile();
+  return cache.get();
+}
+
+// The settings as read from (or written to) the DB; throws SettingsUnavailableError (status 503)
+// if this process has never held real settings. This is what pricing and printing use.
+export function getLiveSettings(): RestaurantSettings {
+  return cache.getLive();
 }
 
 // Async — re-reads the settings row straight from the DB and refreshes the cache, instead
-// of trusting this process's possibly-stale copy. On Vercel, `settingsCache` is per-instance
-// and only updated by writes THIS instance performs — a concurrently-warm instance that was
+// of trusting this process's possibly-stale copy. On Vercel the cache is per-instance and only
+// updated by writes THIS instance performs — a concurrently-warm instance that was
 // cold-started before some other instance saved a change (e.g. a newly-added posSections
-// entry from Admin -> Print Settings) keeps serving its old snapshot indefinitely, since
-// nothing invalidates it across instances. That's why a GET could intermittently omit
-// recently-saved data depending purely on which instance the load balancer picked. Use this
-// wherever a request must reflect the current DB truth, and inside saveSettings() so a merge
-// never clobbers a field this process doesn't know about yet.
-async function readSettingsFromDb(): Promise<RestaurantSettings> {
-  try {
-    const rows = await db.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1));
-    const fresh = rows.length > 0 ? buildSettings(rows[0].settings as Record<string, any>) : loadFromFile();
-    settingsCache = fresh;
-    return fresh;
-  } catch (e) {
-    console.error("[settings] Fresh DB read failed, falling back to in-memory cache/file:", e);
-    return getSettings();
-  }
+// entry from Admin -> Print Settings) keeps serving its old snapshot until it re-reads (the
+// cache also re-reads on its own every ~60s). A single attempt: callers are request paths, and
+// if the DB is down the last real value (or a SettingsUnavailableError) is the right answer.
+export async function getSettingsFresh(): Promise<RestaurantSettings> {
+  await cache.refresh({ attempts: 1 });
+  return cache.getLive();
 }
 
-export function getSettingsFresh(): Promise<RestaurantSettings> {
-  return readSettingsFromDb();
+/**
+ * Express guard mounted on /api in both server entries, BEFORE any route. It makes the rule
+ * "no request is served from fallback defaults" structural rather than per-handler:
+ *  - settings live and fresh        → next() (no DB work)
+ *  - live but older than ~60s       → one quick re-read, then next() (serves last-known-good on failure)
+ *  - not live (the boot read failed) → retries the read; still failing → 503, never defaults
+ * /health and /version stay reachable so uptime probes work while settings are unavailable.
+ */
+export function settingsGuard(req: Request, res: Response, next: NextFunction): void {
+  if (req.path === "/health" || req.path === "/version") return next();
+  cache.ensureLive().then(
+    () => next(),
+    (err) => {
+      if (err instanceof SettingsUnavailableError) {
+        res.setHeader("Retry-After", "2");
+        res.status(err.status).json({ message: err.message });
+        return;
+      }
+      next(err);
+    },
+  );
 }
 
 /**
@@ -305,18 +354,19 @@ export function __setSettingsForBench(next: RestaurantSettings | null): void {
   if (process.env.PRINT_BENCH !== "1") {
     throw new Error("__setSettingsForBench is only available to bench scripts (PRINT_BENCH=1)");
   }
-  settingsCache = next;
+  if (next === null) cache.reset();
+  else cache.set(next);
 }
 
 // Counter issuance is allocated by the DATABASE, not from the in-memory cache.
 //
 // The number must be unique across every process that can create an order, and
-// `settingsCache` is per-process: on Vercel each serverless instance holds its own
+// the settings cache is per-process: on Vercel each serverless instance holds its own
 // cache + its own mutex, so a JS-side read-modify-write ("next = cache + 1") let two
 // instances hand out the SAME orderNumber — the loser blew up on the
 // orderNumber/kotNumber UNIQUE constraint and surfaced as a generic 400 that
-// succeeded on retry. A warm instance also drifts permanently behind once another
-// instance issues numbers, since the cache is never re-read after initSettings().
+// succeeded on retry. A warm instance also drifts behind once another instance issues
+// numbers (the cache now re-reads about once a minute, but issuance must never depend on it).
 //
 // This single UPDATE increments the counter inside the settings JSON and RETURNs
 // the new value. Postgres takes a row lock on id=1, so concurrent callers queue and
@@ -341,8 +391,10 @@ async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number
     throw new Error(`Counter '${field}' could not be issued (settings row missing?)`);
   }
   // Keep the local cache roughly warm for getSettings() readers. The DB is the
-  // source of truth for issuance — this value is only cosmetic.
-  settingsCache = { ...getSettings(), [field]: next };
+  // source of truth for issuance — this value is only cosmetic. patch(), not set(): a counter
+  // bump must not make the cached tax rate / printers look freshly read, or an instance that
+  // issues order numbers every few seconds would never re-read settings saved elsewhere.
+  cache.patch((current) => ({ ...current, [field]: next }));
   return next;
 }
 
@@ -406,6 +458,6 @@ export async function saveSettings(settings: Partial<RestaurantSettings>): Promi
       });
     return merged;
   });
-  settingsCache = updated;
+  cache.set(updated); // authoritative: just written to the DB, so live + fresh
   return updated;
 }

@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRole } from "@/hooks/useRole";
 import { ORDER_TYPE_STYLES } from "@/lib/orderTypeColors";
 import { actionLabel, metaSummary } from "@/lib/auditFormat";
+import { collectedByMethod, paymentLabel } from "@shared/paymentSplit";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -589,17 +590,25 @@ export default function Reports() {
       ]);
     } else {
       filename = `orders_${range}`;
-      header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Amount", "Short"];
-      rows = (salesReport?.orders ?? []).map((o: any) => [
-        serialNum(o.id),
-        new Date(o.createdAt).toLocaleString("en-IN"),
-        o.customerName || "Walk-in",
-        o.customerPhone || "",
-        o.orderType || "",
-        o.paymentMethod || "",
-        parseFloat(o.totalAmount || 0).toFixed(2),
-        parseFloat(o.shortfallAmount || 0).toFixed(2),
-      ]);
+      // Cash and UPI are their own numeric columns (real legs, change excluded) so the sheet
+      // sums to the same figures as Payments / the Tables-page Sales card; "Payment" is the
+      // readable text, e.g. "Cash ₹53 + UPI ₹10" for a part payment.
+      header = ["Order #", "Date", "Customer", "Phone", "Type", "Payment", "Cash", "UPI", "Amount", "Short"];
+      rows = (salesReport?.orders ?? []).map((o: any) => {
+        const legs = collectedByMethod(o);
+        return [
+          serialNum(o.id),
+          new Date(o.createdAt).toLocaleString("en-IN"),
+          o.customerName || "Walk-in",
+          o.customerPhone || "",
+          o.orderType || "",
+          paymentLabel(o),
+          (legs.cash ?? 0).toFixed(2),
+          (legs.upi ?? 0).toFixed(2),
+          parseFloat(o.totalAmount || 0).toFixed(2),
+          parseFloat(o.shortfallAmount || 0).toFixed(2),
+        ];
+      });
     }
 
     if (rows.length === 0) { alert("No data to export for this period."); return; }
@@ -881,9 +890,11 @@ export default function Reports() {
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-sm text-gray-800">{formatCurrency(parseFloat(order.totalAmount))}</p>
-                    <span className="text-[11px] font-medium bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 px-2 py-0.5 rounded-lg">
-                      {order.paymentMethod}
-                    </span>
+                    {paymentLabel(order) && (
+                      <span className="text-[11px] font-medium bg-[var(--paper-0)] border border-[var(--line)] text-gray-600 px-2 py-0.5 rounded-lg">
+                        {paymentLabel(order)}
+                      </span>
+                    )}
                     {parseFloat(order.shortfallAmount || 0) > 0 && (
                       <p className="text-[11px] font-medium text-red-600 mt-0.5">
                         {formatCurrency(parseFloat(order.shortfallAmount))} short
@@ -940,6 +951,11 @@ export default function Reports() {
                 <div className="flex-1 min-w-[140px] rounded-xl bg-emerald-50/60 border border-emerald-200/40 p-3">
                   <p className="text-xs text-gray-500">Total Collected</p>
                   <p className="text-xl font-bold text-emerald-700">{formatCurrency(paymentSummary?.totalPaid || 0)}</p>
+                  {(paymentSummary?.partCount ?? 0) > 0 && (
+                    <p className="text-xs text-emerald-600/70">
+                      incl. {paymentSummary.partCount} part payment{paymentSummary.partCount !== 1 ? "s" : ""} (counted in both Cash and UPI)
+                    </p>
+                  )}
                 </div>
                 <div className="flex-1 min-w-[140px] rounded-xl bg-red-50/60 border border-red-200/40 p-3">
                   <p className="text-xs text-gray-500">Total Due</p>

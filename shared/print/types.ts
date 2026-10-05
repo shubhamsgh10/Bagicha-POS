@@ -74,12 +74,34 @@ export interface PrintJob {
   jobId?: number;
 }
 
+/** One ticket's exact ESC/POS bytes, for the browser-print fallback to render (see escposInterpret.ts). */
+export interface BrowserPayload {
+  encoding: "escpos-base64";
+  /** The ESC/POS buffer the thermal printer would have received, base64. */
+  data: string;
+  /** The printer's column count (48 for an 80 mm roll, 32 for 58 mm). */
+  width: number;
+}
+
 export interface PrintApiResponse {
   printed?: boolean;
   printJob?: PrintJob;
   /** All jobs produced by this print (one per routed printer). `printJob` stays = first element for compat. */
   printJobs?: PrintJob[];
   browserPrint?: boolean;
+  /**
+   * Bill requests that fall back to browser printing: the exact ESC/POS bytes the thermal printer
+   * would have received (base64) plus its column width. The client renders THESE (see
+   * shared/print/escposInterpret.ts) so the fallback bill matches the real one — it never builds
+   * its own layout. Absent for non-fallback responses.
+   */
+  browserPayload?: BrowserPayload;
+  /**
+   * KOT requests that fall back to browser printing: one entry per ticket the thermal printer(s)
+   * would have printed (category routing can split one tap into several), in print order. Same
+   * contract as `browserPayload`; the client prints each as its own page.
+   */
+  browserPayloads?: BrowserPayload[];
   reason?: string;
   isDelta?: boolean;
   reprint?: boolean;

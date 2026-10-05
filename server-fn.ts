@@ -7,7 +7,7 @@ import * as Sentry from "@sentry/node";
 import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
-import { initSettings } from "./server/settingsStore";
+import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
 
 // Log-and-survive guards, same as server/index.ts — a warm serverless instance is
@@ -94,6 +94,10 @@ app.use(passport.session());
 
 const ready = (async () => {
   await initSettings();
+  // Refuse (503) rather than serve from built-in defaults if this instance never managed to
+  // read the real settings — a cold instance on defaults priced orders at 18% and found "no
+  // printer". Must precede every route. See server/settingsCache.ts.
+  app.use("/api", settingsGuard);
   await registerRoutes(app, sessionMiddleware);
 
   // Sentry v8+ error handler must be registered after routes (same as server/index.ts).

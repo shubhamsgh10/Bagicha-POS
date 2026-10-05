@@ -5,6 +5,7 @@
  * action labels/one-line summaries for its drill-down list without forking a second
  * copy of this ~15-branch formatter.
  */
+import { paymentLabel } from "@shared/paymentSplit";
 
 export interface ActionLabel {
   label: string;
@@ -45,7 +46,18 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
   if (!meta) return "";
   // Was `meta.amount` — routes.ts's order.payment log has always written `paidAmount`, so
   // every payment row here rendered "₹undefined via cash". Pre-existing, fixed once.
-  if (action === "order.payment") return `₹${meta.paidAmount} via ${meta.paymentMethod}${Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : ""}`;
+  // routes.ts logs every leg as `paymentBreakdown` ({cash, upi}); `paymentMethod` is only the largest
+  // leg, so a part payment used to read "₹63 via cash". Rows logged before that field existed lack it.
+  if (action === "order.payment") {
+    const via = paymentLabel({
+      paymentStatus: "paid",
+      paymentMethod: meta.paymentMethod as string | null | undefined,
+      paymentBreakdown: meta.paymentBreakdown as Record<string, string | number> | null | undefined,
+      paidAmount: meta.paidAmount as string | number | null | undefined,
+      changeAmount: meta.changeAmount as string | number | null | undefined,
+    }) || meta.paymentMethod;
+    return `₹${meta.paidAmount} via ${via}${Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : ""}`;
+  }
   if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;
   if (action === "order.items_edit") {

@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines } from "@/lib/receiptText";
-import { printKOT } from "@/lib/printBill";
+import { printKotFallback, BROWSER_KOT_TOAST } from "@/lib/printBill";
 
 
 const statusAccent: Record<string, string> = {
@@ -62,14 +62,17 @@ export default function KOT() {
         orderId: ticket.orderId,
         ackType: 'kot',
         pendingAck: data.pendingAck,
-        onBrowserKOT: () =>
-          printKOT(
-            { orderNumber: ticket.orderNumber, tableNumber: ticket.tableNumber, createdAt: new Date() },
-            data.items ?? [],
-          ),
+        // The server sends the exact KOT bytes (real KOT number, "** DUPLICATE **" on a reprint);
+        // print THAT — same layout as the thermal KOT. The text preview is only the last resort
+        // (old server / popup blocked).
+        onBrowserKOT: (kotData) => {
+          if (!printKotFallback(kotData)) showKOTPreview(ticket);
+        },
       });
-      if (outcome === 'hardware' || outcome === 'browser') {
+      if (outcome === 'hardware') {
         toast({ title: 'KOT sent to printer!' });
+      } else if (outcome === 'browser') {
+        toast(BROWSER_KOT_TOAST);
       } else if (outcome === 'dispatched') {
         toast({ title: 'Sent to kitchen printer!' });
       } else if (outcome === 'noop') {

@@ -31,6 +31,9 @@ import { serialNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
+import { paymentLabel } from "@shared/paymentSplit";
+import type { PrintApiResponse } from "@shared/print/types";
+import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -55,76 +58,6 @@ function ensureRazorpayScript(): Promise<boolean> {
   });
 }
 
-function printBill(order: any, items: any[] = [], settings?: any) {
-  const win = window.open("", "_blank", "width=450,height=700");
-  if (!win) return;
-  const { subtotal, discount, containerCharge } = deriveBillTotals(order);
-  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
-  const address = settings?.address || "";
-  const phone = settings?.phone || "";
-  const gstNumber = settings?.gstNumber || "";
-  const footerNote = settings?.footerNote || "Thank you for dining with us!";
-
-  win.document.write(`
-    <html>
-      <head>
-        <title>Bill - ${order.orderNumber}</title>
-        <style>
-          body { font-family: monospace; font-size: 13px; margin: 0; padding: 16px; }
-          h2 { text-align: center; font-size: 20px; margin: 0 0 4px; }
-          .center { text-align: center; }
-          .divider { border-top: 1px dashed #000; margin: 10px 0; }
-          .row { display: flex; justify-content: space-between; padding: 2px 0; }
-          .bold { font-weight: bold; }
-          .large { font-size: 16px; }
-          .footer { text-align: center; margin-top: 16px; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <h2>${restaurantName.toUpperCase()}</h2>
-        ${address ? `<div class="center" style="font-size:11px">${address}</div>` : ""}
-        ${phone ? `<div class="center" style="font-size:11px">Ph: ${phone}</div>` : ""}
-        ${gstNumber ? `<div class="center" style="font-size:11px">GSTIN: ${gstNumber}</div>` : ""}
-        <div style="margin-bottom:8px"></div>
-        <div class="divider"></div>
-        <div class="row"><span>Order #</span><span class="bold">${order.orderNumber}</span></div>
-        <div class="row"><span>Type</span><span>${order.orderType}</span></div>
-        ${order.tableNumber ? `<div class="row"><span>Table</span><span>${order.tableNumber}</span></div>` : ""}
-        ${order.customerName ? `<div class="row"><span>Customer</span><span>${order.customerName}</span></div>` : ""}
-        <div class="row"><span>Date</span><span>${new Date(order.createdAt).toLocaleString()}</span></div>
-        <div class="divider"></div>
-        <div class="bold" style="margin-bottom:6px">ITEMS</div>
-        ${items.length > 0
-          ? items.map((item: any) => `
-            <div class="row">
-              <span>${item.name || "Item"} × ${item.quantity}</span>
-              <span>₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</span>
-            </div>
-          `).join("")
-          : "<div>—</div>"
-        }
-        <div class="divider"></div>
-        <div class="row"><span>Subtotal</span><span>₹${subtotal.toFixed(0)}</span></div>
-        ${discount > 0 ? `<div class="row"><span>Discount</span><span>-₹${discount.toFixed(0)}</span></div>` : ""}
-        ${containerCharge > 0 ? `<div class="row"><span>Container</span><span>₹${containerCharge.toFixed(0)}</span></div>` : ""}
-        <div class="row"><span>Tax (GST)</span><span>₹${parseFloat(order.taxAmount).toFixed(0)}</span></div>
-        <div class="divider"></div>
-        <div class="row bold large"><span>TOTAL</span><span>₹${parseFloat(order.totalAmount).toFixed(0)}</span></div>
-        <div class="row" style="margin-top:4px"><span>Payment</span><span>${order.paymentMethod || "—"}</span></div>
-        <div class="footer">
-          <div class="divider"></div>
-          ${footerNote}<br>
-          Please visit again
-        </div>
-      </body>
-    </html>
-  `);
-  win.document.close();
-  win.focus();
-  win.print();
-  win.close();
-}
-
 export default function Billing() {
   const { toast } = useToast();
   const [payingOrder, setPayingOrder] = useState<any | null>(null);
@@ -146,13 +79,16 @@ export default function Billing() {
 
   const { data: settings } = useQuery<any>({ queryKey: ["/api/settings"] });
 
-  const browserBillFallback = async (order: any) => {
-    try {
-      const res = await apiRequest("GET", `/api/orders/${order.id}`);
-      const data: any = await res.json();
-      printBill(order, data.items || [], settings);
-    } catch {
-      printBill(order, [], settings);
+  // The server decided this bill can't go to a thermal printer and sent the exact bytes it would
+  // have printed — show THAT bill (printBillFallback). Billing no longer builds a layout of its
+  // own: its old HTML invoice drifted from the real bill (wrong tax rate, different layout).
+  const openFallbackBill = (data: PrintApiResponse) => {
+    if (!printBillFallback(data)) {
+      toast({
+        title: "Could not open the bill",
+        description: "Allow pop-ups for this app, then press Print again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -229,10 +165,12 @@ export default function Billing() {
             orderId: vars.id,
             ackType: 'bill',
             pendingAck: data.pendingAck,
-            onBrowserBill: () => browserBillFallback({ id: vars.id }),
+            onBrowserBill: openFallbackBill,
           });
-          if (outcome === 'hardware' || outcome === 'browser') {
+          if (outcome === 'hardware') {
             toast({ title: 'Bill printed!' });
+          } else if (outcome === 'browser') {
+            toast(BROWSER_BILL_TOAST);
           }
         })
         .catch(() => {});
@@ -268,7 +206,9 @@ export default function Billing() {
       });
       const data = await res.json();
       if (!res.ok) {
-        await browserBillFallback(order);
+        // No bill bytes came back, so there is nothing truthful to print from here — say so
+        // instead of improvising a different bill.
+        toast({ title: 'Bill print failed', description: data?.message ?? 'The print service did not respond. Try again.', variant: 'destructive' });
         return;
       }
       const { handlePrintResponse } = await import('@/lib/printGateway');
@@ -276,15 +216,17 @@ export default function Billing() {
         orderId: order.id,
         ackType: 'bill',
         pendingAck: data.pendingAck,
-        onBrowserBill: () => browserBillFallback(order),
+        onBrowserBill: openFallbackBill,
       });
-      if (outcome === 'hardware' || outcome === 'browser') {
+      if (outcome === 'hardware') {
         toast({ title: 'Bill printed!' });
+      } else if (outcome === 'browser') {
+        toast(BROWSER_BILL_TOAST);
       } else if (outcome === 'noop' && data.printJob) {
         toast({ title: 'Print job ready', description: 'Use the Electron app for thermal printing.', variant: 'destructive' });
       }
     } catch {
-      await browserBillFallback(order);
+      toast({ title: 'Bill print failed', description: 'Could not reach the print service. Try again.', variant: 'destructive' });
     }
   };
 
@@ -613,10 +555,10 @@ export default function Billing() {
                       <span>Total</span>
                       <span className="text-primary">{formatCurrency(parseFloat(order.totalAmount))}</span>
                     </div>
-                    {order.paymentMethod && (
+                    {paymentLabel(order) && (
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Payment</span>
-                        <span className="capitalize">{order.paymentMethod}</span>
+                        <span>{paymentLabel(order)}</span>
                       </div>
                     )}
                   </div>
@@ -636,7 +578,7 @@ export default function Billing() {
                       <div className="flex-1 flex flex-col gap-0.5">
                         <div className="flex items-center gap-1.5 text-green-600 text-xs font-medium">
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          Paid via {order.paymentMethod}
+                          Paid via {paymentLabel(order) || order.paymentMethod}
                         </div>
                         {parseFloat(order.shortfallAmount || 0) > 0 && (
                           <div className="text-[11px] text-red-600">

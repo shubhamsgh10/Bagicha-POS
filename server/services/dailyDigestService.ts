@@ -24,6 +24,7 @@ import {
 import { getAutomationConfig } from "./automationStore";
 import { sendWhatsAppMessage } from "./whatsappService";
 import { istCalendarDate, istCalendarDayRange, istHour } from "../../shared/businessDay";
+import { summarizeCollected } from "../../shared/paymentSplit";
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
@@ -71,11 +72,12 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   const paidRevenue  = paidOrders.reduce((s, o) => s + parseFloat(String(o.totalAmount ?? 0)), 0);
   const dueRevenue   = dueOrders.reduce((s, o) => s + parseFloat(String(o.totalAmount ?? 0)), 0);
 
+  // Payment mix by what was actually collected per method (shared/paymentSplit.ts) — the old
+  // loop credited each order's whole billed total to its single `paymentMethod` label, which
+  // is only the largest leg of a part payment (and ignored write-offs and change).
   const paymentBreakdown: Record<string, number> = {};
-  for (const o of paidOrders) {
-    const m = o.paymentMethod || "cash";
-    paymentBreakdown[m] = (paymentBreakdown[m] ?? 0) + parseFloat(String(o.totalAmount ?? 0));
-  }
+  const collected = summarizeCollected(paidOrders as any[]).breakdown;
+  for (const m of Object.keys(collected)) paymentBreakdown[m] = collected[m].amount;
 
   // Top items today
   const topItems = await db

@@ -17,6 +17,8 @@ import { serialNum, avatarNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
+import { paymentLabel } from "@shared/paymentSplit";
+import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
 
 const fmt = (n: number) =>
@@ -74,7 +76,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       totalAmount: parseFloat(order.totalAmount ?? '0'),
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       discountAmount: parseFloat(order.discountAmount ?? '0'),
-      paymentMethod: order.paymentMethod ?? null,
+      paymentMethod: paymentLabel(order) || null, // real legs ("Cash ₹53 + UPI ₹10"), not the largest-leg label
       billPrintCount: order.billPrintCount ?? 0,
       createdAt: order.createdAt,
       items: items.map((i: any) => ({
@@ -107,10 +109,16 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
         orderId: order.id,
         ackType: 'bill',
         pendingAck: data.pendingAck,
-        onBrowserBill: () => showBillPreview(),
+        // The server sends the exact bill bytes; print THAT (same layout as the thermal bill).
+        // The text preview is only the last resort (old server / popup blocked) — it can't be printed.
+        onBrowserBill: (billData) => {
+          if (!printBillFallback(billData)) showBillPreview();
+        },
       });
-      if (outcome === 'hardware' || outcome === 'browser') {
+      if (outcome === 'hardware' || outcome === 'dispatched') {
         toast({ title: 'Bill sent to printer!' });
+      } else if (outcome === 'browser') {
+        toast(BROWSER_BILL_TOAST);
       } else if (outcome === 'noop') {
         showBillPreview();
       }
@@ -238,7 +246,7 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   { label: "Phone",     value: order.customerPhone || "—" },
                   { label: "Table",     value: order.tableNumber ? `Table ${order.tableNumber}` : "—" },
                   { label: "Type",      value: order.orderType?.replace("-", " ") || "—" },
-                  { label: "Payment",   value: order.paymentStatus === "paid" ? (order.paymentMethod || "cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
+                  { label: "Payment",   value: order.paymentStatus === "paid" ? (paymentLabel(order) || "Cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
                   ...(order.createdByName ? [{ label: "Served By", value: order.createdByName }] : []),
                   ...(parseFloat(order.shortfallAmount || 0) > 0 ? [{ label: "Written Off", value: fmt(parseFloat(order.shortfallAmount)) }] : []),
                   ...(order.status === "cancelled" && order.cancelReason ? [{ label: "Cancel Reason", value: order.cancelReason }] : []),

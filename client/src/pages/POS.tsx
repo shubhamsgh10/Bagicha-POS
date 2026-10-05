@@ -1,4 +1,4 @@
-import { apiUrl, apiJson } from '@/lib/api';
+import { apiUrl } from '@/lib/api';
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -31,9 +31,10 @@ import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines, billLines } from "@/lib/receiptText";
-import { printKOT, printOrderBill } from "@/lib/printBill";
+import { printKotFallback, printBillFallback, BROWSER_BILL_TOAST, BROWSER_KOT_TOAST } from "@/lib/printBill";
 import { startPrintTap, timePrintStage, endPrintTap } from "@/lib/printPerfClient";
 import { printFieldsForSubmitMode } from "@shared/printRequest";
+import { paymentLabel } from "@shared/paymentSplit";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -468,7 +469,7 @@ export default function POS() {
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       discountAmount: parseFloat(order.discountAmount ?? '0'),
       containerCharge: order.containerCharge != null ? parseFloat(order.containerCharge) : containerCharge,
-      paymentMethod: order.paymentMethod ?? null,
+      paymentMethod: paymentLabel(order) || null,
       createdAt: order.createdAt ?? new Date(),
       items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode })),
       restaurantName: s?.restaurantName,
@@ -489,18 +490,22 @@ export default function POS() {
 
   const handleKotResult = async (data: any, orderId: number, order: any, silent: boolean) => {
     const { handlePrintResponse } = await import('@/lib/printGateway');
+    // How the browser fallback (if any) ended up being shown — drives the toast below.
+    const fallback: { mode: 'window' | 'preview' | null } = { mode: null };
     const outcome = await timePrintStage('handle_kot', () =>
       handlePrintResponse(data, {
         orderId,
         ackType: 'kot',
         pendingAck: data.pendingAck,
-        onBrowserKOT: () => {
-          if (!order) {
-            printKOT(
-              { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
-              data.items ?? [],
-            );
-          }
+        onBrowserKOT: (kotData) => {
+          // The server sent the exact ESC/POS bytes of the KOT the kitchen printer would have
+          // received; printKotFallback renders THOSE (double-size header, tall bold rows, the real
+          // KOT number, VOID/modified rows) — this screen no longer builds a ticket of its own. If
+          // there is nothing to render (old server) or the popup/iframe is blocked, show the
+          // in-page preview so the user isn't stuck.
+          const printed = printKotFallback(kotData);
+          fallback.mode = printed ? 'window' : 'preview';
+          if (!printed && order) showKOTPreview(order, data?.kotNumber);
         },
       }),
     );
@@ -518,15 +523,17 @@ export default function POS() {
         ? { title: 'KOT sent to printer!', description: data.message, variant: 'destructive' }
         : { title: 'KOT sent to printer!' });
     } else if (outcome === 'browser') {
-      toast({
-        title: data.reason === 'non_escpos_printer' ? 'Use KOT preview to print' : 'KOT ready',
-        description:
-          data.message ??
-          (data.reason === 'non_escpos_printer'
-            ? 'Office printers cannot print thermal tickets. Use Print in the preview window or add a thermal printer.'
-            : 'Use Print in the preview panel.'),
-      });
-      if (order) showKOTPreview(order, data?.kotNumber);
+      // Honest wording: nothing reached a kitchen printer. (This used to say "Use Print in the
+      // preview panel" about a text preview that has no Print button.)
+      if (fallback.mode === 'preview') {
+        toast({ title: 'KOT ready', description: 'Could not open the print window — see the preview.' });
+      } else {
+        toast(
+          data.reason === 'non_escpos_printer' && data.message
+            ? { ...BROWSER_KOT_TOAST, description: data.message }
+            : BROWSER_KOT_TOAST,
+        );
+      }
     } else if (outcome === 'dispatched') {
       toast({ title: 'Sent to kitchen printer!' });
     } else if (outcome === 'noop' && data.printJob) {
@@ -575,28 +582,35 @@ export default function POS() {
   const handleBillResult = async (data: any, orderId: number, order: any, markBilled?: 'always' | 'on_send') => {
     await handleKotCatchUpPart(data.kotCatchUp, orderId, order);
     const { handlePrintResponse } = await import('@/lib/printGateway');
+    // How the browser fallback (if any) ended up being shown — drives the toast below.
+    const fallback: { mode: 'window' | 'preview' | null } = { mode: null };
     const outcome = await timePrintStage('handle_bill', () =>
       handlePrintResponse(data, {
         orderId,
         ackType: 'bill',
         pendingAck: data.pendingAck,
-        onBrowserBill: async () => {
-          // apiJson() checks res.ok before parsing — a hand-rolled fetch(...).then(r =>
-          // r.json()) here used to let a non-2xx response's error body flow straight into
-          // printOrderBill as if it were real order/settings data instead of throwing
-          // (which the caller's catch already handles via showBillPreview).
-          const [freshOrder, freshSettings] = await Promise.all([
-            apiJson<any>(`/api/orders/${orderId}`),
-            apiJson<any>('/api/settings'),
-          ]);
-          const printed = await printOrderBill(freshOrder, freshOrder.items || [], freshSettings);
-          // Popup + iframe both blocked (rare) — show the in-page preview so the user isn't stuck.
-          if (!printed) showBillPreview(freshOrder ?? order);
+        onBrowserBill: (billData) => {
+          // The server sent the exact ESC/POS bytes the thermal printer would have received;
+          // printBillFallback renders THOSE (same fonts, bold, columns, tax lines, duplicate
+          // watermark) — this screen no longer builds a bill of its own. If there is nothing to
+          // render (old server) or the popup/iframe is blocked, show the in-page preview so the
+          // user isn't stuck.
+          const printed = printBillFallback(billData);
+          fallback.mode = printed ? 'window' : 'preview';
+          if (!printed) showBillPreview(order);
         },
       }),
     );
-    if (outcome === 'hardware' || outcome === 'browser' || outcome === 'dispatched') {
+    if (outcome === 'hardware' || outcome === 'dispatched') {
       toast({ title: 'Bill sent to printer!' });
+    } else if (outcome === 'browser') {
+      // Honest wording: nothing reached a thermal printer. This used to say "Bill sent to
+      // printer!" while a browser print dialog was open, which hid that the printer was bypassed.
+      toast(
+        fallback.mode === 'preview'
+          ? { title: 'Bill ready', description: 'Use Print in the preview window.' }
+          : BROWSER_BILL_TOAST,
+      );
     } else if (outcome === 'noop' && data.printJob) {
       toast({
         title: 'Print job ready',
