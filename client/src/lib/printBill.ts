@@ -1,5 +1,7 @@
-import bagichaLogoImg from "@assets/Bagicha Logo.png";
-import { deriveBillTotals } from "@shared/orderPricing";
+import type { BrowserPayload, PrintApiResponse } from "@shared/print/types";
+import { browserPayloadsOf } from "@shared/print/browserPayload";
+import { decodeBase64, interpretEscPos } from "@shared/print/escposInterpret";
+import { renderReceiptToDataUrl } from "@/lib/receiptRaster";
 
 /**
  * Render an HTML document to the printer.
@@ -41,292 +43,86 @@ function openPrintDocument(html: string, delayMs: number): boolean {
 }
 
 /**
- * KOT slip printer — matches the reference image:
- * centred KOT header, order# + datetime, customer, table, numbered item table,
- * total items. No prices, no logo, no address — kitchen-only info.
- * Returns true if a print was initiated (popup or iframe), false if blocked entirely.
+ * Browser-print fallback for a BILL or a KOT — used only when no raw-capable thermal printer can
+ * take the ticket (none configured, an office printer, or the Electron host failed to enqueue).
+ *
+ * It does NOT build a ticket of its own. The server sends the exact ESC/POS bytes the thermal
+ * printer would have received (`browserPayload` for a bill, `browserPayloads` for a KOT — category
+ * routing can split one tap into several tickets); those are run through a virtual thermal printer
+ * (shared/print/escposInterpret.ts) and painted on the printer's own 12×24-dot cell grid
+ * (receiptRaster.ts), so the fallback has the same fonts, bold, double-size headers, alignment,
+ * columns, tax lines, round-off and duplicate watermark as the real ticket — it can't drift, because
+ * it is the same document. (Both used to be hand-built HTML tickets that did drift: wrong tax,
+ * a different layout from the thermal bill/KOT.)
+ *
+ * Returns true if a print window was opened; false if there was nothing to render (old server that
+ * sends no payload) or the popup/iframe was blocked — callers then show their in-page preview.
  */
-export function printKOT(order: any, items: any[]): boolean {
-  const orderDate = new Date(order.createdAt || Date.now());
-  const dateStr   = orderDate.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const timeStr   = orderDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+function printTicketImages(payloads: BrowserPayload[], title: string): boolean {
+  if (payloads.length === 0) return false;
 
-  const itemRows = items.length > 0
-    ? items.map((item: any, i: number) => `
-        <tr>
-          <td class="sl">${i + 1}</td>
-          <td class="name">${item.name || "Item"}</td>
-          <td class="qty">${item.quantity}</td>
-        </tr>`).join("")
-    : `<tr><td colspan="3" class="empty">No items</td></tr>`;
-
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>KOT - ${order.orderNumber || ""}</title>
-<style>
-  @page { size: 76mm auto; margin: 3mm 4mm; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: 12px;
-    color: #000;
-    background: #fff;
-    width: 68mm;
-  }
-  .kot-title {
-    text-align: center;
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 2px;
-    margin-bottom: 6px;
-  }
-  .meta-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    margin-bottom: 5px;
-  }
-  hr { border: none; border-top: 1px solid #000; margin: 5px 0; }
-  .info-line { font-size: 11px; margin-bottom: 3px; }
-  .info-line span { font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  thead th {
-    font-size: 11px;
-    font-weight: 700;
-    padding: 3px 2px;
-    border-top: 1px solid #000;
-    border-bottom: 1px solid #000;
-    text-align: left;
-  }
-  th.qty, td.qty { text-align: right; width: 28px; }
-  th.sl,  td.sl  { width: 28px; }
-  tbody td { font-size: 11px; padding: 3px 2px; vertical-align: top; }
-  tbody tr:last-child td { border-bottom: 1px solid #000; }
-  .empty { text-align: center; color: #888; padding: 6px 0; border-bottom: 1px solid #000; }
-  .total-row {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 700;
-    margin-top: 5px;
-  }
-  .total-row .label { }
-  .total-row .val { min-width: 20px; text-align: right; }
-</style>
-</head><body>
-
-<div class="kot-title">KOT</div>
-
-<div class="meta-row">
-  <span>${order.orderNumber || "—"}</span>
-  <span>${dateStr} ${timeStr}</span>
-</div>
-
-<hr>
-
-${order.customerName ? `<div class="info-line">Customer &nbsp;: &nbsp;<span>${order.customerName}</span></div>` : ""}
-${order.tableNumber  ? `<div class="info-line">Table No. : &nbsp;<span>${order.tableNumber}</span></div>`  :
-  order.tableName    ? `<div class="info-line">Table No. : &nbsp;<span>${order.tableName}</span></div>`    : ""}
-
-<table>
-  <thead>
-    <tr>
-      <th class="sl">Sl.No</th>
-      <th class="name">Item Name</th>
-      <th class="qty">Qty.</th>
-    </tr>
-  </thead>
-  <tbody>${itemRows}</tbody>
-</table>
-
-<div class="total-row">
-  <span class="label">Total Items :</span>
-  <span class="val">${items.length}</span>
-</div>
-
-</body></html>`;
-
-  return openPrintDocument(html, 600);
-}
-
-/** Shared retail-invoice bill printer used by Tables and POS.
- *  Returns true if a print was initiated (popup or iframe), false if blocked entirely. */
-export async function printOrderBill(order: any, items: any[], settings: any): Promise<boolean> {
-  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
-  const address        = settings?.address        || "";
-  const phone          = settings?.phone          || "";
-  const gstNumber      = settings?.gstNumber      || "";
-  const fssaiNumber    = settings?.fssaiNumber    || "";
-  const upiId          = settings?.upiId          || "";
-  const footerNote     = settings?.footerNote     || "Thank you for dining with us!";
-
-  // Read subtotal/discount/container/tax straight off the persisted order — this used
-  // to independently re-derive container charge from item quantities (₹15/item,
-  // hardcoded, no ceil-per-line, no leftover-parcel handling, and dropped `discount`
-  // from the subtotal formula entirely), which drifted from the real saved/printed
-  // total the moment the rate changed or an order had a discount or a parcel-leftover
-  // item. Container charge is a manually staff-entered amount now — there is nothing
-  // to derive it from except the order's own persisted value.
-  const { subtotal, discount, containerCharge, tax, total: grandTotal } = deriveBillTotals(order);
-
-  const orderDate = new Date(order.createdAt || Date.now());
-  const dateStr   = orderDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-  const timeStr   = orderDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
-
-  // Embed logo as base64 so it renders in the detached print window
-  let logoHtml = `<div class="logo-placeholder">Your<br>Logo</div>`;
+  const tickets: Array<{ url: string; mm: number }> = [];
+  let widestCols = 0;
   try {
-    const logoRes = await fetch(bagichaLogoImg);
-    const blob    = await logoRes.blob();
-    const base64  = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    logoHtml = `<img src="${base64}" class="logo-img" alt="Logo" />`;
-  } catch { /* keep placeholder */ }
-
-  const hasMixedModes = items.some((i: any) => i.serviceMode && i.serviceMode !== 'dinein');
-  const modeLabel: Record<string, string> = { dinein: '🍽 Dine-In', pickup: '📦 Pickup', delivery: '🛵 Delivery' };
-
-  const renderItemRow = (item: any, idx: number) => `
-    <tr>
-      <td class="item-name">${idx + 1}. ${item.name || "Item"}</td>
-      <td class="r">${item.quantity}</td>
-      <td class="r">₹${parseFloat(item.price).toFixed(0)}</td>
-      <td class="r">₹${(parseFloat(item.price) * item.quantity).toFixed(0)}</td>
-    </tr>`;
-
-  let itemRows = '';
-  if (items.length === 0) {
-    itemRows = `<tr><td colspan="4" style="color:#bbb;padding:8px 0;text-align:center;">No items</td></tr>`;
-  } else if (hasMixedModes) {
-    let globalIdx = 0;
-    for (const mode of ['dinein', 'pickup', 'delivery']) {
-      const group = items.filter((i: any) => (i.serviceMode ?? 'dinein') === mode);
-      if (group.length === 0) continue;
-      itemRows += `<tr><td colspan="4" style="font-size:8px;font-weight:700;text-transform:uppercase;color:#555;padding:4px 0 2px;border-bottom:1px dashed #bbb;">${modeLabel[mode] ?? mode}</td></tr>`;
-      itemRows += group.map((item: any) => renderItemRow(item, globalIdx++)).join('');
+    for (const payload of payloads) {
+      const cols = payload.width > 0 ? payload.width : 48;
+      widestCols = Math.max(widestCols, cols);
+      tickets.push({
+        url: renderReceiptToDataUrl(interpretEscPos(decodeBase64(payload.data), cols)),
+        // 12 dots per column at 203 dpi = 1.5 mm per column: 48 cols = 72 mm printable on an 80 mm roll.
+        mm: cols * 1.5,
+      });
     }
-  } else {
-    itemRows = items.map((item: any, i: number) => renderItemRow(item, i)).join('');
+  } catch (err) {
+    console.error(`[print] could not render the fallback ${title}`, err);
+    return false;
   }
 
-  const upiQrHtml = upiId ? `
-    <div class="upi-box">
-      <div class="upi-text"><strong>UPI Payment</strong><br><span style="font-size:11px;color:#555;">Scan to pay</span></div>
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=72x72&data=upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(restaurantName)}&cu=INR"
-           width="72" height="72" alt="UPI QR" />
-    </div>` : "";
-
-  const metaLine = [
-    gstNumber   ? `GST - ${gstNumber}`     : "",
-    fssaiNumber ? `FSSAI - ${fssaiNumber}` : "",
-    !gstNumber && !fssaiNumber && address ? address : "",
-    phone ? `Ph: ${phone}` : "",
-  ].filter(Boolean).join("<br>");
-
-  // 76mm thermal/KOT roll paper — window width matches usable print area
+  const pageMm = widestCols <= 32 ? 58 : 76;
+  // One page per ticket, so a category-routed KOT still comes out as separate tickets.
+  const images = tickets
+    .map((t, i) => {
+      const pageBreak = i < tickets.length - 1 ? ";break-after:page;page-break-after:always" : "";
+      return `<img src="${t.url}" alt="${title}" style="width:${t.mm}mm${pageBreak}">`;
+    })
+    .join("");
   const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Bill - ${order.orderNumber}</title>
+<html><head><meta charset="UTF-8"><title>${title}</title>
 <style>
-  /* ── 76 mm thermal roll paper ── */
-  @page {
-    size: 76mm auto;   /* width fixed, height grows with content */
-    margin: 2mm 3mm;   /* narrow margins — thermal printers use almost full width */
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    font-family:'Courier New',Courier,monospace; /* thermal printers render monospace cleanly */
-    font-size:11px;
-    color:#000;
-    background:#fff;
-    width:70mm;        /* 76mm roll − 3mm×2 side margins */
-    padding:2mm 0;
-  }
-  .header{display:flex;align-items:flex-start;gap:6px;margin-bottom:8px}
-  .logo-placeholder{width:44px;height:44px;flex-shrink:0;border:1px dashed #999;display:flex;align-items:center;justify-content:center;font-size:8px;color:#888;text-align:center;line-height:1.3}
-  .logo-img{width:44px;height:44px;flex-shrink:0;object-fit:contain}
-  .header-info{flex:1;min-width:0}
-  .retail-label{font-size:8px;color:#666;margin-bottom:1px;text-transform:uppercase;letter-spacing:.04em}
-  .rest-name{font-size:13px;font-weight:700;line-height:1.2;margin-bottom:3px;word-break:break-word}
-  .meta{font-size:8.5px;color:#333;line-height:1.7}
-  hr{border:none;border-top:1px dashed #555;margin:6px 0}
-  .token-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:4px}
-  .token-no{font-size:12px;font-weight:700;white-space:nowrap}
-  .datetime{font-size:8px;color:#444;text-align:right;white-space:nowrap}
-  .order-meta{font-size:9px;color:#333;margin-bottom:6px;line-height:1.6}
-  .order-meta span{display:block}
-  table{width:100%;border-collapse:collapse}
-  thead th{font-size:8.5px;color:#555;font-weight:700;padding:0 0 3px;border-bottom:1px dashed #555;text-transform:uppercase;text-align:left}
-  thead th.r,tbody td.r{text-align:right}
-  tbody td{font-size:10px;padding:3px 0;vertical-align:top;border-bottom:1px dotted #ddd;word-break:break-word}
-  tbody td.item-name{padding-right:4px;max-width:38mm}
-  tbody tr:last-child td{border-bottom:none}
-  .totals{margin-top:6px}
-  .trow{display:flex;justify-content:space-between;padding:2px 0;font-size:10px;color:#222}
-  .trow.discount{color:#1a7a1a;font-weight:600}
-  .trow.tax{font-size:9px;color:#444}
-  .grand{display:flex;justify-content:space-between;font-size:13px;font-weight:700;border-top:1px solid #000;padding-top:5px;margin-top:4px}
-  .pay-row{font-size:9px;color:#555;margin-top:4px;display:flex;justify-content:space-between}
-  .upi-box{display:flex;align-items:center;justify-content:space-between;border:1px dashed #888;padding:6px 8px;margin-top:10px}
-  .upi-text{font-size:9px;line-height:1.5;color:#222}
-  .footer{text-align:center;font-size:8.5px;color:#555;margin-top:12px;line-height:1.7}
+  @page { size: ${pageMm}mm auto; margin: 0; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { width: ${pageMm}mm; }
+  img { display: block; margin: 0 auto; image-rendering: pixelated; }
 </style>
-</head><body>
+</head><body>${images}</body></html>`;
 
-<div class="header">
-  ${logoHtml}
-  <div class="header-info">
-    <div class="retail-label">Retail Invoice</div>
-    <div class="rest-name">${restaurantName}</div>
-    <div class="meta">${metaLine}</div>
-  </div>
-</div>
-
-<hr>
-
-<div class="token-row">
-  <span class="token-no">Order #${order.orderNumber}</span>
-  <span class="datetime">${dateStr}&nbsp;&nbsp;${timeStr}</span>
-</div>
-
-${(order.orderType || order.tableNumber || order.customerName) ? `
-<div class="order-meta">
-  ${order.orderType    ? `<span>${order.orderType}</span>`          : ""}
-  ${order.tableNumber  ? `<span>Table: ${order.tableNumber}</span>` : ""}
-  ${order.customerName ? `<span>${order.customerName}</span>`       : ""}
-</div>` : ""}
-
-<table>
-  <thead>
-    <tr>
-      <th>Item</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Amt</th>
-    </tr>
-  </thead>
-  <tbody>${itemRows}</tbody>
-</table>
-
-<hr>
-
-<div class="totals">
-  <div class="trow"><span>Sub-total:</span><span>₹${subtotal.toFixed(2)}</span></div>
-  ${discount > 0        ? `<div class="trow discount"><span>Discount:</span><span>-₹${discount.toFixed(2)}</span></div>` : ""}
-  ${tax > 0             ? `<div class="trow tax"><span>Tax (GST):</span><span>₹${tax.toFixed(2)}</span></div>` : ""}
-  ${containerCharge > 0 ? `<div class="trow tax"><span>Container Charge:</span><span>₹${containerCharge.toFixed(2)}</span></div>` : ""}
-  <div class="grand"><span>Grand Total:</span><span>₹${grandTotal.toFixed(2)}</span></div>
-  ${order.paymentMethod ? `<div class="pay-row"><span>Payment</span><span>${order.paymentMethod}</span></div>` : ""}
-</div>
-
-${upiQrHtml}
-
-<div class="footer">${footerNote}<br>Please visit again</div>
-
-</body></html>`;
-
-  // 1 s — gives the thermal driver time to receive the page size before the dialog opens,
-  // and allows the base64 logo + QR image (if any) to fully render.
-  return openPrintDocument(html, 1000);
+  // The bitmaps are data: URLs, so they decode almost instantly; the delay mirrors the other print
+  // paths and gives the thermal driver time to receive the page size before the dialog opens.
+  return openPrintDocument(html, 800);
 }
+
+/** Bill fallback — see printTicketImages. */
+export function printBillFallback(data: PrintApiResponse): boolean {
+  return printTicketImages(browserPayloadsOf(data), "Bill");
+}
+
+/** KOT fallback — see printTicketImages. */
+export function printKotFallback(data: PrintApiResponse): boolean {
+  return printTicketImages(browserPayloadsOf(data), "KOT");
+}
+
+/**
+ * Toast for a bill that went to the browser print dialog instead of a thermal printer. Honest on
+ * purpose: this path used to announce "Bill sent to printer!" while a print dialog was open, which
+ * hid the fact that the thermal printer had been bypassed.
+ */
+export const BROWSER_BILL_TOAST = {
+  title: "Bill opened for printing",
+  description: "It did not go to the thermal printer — choose the thermal printer in the print dialog and press Print.",
+} as const;
+
+/** Same, for a KOT that did not reach the kitchen printer. */
+export const BROWSER_KOT_TOAST = {
+  title: "KOT opened for printing",
+  description: "It did not go to the kitchen printer — choose the thermal printer in the print dialog and press Print.",
+} as const;

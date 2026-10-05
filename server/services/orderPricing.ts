@@ -6,7 +6,7 @@
 import { db } from "../db";
 import { menuItems } from "@shared/schema";
 import { inArray } from "drizzle-orm";
-import { getSettings } from "../settingsStore";
+import { getLiveSettings } from "../settingsStore";
 import {
   priceResolved,
   computeTotals,
@@ -17,12 +17,20 @@ import {
 
 export type { PricingItemInput, PricedOrder, PricedLine, ResolvedMenuItem } from "@shared/orderPricing";
 
-/** Rates from the settings singleton (tax as a fraction). */
+/**
+ * Rates from the settings singleton (tax as a fraction).
+ *
+ * getLiveSettings(), never getSettings(), and no `?? 18`: an instance whose settings read failed
+ * used to price orders at the built-in default 18% instead of the configured 5%. This now throws
+ * SettingsUnavailableError (status 503) rather than invent a tax rate — money must never be
+ * computed from a default. (settingsGuard normally stops such a request before it gets here.)
+ */
 export function pricingRates(): { taxRate: number } {
-  const settings = getSettings() as any;
-  return {
-    taxRate: Number(settings?.taxRate ?? 18) / 100,
-  };
+  const percent = Number(getLiveSettings().taxRate);
+  if (!Number.isFinite(percent) || percent < 0) {
+    throw new Error(`Configured tax rate is invalid (${String(getLiveSettings().taxRate)}) — fix it in Admin → Settings`);
+  }
+  return { taxRate: percent / 100 };
 }
 
 /** DB-backed pricing for POST /orders and PUT /orders/:id/items. `containerChargeRaw`

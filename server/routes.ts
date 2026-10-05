@@ -10,6 +10,7 @@ import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orde
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
+import { summarizeCollected } from "@shared/paymentSplit";
 import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
 import { computeDelta, type SnapshotItem } from "@shared/kotDelta";
 import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
@@ -1192,7 +1193,9 @@ export async function registerRoutes(
         res.json(s);
       }
     } catch (err) {
-      res.status(500).json({ message: "Failed to fetch settings" });
+      // SettingsUnavailableError (503) means "never held real settings" — say so instead of 500.
+      const status = typeof (err as any)?.status === "number" ? (err as any).status : 500;
+      res.status(status).json({ message: status === 503 ? (err as Error).message : "Failed to fetch settings" });
     }
   });
 
@@ -1364,20 +1367,14 @@ export async function registerRoutes(
       const todaySales = paidToday.reduce(
         (sum, o: any) => sum + parseFloat(o.totalAmount as string) - parseFloat(o.shortfallAmount ?? "0"), 0);
 
-      // Per-method split from the entered breakdown, so a Part (cash + UPI) settle counts
-      // toward both. Cash entered above the bill is change handed back, so it's removed
-      // from cash. Legacy rows with no breakdown fall back to their single paymentMethod.
-      let cashSales = 0, upiSales = 0;
-      for (const o of paidToday as any[]) {
-        const bd = o.paymentBreakdown as Record<string, string> | null;
-        if (bd && (bd.cash !== undefined || bd.upi !== undefined)) {
-          cashSales += Math.max(0, parseFloat(bd.cash ?? "0") - parseFloat(o.changeAmount ?? "0"));
-          upiSales += parseFloat(bd.upi ?? "0");
-        } else {
-          const collected = parseFloat(o.paidAmount ?? o.totalAmount ?? "0");
-          if (o.paymentMethod === "upi") upiSales += collected; else cashSales += collected;
-        }
-      }
+      // Per-method split from the entered legs (shared/paymentSplit.ts — the same rule
+      // Reports → Payments uses, so the two can never disagree again). A Part (cash + UPI)
+      // settle counts toward both; cash change handed back is removed from cash. Anything
+      // that isn't UPI (a stray legacy method) stays in the cash figure, as it always has,
+      // so Cash + UPI still adds up to everything collected.
+      const collectedToday = summarizeCollected(paidToday as any[]);
+      const upiSales = collectedToday.breakdown.upi?.amount ?? 0;
+      const cashSales = collectedToday.totalPaid - upiSales;
 
       // Outstanding dues = every order settled in Due mode and not yet paid (served +
       // pending), regardless of day — a due is owed until collected, same set as the
@@ -1870,8 +1867,11 @@ export async function registerRoutes(
       try {
         priced = await priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge);
       } catch (pricingErr) {
-        console.warn("[order] rejected invalid line items:", pricingErr);
-        return res.status(400).json({
+        // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
+        // its own status (503): that is a server condition, not a bad order — staff just retry.
+        const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
+        console.warn("[order] rejected line items / pricing unavailable:", pricingErr);
+        return res.status(pricingStatus).json({
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
@@ -2055,8 +2055,11 @@ export async function registerRoutes(
       try {
         priced = await priceOrder(lineItems, discountAmount, containerCharge);
       } catch (pricingErr) {
-        console.warn("[order] rejected invalid line items:", pricingErr);
-        return res.status(400).json({
+        // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
+        // its own status (503): that is a server condition, not a bad order — staff just retry.
+        const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
+        console.warn("[order] rejected line items / pricing unavailable:", pricingErr);
+        return res.status(pricingStatus).json({
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
@@ -2586,25 +2589,22 @@ export async function registerRoutes(
       const due  = allOrders.filter((o: any) => o.paymentStatus === "pending" && o.status === "served");
 
       // This is the cash-drawer view — it must show what was actually collected, not the
-      // billed total. `paidAmount` is the amount genuinely received (falls back to
-      // totalAmount for legacy rows written before that column existed); a short-settled
-      // order's write-off is excluded here and reported separately as totalShortfall.
-      const collected = (o: any) => parseFloat(o.paidAmount ?? o.totalAmount ?? "0");
-
-      const breakdown: Record<string, { count: number; amount: number }> = {};
-      for (const o of paid) {
-        const method = o.paymentMethod || "cash";
-        if (!breakdown[method]) breakdown[method] = { count: 0, amount: 0 };
-        breakdown[method].count++;
-        breakdown[method].amount += collected(o);
-      }
+      // billed total: change handed back and a short-settled order's write-off are excluded
+      // (the write-off is reported separately as totalShortfall).
+      //
+      // Split by the entered payment LEGS, not by `orders.paymentMethod`. That column is only
+      // the largest leg's label, so bucketing by it credited the whole of a Part (cash + UPI)
+      // bill to one method — e.g. a ₹63 bill paid ₹53 cash + ₹10 UPI landed entirely under
+      // Cash. See shared/paymentSplit.ts; the Tables-page Sales card uses the same function.
+      const { breakdown, totalPaid, partCount } = summarizeCollected(paid);
 
       const dueTotal = due.reduce((s: number, o: any) => s + parseFloat(o.totalAmount || "0"), 0);
       const totalShortfall = paid.reduce((s: number, o: any) => s + parseFloat(o.shortfallAmount ?? "0"), 0);
 
       res.json({
-        breakdown,                        // { cash: {count, amount}, upi: {...}, ... }
-        totalPaid: paid.reduce((s: number, o: any) => s + collected(o), 0),
+        breakdown,                        // { cash: {count, amount}, upi: {...}, ... } — a part order counts under both
+        totalPaid,
+        partCount,                        // orders settled with more than one method
         totalShortfall,
         totalDue: dueTotal,
         dueCount: due.length,

@@ -1,7 +1,8 @@
 import type { PrintApiResponse, PrintConfigSettings, PrintJob } from "@shared/print/types";
 import { apiUrl } from "@/lib/api";
 import { queryClient } from "@/lib/queryClient";
-import { printKOT, printOrderBill } from "@/lib/printBill";
+import { printKotFallback } from "@/lib/printBill";
+import { withBrowserPayloads } from "@shared/print/browserPayload";
 import { claimPrintJob, releasePrintJob, ownsPrinter, canExecuteLocallyVerified } from "@/lib/printStationCore";
 
 /** Same rationale as usePrintJobBridge.ts: don't let this host claim a printer it can't
@@ -32,10 +33,29 @@ export interface PrintHandleOptions {
   orderId?: number;
   ackType?: "kot" | "bill";
   pendingAck?: boolean;
-  /** Called when API returns browserPrint for KOT */
+  /**
+   * Called when a KOT must go through the browser instead of a thermal printer. Receives the
+   * response with the tickets' ESC/POS bytes attached whenever they are known (see fallbackData) —
+   * hand it to printKotFallback() so the fallback is the real KOT.
+   */
   onBrowserKOT?: (data: PrintApiResponse) => void;
-  /** Called when API returns browserPrint for bill */
-  onBrowserBill?: () => void | Promise<void>;
+  /**
+   * Called when a bill must go through the browser instead of a thermal printer. Same contract:
+   * hand the data to printBillFallback() so the fallback is the real bill.
+   */
+  onBrowserBill?: (data: PrintApiResponse) => void | Promise<void>;
+}
+
+/**
+ * Makes sure a fallback response carries the tickets' ESC/POS bytes. The server attaches them on
+ * every fallback it decides itself; when the fallback is decided HERE instead (Electron failed to
+ * enqueue the job), the bytes are in `printJob(s)`, so lift them into the same shape — using each
+ * printer's configured width from the cached settings (48 columns when unknown).
+ */
+function fallbackData(data: PrintApiResponse): PrintApiResponse {
+  const settings = queryClient.getQueryData<{ printSettings?: PrintConfigSettings }>(["/api/settings"]);
+  const printers = settings?.printSettings?.printers;
+  return withBrowserPayloads(data, (id) => printers?.find((p) => p.id === id)?.width);
 }
 
 async function ackPrint(orderId: number, type: "kot" | "bill"): Promise<void> {
@@ -58,14 +78,11 @@ export async function handlePrintResponse(
 
   if (data.browserPrint) {
     if (options.onBrowserBill) {
-      await options.onBrowserBill();
+      await options.onBrowserBill(fallbackData(data));
     } else if (options.onBrowserKOT) {
-      options.onBrowserKOT(data);
+      options.onBrowserKOT(fallbackData(data));
     } else if (data.orderNumber && data.items) {
-      printKOT(
-        { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
-        data.items,
-      );
+      printKotFallback(fallbackData(data));
     }
     return "browser";
   }
@@ -125,16 +142,13 @@ export async function handlePrintResponse(
     // Every job failed to enqueue — fall back to browser print.
     console.warn("[print] Electron print failed, falling back to browser:", lastError);
     if (options.onBrowserBill) {
-      await options.onBrowserBill();
+      await options.onBrowserBill(fallbackData(data));
       return "browser";
     } else if (options.onBrowserKOT) {
-      options.onBrowserKOT(data);
+      options.onBrowserKOT(fallbackData(data));
       return "browser";
     } else if (data.orderNumber && data.items) {
-      printKOT(
-        { orderNumber: data.orderNumber, tableNumber: data.tableNumber, createdAt: new Date() },
-        data.items,
-      );
+      printKotFallback(fallbackData(data));
       return "browser";
     }
     return "failed";

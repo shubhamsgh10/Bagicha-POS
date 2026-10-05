@@ -3,7 +3,7 @@ import { db } from "../db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
 import { eq, asc, inArray, sql } from "drizzle-orm";
 import type { PrinterConfig } from "@shared/print/types";
-import { getSettings } from "../settingsStore";
+import { getLiveSettings } from "../settingsStore";
 import { computeDelta, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
 import {
   generateKOTBuffer,
@@ -11,7 +11,7 @@ import {
   sendToPrinter,
   canExecutePrintOnServer,
 } from "../printService";
-import { toPrintJob } from "@shared/print/generators";
+import { toPrintJob, toBrowserPayload } from "@shared/print/generators";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { storage } from "../storage";
 import { publishRealtime, publishRealtimeMany } from "../realtime/publisher";
@@ -94,7 +94,12 @@ export async function runKotPrint(p: {
   const { req, orderId, reprint = false, auto = false } = p;
   const timer = p.timer ?? createStageTimer();
 
-  const settings = getSettings();
+  // getLiveSettings(): on an instance that never read the real settings this THROWS (503) before
+  // anything is committed. With the built-in defaults there are no printers, so this used to take
+  // the "no printer → browser preview" branch below, which COMMITS lastKotSnapshot — marking
+  // items as sent to the kitchen when no ticket was printed, so a later healthy catch-up found
+  // "no delta" and the items never reached the kitchen.
+  const settings = getLiveSettings();
   const { kot: kotSettings, printers } = settings.printSettings;
 
   if (!kotSettings.enabled) {
@@ -206,10 +211,27 @@ export async function runKotPrint(p: {
       // KOT & Bill Activity tab.
       logAudit(req, "kot.reprint", "order", orderId, { kotNumber: browserKotNum });
     }
+    // The fallback ticket is the real KOT: the same ESC/POS bytes a kitchen printer would have
+    // received (this restaurant's KOT settings, real KOT number, delta/VOID/modified rows), which
+    // the client renders instead of building a layout of its own. Same numbering rule as the
+    // hardware path below: the ticket's number, else the next one.
+    const fallbackTicket = generateKOTBuffer({
+      orderNumber: order.orderNumber,
+      tableNumber: order.tableNumber,
+      kotNumber: browserKotNum ?? String((order.kotPrintCount ?? 0) + 1),
+      isReprint: reprint,
+      isDelta,
+      newItems,
+      modifiedItems,
+      cancelledItems,
+      kotSettings,
+      width: 48,
+    });
     return {
       ok: true,
       body: {
         browserPrint: true,
+        browserPayloads: [toBrowserPayload(fallbackTicket, 48)],
         isDelta,
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
@@ -374,6 +396,10 @@ export async function runKotPrint(p: {
       printJob: dispatchedJobs[0],
       printJobs: dispatchedJobs.length > 0 ? dispatchedJobs : undefined,
       browserPrint: allNonEscPos,
+      // Every ticket the non-thermal printer(s) could not take, as real ESC/POS bytes (see above).
+      browserPayloads: allNonEscPos
+        ? nonEscPosJobs.map((j) => toBrowserPayload(j.buffer, j.printer.width ?? 48))
+        : undefined,
       reason: allNonEscPos ? "non_escpos_printer" : undefined,
       message: nonEscPosJobs.length > 0 ? nonEscPosPrinterMessage(nonEscPosJobs[0].printer) : failureMessage,
       pendingAck: dispatchedJobs.length > 0 && !reprint,
@@ -567,7 +593,8 @@ async function runBillAfterCatchUp(
   data: Awaited<ReturnType<typeof readBillData>>,
 ): Promise<PrintResult> {
   const { req, orderId } = p;
-  const settings = getSettings();
+  // See runKotPrint: real settings or a thrown 503 — never "no printer" from fallback defaults.
+  const settings = getLiveSettings();
   const { bill: billSettings, printers } = settings.printSettings;
   const { order, rawItems } = data;
   if (!order) return { ok: false, status: 404, message: "Order not found" };
@@ -608,17 +635,12 @@ async function runBillAfterCatchUp(
       ? printers.find((pr) => pr.id === billSection.billPrinterId)
       : undefined) ?? printers.find((pr) => pr.id === billSettings.billPrinterId);
 
-  if (!printer) {
-    await timer.time("commit", () =>
-      db
-        .update(orders)
-        .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
-        .where(eq(orders.id, orderId)),
-    );
-    if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
-    return done({ browserPrint: true });
-  }
-
+  // The bill's ESC/POS bytes are built BEFORE deciding how it leaves the building, because every
+  // exit needs them: a thermal printer receives them, and the browser-print fallback RENDERS THEM
+  // (client: shared/print/escposInterpret.ts → receiptRaster.ts) — so a fallback bill is the very
+  // same bill (fonts, columns, bold, CGST/SGST, round-off, duplicate watermark) rather than a
+  // second hand-built HTML layout that drifts from it.
+  const width = printer?.width ?? 48;
   const buffer = await timer.time("build", async () =>
     generateBillBuffer({
       order: {
@@ -646,9 +668,21 @@ async function runBillAfterCatchUp(
       restaurant: settings,
       billSettings,
       cashierName: order.createdByName ?? (req.user as any)?.username ?? "Admin",
-      width: printer.width ?? 48,
+      width,
     }),
   );
+  const browserPayload = () => toBrowserPayload(buffer, width);
+
+  if (!printer) {
+    await timer.time("commit", () =>
+      db
+        .update(orders)
+        .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
+        .where(eq(orders.id, orderId)),
+    );
+    if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
+    return done({ browserPrint: true, browserPayload: browserPayload() });
+  }
 
   const commitBillState = async () => {
     await db
@@ -683,6 +717,7 @@ async function runBillAfterCatchUp(
     return done({
       printed: false,
       browserPrint: true,
+      browserPayload: browserPayload(),
       message: nonEscPosPrinterMessage(printer),
       orderId,
     });
@@ -704,6 +739,7 @@ async function runBillAfterCatchUp(
     dispatched: escPosOk,
     printJob: escPosOk ? toPrintJob(printer.id, buffer, { orderId, ackType: "bill", jobId: billJobId }) : undefined,
     browserPrint: !escPosOk,
+    browserPayload: escPosOk ? undefined : browserPayload(),
     message: escPosOk ? undefined : nonEscPosPrinterMessage(printer),
     pendingAck: escPosOk,
     orderId,

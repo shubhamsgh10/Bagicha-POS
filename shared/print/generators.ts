@@ -1,6 +1,6 @@
 import * as E from "./escpos";
 import { formatISTDateTime } from "./formatDate";
-import type { BillPrintSettings, KOTPrintSettings } from "./types";
+import type { BillPrintSettings, BrowserPayload, KOTPrintSettings } from "./types";
 import { deriveBillTotals } from "../orderPricing";
 import { stripKitchenNotes } from "../orderItemText";
 
@@ -329,6 +329,14 @@ export function generateBillBuffer(params: {
   parts.push(E.CUT);
 
   return E.build(...parts);
+}
+
+/**
+ * Wire form of a ticket for the browser-print fallback: the client renders these exact bytes
+ * (shared/print/escposInterpret.ts) instead of building a second layout of its own.
+ */
+export function toBrowserPayload(buffer: Buffer, width: number): BrowserPayload {
+  return { encoding: "escpos-base64", data: buffer.toString("base64"), width };
 }
 
 export function toPrintJob(

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
 import { eq, asc, and, gt, or, lt, inArray, isNull, sql } from "drizzle-orm";
-import { getSettings } from "./settingsStore";
+import { getSettings, getLiveSettings } from "./settingsStore";
 import { computeDelta, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
 import {
   sendToPrinter,
@@ -454,7 +454,8 @@ export function registerPrintRoutes(app: Express): void {
       };
       if (!orderId || !type) return res.status(400).json({ message: "type and orderId are required" });
 
-      const settings = getSettings();
+      // Live settings: a preview rendered from fallback defaults would show the wrong tax rate.
+      const settings = getLiveSettings();
       const W = 48;
 
       const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
