@@ -1346,6 +1346,13 @@ export default function Reports() {
                       <span className="flex items-center gap-2 text-sm text-gray-600"><MinusCircle className="w-4 h-4 text-red-500" /> Waived off</span>
                       <span className="font-bold text-gray-800">{kotBillActivity?.billWaivedOff ?? 0}</span>
                     </div>
+                    {/* Cash ↔ UPI corrected after settling. The amount collected cannot change
+                        through that route (shared/paymentEdit.ts), so this tracks how often the
+                        wrong method is being tapped — not money moving. */}
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><ArrowLeftRight className="w-4 h-4 text-indigo-500" /> Method corrected</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.paymentMethodEdited ?? 0}</span>
+                    </div>
                   </div>
                 </div>
               </div>
