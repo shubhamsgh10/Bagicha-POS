@@ -1,5 +1,5 @@
 import { apiUrl, apiJson } from '@/lib/api';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,7 +9,11 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, RefreshCw, ChevronDown, ChevronUp, User, Phone, ShoppingBag, Search, X, Printer } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+// The standalone `toast`, deliberately NOT the useToast() hook: useToast() registers its caller
+// in a module-level listener list that EVERY toast notifies, so a row calling it re-renders on
+// every toast anywhere in the app. With ~300 rows on "All Dates" that was a ~1.3 s freeze each
+// time a toast fired (e.g. right after saving a payment-method change).
+import { toast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { billLines } from "@/lib/receiptText";
@@ -17,7 +21,10 @@ import { serialNum, avatarNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
-import { paymentLabel } from "@shared/paymentSplit";
+import { paymentLabel, matchesPaymentFilter, paymentFilterCounts, type PaymentFilter } from "@shared/paymentSplit";
+import { businessDateOf } from "@shared/businessDay";
+import { PaymentTag } from "@/components/PaymentTag";
+import { PaymentMethodDialog } from "@/components/PaymentMethodDialog";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
 
@@ -42,8 +49,21 @@ const neonDot: Record<string, string> = {
   cancelled: "bg-gray-400",
 };
 
-function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
+// memo: on "All Dates" this renders every order ever (~300 rows). Re-rendering all of them cost
+// ~4 ms each, i.e. ~1.3 s of frozen UI on ANY parent change — a refetch after a save, a search
+// keystroke, the 8-second poll finding a new order. React Query's structural sharing keeps an
+// unchanged order's object identity across refetches, so memo lets only the changed row redraw.
+const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(false);
+
+  // Only today's settled orders can have their method corrected — the server enforces the
+  // same three conditions (shared/paymentEdit.ts); this just hides a button that would 400.
+  // Yesterday's takings have already been counted in the cash book and reported.
+  const canEditPayment =
+    order.paymentStatus === "paid" &&
+    order.status !== "cancelled" &&
+    businessDateOf(new Date(order.createdAt)) === todayBusinessDate();
 
   const { data: detail } = useQuery<any>({
     queryKey: ["/api/orders", String(order.id)],
@@ -64,7 +84,6 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
   const taxableBase = billTotals.subtotal - billTotals.discount;
   const taxPct = taxableBase > 0 ? (billTotals.tax / taxableBase) * 100 : 0;
 
-  const { toast } = useToast();
   const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
 
   const showBillPreview = () => {
@@ -177,11 +196,17 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
               <span className="text-xs text-gray-400">
                 {new Date(order.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
               </span>
+              {/* The amount block on the right is hidden below sm, and the tag lives with it
+                  there — so on a phone it rides here instead, next to the customer line. */}
+              <PaymentTag order={order} className="sm:hidden" />
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 ml-3">
+          {/* How it was paid, read just before the amount it refers to. */}
+          <PaymentTag order={order} className="hidden sm:inline-flex" />
+
           {/* amount */}
           <div className="text-right hidden sm:block mr-1">
             <p className="font-bold text-sm text-gray-800">{fmt(parseFloat(order.totalAmount || "0"))}</p>
@@ -246,14 +271,29 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
                   { label: "Phone",     value: order.customerPhone || "—" },
                   { label: "Table",     value: order.tableNumber ? `Table ${order.tableNumber}` : "—" },
                   { label: "Type",      value: order.orderType?.replace("-", " ") || "—" },
-                  { label: "Payment",   value: order.paymentStatus === "paid" ? (paymentLabel(order) || "Cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—" },
+                  {
+                    label: "Payment",
+                    value: order.paymentStatus === "paid" ? (paymentLabel(order) || "Cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—",
+                    // Staff tap the wrong method more often than they miscount money, and it
+                    // only surfaces when the cash book disagrees at closing. Correcting it
+                    // cannot change the amount — see shared/paymentEdit.ts.
+                    action: canEditPayment ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingPayment(true); }}
+                        className="text-[10px] font-semibold text-emerald-700 hover:text-emerald-800 underline underline-offset-2 mt-0.5"
+                      >
+                        Change
+                      </button>
+                    ) : null,
+                  },
                   ...(order.createdByName ? [{ label: "Served By", value: order.createdByName }] : []),
                   ...(parseFloat(order.shortfallAmount || 0) > 0 ? [{ label: "Written Off", value: fmt(parseFloat(order.shortfallAmount)) }] : []),
                   ...(order.status === "cancelled" && order.cancelReason ? [{ label: "Cancel Reason", value: order.cancelReason }] : []),
-                ].map(({ label, value }) => (
+                ].map(({ label, value, action }: any) => (
                   <div key={label} className={`bg-[var(--paper-100)] rounded-xl px-3 py-2 ${label === "Cancel Reason" ? "col-span-2 sm:col-span-5" : ""}`}>
                     <p className="text-gray-400 font-medium uppercase tracking-wide text-[10px] mb-0.5">{label}</p>
                     <p className={`font-semibold truncate ${label === "Cancel Reason" ? "text-red-600 normal-case" : "capitalize"} ${label === "Payment" && value === "Due" ? "text-red-500" : label === "Payment" && value !== "—" ? "text-emerald-600" : label === "Written Off" ? "text-red-600" : label === "Cancel Reason" ? "" : "text-gray-700"}`}>{value}</p>
+                    {action}
                   </div>
                 ))}
               </div>
@@ -352,14 +392,99 @@ function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange:
       {printPreview && (
         <PrintPreviewModal preview={printPreview} onClose={() => setPrintPreview(null)} />
       )}
+
+      {/* Mounted only while open. This used to render in every row, closed, so a 293-order
+          "All Dates" list carried 293 copies of the dialog — each with its own useMutation,
+          useAuth query observer and a planPaymentEdit() run on every render. */}
+      {editingPayment && (
+        <PaymentMethodDialog open onOpenChange={setEditingPayment} order={order} />
+      )}
+    </motion.div>
+  );
+});
+
+function EmptyState({ label }: { label: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="text-center py-16 text-gray-400"
+    >
+      <ShoppingBag className="w-10 h-10 mx-auto mb-3 opacity-30" />
+      <p className="text-sm font-medium">{label}</p>
     </motion.div>
   );
 }
 
+// Draw the list in slices instead of all at once. "All Dates" is every order the restaurant has
+// ever taken (293 today, +~20 a day); mounting that many rows cost ~4 s on its own (~14 ms per
+// row — each has an animation wrapper, a dropdown and a data subscription), and every filter or
+// search that widened the list paid it again. Only the rows near the viewport are ever drawn;
+// the rest load as the user scrolls (sentinel below) or via the button. Filtering/searching still
+// run over the FULL list, so nothing is hidden — it just isn't drawn until it's reached.
+const ORDER_PAGE_SIZE = 30;
+
+function OrderList({ orders, emptyLabel, resetKey, onStatusChange }: {
+  orders: any[];
+  emptyLabel: string;
+  /** Changes whenever the filter/search/date changes, so a new result starts from the top. */
+  resetKey: string;
+  onStatusChange: (id: number, status: string) => void;
+}) {
+  const [limit, setLimit] = useState(ORDER_PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const hasMore = orders.length > limit;
+
+  useEffect(() => { setLimit(ORDER_PAGE_SIZE); }, [resetKey]);
+
+  // Re-created after every growth (deps include `limit`) so that a sentinel that is STILL inside
+  // the margin after a batch lands fires again — it keeps loading until the page is full, then
+  // stops. An observer's initial callback is what triggers that second round.
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) setLimit((l) => l + ORDER_PAGE_SIZE); },
+      { rootMargin: "600px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, limit]);
+
+  if (orders.length === 0) return <EmptyState label={emptyLabel} />;
+
+  return (
+    <>
+      {orders.slice(0, limit).map((order: any) => (
+        <OrderDetailRow key={order.id} order={order} onStatusChange={onStatusChange} />
+      ))}
+      {hasMore && (
+        <div ref={sentinelRef} className="flex items-center justify-center gap-3 py-4 text-xs text-gray-400">
+          <span>Showing {limit} of {orders.length}</span>
+          <button
+            onClick={() => setLimit((l) => l + ORDER_PAGE_SIZE)}
+            className="px-3 py-1 rounded-lg font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+          >
+            Show more
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+const PAYMENT_FILTERS: { key: PaymentFilter; label: string; dot: string; hint: string }[] = [
+  { key: "all",  label: "All",  dot: "",              hint: "Every order" },
+  { key: "cash", label: "Cash", dot: "bg-emerald-500", hint: "Paid with any cash — includes part payments" },
+  { key: "upi",  label: "UPI",  dot: "bg-indigo-500",  hint: "Paid with any UPI — includes part payments" },
+  { key: "due",  label: "Due",  dot: "bg-amber-500",   hint: "Served but not yet paid" },
+];
+
 export default function Orders() {
   const [, navigate] = useLocation();
-  const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [payFilter, setPayFilter] = useState<PaymentFilter>("all");
   const [businessDate, setBusinessDate] = useState(() => todayBusinessDate());
   const [showAll, setShowAll] = useState(false);
   const { data: orders, isLoading, isError, refetch } = useQuery({
@@ -380,11 +505,14 @@ export default function Orders() {
     },
   });
 
-  // Auto-refresh every 8 seconds
+  // Auto-refresh. "All Dates" is the entire order history (~240 KB today, growing ~20 orders a
+  // day) and is history, not a live board — re-downloading all of it every 8 s was pure waste, so
+  // it polls once a minute (the Refresh button and every save's invalidation still update it
+  // immediately). A single day stays at 8 s.
   useEffect(() => {
-    const id = setInterval(() => refetch(), 8000);
+    const id = setInterval(() => refetch(), showAll ? 60_000 : 8_000);
     return () => clearInterval(id);
-  }, [refetch]);
+  }, [refetch, showAll]);
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) =>
@@ -396,24 +524,40 @@ export default function Orders() {
     onError: () => toast({ title: "Failed to update status", variant: "destructive" }),
   });
 
-const q = search.trim().toLowerCase();
+  const q = search.trim().toLowerCase();
+  // Search AND payment filter, applied to every status tab alike. Both run over the full list —
+  // OrderList only limits how many of the matches are DRAWN.
   const filterOrders = (list: any[]) => {
-    if (!q) return list;
+    if (!q && payFilter === "all") return list;
     return list.filter((o: any) =>
-      o.orderNumber?.toLowerCase().includes(q) ||
-      serialNum(o.id).toLowerCase().includes(q) ||
-      String(o.id).includes(q.replace(/^#/, "")) ||
-      o.customerName?.toLowerCase().includes(q) ||
-      o.customerPhone?.toLowerCase().includes(q) ||
-      o.tableNumber?.toLowerCase().includes(q)
+      matchesPaymentFilter(o, payFilter) && (
+        !q ||
+        o.orderNumber?.toLowerCase().includes(q) ||
+        serialNum(o.id).toLowerCase().includes(q) ||
+        String(o.id).includes(q.replace(/^#/, "")) ||
+        o.customerName?.toLowerCase().includes(q) ||
+        o.customerPhone?.toLowerCase().includes(q) ||
+        o.tableNumber?.toLowerCase().includes(q)
+      )
     );
   };
 
   const getOrdersByStatus = (status: string) =>
     filterOrders((orders as any[])?.filter((o: any) => o.status === status) || []);
 
-  const handleStatusChange = (id: number, status: string) =>
-    updateStatusMutation.mutate({ id, status });
+  // Chip counts over the date-scoped list (not the search or the status tab), so the numbers stay
+  // put while typing and answer "how many Due / Cash / UPI orders in this range". Built on the
+  // same matchesPaymentFilter the rows use — they cannot disagree.
+  const payCounts = useMemo(() => paymentFilterCounts((orders as any[]) ?? []), [orders]);
+  const listKey = `${q}|${payFilter}|${showAll ? "all" : businessDate}`;
+
+  // Stable identity (mutate is stable in TanStack Query v5) — a fresh arrow every render would
+  // defeat React.memo on every OrderDetailRow below and redraw all of them on any change.
+  const { mutate: updateStatus } = updateStatusMutation;
+  const handleStatusChange = useCallback(
+    (id: number, status: string) => updateStatus({ id, status }),
+    [updateStatus],
+  );
 
   if (isLoading) {
     return (
@@ -448,17 +592,6 @@ const q = search.trim().toLowerCase();
       </div>
     );
   }
-
-  const EmptyState = ({ label }: { label: string }) => (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="text-center py-16 text-gray-400"
-    >
-      <ShoppingBag className="w-10 h-10 mx-auto mb-3 opacity-30" />
-      <p className="text-sm font-medium">{label}</p>
-    </motion.div>
-  );
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "transparent" }}>
@@ -512,6 +645,37 @@ const q = search.trim().toLowerCase();
             </button>
           )}
         </div>
+
+        {/* Payment filter — Cash / UPI / Due. A part payment is listed under BOTH Cash and UPI
+            (it is both), the same way Reports → Payments counts it. */}
+        <div
+          role="group"
+          aria-label="Filter by payment"
+          className="flex items-center gap-0.5 rounded-xl p-1"
+          style={{ background: "var(--paper-100)", border: "1px solid var(--line)", boxShadow: "var(--shadow-xs)" }}
+        >
+          {PAYMENT_FILTERS.map(({ key, label, dot, hint }) => {
+            const active = payFilter === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                title={hint}
+                aria-pressed={active}
+                onClick={() => setPayFilter(key)}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 min-h-[32px] text-xs font-semibold transition-all ${
+                  active ? "bg-white shadow-sm text-emerald-700" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {dot && <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />}
+                {label}
+                <span className={`tabular-nums text-[10px] ${active ? "text-emerald-600/80" : "text-gray-400"}`}>
+                  {payCounts[key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Tabs + Orders ── */}
@@ -537,20 +701,22 @@ const q = search.trim().toLowerCase();
           </TabsList>
 
           <TabsContent value="all" className="mt-0 space-y-0">
-            {filterOrders((orders as any[]) || []).length === 0
-              ? <EmptyState label="No orders found" />
-              : filterOrders((orders as any[]) || []).map((order: any) => (
-                  <OrderDetailRow key={order.id} order={order} onStatusChange={handleStatusChange} />
-                ))}
+            <OrderList
+              orders={filterOrders((orders as any[]) || [])}
+              emptyLabel="No orders found"
+              resetKey={listKey}
+              onStatusChange={handleStatusChange}
+            />
           </TabsContent>
 
           {["pending","preparing","ready","served","delivered","cancelled"].map((status) => (
             <TabsContent key={status} value={status} className="mt-0 space-y-0">
-              {getOrdersByStatus(status).length === 0
-                ? <EmptyState label={`No ${status} orders`} />
-                : getOrdersByStatus(status).map((order: any) => (
-                    <OrderDetailRow key={order.id} order={order} onStatusChange={handleStatusChange} />
-                  ))}
+              <OrderList
+                orders={getOrdersByStatus(status)}
+                emptyLabel={`No ${status} orders`}
+                resetKey={listKey}
+                onStatusChange={handleStatusChange}
+              />
             </TabsContent>
           ))}
         </Tabs>
