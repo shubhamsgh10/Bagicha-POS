@@ -82,6 +82,7 @@ export async function getAuditLogs(opts: {
 const KOT_BILL_ACTIONS = [
   "order.cancel", "order.move_table", "order.write_off",
   "kot.reprint", "bill.reprint", "order.items_edit", "order.item_cancel",
+  "order.payment_method_edit",
 ] as const;
 
 export interface KotBillActivitySummary {
@@ -94,6 +95,10 @@ export interface KotBillActivitySummary {
   billModified: number;
   billReprinted: number;
   billWaivedOff: number;
+  /** Payment method corrected after settlement (cash ↔ upi). The amount collected is
+   *  unchanged by construction — see shared/paymentEdit.ts — so this is a labelling
+   *  correction to review, not a money deviation like a write-off. */
+  paymentMethodEdited: number;
   recentEvents: Array<Pick<AuditLog, "id" | "createdAt" | "actorName" | "actorRole" | "action" | "entityId" | "metadata">>;
 }
 
@@ -113,6 +118,7 @@ export async function getKotBillActivitySummary(startDate: Date, endDate: Date):
     kotShifted:   sql<number>`count(*) filter (where ${auditLogs.action} = 'order.move_table')`,
     kotItemCancelled: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.item_cancel')`,
     billWaivedOff: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.write_off')`,
+    paymentMethodEdited: sql<number>`count(*) filter (where ${auditLogs.action} = 'order.payment_method_edit')`,
     // Merged per the locked decision — matches the Petpooja reference's single
     // "Re-printed" tile under Bills. The drill-down list below still distinguishes
     // kot.reprint from bill.reprint per-row.
@@ -165,6 +171,7 @@ export async function getKotBillActivitySummary(startDate: Date, endDate: Date):
     billModified: Number(counts?.billModified ?? 0),
     billReprinted: Number(counts?.billReprinted ?? 0),
     billWaivedOff: Number(counts?.billWaivedOff ?? 0),
+    paymentMethodEdited: Number(counts?.paymentMethodEdited ?? 0),
     recentEvents,
   };
 }

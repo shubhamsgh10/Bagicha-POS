@@ -10,7 +10,7 @@
  * only), as read from the shared DB while debugging the report.
  * Run: npx tsx scripts/verify-payment-split.ts
  */
-import { collectedByMethod, paymentLabel, summarizeCollected } from "../shared/paymentSplit";
+import { collectedByMethod, paymentLabel, summarizeCollected, matchesPaymentFilter, paymentFilterCounts } from "../shared/paymentSplit";
 
 const checks: Array<[string, boolean]> = [];
 const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
@@ -118,6 +118,35 @@ const paid = oct3.filter(o => o.paymentStatus === "paid");
   checks.push(["label: single upi", paymentLabel(oct3[3]) === "UPI"]);
   checks.push(["label: legacy row uses its method", paymentLabel(R(6, "paid", "upi", null, "10", "10", "0", "0")) === "UPI"]);
   checks.push(["label: nothing recorded → empty string", paymentLabel(R(7, "pending", null, null, "10", null, "0", "0")) === ""]);
+}
+
+// 7. Order-page filter (Cash / UPI / Due) — same legs the Reports tiles use, so the two can never
+//    disagree about which orders are "Cash". A part payment belongs to BOTH.
+{
+  const ids = (f: "all" | "cash" | "upi" | "due") => oct3.filter(o => matchesPaymentFilter(o, f)).map(o => o.id);
+  checks.push(["filter cash = the 8 orders with a cash leg (part payments included)",
+    JSON.stringify(ids("cash")) === JSON.stringify([1790, 1791, 1792, 1795, 1796, 1800, 1804, 1807])]);
+  checks.push(["filter upi = the 11 orders with a upi leg (part payments included)",
+    JSON.stringify(ids("upi")) === JSON.stringify([1791, 1792, 1793, 1794, 1795, 1797, 1798, 1801, 1802, 1803, 1809])]);
+  checks.push(["a part payment (#1792) shows under BOTH cash and upi", ids("cash").indexOf(1792) !== -1 && ids("upi").indexOf(1792) !== -1]);
+  checks.push(["filter due = only the served-but-unpaid order (#1806)", JSON.stringify(ids("due")) === JSON.stringify([1806])]);
+  checks.push(["a due order is NOT counted as cash even though its stored method says cash", ids("cash").indexOf(1806) === -1]);
+  checks.push(["cancelled orders match no payment filter", [1799, 1805, 1808].every(id => ids("cash").indexOf(id) === -1 && ids("upi").indexOf(id) === -1 && ids("due").indexOf(id) === -1)]);
+  checks.push(["filter all matches everything, cancelled included", ids("all").length === oct3.length]);
+
+  const c = paymentFilterCounts(oct3);
+  checks.push(["counts agree with the Reports tiles (cash 8, upi 11)", c.cash === 8 && c.upi === 11]);
+  checks.push(["counts: due 1, all 20", c.due === 1 && c.all === 20]);
+  checks.push(["counts equal what the filter returns (no second implementation to drift)",
+    c.cash === ids("cash").length && c.upi === ids("upi").length && c.due === ids("due").length]);
+  checks.push(["counts of an empty list are all zero", JSON.stringify(paymentFilterCounts([])) === JSON.stringify({ all: 0, cash: 0, upi: 0, due: 0 })]);
+
+  // Billing's legacy "mark as paid" path can leave a due order with paymentMethod "due" — still Due.
+  const legacyDue = R(9001, "pending", "due", {}, "100.00", null, "0", "0");
+  checks.push(["legacy method:'due' order with status served is Due", matchesPaymentFilter(legacyDue, "due")]);
+  // an order still being prepared and not yet settled is neither paid nor "due"
+  const inProgress = R(9002, "pending", null, null, "100.00", null, "0", "0", "preparing");
+  checks.push(["an unsettled order still being prepared is not Due", !matchesPaymentFilter(inProgress, "due") && !matchesPaymentFilter(inProgress, "cash")]);
 }
 
 let failed = 0;

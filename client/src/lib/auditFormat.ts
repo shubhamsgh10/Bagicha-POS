@@ -15,6 +15,9 @@ export interface ActionLabel {
 export const ACTION_LABELS: Record<string, ActionLabel> = {
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
+  // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
+  // this is a corrected label, not money forgiven.
+  "order.payment_method_edit": { label: "Payment Method Changed", color: "bg-indigo-100 text-indigo-800" },
   "order.cancel":         { label: "Cancellation",   color: "bg-red-100 text-red-800" },
   "order.items_edit":     { label: "Bill Edited",    color: "bg-amber-100 text-amber-800" },
   // Deliberately a different color from "order.cancel" above — that's the whole order
@@ -58,6 +61,7 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     }) || meta.paymentMethod;
     return `₹${meta.paidAmount} via ${via}${Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : ""}`;
   }
+  if (action === "order.payment_method_edit") return `${meta.beforeLabel} → ${meta.afterLabel} (₹${meta.collectedTotal} unchanged) — ${meta.reason ?? ""}`;
   if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;
   if (action === "order.items_edit") {

@@ -128,6 +128,7 @@ export interface IStorage {
   ): Promise<Order>;
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
+  repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
   deleteOrder(id: number): Promise<void>;
   mergeOrders(params: {
     targetOrderId: number;
@@ -834,6 +835,34 @@ export class DatabaseStorage implements IStorage {
       ...(order as any),
       updatedAt: new Date(),
     }).where(and(eq(orders.id, id), eq(orders.paymentStatus, "pending"))).returning();
+    return updated;
+  }
+
+  // Re-label a settled order's payment method (cash ↔ upi, or a corrected split) — the
+  // write half of shared/paymentEdit.ts. Deliberately NOT updateOrder(): this is conditional
+  // on the row still being paid AND still being the exact revision the caller planned
+  // against (updatedAt as an optimistic-concurrency token). Two managers correcting the same
+  // order at once would otherwise both plan against the same "before" split and the second
+  // write would silently overwrite the first, with two audit rows claiming contradictory
+  // before/after states. The loser gets undefined and is told to retry.
+  //
+  // ⚠️ The token MUST be updatedAt, never createdAt. Postgres timestamps carry microseconds
+  // but a JS Date only has milliseconds, so a value that round-trips through Drizzle loses
+  // precision and an equality match can never succeed. updatedAt is always written by the
+  // app (`new Date()`, millisecond-precision) — and an order can only reach this method
+  // once settleOrderIfUnpaid has written it — whereas createdAt comes from the column's
+  // defaultNow() and really does carry microseconds (verified against the live DB: 0 of 293
+  // orders had sub-millisecond updatedAt, 292 of 293 had sub-millisecond createdAt). Keying
+  // this on createdAt would make every edit fail as a phantom conflict.
+  async repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined> {
+    const [updated] = await db.update(orders).set({
+      ...(patch as any),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(orders.id, id),
+      eq(orders.paymentStatus, "paid"),
+      eq(orders.updatedAt, expectedUpdatedAt),
+    )).returning();
     return updated;
   }
 

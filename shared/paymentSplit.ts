@@ -95,6 +95,49 @@ export function summarizeCollected(paidOrders: PaymentOrderLike[]): CollectedSum
   return { breakdown, totalPaid: round2(totalPaid), partCount };
 }
 
+export type PaymentFilter = "all" | "cash" | "upi" | "due";
+
+export interface PaymentFilterOrder extends PaymentOrderLike {
+  status?: string | null;
+}
+
+/**
+ * A bill served but not yet paid — the open-tab set, identical to the Reports "Due" figure, the
+ * amber Due tag on the Orders page and storage.getOpenTabsByCustomer. NOT keyed on
+ * `paymentMethod`: a due order's stored method is a placeholder ("cash", or "due" from Billing's
+ * legacy path), so reading it would call every open tab Cash.
+ */
+export function isDueOrder(order: PaymentFilterOrder): boolean {
+  return order.paymentStatus === "pending" && order.status === "served";
+}
+
+/**
+ * Does an order belong under the Orders-page Cash / UPI / Due filter?
+ *
+ * Cash and UPI come from the same legs as the Reports tiles (collectedByMethod), so the two can
+ * never disagree about which orders are "Cash" — and a part payment belongs to BOTH, exactly as
+ * it counts in both Reports tiles. Cancelled and unsettled orders collected nothing, so they
+ * match neither; "all" matches everything.
+ */
+export function matchesPaymentFilter(order: PaymentFilterOrder, filter: PaymentFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "due") return isDueOrder(order) && order.status !== "cancelled";
+  return (collectedByMethod(order)[filter] ?? 0) > 0;
+}
+
+/** One pass over the list for the filter chips' counts — built on matchesPaymentFilter so the
+ *  numbers on the chips and the rows the filter returns cannot drift apart. */
+export function paymentFilterCounts(orders: PaymentFilterOrder[]): Record<PaymentFilter, number> {
+  const counts: Record<PaymentFilter, number> = { all: 0, cash: 0, upi: 0, due: 0 };
+  for (const o of orders) {
+    counts.all++;
+    if (matchesPaymentFilter(o, "cash")) counts.cash++;
+    if (matchesPaymentFilter(o, "upi")) counts.upi++;
+    if (matchesPaymentFilter(o, "due")) counts.due++;
+  }
+  return counts;
+}
+
 const METHOD_NAMES: Record<string, string> = { cash: "Cash", upi: "UPI" };
 const ORDER = ["cash", "upi"];
 
