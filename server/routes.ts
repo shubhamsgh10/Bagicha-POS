@@ -11,6 +11,7 @@ import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
 import { summarizeCollected } from "@shared/paymentSplit";
+import { planPaymentEdit } from "@shared/paymentEdit";
 import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
 import { computeDelta, type SnapshotItem } from "@shared/kotDelta";
 import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
@@ -2508,6 +2509,73 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Payment error:", error);
       res.status(500).json({ error: "Failed to process payment" });
+    }
+  });
+
+  // ── Correct a settled order's payment METHOD (not its amount) ────────────────
+  // Staff tap the wrong method more often than they mis-count money, and the mistake is
+  // invisible until the cash book disagrees at closing. This re-labels cash ↔ upi (or fixes
+  // a mistyped split) and nothing else: shared/paymentEdit.ts refuses any request whose
+  // Cash + UPI doesn't equal what was already collected, so no amount can move through here.
+  //
+  // Manager elevation, same tier as every other money deviation (cancel, write-off,
+  // discount). Deliberately NOT a re-settle — POST /api/orders/:id/payment fires loyalty
+  // points, the customer WhatsApp message and feedback scheduling exactly once, and none of
+  // that should re-fire because a label was corrected.
+  app.post("/api/orders/:id/payment-method", requireAuth, requireElevation("manager"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
+
+      const existing = await storage.getOrderById(id);
+      if (!existing) return res.status(404).json({ error: "Order not found" });
+
+      const { cash, upi, reason } = req.body as { cash?: unknown; upi?: unknown; reason?: unknown };
+      const plan = planPaymentEdit(
+        existing as any,
+        { cash: Number(cash), upi: Number(upi), reason: String(reason ?? "") },
+        todayBusinessDate(),
+      );
+      if (!plan.ok) {
+        return res.status(400).json({ error: plan.message, code: plan.code });
+      }
+
+      const updated = await storage.repaymentMethodIfUnchanged(
+        id,
+        {
+          paymentMethod: plan.primaryMethod,
+          paymentBreakdown: plan.breakdown,
+          paidAmount: plan.paidAmount,
+          changeAmount: plan.changeAmount,
+        } as any,
+        (existing as any).updatedAt,
+      );
+      if (!updated) {
+        // Either someone else corrected it between our read and our write, or the row is no
+        // longer paid. Re-reading is the only safe move — the plan's "before" is now stale.
+        return res.status(409).json({
+          error: "This order changed while you were editing it. Reopen it and try again.",
+          code: "conflict",
+        });
+      }
+
+      logAudit(req, "order.payment_method_edit", "order", id, {
+        orderNumber: (existing as any).orderNumber,
+        beforeLabel: plan.before.label,
+        afterLabel: plan.after.label,
+        beforeCash: plan.before.cash,
+        beforeUpi: plan.before.upi,
+        afterCash: plan.after.cash,
+        afterUpi: plan.after.upi,
+        collectedTotal: plan.collectedTotal,
+        reason: plan.reason,
+      });
+
+      broadcast({ type: "ORDER_UPDATE", order: updated });
+      res.json(updated);
+    } catch (error) {
+      console.error("[payment-method] edit error:", error);
+      res.status(500).json({ error: "Failed to update payment method" });
     }
   });
 
