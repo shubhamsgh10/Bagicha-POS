@@ -18,6 +18,9 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
   // this is a corrected label, not money forgiven.
   "order.payment_method_edit": { label: "Payment Method Changed", color: "bg-indigo-100 text-indigo-800" },
+  // A customer paying an open tab. Money IS collected here (unlike the correction above), so it is
+  // green like a payment — a write-off, if any, gets its own red row.
+  "order.due_settled":    { label: "Due Settled",    color: "bg-emerald-100 text-emerald-800" },
   "order.cancel":         { label: "Cancellation",   color: "bg-red-100 text-red-800" },
   "order.items_edit":     { label: "Bill Edited",    color: "bg-amber-100 text-amber-800" },
   // Deliberately a different color from "order.cancel" above — that's the whole order
@@ -45,6 +48,12 @@ export function actionLabel(action: string): ActionLabel {
   return ACTION_LABELS[action] ?? { label: action, color: "bg-gray-100 text-gray-700" };
 }
 
+/** " · approved by rajbhaghel" when the row records whose PIN approved it (older rows don't). */
+function approvedSuffix(meta: Record<string, unknown>): string {
+  const by = meta.approvedBy as { name?: string; role?: string } | null | undefined;
+  return by?.name ? ` · approved by ${by.name}` : "";
+}
+
 export function metaSummary(action: string, meta: Record<string, unknown> | null): string {
   if (!meta) return "";
   // Was `meta.amount` — routes.ts's order.payment log has always written `paidAmount`, so
@@ -61,8 +70,12 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     }) || meta.paymentMethod;
     return `₹${meta.paidAmount} via ${via}${Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : ""}`;
   }
-  if (action === "order.payment_method_edit") return `${meta.beforeLabel} → ${meta.afterLabel} (₹${meta.collectedTotal} unchanged) — ${meta.reason ?? ""}`;
-  if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}`;
+  if (action === "order.payment_method_edit") return `${meta.beforeLabel} → ${meta.afterLabel} (₹${meta.collectedTotal} unchanged) — ${meta.reason ?? ""}${approvedSuffix(meta)}`;
+  if (action === "order.due_settled") {
+    const short = Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : "";
+    return `${meta.customerName ? `${meta.customerName} · ` : ""}Due ₹${meta.orderTotal} settled — ${meta.afterLabel}${short}${approvedSuffix(meta)}`;
+  }
+  if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}${approvedSuffix(meta)}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;
   if (action === "order.items_edit") {
     const added = (meta.added as unknown[])?.length ?? 0;

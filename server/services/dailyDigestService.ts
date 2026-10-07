@@ -10,7 +10,7 @@
  */
 
 import { db } from "../db";
-import { and, gte, lte, sql, eq, desc, isNotNull } from "drizzle-orm";
+import { and, or, gte, lte, sql, eq, desc, isNotNull, isNull } from "drizzle-orm";
 import {
   orders,
   orderItems,
@@ -75,8 +75,20 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   // Payment mix by what was actually collected per method (shared/paymentSplit.ts) — the old
   // loop credited each order's whole billed total to its single `paymentMethod` label, which
   // is only the largest leg of a part payment (and ignored write-offs and change).
+  // It is the money RECEIVED that day (paid_at, falling back to the billed day for rows without
+  // one), so a due a customer settled today lands in today's digest, not in the day it was billed.
+  const receivedToday = await db
+    .select()
+    .from(orders)
+    .where(and(
+      eq(orders.paymentStatus, "paid"),
+      or(
+        and(isNotNull(orders.paidAt), gte(orders.paidAt, start), lte(orders.paidAt, end)),
+        and(isNull(orders.paidAt), gte(orders.createdAt, start), lte(orders.createdAt, end)),
+      ),
+    ));
   const paymentBreakdown: Record<string, number> = {};
-  const collected = summarizeCollected(paidOrders as any[]).breakdown;
+  const collected = summarizeCollected(receivedToday as any[]).breakdown;
   for (const m of Object.keys(collected)) paymentBreakdown[m] = collected[m].amount;
 
   // Top items today

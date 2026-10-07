@@ -32,4 +32,7 @@ export const ORDER_CREATE_FORCED_DEFAULTS = {
   shortfallAmount: "0",
   paymentMethod: null,
   paymentBreakdown: null,
+  // paid_at picks the business day a payment counts on AND how long it can be corrected, so it is
+  // stamped only by the server's own settle paths — a client can never choose it.
+  paidAt: null,
 };

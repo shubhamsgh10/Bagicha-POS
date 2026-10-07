@@ -21,10 +21,10 @@ import { serialNum, avatarNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
-import { paymentLabel, matchesPaymentFilter, paymentFilterCounts, type PaymentFilter } from "@shared/paymentSplit";
-import { businessDateOf } from "@shared/businessDay";
+import { paymentLabel, matchesPaymentFilter, paymentFilterCounts, isDueOrder, collectedBusinessDate, type PaymentFilter } from "@shared/paymentSplit";
 import { PaymentTag } from "@/components/PaymentTag";
 import { PaymentMethodDialog } from "@/components/PaymentMethodDialog";
+import { DueSettleDialog } from "@/components/DueSettleDialog";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
 
@@ -56,18 +56,24 @@ const neonDot: Record<string, string> = {
 const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [editingPayment, setEditingPayment] = useState(false);
+  const [settlingDue, setSettlingDue] = useState(false);
 
-  // Only today's settled orders can have their method corrected — the server enforces the
-  // same three conditions (shared/paymentEdit.ts); this just hides a button that would 400.
-  // Yesterday's takings have already been counted in the cash book and reported.
+  // Only a payment RECEIVED today can be corrected — the server enforces the same three
+  // conditions (shared/paymentEdit.ts); this just hides a button that would 400. "Today" is the day
+  // the money arrived (paidAt), not the day the order was billed: a due settled this morning is
+  // correctable until the business day ends, then locked for good. Yesterday's takings have already
+  // been counted in the cash book and reported.
   const canEditPayment =
     order.paymentStatus === "paid" &&
     order.status !== "cancelled" &&
-    businessDateOf(new Date(order.createdAt)) === todayBusinessDate();
+    collectedBusinessDate(order) === todayBusinessDate();
+
+  // An open due can ALWAYS be settled, whatever day it was billed — there is no age limit on a debt.
+  const canSettleDue = isDueOrder(order);
 
   const { data: detail } = useQuery<any>({
     queryKey: ["/api/orders", String(order.id)],
-    enabled: expanded,
+    enabled: expanded || settlingDue,
     staleTime: 0,
   });
 
@@ -198,14 +204,14 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
               </span>
               {/* The amount block on the right is hidden below sm, and the tag lives with it
                   there — so on a phone it rides here instead, next to the customer line. */}
-              <PaymentTag order={order} className="sm:hidden" />
+              <PaymentTag order={order} className="sm:hidden" onSettleDue={canSettleDue ? () => setSettlingDue(true) : undefined} />
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 ml-3">
           {/* How it was paid, read just before the amount it refers to. */}
-          <PaymentTag order={order} className="hidden sm:inline-flex" />
+          <PaymentTag order={order} className="hidden sm:inline-flex" onSettleDue={canSettleDue ? () => setSettlingDue(true) : undefined} />
 
           {/* amount */}
           <div className="text-right hidden sm:block mr-1">
@@ -274,10 +280,18 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
                   {
                     label: "Payment",
                     value: order.paymentStatus === "paid" ? (paymentLabel(order) || "Cash") : order.paymentStatus === "pending" && order.status === "served" ? "Due" : "—",
-                    // Staff tap the wrong method more often than they miscount money, and it
-                    // only surfaces when the cash book disagrees at closing. Correcting it
-                    // cannot change the amount — see shared/paymentEdit.ts.
-                    action: canEditPayment ? (
+                    // A due is always one tap from "Settle due" (Cash / UPI / Part). A settled order can
+                    // be corrected while its paid day is today — staff tap the wrong method more often
+                    // than they miscount money, and it only surfaces when the cash book disagrees at
+                    // closing. Correcting it cannot change the amount — see shared/paymentEdit.ts.
+                    action: canSettleDue ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSettlingDue(true); }}
+                        className="text-[10px] font-semibold text-amber-700 hover:text-amber-800 underline underline-offset-2 mt-0.5"
+                      >
+                        Settle due
+                      </button>
+                    ) : canEditPayment ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); setEditingPayment(true); }}
                         className="text-[10px] font-semibold text-emerald-700 hover:text-emerald-800 underline underline-offset-2 mt-0.5"
@@ -398,6 +412,19 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
           useAuth query observer and a planPaymentEdit() run on every render. */}
       {editingPayment && (
         <PaymentMethodDialog open onOpenChange={setEditingPayment} order={order} />
+      )}
+      {settlingDue && (
+        <DueSettleDialog
+          order={order}
+          items={items.length > 0 ? items.map((i: any) => ({
+            name: i.name || "Item",
+            quantity: i.quantity,
+            price: parseFloat(i.price ?? "0"),
+            size: i.size ?? null,
+            serviceMode: i.serviceMode ?? null,
+          })) : undefined}
+          onClose={() => setSettlingDue(false)}
+        />
       )}
     </motion.div>
   );

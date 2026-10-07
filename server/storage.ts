@@ -13,7 +13,7 @@ import {
   type StaffMember, type InsertStaffMember,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, sql, asc, inArray, ne, getTableColumns } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, sql, asc, inArray, ne, isNull, isNotNull, getTableColumns } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
@@ -129,6 +129,8 @@ export interface IStorage {
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
+  settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
+  getOrdersCollectedBetween(startDate: Date, endDate: Date): Promise<Order[]>;
   deleteOrder(id: number): Promise<void>;
   mergeOrders(params: {
     targetOrderId: number;
@@ -727,10 +729,15 @@ export class DatabaseStorage implements IStorage {
     // placeholder and silently ignored whatever method was actually passed in here —
     // this bulk settle is a real payment event happening now, so the method chosen at
     // settle time (Reports.tsx's Cash/UPI picker) must be authoritative.
+    const settledAt = new Date();
     const settled = await db.update(orders).set({
       paymentStatus: "paid",
       paymentMethod,
       paidAmount: sql`coalesce(${orders.totalAmount}, '0')`,
+      // The money arrives NOW, not on the day each tab was billed — stamping this is what makes the
+      // Tables card / Reports count it today and keeps the "correct a payment" window on today.
+      paidAt: settledAt,
+      updatedAt: settledAt,
     }).where(and(
       inArray(orders.id, mine.map((o) => o.id)),
       eq(orders.paymentStatus, "pending"),
@@ -864,6 +871,45 @@ export class DatabaseStorage implements IStorage {
       eq(orders.updatedAt, expectedUpdatedAt),
     )).returning();
     return updated;
+  }
+
+  // Settle an order that is still an open DUE (served + unpaid) — the write half of
+  // shared/dueSettlement.ts. Conditional on the row still being exactly that AND still the revision
+  // the caller planned against (updatedAt as an optimistic-concurrency token, same reasoning and same
+  // millisecond-precision caveat as repaymentMethodIfUnchanged above): two people settling the same
+  // due at once, or the Reports "Mark all paid" button landing in between, must not both succeed and
+  // record two different payments. The loser gets undefined and is told to reopen the order.
+  // Stamps paidAt = now: THIS is the moment the money was received, whatever day the order was billed.
+  async settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined> {
+    const now = new Date();
+    const [updated] = await db.update(orders).set({
+      ...(patch as any),
+      paymentStatus: "paid",
+      paidAt: now,
+      updatedAt: now,
+    }).where(and(
+      eq(orders.id, id),
+      eq(orders.paymentStatus, "pending"),
+      eq(orders.status, "served"),
+      eq(orders.updatedAt, expectedUpdatedAt),
+    )).returning();
+    return updated;
+  }
+
+  // Paid orders whose money was RECEIVED in [start, end] — by paidAt, falling back to createdAt for
+  // rows that have none (see shared/paymentSplit.ts collectedAt). This is the cash-drawer view:
+  // a due billed last week and paid today belongs to today here, while getOrdersByDateRange (billed
+  // in range) is still what sales/billing views and the "unpaid dues" list use.
+  async getOrdersCollectedBetween(startDate: Date, endDate: Date): Promise<Order[]> {
+    return await db.select().from(orders)
+      .where(and(
+        eq(orders.paymentStatus, "paid"),
+        or(
+          and(isNotNull(orders.paidAt), gte(orders.paidAt, startDate), lte(orders.paidAt, endDate)),
+          and(isNull(orders.paidAt), gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)),
+        ),
+      ))
+      .orderBy(desc(orders.createdAt));
   }
 
   async deleteOrder(id: number): Promise<void> {

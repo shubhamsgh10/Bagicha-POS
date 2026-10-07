@@ -14,6 +14,7 @@
  * Pure (no DB, no React) so the server routes, the client pages and scripts/verify-payment-split.ts
  * all share the exact same function.
  */
+import { businessDateOf } from "./businessDay";
 
 export interface PaymentOrderLike {
   /** When present and not "paid", nothing was collected — see collectedByMethod. */
@@ -93,6 +94,28 @@ export function summarizeCollected(paidOrders: PaymentOrderLike[]): CollectedSum
     }
   }
   return { breakdown, totalPaid: round2(totalPaid), partCount };
+}
+
+/** An order's billed time and (once settled by a server settle path) its paid time. */
+export interface CollectedDateOrder {
+  createdAt: string | Date;
+  paidAt?: string | Date | null;
+}
+
+/**
+ * WHEN the money for this order was received. A due is billed on one day and often paid days
+ * later; the owner's cash book counts it the day it arrived. `paidAt` is stamped by every server
+ * settle path (payment route, settle-due, Reports' bulk "Mark all paid"); rows that predate it
+ * — and Razorpay confirmations, which don't stamp it — have no `paidAt` and fall back to the day
+ * they were billed, which is exactly how they were counted before the column existed.
+ */
+export function collectedAt(order: CollectedDateOrder): Date {
+  return new Date((order.paidAt ?? order.createdAt) as string | Date);
+}
+
+/** The business day (5am-IST cutoff) the money was received on. */
+export function collectedBusinessDate(order: CollectedDateOrder): string {
+  return businessDateOf(collectedAt(order));
 }
 
 export type PaymentFilter = "all" | "cash" | "upi" | "due";

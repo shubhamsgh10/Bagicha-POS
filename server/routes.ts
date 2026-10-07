@@ -10,8 +10,9 @@ import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orde
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
-import { summarizeCollected } from "@shared/paymentSplit";
+import { summarizeCollected, collectedBusinessDate } from "@shared/paymentSplit";
 import { planPaymentEdit } from "@shared/paymentEdit";
+import { planDueSettlement } from "@shared/dueSettlement";
 import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
 import { computeDelta, type SnapshotItem } from "@shared/kotDelta";
 import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
@@ -78,7 +79,7 @@ import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsapp
 import { registerStaffRoutes } from "./staffRoutes";
 import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
 import { buildSpecialInstructions } from "@shared/orderItemText";
-import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation } from "./elevation";
+import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
@@ -612,8 +613,14 @@ export async function registerRoutes(
       const match = allUsers.find(
         (u) => (ROLE_LEVEL[u.role] ?? 0) >= targetLevel && u.pin === String(pin)
       );
-      // Back the client PIN dialog with a short-lived server-side elevation grant.
-      if (match) grantElevation(req, ROLE_LEVEL[match.role] ?? targetLevel);
+      // Back the client PIN dialog with a short-lived server-side elevation grant. The grant also
+      // remembers WHOSE PIN opened it, so an audit row can say who approved a settle/correction
+      // (the session's own user is just whoever happened to be logged in at the till).
+      if (match) {
+        grantElevation(req, ROLE_LEVEL[match.role] ?? targetLevel, Date.now(), {
+          id: `u:${match.id}`, name: match.username, role: match.role,
+        });
+      }
       res.json({ valid: !!match });
     } catch (err) {
       console.error("Verify PIN error:", err);
@@ -1353,16 +1360,19 @@ export async function registerRoutes(
       // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — a naive
       // local-midnight boundary disagreed with those pages for any order placed between
       // midnight and 5am IST, even on an IST-hosted server.
-      const { start: today, end: todayEnd } = businessDayRange(todayBusinessDate());
+      const todayDate = todayBusinessDate();
 
       const allOrders = await storage.getOrders();
       const activeOrders = allOrders.filter(
         o => o.status !== "served" && o.status !== "cancelled"
       ).length;
-      const paidToday = allOrders.filter(o => {
-        const d = new Date(o.createdAt);
-        return d >= today && d <= todayEnd && o.paymentStatus === 'paid';
-      });
+      // Counted on the day the money was RECEIVED (paid_at), not the day the order was billed: a
+      // due from last week that a customer paid this morning is in today's drawer, and last week's
+      // closed figures no longer change after the fact. Rows with no paid_at (older orders, Razorpay)
+      // fall back to the billed day — identical to how they were always counted.
+      const paidToday = allOrders.filter(
+        o => o.paymentStatus === 'paid' && collectedBusinessDate(o as any) === todayDate
+      );
       // Sales nets out any written-off shortfall so it equals what was actually collected,
       // i.e. exactly cashSales + upiSales (same rule as the Reports revenue figures).
       const todaySales = paidToday.reduce(
@@ -2410,6 +2420,9 @@ export async function registerRoutes(
         changeAmount: String(changeDue),
         shortfallAmount: String(shortfall),
         paymentBreakdown: Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, String(v)])),
+        // The day the money was received — drives the Tables card / Reports counting and the
+        // "correct a payment" window. A due (isDue) collected nothing yet, so it gets no paid day.
+        paidAt: isDue ? null : new Date(),
       };
       if (notes) updateData.notes = notes;
       if (customerName) updateData.customerName = customerName;
@@ -2518,11 +2531,13 @@ export async function registerRoutes(
   // a mistyped split) and nothing else: shared/paymentEdit.ts refuses any request whose
   // Cash + UPI doesn't equal what was already collected, so no amount can move through here.
   //
-  // Manager elevation, same tier as every other money deviation (cancel, write-off,
-  // discount). Deliberately NOT a re-settle — POST /api/orders/:id/payment fires loyalty
+  // A manager/admin PIN must be typed EVERY time — requireFreshPin, not requireElevation. The
+  // latter waves through any session whose own role is manager/admin, and the restaurant's
+  // everyday login (rajbhaghel) is a manager account, so nobody using it would ever have been asked.
+  // Deliberately NOT a re-settle — POST /api/orders/:id/payment fires loyalty
   // points, the customer WhatsApp message and feedback scheduling exactly once, and none of
   // that should re-fire because a label was corrected.
-  app.post("/api/orders/:id/payment-method", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.post("/api/orders/:id/payment-method", requireAuth, requireFreshPin("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
@@ -2569,6 +2584,8 @@ export async function registerRoutes(
         afterUpi: plan.after.upi,
         collectedTotal: plan.collectedTotal,
         reason: plan.reason,
+        // Whose PIN approved it — distinct from the audit row's actor, who is just who was logged in.
+        approvedBy: freshPinApprover(req),
       });
 
       broadcast({ type: "ORDER_UPDATE", order: updated });
@@ -2576,6 +2593,86 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[payment-method] edit error:", error);
       res.status(500).json({ error: "Failed to update payment method" });
+    }
+  });
+
+  // ── Settle a DUE (a customer paying their tab) from the Orders page ──────────
+  // A due is served + unpaid (paymentStatus "pending"). Until now the only ways to clear one were
+  // Reports → "Mark all paid" (whole customer, cash/UPI only, no PIN, no audit row) or re-running the
+  // POS payment route. This settles ONE order by Cash / UPI / a Cash+UPI split with change and
+  // settle-short handled by the same resolveSettlement the POS box uses (shared/dueSettlement.ts).
+  //
+  // Always PIN-gated (requireFreshPin: a logged-in admin/manager must still type a PIN) and audited
+  // with WHO approved. Changes payment fields only — no table/KOT/loyalty/WhatsApp/feedback side
+  // effects, which belong to a bill being paid at the table, not to an old tab being cleared.
+  app.post("/api/orders/:id/settle-due", requireAuth, requireFreshPin("manager"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
+
+      const existing = await storage.getOrderById(id);
+      if (!existing) return res.status(404).json({ error: "Order not found" });
+
+      const { payments, allowShortfall } = req.body as { payments?: unknown; allowShortfall?: unknown };
+      const plan = planDueSettlement(existing as any, {
+        payments: Array.isArray(payments) ? (payments as any[]) : [],
+        allowShortfall: allowShortfall === true,
+      });
+      if (!plan.ok) {
+        // not_due is a state conflict (someone else already settled it), the rest are bad input.
+        return res.status(plan.code === "not_due" ? 409 : 400).json({ error: plan.message, code: plan.code });
+      }
+
+      const updated = await storage.settleDueIfStillDue(
+        id,
+        {
+          paymentMethod: plan.primaryMethod,
+          paymentBreakdown: plan.breakdown,
+          paidAmount: plan.paidAmount,
+          changeAmount: plan.changeAmount,
+          shortfallAmount: plan.shortfallAmount,
+        } as any,
+        (existing as any).updatedAt,
+      );
+      if (!updated) {
+        // Settled/changed by someone else between our read and our write (or Reports' bulk "Mark all
+        // paid" landed first). The plan was made against a stale row — re-reading is the only safe move.
+        return res.status(409).json({
+          error: "This order changed while you were settling it — it may already be paid. Reopen it and check.",
+          code: "conflict",
+        });
+      }
+
+      const approvedBy = freshPinApprover(req);
+      logAudit(req, "order.due_settled", "order", id, {
+        orderNumber: (existing as any).orderNumber,
+        customerName: (existing as any).customerName ?? null,
+        orderTotal: plan.orderTotal,
+        paidAmount: Number(plan.paidAmount),
+        changeAmount: Number(plan.changeAmount),
+        shortfallAmount: Number(plan.shortfallAmount),
+        afterLabel: plan.label,
+        paymentBreakdown: plan.breakdown,
+        // The day it was billed — a due settled weeks later should be traceable back to its bill.
+        billedAt: (existing as any).createdAt,
+        approvedBy,
+      });
+      // Same convention as the POS payment route: any recorded shortfall gets its own, independently
+      // filterable write-off row (Reports → KOT & Bill Activity counts these).
+      if (Number(plan.shortfallAmount) > 0) {
+        logAudit(req, "order.write_off", "order", id, {
+          orderTotal: plan.orderTotal,
+          paidAmount: Number(plan.paidAmount),
+          shortfallAmount: Number(plan.shortfallAmount),
+          approvedBy,
+        });
+      }
+
+      broadcast({ type: "ORDER_UPDATE", order: updated });
+      res.json(updated);
+    } catch (error) {
+      console.error("[settle-due] error:", error);
+      res.status(500).json({ error: "Failed to settle due" });
     }
   });
 
@@ -2650,11 +2747,14 @@ export async function registerRoutes(
       // upper bound and silently vanished from "today"'s report.
       const start = businessDayRange((startDate as string)?.slice(0, 10) ?? todayBusinessDate()).start;
       const end = businessDayRange((endDate as string)?.slice(0, 10) ?? todayBusinessDate()).end;
-      const allOrders: any[] = await storage.getOrdersByDateRange(start, end);
-
-      // Only count paid orders for revenue; due orders counted separately
-      const paid = allOrders.filter((o: any) => o.paymentStatus === "paid");
-      const due  = allOrders.filter((o: any) => o.paymentStatus === "pending" && o.status === "served");
+      // Two different questions, two different queries:
+      //  • MONEY (Collected / Cash / UPI / write-offs): orders whose payment was RECEIVED in the range —
+      //    by paid_at, falling back to the billed day for rows without one. A due billed last week and
+      //    paid today is today's money, and last week's closed figures stop changing after the fact.
+      //  • DUES (the "Unpaid / Due Orders" list): orders BILLED in the range that are still unpaid.
+      const paid: any[] = await storage.getOrdersCollectedBetween(start, end);
+      const billedInRange: any[] = await storage.getOrdersByDateRange(start, end);
+      const due  = billedInRange.filter((o: any) => o.paymentStatus === "pending" && o.status === "served");
 
       // This is the cash-drawer view — it must show what was actually collected, not the
       // billed total: change handed back and a short-settled order's write-off are excluded
