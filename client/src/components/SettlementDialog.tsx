@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/lib/api";
+import { lockedDialogProps } from "@/lib/dialogLock";
 import { resolveSettlement, type SettlementMode } from "@shared/settlement";
 
 export interface SettlementPayment {
@@ -58,6 +59,15 @@ interface Props {
   // cancel-confirm flow (with its reason box) — undefined hides the link entirely,
   // e.g. for a cart that hasn't been saved as a real order yet.
   onCancelOrder?: () => void;
+  // Settling an order that is ALREADY a Due (Orders page): marking it Due again makes no sense, so
+  // the Due pill is hidden and only Cash / UPI / Part remain. POS never sets this.
+  hideDueMode?: boolean;
+  // Replaces the default "Collect Payment · #n · ₹x" heading (e.g. "Settle Due · #1806 · ₹398").
+  title?: string;
+  // While true the dialog ignores outside-clicks / Escape and goes inert (see lib/dialogLock.ts). The
+  // Orders page opens a PIN pad ON TOP of this dialog; a click on that pad is "outside" this dialog's
+  // content, which would otherwise close it (and wipe what was typed) in the middle of the approval.
+  lockClose?: boolean;
 }
 
 const MODES: { key: SettlementMode; label: string; icon: string }[] = [
@@ -73,6 +83,7 @@ export function SettlementDialog({
   open, onOpenChange, grandTotal, onSettle, isLoading,
   items, subtotal, taxAmount, discountAmount, orderLabel,
   initialCustomerName, initialCustomerPhone, onCancelOrder,
+  hideDueMode, title, lockClose,
 }: Props) {
   const [mode, setMode] = useState<SettlementMode>("cash");
   const [cash, setCash] = useState(0);
@@ -266,10 +277,14 @@ export function SettlementDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+      <DialogContent
+        className="max-w-md max-h-[90vh] overflow-y-auto"
+        aria-describedby={undefined}
+        {...lockedDialogProps(!!lockClose)}
+      >
         <DialogHeader>
           <DialogTitle>
-            Collect Payment{orderLabel ? ` · ${orderLabel}` : ""} · {inr(grandTotal)}
+            {title ?? <>Collect Payment{orderLabel ? ` · ${orderLabel}` : ""} · {inr(grandTotal)}</>}
           </DialogTitle>
         </DialogHeader>
 
@@ -327,8 +342,8 @@ export function SettlementDialog({
 
           {/* Mode pills — Cash / UPI / Due / Part, Petpooja-style single-select. The area
               below swaps to match whichever is active. */}
-          <div className={`grid grid-cols-4 rounded-lg overflow-hidden border border-[var(--line)] ${confirmingShortfall ? "opacity-40 pointer-events-none" : ""}`}>
-            {MODES.map(m => (
+          <div className={`grid ${hideDueMode ? "grid-cols-3" : "grid-cols-4"} rounded-lg overflow-hidden border border-[var(--line)] ${confirmingShortfall ? "opacity-40 pointer-events-none" : ""}`}>
+            {MODES.filter(m => !(hideDueMode && m.key === "due")).map(m => (
               <button
                 key={m.key}
                 type="button"

@@ -16,12 +16,13 @@
  * Pure (no DB, no React) so the route, the dialog and scripts/verify-payment-edit.ts all
  * share one implementation — same discipline as shared/settlement.ts.
  */
-import { businessDateOf } from "./businessDay";
-import { collectedByMethod, paymentLabel, type PaymentOrderLike } from "./paymentSplit";
+import { collectedBusinessDate, collectedByMethod, paymentLabel, type PaymentOrderLike } from "./paymentSplit";
 
 export interface PaymentEditOrder extends PaymentOrderLike {
   status?: string | null;
   createdAt: string | Date;
+  /** When the money was received (server-stamped). Null on older rows → the billed day applies. */
+  paidAt?: string | Date | null;
   shortfallAmount?: string | number | null;
 }
 
@@ -99,10 +100,13 @@ export function planPaymentEdit(
   if (order.status === "cancelled") {
     return reject("cancelled", "A cancelled order's payment method cannot be changed.");
   }
-  // Same business day only (5am IST cutoff). Yesterday's takings have already been counted
-  // in the cash book and reported to the owner, so they must not move underneath them.
-  if (businessDateOf(new Date(order.createdAt)) !== todayBusinessDate) {
-    return reject("too_old", "Only today's orders can be corrected. For an older order, the day's figures have already been reported.");
+  // Same business day only (5am IST cutoff) — and "the day" is the day the money was RECEIVED, not
+  // the day the order was billed: a due billed last week and settled this morning is still open for
+  // correction today, then locks for good when the business day ends. Yesterday's takings have
+  // already been counted in the cash book and reported to the owner, so they must not move
+  // underneath them. (Rows with no paidAt fall back to the billed day — the old behaviour.)
+  if (collectedBusinessDate(order) !== todayBusinessDate) {
+    return reject("too_old", "Only payments received today can be corrected. For an older payment, that day's figures have already been reported.");
   }
 
   // Order matters for the dialog, which renders whichever rejection comes back. The amount

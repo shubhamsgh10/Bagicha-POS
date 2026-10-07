@@ -1353,6 +1353,12 @@ export default function Reports() {
                       <span className="flex items-center gap-2 text-sm text-gray-600"><ArrowLeftRight className="w-4 h-4 text-indigo-500" /> Method corrected</span>
                       <span className="font-bold text-gray-800">{kotBillActivity?.paymentMethodEdited ?? 0}</span>
                     </div>
+                    {/* A customer's open tab paid from the Orders page — PIN-approved and audited
+                        (the older Reports "Mark all paid" button leaves no trace, so it can't be counted). */}
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--paper-0)] border border-[var(--line)]">
+                      <span className="flex items-center gap-2 text-sm text-gray-600"><IndianRupee className="w-4 h-4 text-emerald-600" /> Due settled</span>
+                      <span className="font-bold text-gray-800">{kotBillActivity?.dueSettled ?? 0}</span>
+                    </div>
                   </div>
                 </div>
               </div>

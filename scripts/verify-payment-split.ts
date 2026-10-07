@@ -10,7 +10,7 @@
  * only), as read from the shared DB while debugging the report.
  * Run: npx tsx scripts/verify-payment-split.ts
  */
-import { collectedByMethod, paymentLabel, summarizeCollected, matchesPaymentFilter, paymentFilterCounts } from "../shared/paymentSplit";
+import { collectedByMethod, paymentLabel, summarizeCollected, matchesPaymentFilter, paymentFilterCounts, collectedAt, collectedBusinessDate } from "../shared/paymentSplit";
 
 const checks: Array<[string, boolean]> = [];
 const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
@@ -147,6 +147,23 @@ const paid = oct3.filter(o => o.paymentStatus === "paid");
   // an order still being prepared and not yet settled is neither paid nor "due"
   const inProgress = R(9002, "pending", null, null, "100.00", null, "0", "0", "preparing");
   checks.push(["an unsettled order still being prepared is not Due", !matchesPaymentFilter(inProgress, "due") && !matchesPaymentFilter(inProgress, "cash")]);
+}
+
+// 8. WHICH DAY did the money arrive? A due is billed on one day and often paid days later; the cash
+//    book counts it the day it was received. `paidAt` (set by every server settle path) wins;
+//    legacy rows with no paidAt fall back to the day they were billed — exactly the old behaviour.
+{
+  // kivi's due: billed 3 Oct 22:29 IST (=16:59Z), paid 7 Oct 12:20 IST (=06:50Z)
+  const billed = "2026-10-03T16:59:00.000Z";
+  const paid = "2026-10-07T06:50:00.000Z";
+  checks.push(["collected day = the PAID day, not the billed day", collectedBusinessDate({ createdAt: billed, paidAt: paid }) === "2026-10-07"]);
+  checks.push(["no paidAt -> falls back to the billed day (legacy rows unchanged)", collectedBusinessDate({ createdAt: billed, paidAt: null }) === "2026-10-03"]);
+  checks.push(["paidAt undefined behaves like null", collectedBusinessDate({ createdAt: billed }) === "2026-10-03"]);
+  checks.push(["accepts Date objects as well as ISO strings", collectedBusinessDate({ createdAt: new Date(billed), paidAt: new Date(paid) }) === "2026-10-07"]);
+  checks.push(["collectedAt returns the paid instant", collectedAt({ createdAt: billed, paidAt: paid }).toISOString() === paid]);
+  // The 5am-IST business-day cutoff applies to the paid time too: 02:00 IST on 8 Oct is still 7 Oct's day.
+  checks.push(["paid at 2am IST belongs to the PREVIOUS business day", collectedBusinessDate({ createdAt: billed, paidAt: "2026-10-07T20:30:00.000Z" }) === "2026-10-07"]);
+  checks.push(["paid at 5:10am IST starts the NEXT business day", collectedBusinessDate({ createdAt: billed, paidAt: "2026-10-07T23:40:00.000Z" }) === "2026-10-08"]);
 }
 
 let failed = 0;

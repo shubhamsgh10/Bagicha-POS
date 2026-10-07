@@ -117,6 +117,13 @@ export const orders = pgTable("orders", {
   // a due order owes its full total and is tracked by paymentStatus, not by this column.
   shortfallAmount: decimal("shortfall_amount", { precision: 10, scale: 2 }).default("0"),
   paymentBreakdown: json("payment_breakdown").$type<Record<string, string>>(),
+  // When the money was RECEIVED. A due is billed on one day and often paid days later; the cash
+  // book, the Tables card, Reports → Payments and the "correct a payment" window all go by this day.
+  // Stamped only by the server's settle paths (POST /payment, POST /settle-due, Reports' bulk
+  // "Mark all paid") — never by a client. NULL on rows that predate the column and on Razorpay
+  // confirmations: shared/paymentSplit.ts's collectedAt() then falls back to createdAt, which is
+  // exactly how those rows were counted before. See scripts/migrate-order-paid-at.mjs.
+  paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   kotPrintCount: integer("kot_print_count").default(0).notNull(),

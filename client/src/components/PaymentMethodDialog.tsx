@@ -9,16 +9,21 @@
  *
  * The PIN comes AFTER the form is filled: the server grant lasts 90s, and a manager typing
  * a reason first could otherwise watch it expire between the PIN pad and Save.
+ *
+ * A manager/admin PIN is asked for EVERY time, whoever is logged in — the server enforces it
+ * too (requireFreshPin ignores the session's own role). It used to be skipped for admin/manager
+ * logins, but the restaurant's everyday login is a manager account, so nobody was ever asked.
  */
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { describeApiError } from "@/lib/apiError";
 import { useToast } from "@/hooks/use-toast";
-import { useRole } from "@/hooks/useRole";
 import { PinGuard } from "@/components/PinGuard";
+import { lockedDialogProps } from "@/lib/dialogLock";
 import { collectedByMethod, paymentLabel } from "@shared/paymentSplit";
 import { planPaymentEdit } from "@shared/paymentEdit";
 import { todayBusinessDate } from "@shared/businessDay";
@@ -38,11 +43,9 @@ interface Props {
 
 export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
   const { toast } = useToast();
-  const role = useRole();
-  // A manager/admin session already satisfies the server's elevation check, so making them
-  // re-enter their own PIN would be friction with no extra safety. A staff-tier session must
-  // produce a manager-or-admin PIN, which is what actually stamps the grant the route needs.
-  const needsPin = role !== "manager" && role !== "admin";
+  // The provider's client, not the module-level singleton: in Vite dev the module can be served under two
+  // URLs (see App.tsx's Router) and invalidating the wrong instance leaves the list stale after a save.
+  const queryClient = useQueryClient();
 
   const before = collectedByMethod(order ?? {});
   const beforeCash = before.cash ?? 0;
@@ -104,8 +107,8 @@ export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
     },
     onSuccess: () => {
       toast({ title: "Payment method updated", description: plan?.ok ? `${plan.before.label} → ${plan.after.label}` : undefined });
+      // One prefix match covers the list AND this order's own detail (["/api/orders", id]).
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(order.id)] });
       queryClient.invalidateQueries({ queryKey: ["/api/live-status"] });
       // Reports' payment tiles and the owner's activity list both change as a result.
       queryClient.invalidateQueries({ predicate: q => {
@@ -114,25 +117,22 @@ export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
       }});
       onOpenChange(false);
     },
-    onError: (err: any) => {
-      // apiRequest throws `${status}: ${rawBody}` — pull the real reason back out, same
-      // unwrapping POS.tsx's settle mutation does for its 409.
-      let description = err?.message || "Something went wrong";
-      const at = description.indexOf("{");
-      if (at !== -1) {
-        try {
-          const parsed = JSON.parse(description.slice(at));
-          if (parsed?.error) description = parsed.error;
-        } catch { /* leave the raw message */ }
-      }
-      toast({ title: "Could not update payment method", description, variant: "destructive" });
+    onError: (err: unknown) => {
+      const info = describeApiError(err);
+      toast({
+        title: info.code === "PIN_REQUIRED" ? "PIN needed" : "Could not update payment method",
+        description: info.code === "PIN_REQUIRED" ? "The PIN check expired — press Save and enter the PIN again." : info.message,
+        variant: "destructive",
+      });
     },
   });
 
   const submit = () => {
     if (!canSave || mutation.isPending) return;
-    if (needsPin) { setShowPin(true); return; }
-    mutation.mutate();
+    // The PIN pad is a modal of its own; stop the form's last-focused control (the Save button,
+    // or the reason box) from also receiving the digits typed for the PIN.
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    setShowPin(true);
   };
 
   if (!order) return null;
@@ -140,7 +140,7 @@ export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md" {...lockedDialogProps(showPin)}>
           <DialogHeader>
             <DialogTitle className="text-base">Change payment method</DialogTitle>
           </DialogHeader>
@@ -221,7 +221,7 @@ export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
                 Cancel
               </Button>
               <Button className="flex-1" onClick={submit} disabled={!canSave || mutation.isPending}>
-                {mutation.isPending ? "Saving…" : needsPin ? "Save (PIN)" : "Save change"}
+                {mutation.isPending ? "Saving…" : "Save (PIN)"}
               </Button>
             </div>
           </div>

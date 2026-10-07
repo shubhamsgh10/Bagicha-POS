@@ -58,6 +58,13 @@ for (const field of [{ tableId: 5 }, { orderNumber: "ORD9999" }, { orderType: "d
 checks.push(["ORDER_CREATE_FORCED_DEFAULTS.paymentStatus is pending", ORDER_CREATE_FORCED_DEFAULTS.paymentStatus === "pending"]);
 checks.push(["ORDER_CREATE_FORCED_DEFAULTS.paidAmount is null", ORDER_CREATE_FORCED_DEFAULTS.paidAmount === null]);
 checks.push(["ORDER_CREATE_FORCED_DEFAULTS.paymentMethod is null", ORDER_CREATE_FORCED_DEFAULTS.paymentMethod === null]);
+// paid_at decides which business day a payment counts on AND how long it can be corrected, so a
+// client must never be able to choose it — it is stamped only by the server's own settle paths.
+checks.push(["ORDER_CREATE_FORCED_DEFAULTS.paidAt is null (client cannot pick the paid day)", (ORDER_CREATE_FORCED_DEFAULTS as any).paidAt === null]);
+{
+  const parsed = orderUpdateAllowlist.safeParse({ status: "served", paidAt: "2026-01-01T00:00:00.000Z" });
+  checks.push(["paidAt is stripped from PUT /api/orders/:id", parsed.success && !("paidAt" in (parsed.data as any))]);
+}
 
 let failed = 0;
 for (const [name, ok] of checks) {

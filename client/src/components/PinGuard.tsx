@@ -138,7 +138,11 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
       <style>{styles}</style>
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center"
-        style={{ background: "rgba(20,34,27,0.42)", backdropFilter: "blur(3px)" }}
+        // pointerEvents:"auto" is load-bearing. While a Radix modal (any shadcn <Dialog>) is open it sets
+        // `pointer-events: none` on <body>, and this portal is a direct child of <body>, so without it the
+        // whole pad inherits "none": every tap falls straight through to the dialog's overlay underneath —
+        // the keys look alive but never fire (confirmed in a real browser, not just reasoned about).
+        style={{ background: "rgba(20,34,27,0.42)", backdropFilter: "blur(3px)", pointerEvents: "auto" }}
         onClick={onCancel}
       >
         <div

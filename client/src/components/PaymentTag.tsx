@@ -25,11 +25,30 @@ const byOrder = (a: string, b: string) => {
   return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
 };
 
-export function PaymentTag({ order, className = "" }: { order: any; className?: string }) {
+export function PaymentTag({ order, className = "", onSettleDue }: {
+  order: any;
+  className?: string;
+  /** When given, a Due tag becomes a button that opens the settle dialog — so an open due always has
+   *  an obvious way to be settled, even from the collapsed row. */
+  onSettleDue?: () => void;
+}) {
   // A cancelled order collected nothing and must never look like it did.
   if (order?.status === "cancelled") return null;
 
   if (order?.paymentStatus === "pending" && order?.status === "served") {
+    if (onSettleDue) {
+      return (
+        <button
+          type="button"
+          title="Settle this due"
+          onClick={(e) => { e.stopPropagation(); onSettleDue(); }}
+          className={`${BASE} bg-amber-100/70 text-amber-800 hover:bg-amber-200/80 transition-colors cursor-pointer ${className}`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          Due · Settle
+        </button>
+      );
+    }
     return (
       <span className={`${BASE} bg-amber-100/70 text-amber-700 ${className}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />

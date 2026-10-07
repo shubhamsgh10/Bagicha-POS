@@ -119,6 +119,32 @@ const code = (r: ReturnType<typeof planPaymentEdit>) => (r.ok ? "" : r.code);
   checks.push(["allows 1am tomorrow (still today's business day)", ok(planPaymentEdit(order({ createdAt: "2026-10-07T01:00:00.000+05:30" }), { cash: 0, upi: 63, reason: "x" }, TODAY))]);
 }
 
+// 6b. The correction window is the day the money was RECEIVED (paidAt), not the day it was billed.
+//     A due billed weeks ago and settled today must be correctable today — and only today.
+{
+  const OLD = "2026-10-03T22:29:00.000+05:30"; // kivi's due, billed days ago
+  const dueSettledToday = order({ createdAt: OLD, paidAt: todayAt("12:20") });
+  checks.push(["a due billed days ago but settled TODAY can be corrected today", ok(planPaymentEdit(dueSettledToday, { cash: 0, upi: 63, reason: "wrong method" }, TODAY))]);
+
+  const dueSettledYesterday = order({ createdAt: OLD, paidAt: "2026-10-05T12:20:00.000+05:30" });
+  checks.push(["a due settled YESTERDAY is locked for good", code(planPaymentEdit(dueSettledYesterday, { cash: 0, upi: 63, reason: "x" }, TODAY)) === "too_old"]);
+
+  // paidAt wins over createdAt in BOTH directions
+  const billedTodayPaidYesterday = order({ createdAt: todayAt("10:30"), paidAt: "2026-10-05T20:00:00.000+05:30" });
+  checks.push(["paidAt takes precedence over a newer createdAt", code(planPaymentEdit(billedTodayPaidYesterday, { cash: 0, upi: 63, reason: "x" }, TODAY)) === "too_old"]);
+
+  // legacy rows (no paidAt) still use the billed day
+  checks.push(["legacy row, billed today, no paidAt -> editable (unchanged)", ok(planPaymentEdit(order({ paidAt: null }), { cash: 0, upi: 63, reason: "x" }, TODAY))]);
+  checks.push(["legacy row, billed yesterday, no paidAt -> locked (unchanged)", code(planPaymentEdit(order({ createdAt: "2026-10-05T20:00:00.000+05:30", paidAt: null }), { cash: 0, upi: 63, reason: "x" }, TODAY)) === "too_old"]);
+
+  // the 5am cutoff applies to the paid time
+  checks.push(["paid at 2am today is still the previous business day -> locked", code(planPaymentEdit(order({ createdAt: OLD, paidAt: "2026-10-06T02:00:00.000+05:30" }), { cash: 0, upi: 63, reason: "x" }, TODAY)) === "too_old"]);
+  checks.push(["paid at 1am tomorrow is still today's business day -> editable", ok(planPaymentEdit(order({ createdAt: OLD, paidAt: "2026-10-07T01:00:00.000+05:30" }), { cash: 0, upi: 63, reason: "x" }, TODAY))]);
+
+  // an unpaid (due) order is still not editable here — it is SETTLED, not corrected
+  checks.push(["a still-due order is not correctable (settle it instead)", code(planPaymentEdit(order({ paymentStatus: "pending", paymentBreakdown: {}, paidAmount: "0.00", paidAt: null }), { cash: 63, upi: 0, reason: "x" }, TODAY)) === "not_paid"]);
+}
+
 // 7. A reason is required, and a no-op edit is refused rather than logged as a change.
 {
   checks.push(["refuses a blank reason", code(planPaymentEdit(order({}), { cash: 0, upi: 63, reason: "   " }, TODAY)) === "reason_required"]);
