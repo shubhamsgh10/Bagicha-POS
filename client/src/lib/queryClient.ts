@@ -83,6 +83,15 @@ export const queryClient = new QueryClient({
     },
     mutations: {
       retry: false,
+      // TanStack Query's default ("online") PARKS a mutation, sending nothing, whenever the browser
+      // reports offline (a WiFi roam, a tablet waking from sleep, a flaky router) — the button
+      // just sits on "…" with no error and no request, until an `online` event arrives, which on a
+      // flapping or falsely-offline connection can be a minute. That is exactly "Settle sometimes
+      // takes up to a minute but always works": reproduced in a real browser (offline → Settle Now →
+      // 0 requests sent → reconnect → PUT + POST fire at once). For a POS, a payment silently queued
+      // in limbo is worse than one that fails at once: always attempt the request, so a truly dead
+      // network fails immediately and the existing onError toasts tell staff to retry.
+      networkMode: "always",
     },
   },
 });
