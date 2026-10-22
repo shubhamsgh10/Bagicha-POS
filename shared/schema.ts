@@ -135,7 +135,12 @@ export const orders = pgTable("orders", {
   createdBy: integer("created_by"),  // users.id who created the order — set only when the actor is a `users` login
   createdByStaffMemberId: integer("created_by_staff_member_id"),  // staffMembers.id who created the order — set only for PIN name-card logins (users/staffMembers share an id space, so exactly one of these two is set per order, never both)
   createdByName: text("created_by_name"),  // display name — works for both users and PIN staff
-});
+}, (t) => [
+  // Read-path indexes — created by scripts/migrate-perf-indexes.mjs (declared here so db:push
+  // doesn't propose dropping them). Date-ranged lists/reports and the open/due filters.
+  index("idx_orders_created_at").on(t.createdAt),
+  index("idx_orders_status_payment").on(t.status, t.paymentStatus),
+]);
 
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),
@@ -149,7 +154,11 @@ export const orderItems = pgTable("order_items", {
   serviceMode: text("service_mode"), // "dinein" | "pickup" | "delivery" — null treated as "dinein"
   parcelLeftover: boolean("parcel_leftover").default(false), // dine-in leftover packed as takeaway → flat container charge
   unitCost: decimal("unit_cost", { precision: 10, scale: 2 }), // snapshot of computeMenuItemCost() at sale time — never recomputed retroactively, so historical COGS/margin stay stable when inventory.costPerUnit later changes
-});
+}, (t) => [
+  // Every item read is by order_id; without this each one scanned the whole table
+  // (scripts/migrate-perf-indexes.mjs).
+  index("idx_order_items_order_id").on(t.orderId),
+]);
 
 export const kotTickets = pgTable("kot_tickets", {
   id: serial("id").primaryKey(),
@@ -164,7 +173,9 @@ export const kotTickets = pgTable("kot_tickets", {
     instructions?: string;
     serviceMode?: string | null;
   }>>(),
-});
+}, (t) => [
+  index("idx_kot_tickets_order_id").on(t.orderId), // scripts/migrate-perf-indexes.mjs
+]);
 
 export const deliveryIntegrations = pgTable("delivery_integrations", {
   id: serial("id").primaryKey(),
@@ -385,7 +396,10 @@ export const printJobs = pgTable("print_jobs", {
   claimedAt:  timestamp("claimed_at"), // stale claims (>2 min) become reclaimable
   printedAt:  timestamp("printed_at"),
   error:      text("error"), // last failure reason when a station releases a claim
-});
+}, (t) => [
+  // The pending/claimable poll filters on status (scripts/migrate-perf-indexes.mjs).
+  index("idx_print_jobs_status_created").on(t.status, t.createdAt),
+]);
 
 export const insertPrintJobSchema = createInsertSchema(printJobs).omit({ id: true, createdAt: true, printedAt: true });
 export type PrintJobRecord = typeof printJobs.$inferSelect;

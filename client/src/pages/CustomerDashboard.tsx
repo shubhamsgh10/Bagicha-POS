@@ -1085,6 +1085,8 @@ export default function CustomerDashboard() {
         if (res?.backfilled > 0) {
           // Phone was written into old orders — refresh the orders query cache
           queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/orders/customer-history"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/orders/customers"] });
         }
       })
       .catch(e => console.warn("[CRM] Profile sync failed (non-fatal):", e));

@@ -21,6 +21,7 @@ import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, 
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
 import { getSettings } from "./settingsStore";
+import { forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
@@ -38,7 +39,12 @@ export type OrderListFilter = {
   open?: boolean;            // status is neither "served" nor "cancelled" (still on the floor / unsettled)
   unpaid?: boolean;          // payment_status <> 'paid'
   due?: boolean;             // an open tab: status = "served" and payment_status = "pending"
+  updatedSince?: Date;       // updated_at >= updatedSince — incremental sync of a cached list
 };
+
+/** The slim per-order row the Customers page aggregates (useCustomerIntelligence). */
+export type CustomerOrderRow = Pick<Order,
+  "id" | "orderNumber" | "customerName" | "customerPhone" | "totalAmount" | "status" | "orderType" | "createdAt">;
 
 /** A customer with open "tabs" (served + unpaid orders), aggregated for the Dues report. */
 export type OpenTabCustomer = {
@@ -136,6 +142,7 @@ export interface IStorage {
   findOrders(filter: OrderListFilter): Promise<Order[]>;
   getOpenOrderStats(): Promise<{ activeOrders: number; dueAmount: number }>;
   getCustomerDirectory(): Promise<Array<{ name: string; phone: string }>>;
+  getCustomerOrderHistory(): Promise<CustomerOrderRow[]>;
   getOpenTabsByCustomer(): Promise<OpenTabCustomer[]>;
   settleCustomerTabs(key: string, paymentMethod?: string): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
@@ -296,11 +303,13 @@ export class DatabaseStorage implements IStorage {
 
   async updateUser(id: number, data: Partial<InsertUser>): Promise<User> {
     const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+    forgetPrincipal(userPrincipalKey(id));
     return user;
   }
 
   async deleteUser(id: number): Promise<void> {
     await db.delete(users).where(eq(users.id, id));
+    forgetPrincipal(userPrincipalKey(id));
   }
 
   // Categories
@@ -682,6 +691,7 @@ export class DatabaseStorage implements IStorage {
     if (filter.open) conditions.push(ne(orders.status, "served"), ne(orders.status, "cancelled"));
     if (filter.unpaid) conditions.push(ne(orders.paymentStatus, "paid"));
     if (filter.due) conditions.push(eq(orders.status, "served"), eq(orders.paymentStatus, "pending"));
+    if (filter.updatedSince) conditions.push(gte(orders.updatedAt, filter.updatedSince));
     return await db.select().from(orders)
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(orders.createdAt));
@@ -715,6 +725,27 @@ export class DatabaseStorage implements IStorage {
       ) first_orders
       ORDER BY first_at ASC`);
     return (result.rows as Array<{ name: string; phone: string }>).map((r) => ({ name: r.name, phone: r.phone }));
+  }
+
+  // Every order that names a customer, newest first, with only the columns the Customers page
+  // aggregates. That page used to download the whole order history (every column of every
+  // order, walk-ins included) to compute the same profiles.
+  async getCustomerOrderHistory(): Promise<CustomerOrderRow[]> {
+    return await db.select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      customerName: orders.customerName,
+      customerPhone: orders.customerPhone,
+      totalAmount: orders.totalAmount,
+      status: orders.status,
+      orderType: orders.orderType,
+      createdAt: orders.createdAt,
+    }).from(orders)
+      .where(or(
+        sql`coalesce(${orders.customerName}, '') <> ''`,
+        sql`coalesce(${orders.customerPhone}, '') <> ''`,
+      ))
+      .orderBy(desc(orders.createdAt));
   }
 
   // Customers with open "tabs" = served + unpaid orders (paymentStatus pending), grouped by
@@ -1962,11 +1993,13 @@ export class DatabaseStorage implements IStorage {
   async updateStaffMember(id: number, data: Partial<InsertStaffMember>): Promise<StaffMember> {
     if (Object.keys(data).length === 0) return this.getStaffMember(id) as Promise<StaffMember>; // no-op: avoid Drizzle "No values to set"
     const [sm] = await db.update(staffMembers).set(data).where(eq(staffMembers.id, id)).returning();
+    forgetPrincipal(staffPrincipalKey(id));
     return sm;
   }
 
   async deleteStaffMember(id: number): Promise<void> {
     await db.delete(staffMembers).where(eq(staffMembers.id, id));
+    forgetPrincipal(staffPrincipalKey(id));
   }
 }
 

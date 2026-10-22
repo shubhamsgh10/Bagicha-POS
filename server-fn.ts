@@ -79,6 +79,11 @@ const sessionMiddleware = session({
     pool,
     tableName: "sessions",
     createTableIfMissing: true,
+    // No `UPDATE sessions SET expire = …` on every request. With rolling:false (the default) the
+    // browser cookie is only re-issued when the session is modified — and a modification already
+    // saves the row with the new expiry — so touching an unmodified session only extended a
+    // server-side expiry that the cookie itself never outlives. It was one write per API call.
+    disableTouch: true,
   }),
   cookie: {
     maxAge: 24 * 60 * 60 * 1000,
