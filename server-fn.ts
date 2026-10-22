@@ -9,6 +9,7 @@ import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
 import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
+import { serverTiming } from "./server/serverTiming";
 
 // Log-and-survive guards, same as server/index.ts — a warm serverless instance is
 // still a live Node process between invocations, so an unhandled rejection here was
@@ -38,6 +39,7 @@ app.use((req, res, next) => {
   if (req.path.startsWith("/api")) res.set("Cache-Control", "no-store");
   next();
 });
+app.use("/api", serverTiming);
 
 applyCors(app);
 
