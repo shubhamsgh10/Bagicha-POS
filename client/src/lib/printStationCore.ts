@@ -1,5 +1,6 @@
 import { apiUrl } from "@/lib/api";
 import type { PrinterConfig } from "@shared/print/types";
+import { createQueueCheckCache } from "@/lib/queueCheckCache";
 
 /** Wire shape of a PRINT_JOB broadcast / pending-jobs row (see server/printRoutes.ts). */
 export interface RemotePrintJob {
@@ -36,15 +37,34 @@ export function canExecuteLocally(printer: PrinterConfig | undefined): boolean {
   return !!printer.windowsQueueName?.trim() || (printer.vendorId != null && printer.productId != null);
 }
 
-// Only successful (queue found) results are cached — a cached "not found" would silently
-// starve a legitimate job with no automatic retry (usePrintJobBridge's broadcast handler
-// evaluates a given job's canClaim exactly once), so every "not found" is re-checked fresh
-// next time instead. In-flight promises are de-duped so two concurrent callers checking the
-// same queue name (the tab's own printGateway.ts request path + the broadcast listener both
-// often fire for the same job) share one PowerShell round-trip instead of spawning two.
-const queueExistsTrueAt = new Map<string, number>();
-const queueExistsInFlight = new Map<string, Promise<boolean>>();
-const QUEUE_EXISTS_TTL_MS = 30_000;
+// The real check spawns a fresh PowerShell for `Get-Printer` (measured ~1.0–1.2 s) and runs before
+// every claim; with a 30 s "yes" cache ~95% of prints paid it (pickup p50 1.1 s vs 0.09 s when cached).
+// queueCheckCache.ts serves a "yes" instantly for up to 12 h and re-verifies in the background; a "no" is
+// never cached (a cached "not found" would silently starve a legitimate job with no automatic retry —
+// usePrintJobBridge's broadcast handler evaluates a given job's canClaim exactly once) and concurrent
+// callers (the tab's own printGateway.ts path + the broadcast listener both often fire for the same job)
+// share one check. Fails OPEN (assume executable) if the IPC itself errors.
+const queueCheckCache = createQueueCheckCache({
+  check: (queueName) =>
+    (window.electronAPI?.checkPrinterQueueExists
+      ? window.electronAPI.checkPrinterQueueExists(queueName)
+      : Promise.resolve(true)
+    ).catch(() => true),
+});
+
+/**
+ * Verify this host's printer queues in the background (call once printer configs are known) so the first
+ * print of the day doesn't pay for the PowerShell check either. Only queues this station would actually
+ * claim (usb + saved queue name + owned) on a Windows Electron host; harmless anywhere else.
+ */
+export function prewarmLocalPrinterChecks(printers: PrinterConfig[] | undefined): void {
+  if (!printers || !window.electronAPI?.checkPrinterQueueExists || window.electronAPI.platform !== "win32") return;
+  for (const p of printers) {
+    const queueName = p.windowsQueueName?.trim();
+    if (p.type !== "usb" || !queueName || !ownsPrinter(p.id)) continue;
+    queueCheckCache.prewarm(queueName);
+  }
+}
 
 /**
  * Electron-only, live version of canExecuteLocally: for a "usb" printer with a saved
@@ -76,18 +96,7 @@ export async function canExecuteLocallyVerified(printer: PrinterConfig | undefin
   if (!queueName || !window.electronAPI?.checkPrinterQueueExists) return true;
   if (window.electronAPI.platform !== "win32") return hasVidPid;
 
-  const cachedAt = queueExistsTrueAt.get(queueName);
-  if (cachedAt && Date.now() - cachedAt < QUEUE_EXISTS_TTL_MS) return true;
-
-  let pending = queueExistsInFlight.get(queueName);
-  if (!pending) {
-    pending = window.electronAPI.checkPrinterQueueExists(queueName).catch(() => true);
-    pending.finally(() => queueExistsInFlight.delete(queueName));
-    queueExistsInFlight.set(queueName, pending);
-  }
-  const exists = await pending;
-  if (exists) queueExistsTrueAt.set(queueName, Date.now());
-  return exists;
+  return queueCheckCache.exists(queueName);
 }
 
 const STATION_ENABLED_KEY = "printStation.enabled";

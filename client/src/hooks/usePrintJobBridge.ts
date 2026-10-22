@@ -6,6 +6,7 @@ import {
   claimAndExecute,
   canExecuteLocallyVerified,
   pollPendingJobs,
+  prewarmLocalPrinterChecks,
   hydrateFromDurableStore,
   type RemotePrintJob,
 } from "@/lib/printStationCore";
@@ -65,6 +66,15 @@ export function usePrintJobBridge(): void {
   });
   const printersRef = useRef(settings?.printSettings?.printers);
   printersRef.current = settings?.printSettings?.printers;
+
+  // Verify the host's printer queue(s) once configs are known, so the first print of the day doesn't pay
+  // the ~1 s PowerShell check inside its pickup (see queueCheckCache.ts). Re-runs only when the printer
+  // list changes; fresh answers make repeats a no-op.
+  const printers = settings?.printSettings?.printers;
+  useEffect(() => {
+    if (!window.electronAPI?.isElectron || !isAuthenticated) return;
+    prewarmLocalPrinterChecks(printers);
+  }, [printers, isAuthenticated]);
 
   const canClaim = async (printerId: string): Promise<boolean> => {
     const printers = printersRef.current;

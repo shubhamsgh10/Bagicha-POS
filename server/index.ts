@@ -7,6 +7,7 @@ import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
 import { initSettings, settingsGuard } from "./settingsStore";
 import { resolveSessionSecret } from "./sessionSecret";
+import { serverTiming } from "./serverTiming";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
@@ -52,6 +53,7 @@ app.use((req, res, next) => {
   if (req.path.startsWith("/api")) res.set("Cache-Control", "no-store");
   next();
 });
+app.use("/api", serverTiming);
 
 applyCors(app);
 

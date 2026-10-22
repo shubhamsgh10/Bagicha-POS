@@ -273,6 +273,34 @@ export async function registerRoutes(
     });
   });
 
+  // Diagnostic only: the POS reports the timeline of any Settle that took >= 4s (shared/settleTiming.ts)
+  // so "why was that one slow?" has an answer — a parked request, a cold instance, or a slow handler
+  // look completely different here and invisible everywhere else (Vercel keeps 1h of logs, no durations).
+  // Written to the audit trail, which is the durable forensic record on this project. Never affects a settle.
+  app.post("/api/perf/slow-settle", requireAuth, async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+    const s = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : null);
+    const legs = Array.isArray(b.legs)
+      ? b.legs.slice(0, 6).map((l: any) => ({
+          leg: s(l?.leg, 10), startMs: n(l?.startMs), durationMs: n(l?.durationMs),
+          ttfbMs: n(l?.ttfbMs), serverMs: n(l?.serverMs), instance: s(l?.instance, 40),
+        }))
+      : [];
+    const orderId = Number(b.orderId);
+    await logAudit(req, "perf.slow_settle", "order", Number.isFinite(orderId) && orderId > 0 ? orderId : null, {
+      outcome: s(b.outcome, 10),
+      totalMs: n(b.totalMs),
+      startLagMs: n(b.startLagMs),
+      betweenLegsMs: n(b.betweenLegsMs),
+      slowestLeg: s(b.slowestLeg, 10),
+      legs,
+      onlineAtClick: typeof b.onlineAtClick === "boolean" ? b.onlineAtClick : null,
+      connection: s(b.connection, 60),
+    });
+    res.status(204).end();
+  });
+
   // Pusher private-channel auth — only an authenticated session may subscribe to
   // the realtime channel (which carries orders, customer phones, WhatsApp bodies).
   app.post("/api/pusher/auth", requireAuth, (req, res) => {

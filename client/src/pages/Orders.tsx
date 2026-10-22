@@ -100,6 +100,7 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
       orderType: order.orderType,
       totalAmount: parseFloat(order.totalAmount ?? '0'),
       taxAmount: parseFloat(order.taxAmount ?? '0'),
+      containerCharge: billTotals.containerCharge,
       discountAmount: parseFloat(order.discountAmount ?? '0'),
       paymentMethod: paymentLabel(order) || null, // real legs ("Cash ₹53 + UPI ₹10"), not the largest-leg label
       billPrintCount: order.billPrintCount ?? 0,
@@ -379,6 +380,15 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
                     <div className="flex justify-between text-gray-500">
                       <span>Tax <span className="text-gray-400">({taxPct.toFixed(1)}%)</span></span>
                       <span>{fmt(billTotals.tax)}</span>
+                    </div>
+                  )}
+                  {/* The flat, manually-entered parcel charge — untaxed, added after tax (total =
+                      (subtotal − discount) × (1 + tax) + container). Without this row the total
+                      looked ₹20 too high: items + tax no longer added up to it. */}
+                  {billTotals.containerCharge > 0 && (
+                    <div className="flex justify-between text-gray-500">
+                      <span>Container</span>
+                      <span>{fmt(billTotals.containerCharge)}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold border-t border-[var(--line)] pt-1.5 mt-1 text-sm">

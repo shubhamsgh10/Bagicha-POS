@@ -22,7 +22,17 @@ type GetCookieHeader = () => Promise<string>;
 type GetApiBase = () => string;
 
 const RETRY_DELAYS = [0, 2_000, 5_000, 10_000];
+const ACK_DELAYS = [0, 1_000, 3_000];
 const MAX_RETRIES = 3;
+
+/** Seams for scripts/verify-print-queue-ack.ts; production (desktop/main.ts) passes none of these. */
+export interface PrintQueueOptions {
+  execute?: (job: PrintJob, printers: PrinterConfig[]) => Promise<void>;
+  /** Wait before each /api/print/ack attempt (its length is the attempt count). */
+  ackDelaysMs?: number[];
+  /** Wait before each print retry, indexed by retry number. */
+  retryDelaysMs?: number[];
+}
 
 export class PrintQueue {
   private queue: QueuedJob[] = [];
@@ -32,6 +42,9 @@ export class PrintQueue {
   private getCookieHeader: GetCookieHeader;
   private getApiBase: GetApiBase;
   private printLog: PrintLog | null = null;
+  private execute: (job: PrintJob, printers: PrinterConfig[]) => Promise<void>;
+  private ackDelays: number[];
+  private retryDelays: number[];
 
   constructor(
     userDataPath: string,
@@ -39,12 +52,16 @@ export class PrintQueue {
     getCookieHeader: GetCookieHeader,
     getApiBase: GetApiBase,
     printLog?: PrintLog,
+    opts: PrintQueueOptions = {},
   ) {
     this.queueFile = path.join(userDataPath, "print-queue.json");
     this.getPrinters = getPrinters;
     this.getCookieHeader = getCookieHeader;
     this.getApiBase = getApiBase;
     this.printLog = printLog ?? null;
+    this.execute = opts.execute ?? executePrintJob;
+    this.ackDelays = opts.ackDelaysMs ?? ACK_DELAYS;
+    this.retryDelays = opts.retryDelaysMs ?? RETRY_DELAYS;
     this.load();
   }
 
@@ -138,21 +155,29 @@ export class PrintQueue {
 
     try {
       const printers = await this.getPrinters();
-      await executePrintJob(job.printJob, printers);
+      await this.execute(job.printJob, printers);
       // Ack if needed. The print itself already physically happened (ink/paper spent) —
       // a failed ack must NOT be retried via the normal job-retry path below, since that
-      // re-runs executePrintJob and would print the ticket a second time. Instead retry
-      // just the ack call a few times; /api/print/jobs/:id/release's 2-minute stale-claim
-      // window means a permanently-failed ack leaves a small residual risk of another
-      // station reclaiming and reprinting this same job later, but that's strictly better
-      // than the previous behavior (swallow the ack failure silently on the first try,
-      // remove the job from the queue as if fully done — a guaranteed miss the moment the
-      // ack request had a transient network blip).
+      // re-runs the print and would print the ticket a second time. Instead retry just the
+      // ack call a few times; /api/print/jobs/:id/release's 2-minute stale-claim window means
+      // a permanently-failed ack leaves a small residual risk of another station reclaiming
+      // and reprinting this same job later, but that's strictly better than swallowing the
+      // failure on the first try (a guaranteed miss the moment the ack request had a
+      // transient network blip).
+      //
+      // NOT awaited: the ack is a network round trip to the server (0.3–0.5 s, or 1–4 s while it
+      // retries) and used to sit between two tickets, so a KOT and a Bill tapped together printed
+      // one behind the other with that wait wedged in the middle (production p90 7.5 s for pairs
+      // vs 5.0 s for a single ticket). The next ticket now starts as soon as this one is printed.
+      // Printing is still strictly one at a time (`processing`); only the confirmation is detached.
       if (job.orderId && job.ackType) {
-        const ackOk = await this.ackWithRetry(job.orderId, job.ackType, job.printJob.jobId, job.id);
-        if (!ackOk) {
-          console.error(`[printQueue] Job ${job.id} printed but ack permanently failed for order ${job.orderId}/${job.ackType}`);
-        }
+        this.ackWithRetry(job.orderId, job.ackType, job.printJob.jobId, job.id)
+          .then((ackOk) => {
+            if (!ackOk) {
+              console.error(`[printQueue] Job ${job.id} printed but ack permanently failed for order ${job.orderId}/${job.ackType}`);
+            }
+          })
+          .catch((e) => console.error(`[printQueue] ack for job ${job.id} threw:`, e));
       }
       console.log(`[printQueue] Job ${job.id} (${job.type}) succeeded`);
       this.printLog?.append({
@@ -167,7 +192,7 @@ export class PrintQueue {
       if (job.retries < MAX_RETRIES) {
         job.retries++;
         job.status = "retrying";
-        const delay = RETRY_DELAYS[job.retries] ?? 10_000;
+        const delay = this.retryDelays[job.retries] ?? 10_000;
         console.warn(`[printQueue] Job ${job.id} failed, retry ${job.retries}/${MAX_RETRIES} in ${delay}ms:`, err?.message);
         this.printLog?.append({
           type: job.type,
@@ -238,7 +263,7 @@ export class PrintQueue {
     jobId: number | undefined,
     logId: string,
   ): Promise<boolean> {
-    const delays = [0, 1_000, 3_000];
+    const delays = this.ackDelays;
     for (let i = 0; i < delays.length; i++) {
       if (delays[i] > 0) await new Promise((r) => setTimeout(r, delays[i]));
       try {

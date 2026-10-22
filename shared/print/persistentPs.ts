@@ -47,11 +47,60 @@ public class RawPrinterHelper {
 }
 `;
 
+/**
+ * The one command that readies the session: compile the C# helper, then print PSREADY.
+ *
+ * It MUST be a single line. This used to be `Add-Type -TypeDefinition @'` … `'@` — a multi-line
+ * here-string — piped to `powershell -Command -`. While stdin stays open PowerShell never executes a
+ * here-string sent that way (it keeps waiting for more input; reproduced on Windows PowerShell 5.1), so
+ * PSREADY never arrived, init timed out (60 s here; "30–40 s first-print wait" per the git history) and every
+ * ticket silently used the slow per-job fallback (new PowerShell + C# compile each time, ~1–3 s).
+ * Single-line commands are executed immediately, so the C# source is shipped as base64 and decoded in-process.
+ * Verified by scripts/verify-ps-session-init.ts (pure) and its --live mode (real PowerShell).
+ */
+export function buildSessionInitCommand(): string {
+  const b64 = Buffer.from(RAW_PRINTER_HELPER, "utf8").toString("base64");
+  return (
+    `$ErrorActionPreference = 'Continue'; ` +
+    `$src = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64}')); ` +
+    `Add-Type -TypeDefinition $src; ` +
+    `Write-Output "PSREADY"\n`
+  );
+}
+
 let ps: ChildProcess | null = null;
 let ready = false;
 let initPromise: Promise<void> | null = null;
 let stdoutBuf = "";
 const pending: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+
+// Auto-restart. If the PowerShell session dies (crash, killed by antivirus, init timeout) nothing used to
+// bring it back until a print arrived: that print fell back to sendRawLegacy — a brand-new PowerShell plus a
+// C# Add-Type compile, ~2–3 s — while the session re-warmed in the background. Restarting proactively (with
+// backoff, so a machine where PowerShell can't start doesn't spin) means the next ticket finds it warm.
+// `closing` is set by closePrinterSession() (app quit) so a deliberate shutdown never restarts.
+let closing = false;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let restartDelayMs = 1_000;
+const RESTART_MAX_DELAY_MS = 60_000;
+
+function scheduleRestart() {
+  if (closing || process.platform !== "win32" || restartTimer) return;
+  const delay = restartDelayMs;
+  restartDelayMs = Math.min(restartDelayMs * 2, RESTART_MAX_DELAY_MS);
+  console.warn(`[persistentPs] restarting PowerShell print session in ${delay}ms`);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    if (closing) return;
+    startSession().catch((e) => console.warn("[persistentPs] restart failed:", e?.message ?? e));
+  }, delay);
+  restartTimer.unref?.();
+}
+
+/** True when the warm PowerShell session can take a print right now (the ~15 ms fast path). */
+export function isPrinterSessionReady(): boolean {
+  return ready && !!ps;
+}
 
 function drainResponses() {
   while (pending.length > 0) {
@@ -85,12 +134,14 @@ function startSession(): Promise<void> {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    const proc = ps;
 
     ps.stdout!.setEncoding("utf8");
     ps.stdout!.on("data", (chunk: string) => {
       stdoutBuf += chunk;
       if (!ready && stdoutBuf.includes("PSREADY")) {
         ready = true;
+        restartDelayMs = 1_000; // healthy again — the next failure starts the backoff from scratch
         stdoutBuf = stdoutBuf.replace("PSREADY", "");
         clearTimeout(deadline);
         resolve();
@@ -104,6 +155,9 @@ function startSession(): Promise<void> {
     });
 
     ps.on("exit", (code) => {
+      // A LATE exit from an old process (e.g. the one the init deadline killed) must not wipe the state
+      // of a newer session that has since started: only act when no other session has taken over.
+      if (ps && ps !== proc) return;
       console.warn("[persistentPs] PowerShell session exited with code", code);
       // Reject any pending jobs
       const err = new Error("PowerShell session exited unexpectedly");
@@ -112,6 +166,7 @@ function startSession(): Promise<void> {
       ps = null;
       ready = false;
       initPromise = null;
+      scheduleRestart();
     });
 
     ps.on("error", (err) => {
@@ -120,14 +175,11 @@ function startSession(): Promise<void> {
       ps = null;
       ready = false;
       initPromise = null;
+      scheduleRestart();
     });
 
     // Send C# type definition once; signal readiness with PSREADY
-    const initCmd =
-      `$ErrorActionPreference = 'Continue'\n` +
-      `Add-Type -TypeDefinition @'\n${RAW_PRINTER_HELPER}\n'@\n` +
-      `Write-Output "PSREADY"\n`;
-    ps.stdin!.write(initCmd);
+    ps.stdin!.write(buildSessionInitCommand());
   });
 
   return initPromise;
@@ -185,12 +237,15 @@ export async function sendRawFast(queueName: string, data: Buffer): Promise<void
 
 export async function warmPrinterSession(): Promise<void> {
   if (process.platform !== "win32") return;
+  closing = false; // allows re-opening after an earlier closePrinterSession()
   try { await startSession(); } catch (e) {
     console.warn("[persistentPs] warm failed:", e);
   }
 }
 
 export function closePrinterSession(): void {
+  closing = true; // a deliberate shutdown must not trigger the auto-restart in the exit handler
+  if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
   const err = new Error("Printer session closed");
   for (const p of pending) p.reject(err);
   pending.length = 0;

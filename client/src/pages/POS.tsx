@@ -35,6 +35,9 @@ import { printKotFallback, printBillFallback, BROWSER_BILL_TOAST, BROWSER_KOT_TO
 import { startPrintTap, timePrintStage, endPrintTap } from "@/lib/printPerfClient";
 import { printFieldsForSubmitMode } from "@shared/printRequest";
 import { paymentLabel } from "@shared/paymentSplit";
+import { composeCartInstructions, rehydrateSelections, splitPersistedInstructions } from "@shared/orderItemText";
+import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
+import { buildEbillText } from "@shared/ebillText";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -77,7 +80,11 @@ interface CartItem {
   basePrice: number;
   addons: AddonOption[];
   variants: Record<string, string>; // group → chosen option name
-  notes: string;
+  notes: string; // only what the user typed — never the saved "Note: …" composite
+  // Variant/addon segments of the saved specialInstructions that rehydrateSelections could
+  // NOT map back onto the menu item's current definitions (renamed/removed option, addons
+  // switched off) — carried verbatim so a re-save never loses text. Normally empty.
+  extras?: string;
   totalPrice: number;
   quantity: number;
   size?: string;
@@ -146,32 +153,9 @@ function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetW
     if (targetWindow) targetWindow.close();
     return false;
   }
-  const restaurantName = settings?.restaurantName || "Bagicha Restaurant";
-  const address = settings?.address ? `\n${settings.address}` : "";
-  const itemLines = items.length > 0
-    ? items.map((i: any) => `  • ${i.name || "Item"} × ${i.quantity}  ₹${(parseFloat(i.price) * i.quantity).toFixed(0)}`).join("\n")
-    : "";
-  const subtotal = parseFloat(order.totalAmount) - parseFloat(order.taxAmount || "0");
-  const discount = parseFloat(order.discountAmount || "0");
-  const tax = parseFloat(order.taxAmount || "0");
-  const total = parseFloat(order.totalAmount);
-  const lines = [
-    `🧾 *${restaurantName}*${address}`,
-    ``,
-    `Order: *${order.orderNumber}*`,
-    order.tableNumber ? `Table: ${order.tableNumber}` : null,
-    order.customerName ? `Name: ${order.customerName}` : null,
-    ``,
-    `*ITEMS*`,
-    itemLines,
-    ``,
-    `Subtotal: ₹${subtotal.toFixed(0)}`,
-    discount > 0 ? `Discount: -₹${discount.toFixed(0)}` : null,
-    `Tax: ₹${tax.toFixed(0)}`,
-    `*TOTAL: ₹${total.toFixed(0)}*`,
-    ``,
-    settings?.footerNote || "Thank you for dining with us!",
-  ].filter(l => l !== null).join("\n");
+  // Built from the order's persisted numbers (shared/ebillText.ts) — the old inline version derived
+  // Subtotal as total − tax, which folded the container charge into it and never printed the charge.
+  const lines = buildEbillText(order, items, settings);
   const url = `https://wa.me/${phone.startsWith("91") ? phone : "91" + phone}?text=${encodeURIComponent(lines)}`;
   if (targetWindow) {
     targetWindow.location.href = url;
@@ -225,6 +209,14 @@ export default function POS() {
   const [isPaid, setIsPaid] = useState(false);
   const [showSettleDialog, setShowSettleDialog] = useState(false);
   const settlementDataRef = useRef<SettlementData | null>(null);
+  // Diagnostics only (lib/slowSettle.ts): when Settle was pressed, so a settle that took >= 4s can
+  // report where the time went. Cleared on finish so a later non-settle error can't report it.
+  const settleClickRef = useRef<SettleClick | null>(null);
+  const finishSettleTiming = (orderId: number, outcome: "ok" | "error") => {
+    const click = settleClickRef.current;
+    settleClickRef.current = null;
+    if (click) reportSlowSettle({ orderId, click, outcome });
+  };
   // Settle two-phase loading state
   const [settlePhase, setSettlePhase] = useState<"idle" | "processing" | "printing">("idle");
   // True from click until the print result that rides back on the save response has been
@@ -771,14 +763,25 @@ export default function POS() {
       const name = menuItem?.name || item.name || "Unknown Item";
       const price = parseFloat(item.price);
       const sm = (item.serviceMode as ItemServiceMode) || "dinein";
+      // The saved string is variants | "Note: <text>" | + addons. Putting all of it into
+      // `notes` made every save wrap it in "Note: " again (Note: Note: Note: …).
+      const { notes, extras: savedExtras } = splitPersistedInstructions(item.specialInstructions);
+      // Rebuild the real variant/addon picks from the menu's definitions. With none, Edit
+      // (even a quantity-only change) would recompute the unit price as base + 0 + 0 and
+      // silently drop the addon/variant surcharge the line was saved with.
+      const picked = rehydrateSelections(savedExtras, {
+        variants: Array.isArray(menuItem?.variants) ? menuItem.variants : [],
+        addons: menuItem?.addonsEnabled && Array.isArray(menuItem.addons) ? menuItem.addons : [],
+      });
       return {
         cartKey: `db-${item.id}-${item.menuItemId}-${sm}`,
         id: item.menuItemId,
         name,
         basePrice: price,
-        addons: [],
-        variants: {},
-        notes: item.specialInstructions || "",
+        addons: picked.addons.map((a: any) => ({ name: a.name, price: Number(a.price) })),
+        variants: picked.variants,
+        notes,
+        extras: picked.extras,
         totalPrice: price,
         size: item.size || undefined,
         quantity: item.quantity,
@@ -975,6 +978,7 @@ export default function POS() {
       }
     },
     onError: (error: any) => {
+      if (submitModeRef.current === "settle") finishSettleTiming(0, "error");
       toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
@@ -1028,7 +1032,8 @@ export default function POS() {
         );
       }
     },
-    onError: (error: any) => {
+    onError: (error: any, vars: any) => {
+      if (submitModeRef.current === "settle") finishSettleTiming(Number(vars?.orderId), "error");
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
@@ -1059,6 +1064,7 @@ export default function POS() {
       return res.json();
     },
     onSuccess: (settled: any, vars: any) => {
+      finishSettleTiming(Number(vars?.orderId), "ok");
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
@@ -1067,7 +1073,8 @@ export default function POS() {
       toast({ title: "Payment complete!" });
       navigate("/tables");
     },
-    onError: (error: any) => {
+    onError: (error: any, vars: any) => {
+      finishSettleTiming(Number(vars?.orderId), "error");
       setSettlePhase("idle");
       // apiRequest() throws `${status}: ${rawBodyText}` — for our JSON error
       // responses that body is `{"error": "..."}`; pull the message back out so
@@ -1277,6 +1284,15 @@ export default function POS() {
 
   // ── Filter ───────────────────────────────────────────────────────────────────
 
+  // The search box and the category tabs are ANDed in filteredItems below, so a search typed under
+  // "All Items" ("plain") and then a switch to another tab matched nothing: "No items found", with the
+  // old search still sitting in the box. Switching to a DIFFERENT category now clears the search so the
+  // tab shows its own items; re-tapping the tab you are already on leaves what you typed alone.
+  const selectCategory = (next: number | "all") => {
+    if (next !== selectedCategory) setSearchQuery("");
+    setSelectedCategory(next);
+  };
+
   const filteredItems = menuItems?.filter((item: any) => {
     const matchCat = selectedCategory === "all" || item.categoryId === selectedCategory;
     const matchSearch = !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -1304,18 +1320,11 @@ export default function POS() {
   // Shared with the Auto-KOT effect below, which must sync the cart through this exact
   // same shape before asking the server to print — see its comment for why.
   const buildItemsPayload = (cartSource: CartItem[]) => {
-    const buildInstructions = (c: CartItem) => {
-      const parts: string[] = [];
-      const variantEntries = Object.entries(c.variants);
-      if (variantEntries.length) parts.push(variantEntries.map(([g, v]) => `${g}: ${v}`).join(", "));
-      if (c.notes) parts.push(`Note: ${c.notes}`);
-      return parts.join(" | ");
-    };
     return cartSource.map(c => ({
       menuItemId: c.id,
       quantity: c.quantity,
       price: c.totalPrice.toFixed(2),
-      specialInstructions: buildInstructions(c),
+      specialInstructions: composeCartInstructions({ variants: c.variants, extras: c.extras, notes: c.notes }),
       name: c.size ? `${c.name} (${c.size})` : c.name,
       size: c.size || null,
       addons: c.addons,
@@ -2480,7 +2489,7 @@ export default function POS() {
           </div>
           <div className="flex-1 overflow-y-auto py-1">
             <button
-              onClick={() => setSelectedCategory("all")}
+              onClick={() => selectCategory("all")}
               className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-l-[3px] ${
                 selectedCategory === "all"
                   ? "border-green-600 bg-green-50 text-green-700"
@@ -2492,7 +2501,7 @@ export default function POS() {
             {visibleCategories?.map((cat: any) => (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => selectCategory(cat.id)}
                 className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-l-[3px] ${
                   selectedCategory === cat.id
                     ? "border-green-600 bg-green-50 text-green-700"
@@ -2513,7 +2522,7 @@ export default function POS() {
           <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 scrollbar-hide shrink-0"
             style={{ background: "var(--paper-0)", borderBottom: "1px solid var(--line)" }}>
             <button
-              onClick={() => setSelectedCategory("all")}
+              onClick={() => selectCategory("all")}
               className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                 selectedCategory === "all"
                   ? "bg-green-600 text-white"
@@ -2525,7 +2534,7 @@ export default function POS() {
             {visibleCategories?.map((cat: any) => (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => selectCategory(cat.id)}
                 className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                   selectedCategory === cat.id
                     ? "bg-green-600 text-white"
@@ -2776,6 +2785,9 @@ export default function POS() {
                       {Object.entries(item.variants || {}).map(([g, v]) => (
                         <div key={g} className="text-[10px] text-purple-600">▸ {g}: {v}</div>
                       ))}
+                      {item.extras && (
+                        <div className="text-[10px] text-muted-foreground truncate">{item.extras}</div>
+                      )}
                       {item.notes && (
                         <div className="text-[10px] text-blue-500 italic truncate">📝 {item.notes}</div>
                       )}
@@ -2984,6 +2996,7 @@ export default function POS() {
             items={cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size, serviceMode: i.serviceMode }))}
             subtotal={subtotal}
             taxAmount={tax}
+            containerCharge={containerCharge}
             discountAmount={discountAmt}
             orderLabel={activeOrderId ? serialNum(activeOrderId) : undefined}
             initialCustomerName={form.watch("customerName") || ""}
@@ -2995,6 +3008,7 @@ export default function POS() {
               // completed, potentially landing between it and the payment check.
               const proceed = () => {
                 cancelPendingAutoKot();
+                settleClickRef.current = markSettleClick();
                 settlementDataRef.current = data;
                 setShowSettleDialog(false);
                 setSettlePhase("processing");
