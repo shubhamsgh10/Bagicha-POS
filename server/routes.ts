@@ -1360,19 +1360,21 @@ export async function registerRoutes(
       // Business day (5am IST cutoff), matching Orders.tsx/Billing.tsx — a naive
       // local-midnight boundary disagreed with those pages for any order placed between
       // midnight and 5am IST, even on an IST-hosted server.
-      const todayDate = todayBusinessDate();
+      const { start: dayStart, end: dayEnd } = businessDayRange(todayBusinessDate());
 
-      const allOrders = await storage.getOrders();
-      const activeOrders = allOrders.filter(
-        o => o.status !== "served" && o.status !== "cancelled"
-      ).length;
+      // Polled every 5s by every open Tables page, so nothing here may read the whole order
+      // history: today's paid orders come back filtered in SQL, and the two all-time figures
+      // (active count, outstanding dues) come back as one aggregated row. This route used to
+      // SELECT every order on each poll, which alone was most of the database's egress.
+      //
       // Counted on the day the money was RECEIVED (paid_at), not the day the order was billed: a
       // due from last week that a customer paid this morning is in today's drawer, and last week's
       // closed figures no longer change after the fact. Rows with no paid_at (older orders, Razorpay)
-      // fall back to the billed day — identical to how they were always counted.
-      const paidToday = allOrders.filter(
-        o => o.paymentStatus === 'paid' && collectedBusinessDate(o as any) === todayDate
-      );
+      // fall back to the billed day — identical to how they were always counted (collectedAt).
+      const [paidToday, { activeOrders, dueAmount }] = await Promise.all([
+        storage.getOrdersCollectedBetween(dayStart, dayEnd),
+        storage.getOpenOrderStats(),
+      ]);
       // Sales nets out any written-off shortfall so it equals what was actually collected,
       // i.e. exactly cashSales + upiSales (same rule as the Reports revenue figures).
       const todaySales = paidToday.reduce(
@@ -1387,16 +1389,13 @@ export async function registerRoutes(
       const upiSales = collectedToday.breakdown.upi?.amount ?? 0;
       const cashSales = collectedToday.totalPaid - upiSales;
 
-      // Outstanding dues = every order settled in Due mode and not yet paid (served +
-      // pending), regardless of day — a due is owed until collected, same set as the
-      // Pay-Later tab / storage.getOpenTabsByCustomer. NOT part of todaySales (those are
-      // collected-only), so the Tables pill shows it as its own segment, only when > 0.
-      const dueAmount = (allOrders as any[])
-        .filter(o => o.status === "served" && o.paymentStatus === "pending")
-        .reduce((sum, o) => sum + parseFloat(o.totalAmount as string), 0);
-
+      // dueAmount = every order settled in Due mode and not yet paid (served + pending),
+      // regardless of day — a due is owed until collected, same set as the Pay-Later tab /
+      // storage.getOpenTabsByCustomer. NOT part of todaySales (those are collected-only), so
+      // the Tables pill shows it as its own segment, only when > 0.
       res.json({ runningTables, freeTables, activeOrders, todaySales, cashSales, upiSales, dueAmount });
     } catch (error) {
+      console.error("GET /api/live-status error:", error);
       res.status(500).json({ error: "Failed to fetch live status" });
     }
   });
@@ -1790,21 +1789,18 @@ export async function registerRoutes(
 
   app.get("/api/orders", requireAuth, async (req, res) => {
     try {
-      const { status, startDate, endDate } = req.query;
-      let orders;
-      if (startDate || endDate) {
-        // Either bound alone is valid (e.g. endDate only = "everything before X") —
-        // combinable with status for narrower queries like "unpaid orders before today".
-        orders = await storage.getOrdersByDateRange(
-          startDate ? new Date(startDate as string) : undefined,
-          endDate ? new Date(endDate as string) : undefined,
-        );
-        if (status) orders = orders.filter((o: any) => o.status === status);
-      } else if (status) {
-        orders = await storage.getOrdersByStatus(status as string);
-      } else {
-        orders = await storage.getOrders();
-      }
+      // All filters combine and are applied in SQL (storage.findOrders). Either date bound alone
+      // is valid (endDate only = "everything before X"). open=true = not served/cancelled;
+      // unpaid=true = payment_status <> 'paid'. With no filter at all this returns the whole
+      // order history — keep that for explicit "All Dates" views only, never for a poll.
+      const { status, startDate, endDate, open, unpaid } = req.query;
+      const orders = await storage.findOrders({
+        startDate: startDate ? new Date(startDate as string) : undefined,
+        endDate: endDate ? new Date(endDate as string) : undefined,
+        status: status ? String(status) : undefined,
+        open: open === "true",
+        unpaid: unpaid === "true",
+      });
       res.json(orders);
     } catch (error) {
       // This swallowed the real exception with no server-side trace — a genuine schema
@@ -1813,6 +1809,17 @@ export async function registerRoutes(
       // opaque "Failed to fetch orders" with nothing in the logs to diagnose it from.
       console.error("GET /api/orders error:", error);
       res.status(500).json({ error: "Failed to fetch orders" });
+    }
+  });
+
+  // Distinct past customers ({ name, phone }) for the POS customer autocomplete (must come
+  // before /:id). The POS used to download every order just to build this list.
+  app.get("/api/orders/customers", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getCustomerDirectory());
+    } catch (error) {
+      console.error("GET /api/orders/customers error:", error);
+      res.status(500).json({ error: "Failed to fetch customers" });
     }
   });
 
@@ -2679,11 +2686,7 @@ export async function registerRoutes(
   // ── Due orders (paymentStatus = pending, status = served) ────────────────────
   app.get("/api/orders/due", requireAuth, async (req, res) => {
     try {
-      const allOrders = await storage.getOrders();
-      const dueOrders = allOrders.filter(
-        (o: any) => o.paymentStatus === "pending" && o.status === "served"
-      );
-      res.json(dueOrders);
+      res.json(await storage.findOrders({ due: true }));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch due orders" });
     }
