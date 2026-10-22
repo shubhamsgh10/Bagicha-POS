@@ -13,6 +13,9 @@ export interface ActionLabel {
 }
 
 export const ACTION_LABELS: Record<string, ActionLabel> = {
+  // Diagnostic, not a business event: written by the POS when a Settle took >= 4s (POST
+  // /api/perf/slow-settle) so a slow one can be explained afterwards. Not part of any report.
+  "perf.slow_settle":     { label: "Slow Settle",    color: "bg-amber-100 text-amber-800" },
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
@@ -74,6 +77,15 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
   if (action === "order.due_settled") {
     const short = Number(meta.shortfallAmount) > 0 ? ` (₹${meta.shortfallAmount} short)` : "";
     return `${meta.customerName ? `${meta.customerName} · ` : ""}Due ₹${meta.orderTotal} settled — ${meta.afterLabel}${short}${approvedSuffix(meta)}`;
+  }
+  if (action === "perf.slow_settle") {
+    const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
+    const legs = Array.isArray(meta.legs) ? (meta.legs as Array<Record<string, unknown>>) : [];
+    const slowest = legs.find((l) => l.leg === meta.slowestLeg);
+    const lag = typeof meta.startLagMs === "number" && meta.startLagMs >= 1500 ? ` · nothing was sent for the first ${secs(meta.startLagMs)}` : "";
+    const slow = slowest ? ` · slowest: ${slowest.leg} ${secs(slowest.durationMs)} (server ${slowest.serverMs ?? "?"}ms${slowest.instance ? `, instance ${slowest.instance}` : ""})` : "";
+    const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
+    return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${net}`;
   }
   if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}${approvedSuffix(meta)}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;
