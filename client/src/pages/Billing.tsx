@@ -125,7 +125,8 @@ export default function Billing() {
     queryFn: async () => {
       const { start } = businessDayRange(businessDate);
       const beforeToday = new Date(start.getTime() - 1);
-      const all = await apiJson<any[]>(`/api/orders?endDate=${beforeToday.toISOString()}`);
+      // unpaid=true keeps this to the (few) unpaid rows instead of the whole order history.
+      const all = await apiJson<any[]>(`/api/orders?endDate=${beforeToday.toISOString()}&unpaid=true`);
       return all.filter((o: any) => BILLABLE_STATUSES.includes(o.status) && o.paymentStatus !== "paid").length;
     },
   });

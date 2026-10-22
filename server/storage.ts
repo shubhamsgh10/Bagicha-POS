@@ -25,6 +25,21 @@ import { getSettings } from "./settingsStore";
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
 
+/**
+ * Row filters for listing orders. Every filter is applied in SQL, never by fetching the whole
+ * table and filtering in JS: each unfiltered `SELECT * FROM orders` ships the entire order
+ * history out of Postgres, and that query, polled from the Tables page, the live-orders rail
+ * and the POS, was ~95% of the database's egress (measured via pg_stat_statements, Oct 2026).
+ */
+export type OrderListFilter = {
+  startDate?: Date;          // created_at >= startDate
+  endDate?: Date;            // created_at <= endDate
+  status?: string;           // exact status
+  open?: boolean;            // status is neither "served" nor "cancelled" (still on the floor / unsettled)
+  unpaid?: boolean;          // payment_status <> 'paid'
+  due?: boolean;             // an open tab: status = "served" and payment_status = "pending"
+};
+
 /** A customer with open "tabs" (served + unpaid orders), aggregated for the Dues report. */
 export type OpenTabCustomer = {
   key: string;                 // customerPhone || customerName (grouping key)
@@ -118,6 +133,9 @@ export interface IStorage {
   getOrderById(id: number): Promise<Order | undefined>;
   getOrdersByStatus(status: string): Promise<Order[]>;
   getOrdersByDateRange(startDate?: Date, endDate?: Date): Promise<Order[]>;
+  findOrders(filter: OrderListFilter): Promise<Order[]>;
+  getOpenOrderStats(): Promise<{ activeOrders: number; dueAmount: number }>;
+  getCustomerDirectory(): Promise<Array<{ name: string; phone: string }>>;
   getOpenTabsByCustomer(): Promise<OpenTabCustomer[]>;
   settleCustomerTabs(key: string, paymentMethod?: string): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
@@ -653,6 +671,50 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders)
       .where(and(...conditions))
       .orderBy(desc(orders.createdAt));
+  }
+
+  // See OrderListFilter. Conditions combine with AND; no conditions = the whole history.
+  async findOrders(filter: OrderListFilter): Promise<Order[]> {
+    const conditions = [];
+    if (filter.startDate) conditions.push(gte(orders.createdAt, filter.startDate));
+    if (filter.endDate) conditions.push(lte(orders.createdAt, filter.endDate));
+    if (filter.status) conditions.push(eq(orders.status, filter.status));
+    if (filter.open) conditions.push(ne(orders.status, "served"), ne(orders.status, "cancelled"));
+    if (filter.unpaid) conditions.push(ne(orders.paymentStatus, "paid"));
+    if (filter.due) conditions.push(eq(orders.status, "served"), eq(orders.paymentStatus, "pending"));
+    return await db.select().from(orders)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(orders.createdAt));
+  }
+
+  // The two whole-history figures on the Tables status bar, aggregated in SQL so only one row
+  // leaves the database: orders still on the floor (anything not served/cancelled, as
+  // /api/live-status has always counted) and the total of all open dues (served + unpaid,
+  // any day — the same set as getOpenTabsByCustomer).
+  async getOpenOrderStats(): Promise<{ activeOrders: number; dueAmount: number }> {
+    const [row] = await db.select({
+      activeOrders: sql<number>`count(*) filter (where ${orders.status} not in ('served', 'cancelled'))`,
+      dueAmount: sql<string>`coalesce(sum(${orders.totalAmount}) filter (where ${orders.status} = 'served' and ${orders.paymentStatus} = 'pending'), 0)`,
+    }).from(orders);
+    return { activeOrders: Number(row?.activeOrders ?? 0), dueAmount: parseFloat(String(row?.dueAmount ?? "0")) };
+  }
+
+  // One entry per past customer for the POS name/phone autocomplete, keyed phone || name. The
+  // name kept for a key is the one from that customer's FIRST order, and the list runs oldest
+  // customer first — exactly what the POS used to derive client-side from the full order list.
+  async getCustomerDirectory(): Promise<Array<{ name: string; phone: string }>> {
+    const result = await db.execute(sql`
+      SELECT name, phone FROM (
+        SELECT DISTINCT ON (coalesce(nullif(${orders.customerPhone}, ''), ${orders.customerName}))
+               ${orders.customerName} AS name,
+               coalesce(${orders.customerPhone}, '') AS phone,
+               ${orders.createdAt} AS first_at
+          FROM ${orders}
+         WHERE coalesce(${orders.customerName}, '') <> ''
+         ORDER BY coalesce(nullif(${orders.customerPhone}, ''), ${orders.customerName}), ${orders.createdAt} ASC, ${orders.id} ASC
+      ) first_orders
+      ORDER BY first_at ASC`);
+    return (result.rows as Array<{ name: string; phone: string }>).map((r) => ({ name: r.name, phone: r.phone }));
   }
 
   // Customers with open "tabs" = served + unpaid orders (paymentStatus pending), grouped by
