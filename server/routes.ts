@@ -81,6 +81,8 @@ import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
 import { buildSpecialInstructions } from "@shared/orderItemText";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
+import { cachedPrincipal, forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
+import { sendWithDbEtag, tableFingerprint } from "./dbEtag";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs, getKotBillActivitySummary } from "./services/auditService";
@@ -141,13 +143,17 @@ passport.serializeUser((user: any, done) => {
   done(null, user._isStaffMember ? `sm:${user.id}` : user.id);
 });
 
+// Runs on every authenticated request — served from a 10s per-process cache (server/principalCache.ts)
+// so a poll doesn't re-read the same users/staff_members row each time.
 passport.deserializeUser(async (key: any, done) => {
   try {
     if (typeof key === "string" && key.startsWith("sm:")) {
-      const sm = await storage.getStaffMember(Number(key.slice(3)));
+      const id = Number(key.slice(3));
+      const sm = await cachedPrincipal(staffPrincipalKey(id), () => storage.getStaffMember(id));
       done(null, sm ? { id: sm.id, username: sm.name, role: "staff", designation: sm.designation ?? null, _isStaffMember: true } : false);
     } else {
-      const user = await storage.getUser(Number(key));
+      const id = Number(key);
+      const user = await cachedPrincipal(userPrincipalKey(id), () => storage.getUser(id));
       done(null, user || false);
     }
   } catch (err) {
@@ -416,6 +422,7 @@ export async function registerRoutes(
       await db.update(users)
         .set({ totpSecret: secret, totpEnabled: true })
         .where(eq(users.id, actor.id));
+      forgetPrincipal(userPrincipalKey(actor.id));
       delete (req.session as any).pending2faSecret;
       logAudit(req, "user.2fa_enabled", "user", actor.id);
       res.json({ success: true });
@@ -437,6 +444,7 @@ export async function registerRoutes(
       await db.update(users)
         .set({ totpSecret: null, totpEnabled: false })
         .where(eq(users.id, actor.id));
+      forgetPrincipal(userPrincipalKey(actor.id));
       logAudit(req, "user.2fa_disabled", "user", actor.id);
       res.json({ success: true });
     } catch (err) {
@@ -1288,8 +1296,8 @@ export async function registerRoutes(
 
   app.get("/api/categories", requireAuth, async (req, res) => {
     try {
-      const categories = await storage.getCategories();
-      res.json(categories);
+      // ETag from a DB-side hash: an unchanged list costs 32 bytes, not every row (server/dbEtag.ts).
+      await sendWithDbEtag(req, res, "categories", tableFingerprint("categories"), () => storage.getCategories());
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to fetch categories" });
@@ -1526,10 +1534,11 @@ export async function registerRoutes(
 
   app.get("/api/menu", requireAuth, async (req, res) => {
     try {
-      const menuItems = req.query.all === "true"
-        ? await storage.getAllMenuItems()
-        : await storage.getMenuItems();
-      res.json(menuItems);
+      // Fetched on every POS mount — ETag from a DB-side hash, so an unchanged menu is a 304
+      // and its rows never leave the database (server/dbEtag.ts).
+      const all = req.query.all === "true";
+      await sendWithDbEtag(req, res, all ? "menu-all" : "menu", tableFingerprint("menu_items"),
+        () => all ? storage.getAllMenuItems() : storage.getMenuItems());
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch menu items" });
     }
@@ -1791,15 +1800,18 @@ export async function registerRoutes(
     try {
       // All filters combine and are applied in SQL (storage.findOrders). Either date bound alone
       // is valid (endDate only = "everything before X"). open=true = not served/cancelled;
-      // unpaid=true = payment_status <> 'paid'. With no filter at all this returns the whole
-      // order history — keep that for explicit "All Dates" views only, never for a poll.
-      const { status, startDate, endDate, open, unpaid } = req.query;
+      // unpaid=true = payment_status <> 'paid'; updatedSince = rows changed at/after that instant
+      // (incremental sync of an already-loaded list, see client/src/lib/orderHistorySync.ts). With no
+      // filter at all this returns the whole order history — keep that for explicit "All Dates"
+      // loads only, never for a poll.
+      const { status, startDate, endDate, open, unpaid, updatedSince } = req.query;
       const orders = await storage.findOrders({
         startDate: startDate ? new Date(startDate as string) : undefined,
         endDate: endDate ? new Date(endDate as string) : undefined,
         status: status ? String(status) : undefined,
         open: open === "true",
         unpaid: unpaid === "true",
+        updatedSince: updatedSince ? new Date(updatedSince as string) : undefined,
       });
       res.json(orders);
     } catch (error) {
@@ -1820,6 +1832,17 @@ export async function registerRoutes(
     } catch (error) {
       console.error("GET /api/orders/customers error:", error);
       res.status(500).json({ error: "Failed to fetch customers" });
+    }
+  });
+
+  // Slim rows for every order that names a customer — the Customers page builds its profiles from
+  // these (must come before /:id). It used to download every column of every order.
+  app.get("/api/orders/customer-history", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getCustomerOrderHistory());
+    } catch (error) {
+      console.error("GET /api/orders/customer-history error:", error);
+      res.status(500).json({ error: "Failed to fetch customer history" });
     }
   });
 

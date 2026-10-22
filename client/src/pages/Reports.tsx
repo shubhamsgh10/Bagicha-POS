@@ -393,7 +393,7 @@ export default function Reports() {
   const { data: lowStockItems = [] } = useQuery<any[]>({
     queryKey: ["/api/inventory/low-stock"],
     queryFn: () => apiJson<any[]>(`/api/inventory/low-stock`),
-    refetchInterval: 10000,
+    refetchInterval: 30_000, // fallback only — realtime order events refresh it (RealtimeProvider)
   });
 
   // Manager+admin only — see canSeeKotBillActivity above. `enabled` so a bare staff

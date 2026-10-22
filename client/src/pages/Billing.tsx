@@ -1,3 +1,4 @@
+import { useOrderHistorySync } from "@/lib/orderHistorySync";
 import { apiUrl, apiJson } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -116,6 +117,10 @@ export default function Billing() {
     select: (data: any[]) =>
       data.filter((o: any) => BILLABLE_STATUSES.includes(o.status)),
   });
+  // "Show all" shares the whole-history cache with Orders → All Dates; keep it current with
+  // small deltas instead of re-downloading it (lib/orderHistorySync.ts). A single day is kept
+  // fresh by realtime order events (RealtimeProvider).
+  useOrderHistorySync(showAllPending);
 
   // Unpaid orders from before today's business day — surfaced as a banner so an old
   // pending bill can't quietly fall out of sight once the list defaults to "today".
