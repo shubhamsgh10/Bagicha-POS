@@ -727,24 +727,15 @@ export default function POS() {
     ? (categories ?? []).filter((c: any) => sectionCategoryIds.includes(c.id))
     : categories;
 
-  // Customer lookup — fetch past orders to build a unique name+phone list
-  const { data: pastOrders = [] } = useQuery<any[]>({
-    queryKey: ["/api/orders"],
-    staleTime: 60_000,
+  // Customer lookup — one { name, phone } per past customer, deduplicated server-side
+  // (storage.getCustomerDirectory). This used to download the entire order history (and
+  // refetch it after every save, since it shared the ["/api/orders"] key) just to build
+  // this short list.
+  const { data: customerDirectory } = useQuery<{ name: string; phone: string }[]>({
+    queryKey: ["/api/orders/customers"],
+    staleTime: 5 * 60_000,
   });
-  const uniqueCustomers = useMemo(() => {
-    const seen = new Set<string>();
-    const list: { name: string; phone: string }[] = [];
-    for (let i = pastOrders.length - 1; i >= 0; i--) {
-      const o = pastOrders[i];
-      if (!o.customerName) continue;
-      const key = o.customerPhone || o.customerName;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      list.push({ name: o.customerName, phone: o.customerPhone || "" });
-    }
-    return list;
-  }, [pastOrders]);
+  const uniqueCustomers = customerDirectory ?? [];
   const taxRate = (settings?.taxRate ?? 18) / 100;
 
   // Fetch existing order when in edit mode (uses activeOrderId so it updates after KOT creates order)

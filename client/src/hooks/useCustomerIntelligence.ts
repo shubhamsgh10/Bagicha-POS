@@ -75,10 +75,13 @@ function suggestionFor(tag: CustomerTag, cat: SpendCategory): string | null {
 // ── Primary hook — aggregates customer profiles from orders ───────────────────
 
 export function useCustomerIntelligence() {
-  const { data: rawOrders = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/orders"],
+  // Slim rows for orders that name a customer (storage.getCustomerOrderHistory) — this page
+  // used to download every column of every order, walk-ins included, to build the same profiles.
+  const { data, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/orders/customer-history"],
     staleTime: 60_000,
   });
+  const rawOrders = data ?? [];
 
   // Server-computed RFM segments — preferred over in-memory computation
   const { data: serverSegments = [] } = useQuery<Array<{ key: string; segment: string; rfmScore: number | null }>>({

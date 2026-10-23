@@ -6,11 +6,36 @@ import {
   type RealtimeMessage,
   type ConnectionStatus,
 } from "@/hooks/realtimeContext";
+import { isOrderEvent, isOrderDerivedKey } from "@shared/realtimeInvalidation";
 
 const MIN_DELAY = 2_000;
 const MAX_DELAY = 30_000;
 
+// Order/table/KOT events are coalesced: the first one schedules a refresh, any arriving within
+// this window ride along, so a burst (a save publishes several) costs one refetch per query.
+const ORDER_REFRESH_DELAY_MS = 1_500;
+let orderRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleOrderRefresh() {
+  if (orderRefreshTimer) return;
+  orderRefreshTimer = setTimeout(() => {
+    orderRefreshTimer = null;
+    // Only queries currently on screen refetch; the rest are just marked stale.
+    queryClient.invalidateQueries({ predicate: (q) => isOrderDerivedKey(q.queryKey) });
+  }, ORDER_REFRESH_DELAY_MS);
+}
+
+// After a reconnect, events sent while we were offline are lost — refresh everything on screen
+// once. Not on the first connect of the page (the data was just loaded).
+let hasConnectedOnce = false;
+function onRealtimeConnected() {
+  if (hasConnectedOnce) queryClient.invalidateQueries();
+  hasConnectedOnce = true;
+}
+
 function handleMessage(msg: RealtimeMessage, setLastMessage: (m: RealtimeMessage | null) => void) {
+  if (isOrderEvent(msg.type)) scheduleOrderRefresh(); // and still delivered to listeners below
+
   if (msg.type === "CACHE_BUST") {
     queryClient.invalidateQueries();
   } else if (msg.type === "MENU_UPDATE") {
@@ -126,7 +151,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           return { eventName, fn };
         });
 
-        pusher.connection.bind("connected", () => !disposed && setConnectionStatus("Open"));
+        pusher.connection.bind("connected", () => {
+          if (disposed) return;
+          setConnectionStatus("Open");
+          onRealtimeConnected();
+        });
         pusher.connection.bind("disconnected", () => !disposed && setConnectionStatus("Closed"));
 
         return () => {
@@ -167,6 +196,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         delayRef.current = MIN_DELAY;
         setConnectionStatus("Open");
         setSocket(ws);
+        onRealtimeConnected();
       };
 
       ws.onmessage = (event) => {

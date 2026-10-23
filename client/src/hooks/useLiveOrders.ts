@@ -105,12 +105,16 @@ export function useLiveOrders() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const rawList = await apiFetch<any[]>("/api/orders");
+      // open=true: the server returns only orders that are neither served nor cancelled. This
+      // poll used to download the entire order history every 30s just to keep a handful.
+      const rawList = await apiFetch<any[]>("/api/orders?open=true");
 
       // Delivery / pickup / section-counter orders: keep every OPEN (unsettled) order regardless
       // of age so nothing unfinished ever hides. Settled ("served") orders leave immediately —
       // they remain visible on the Orders/Billing pages. Cancelled orders never show.
       // (Settling an order sets status = "served"; see POST /api/orders/:id/payment.)
+      // The status check below repeats the server filter, so an older server that ignores
+      // `open` still yields the right list.
       const candidates = rawList.filter((o: any) => {
         const ot = normalizeOrderType(o.orderType, false);
         if (ot !== "delivery" && ot !== "pickup") return false;

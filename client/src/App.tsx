@@ -232,14 +232,12 @@ function Router() {
 
 function App() {
   const { toast } = useToast();
-  const queryClient = useQueryClient(); // see Router()'s comment on why this isn't the module import
 
   usePrintJobBridge();
 
-  useEffect(() => {
-    const id = setInterval(() => queryClient.invalidateQueries(), 60_000);
-    return () => clearInterval(id);
-  }, [queryClient]);
+  // No blanket refetch timer here: it used to invalidate EVERY query every 60s on every open
+  // screen. Freshness now comes from realtime events (RealtimeProvider →
+  // shared/realtimeInvalidation.ts), each page's own polling, and mutation invalidations.
 
   useEffect(() => {
     return window.electronAPI?.onPrinterHealthWarning?.((p) => {

@@ -24,7 +24,7 @@ const cardAnim = {
   }),
 };
 
-// Plain computed elapsed-time label ("12m", "1h 5m") — the page's own 5s poll on
+// Plain computed elapsed-time label ("12m", "1h 5m") — the page's own 15s poll on
 // activeOrdersList keeps this fresh enough; no need for a per-second-ticking timer
 // (OrderCard.tsx has one, but it isn't exported and this dense summary list doesn't
 // need second-level precision the way the primary floor-management card does).
@@ -77,7 +77,7 @@ export default function LiveAnalytics() {
   const { data: stats } = useQuery<any>({
     queryKey: ["/api/dashboard/stats"],
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 15_000, // fallback only — realtime order events refresh it (RealtimeProvider)
   });
 
   // Rolling 2-business-day window (see getDashboardStats' activeResult in storage.ts,
@@ -96,7 +96,7 @@ export default function LiveAnalytics() {
       return r.json();
     },
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 15_000, // fallback only — realtime order events refresh it (RealtimeProvider)
   });
 
   const activeOrdersList = allOrders.filter((o: any) => ACTIVE_ORDER_STATUSES.includes(o.status));

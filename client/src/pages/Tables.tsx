@@ -163,7 +163,8 @@ export default function Tables() {
     queryKey: ["/api/tables"],
     staleTime: 0,
     refetchOnMount: "always",
-    refetchInterval: 5000,
+    // Fallback only: realtime TABLE/ORDER/KOT events refresh this within ~2s (RealtimeProvider).
+    refetchInterval: 15_000,
   });
 
   // Quick-POS sections (e.g. South Indian counter) — configured in Print Settings → Sections.
@@ -225,7 +226,8 @@ export default function Tables() {
     queryKey: ["/api/live-status"],
     staleTime: 0,
     refetchOnMount: "always",
-    refetchInterval: 5000,
+    // Fallback only: realtime order events refresh this within ~2s (RealtimeProvider).
+    refetchInterval: 15_000,
   });
 
   const createMutation = useMutation({

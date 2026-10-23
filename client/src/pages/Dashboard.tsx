@@ -43,31 +43,32 @@ export default function Dashboard() {
   const { data: stats } = useQuery<any>({
     queryKey: ['/api/dashboard/stats'],
     staleTime: 0,
-    refetchInterval: 5000,
+    // Fallback polls only — realtime order events refresh every query here (RealtimeProvider).
+    refetchInterval: 15_000,
   });
 
   const { data: salesChart = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/sales-chart'],
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
   });
 
   const { data: categorySales = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/category-sales'],
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
   });
 
   const { data: topItems = [] } = useQuery<any[]>({
     queryKey: ['/api/dashboard/top-items'],
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
   });
 
   const { data: lowStockItems = [] } = useQuery<any[]>({
     queryKey: ['/api/inventory/low-stock'],
     staleTime: 0,
-    refetchInterval: 10000,
+    refetchInterval: 30_000,
   });
 
   const statCards = [
@@ -149,7 +150,7 @@ export default function Dashboard() {
     <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "transparent" }}>
       <Header
         title="Dashboard"
-        description="Live analytics · refreshes every 5s"
+        description="Live analytics · updates live"
         onNewOrder={() => navigate('/pos')}
       />
 
