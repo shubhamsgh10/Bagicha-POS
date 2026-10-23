@@ -26,6 +26,7 @@ import { PaymentTag } from "@/components/PaymentTag";
 import { PaymentMethodDialog } from "@/components/PaymentMethodDialog";
 import { DueSettleDialog } from "@/components/DueSettleDialog";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
+import { useOrderHistorySync } from "@/lib/orderHistorySync";
 
 
 const fmt = (n: number) =>
@@ -540,16 +541,17 @@ export default function Orders() {
           })();
       return apiJson<any[]>(path);
     },
+    // A single day: realtime order events refresh it within ~2s (RealtimeProvider); this poll is
+    // only the fallback, and React Query pauses it while the page is hidden (the setInterval it
+    // replaced kept polling in the background).
+    refetchInterval: showAll ? false : 15_000,
   });
 
-  // Auto-refresh. "All Dates" is the entire order history (~240 KB today, growing ~20 orders a
-  // day) and is history, not a live board — re-downloading all of it every 8 s was pure waste, so
-  // it polls once a minute (the Refresh button and every save's invalidation still update it
-  // immediately). A single day stays at 8 s.
-  useEffect(() => {
-    const id = setInterval(() => refetch(), showAll ? 60_000 : 8_000);
-    return () => clearInterval(id);
-  }, [refetch, showAll]);
+  // "All Dates" is the entire order history (~0.5 MB and growing) and is history, not a live
+  // board: it is never re-downloaded on a timer. Instead only the rows that changed are fetched
+  // each minute and merged in, with a full reload every 10 minutes (lib/orderHistorySync.ts). The
+  // Refresh button and every save's invalidation still reload it immediately.
+  useOrderHistorySync(showAll);
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) =>
