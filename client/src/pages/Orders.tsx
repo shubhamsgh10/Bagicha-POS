@@ -659,11 +659,13 @@ export default function Orders() {
           <RefreshCw className="w-3.5 h-3.5" /> Refresh
         </motion.button>
 
+        {/* Changing the date (day, arrows, Today, All Dates) drops the Cash/UPI/Due chip back to
+            "All" — a "Due" check on one day shouldn't silently stay applied to the next. */}
         <DayPicker
           value={businessDate}
-          onChange={setBusinessDate}
+          onChange={(d) => { setBusinessDate(d); setPayFilter("all"); }}
           allDates={showAll}
-          onAllDatesChange={setShowAll}
+          onAllDatesChange={(v) => { setShowAll(v); setPayFilter("all"); }}
         />
 
         {/* Search */}
