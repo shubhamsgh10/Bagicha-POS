@@ -458,7 +458,7 @@ export default function Billing() {
 
   const payingOrderTotals = payingOrder
     ? deriveBillTotals(payingOrder)
-    : { subtotal: 0, discount: 0, containerCharge: 0, tax: 0, total: 0 };
+    : { subtotal: 0, discount: 0, containerCharge: 0, deliveryCharge: 0, tax: 0, total: 0 };
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -550,6 +550,12 @@ export default function Billing() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Container</span>
                         <span>{formatCurrency(deriveBillTotals(order).containerCharge)}</span>
+                      </div>
+                    )}
+                    {deriveBillTotals(order).deliveryCharge > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Delivery</span>
+                        <span>{formatCurrency(deriveBillTotals(order).deliveryCharge)}</span>
                       </div>
                     )}
                     <div className="flex justify-between">
@@ -709,6 +715,12 @@ export default function Billing() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Container</span>
                   <span>{formatCurrency(payingOrderTotals.containerCharge)}</span>
+                </div>
+              )}
+              {payingOrderTotals.deliveryCharge > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Delivery</span>
+                  <span>{formatCurrency(payingOrderTotals.deliveryCharge)}</span>
                 </div>
               )}
               <div className="flex justify-between">
