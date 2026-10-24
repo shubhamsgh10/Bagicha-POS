@@ -102,6 +102,7 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
       totalAmount: parseFloat(order.totalAmount ?? '0'),
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       containerCharge: billTotals.containerCharge,
+      deliveryCharge: billTotals.deliveryCharge,
       discountAmount: parseFloat(order.discountAmount ?? '0'),
       paymentMethod: paymentLabel(order) || null, // real legs ("Cash ₹53 + UPI ₹10"), not the largest-leg label
       billPrintCount: order.billPrintCount ?? 0,
@@ -390,6 +391,12 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
                     <div className="flex justify-between text-gray-500">
                       <span>Container</span>
                       <span>{fmt(billTotals.containerCharge)}</span>
+                    </div>
+                  )}
+                  {billTotals.deliveryCharge > 0 && (
+                    <div className="flex justify-between text-gray-500">
+                      <span>Delivery</span>
+                      <span>{fmt(billTotals.deliveryCharge)}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold border-t border-[var(--line)] pt-1.5 mt-1 text-sm">

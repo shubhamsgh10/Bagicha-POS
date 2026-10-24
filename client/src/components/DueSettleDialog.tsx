@@ -84,6 +84,7 @@ export function DueSettleDialog({ order, items, onClose }: Props) {
         subtotal={bill.subtotal}
         taxAmount={bill.tax}
         containerCharge={bill.containerCharge}
+        deliveryCharge={bill.deliveryCharge}
         discountAmount={bill.discount}
         orderLabel={serialNum(order.id)}
         initialCustomerName={order.customerName ?? undefined}
