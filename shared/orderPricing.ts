@@ -37,6 +37,7 @@ export interface PricedOrder {
   taxRate: number; // fraction, e.g. 0.18
   tax: number;
   containerCharge: number;
+  deliveryCharge: number;
   total: number;
   lines: PricedLine[]; // same order as input
 }
@@ -56,6 +57,7 @@ export function priceResolved(
   opts: { taxRate: number },
   discountAmountRaw: unknown,
   containerChargeRaw: unknown = 0,
+  deliveryChargeRaw: unknown = 0,
 ): PricedOrder {
   const { taxRate } = opts;
   const list = Array.isArray(items) ? items : [];
@@ -110,12 +112,15 @@ export function priceResolved(
   // Only validated non-negative here; there is no DB floor to check it against since
   // it isn't derived from anything.
   const containerCharge = Math.max(0, Number(containerChargeRaw) || 0);
+  // Delivery charge: the same contract as the container charge — a staff-typed flat amount
+  // for a delivery order, untaxed (added after tax), only clamped non-negative.
+  const deliveryCharge = Math.max(0, Number(deliveryChargeRaw) || 0);
   const discount = Math.min(Math.max(0, Number(discountAmountRaw) || 0), subtotal);
   const taxable = subtotal - discount;
   const tax = taxable * taxRate;
-  const total = taxable + tax + containerCharge;
+  const total = taxable + tax + containerCharge + deliveryCharge;
 
-  return { subtotal, discount, taxRate, tax, containerCharge, total, lines };
+  return { subtotal, discount, taxRate, tax, containerCharge, deliveryCharge, total, lines };
 }
 
 /**
@@ -123,24 +128,27 @@ export function priceResolved(
  * `containerCharge` defaults to 0 for backward compatibility with existing callers
  * that don't track it — pass through whatever manually-entered amount should apply
  * to the recomputed order (e.g. the sum of two merged orders' existing charges).
+ * `deliveryCharge` is the same kind of manual flat amount and defaults to 0 too.
  */
 export function computeTotals(
   lineTotals: number[],
   discountAmountRaw: unknown,
   taxRate: number,
   containerCharge = 0,
-): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number } {
+  deliveryCharge = 0,
+): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number; deliveryCharge: number } {
   const subtotal = lineTotals.reduce((s, v) => s + v, 0);
   const discount = Math.min(Math.max(0, Number(discountAmountRaw) || 0), subtotal);
   const taxable = subtotal - discount;
   const tax = taxable * taxRate;
-  return { subtotal, discount, tax, containerCharge, total: taxable + tax + containerCharge };
+  return { subtotal, discount, tax, containerCharge, deliveryCharge, total: taxable + tax + containerCharge + deliveryCharge };
 }
 
 export interface BillTotals {
   subtotal: number;
   discount: number;
   containerCharge: number;
+  deliveryCharge: number;
   tax: number;
   total: number;
 }
@@ -152,7 +160,7 @@ export interface BillTotals {
  * `orders` used to have no `subtotalAmount`/`containerCharge` columns, so every such
  * site reconstructed subtotal as `totalAmount - taxAmount` — correct ONLY when
  * discount = 0 AND containerCharge = 0, since the true relation (see priceResolved
- * above) is `total = (subtotal - discount) * (1 + taxRate) + containerCharge`, i.e.
+ * above) is `total = (subtotal - discount) * (1 + taxRate) + containerCharge + deliveryCharge`, i.e.
  * `total - tax = subtotal - discount + containerCharge`, not `subtotal` alone. With a
  * discount and a container charge both present this was wrong by a very real amount
  * (see scripts/verify-bill-derivation.ts for a worked example) — the printed "Sub
@@ -171,6 +179,7 @@ export function deriveBillTotals(order: {
   discountAmount?: string | number | null;
   subtotalAmount?: string | number | null;
   containerCharge?: string | number | null;
+  deliveryCharge?: string | number | null;
 }): BillTotals {
   const total = Number(order.totalAmount) || 0;
   const tax = Number(order.taxAmount) || 0;
@@ -179,5 +188,8 @@ export function deriveBillTotals(order: {
     order.subtotalAmount != null ? Number(order.subtotalAmount) || 0 : total - tax;
   const containerCharge =
     order.containerCharge != null ? Number(order.containerCharge) || 0 : 0;
-  return { subtotal, discount, containerCharge, tax, total };
+  // NULL/absent for every row written before orders.delivery_charge existed.
+  const deliveryCharge =
+    order.deliveryCharge != null ? Number(order.deliveryCharge) || 0 : 0;
+  return { subtotal, discount, containerCharge, deliveryCharge, tax, total };
 }
