@@ -36,6 +36,8 @@ interface KOTPrintSettings {
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
   kotNumbering: boolean;
+  /** "image" (default) = Petpooja-style proportional font drawn as a bitmap; "text" = printer's built-in font. */
+  kotStyle?: 'image' | 'text';
   /** categoryId (stringified) -> printerId; absent = default KOT printer. */
   categoryPrinterOverrides?: Record<string, string | null>;
 }
@@ -84,6 +86,7 @@ const DEFAULT_KOT: KOTPrintSettings = {
   printOnTableMove: false, kotPrinterId: null,
   autoKOTPrint: false, autoKOTDebounceMs: 1500,
   kotNumbering: true,
+  kotStyle: 'image',
   categoryPrinterOverrides: {},
 };
 
@@ -1095,6 +1098,12 @@ export function PrintSettingsPanel({
                 description="Prints KOT#: 001 with date and time on each KOT slip."
                 checked={ps.kot.kotNumbering !== false}
                 onChange={v => setKot('kotNumbering', v)}
+              />
+              <ToggleRow
+                label="Modern KOT font (printed as an image)"
+                description="Prints the KOT in a clean, spaced-out sans-serif font instead of the printer's built-in font. Turn off to go back to the built-in font, for example if a printer shows garbage or prints too slowly."
+                checked={ps.kot.kotStyle !== 'text'}
+                onChange={v => setKot('kotStyle', v ? 'image' : 'text')}
               />
 
               <div className="mt-5">

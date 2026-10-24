@@ -323,7 +323,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       const order = await storage.getOrderById(Number(orderId));
       if (!order) return res.status(404).json({ error: "Order not found" });
 
-      const { subtotal, containerCharge } = deriveBillTotals(order);
+      const { subtotal, containerCharge, deliveryCharge } = deriveBillTotals(order);
 
       const result = await redeemCoupon(
         Number(couponId),
@@ -335,14 +335,15 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       if (!result.ok) return res.status(400).json({ error: result.reason });
 
       // Update order's discount and totals. Uses the configured tax rate (not a
-      // hardcoded 18%) and keeps the container charge that was already on the order
-      // (the previous version dropped it from the recomputed total entirely).
+      // hardcoded 18%) and keeps the container and delivery charges that were already on
+      // the order (the previous version dropped the container charge from the recomputed
+      // total entirely).
       const { taxRate } = pricingRates();
       const baseDiscount = parseFloat(String(order.discountAmount ?? 0));
       const newDiscount = baseDiscount + result.discount;
       const taxable = Math.max(0, subtotal - newDiscount);
       const tax = taxable * taxRate;
-      const total = taxable + tax + containerCharge;
+      const total = taxable + tax + containerCharge + deliveryCharge;
 
       const updated = await storage.updateOrder(Number(orderId), {
         discountAmount: newDiscount.toFixed(2),
@@ -430,16 +431,17 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       if (!result.ok) return res.status(400).json({ error: result.reason });
 
       // Apply discount to order (if provided). Uses the configured tax rate (not a
-      // hardcoded 18%) and keeps the container charge already on the order (the
-      // previous version dropped it from the recomputed total entirely).
+      // hardcoded 18%) and keeps the container and delivery charges already on the order
+      // (the previous version dropped the container charge from the recomputed total
+      // entirely).
       if (order && result.discount > 0) {
-        const { subtotal, containerCharge } = deriveBillTotals(order);
+        const { subtotal, containerCharge, deliveryCharge } = deriveBillTotals(order);
         const { taxRate } = pricingRates();
         const baseDiscount = parseFloat(String(order.discountAmount ?? 0));
         const newDiscount = baseDiscount + result.discount;
         const taxable = Math.max(0, subtotal - newDiscount);
         const tax = taxable * taxRate;
-        const total = taxable + tax + containerCharge;
+        const total = taxable + tax + containerCharge + deliveryCharge;
         const updated = await storage.updateOrder(order.id, {
           discountAmount: newDiscount.toFixed(2),
           taxAmount:      tax.toFixed(2),

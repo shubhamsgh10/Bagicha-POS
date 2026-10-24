@@ -39,6 +39,19 @@ const items = [{ name: "Wildfire (Medium)", quantity: 1, price: "499.00" }];
   checks.push(["no container charge: Subtotal 100, Tax 5, Total 105", t.includes("Subtotal: ₹100") && t.includes("Tax: ₹5") && t.includes("*TOTAL: ₹105*")]);
 }
 
+// Delivery order: an untaxed flat Delivery line after Container, before TOTAL; Subtotal is still the food.
+{
+  const t = buildEbillText({ orderNumber: "D", totalAmount: "585.00", taxAmount: "25.00", subtotalAmount: "500.00", discountAmount: "0.00", containerCharge: "20.00", deliveryCharge: "40.00" }, []);
+  checks.push(["delivery order: a Delivery line is printed", lineOf(t, "Delivery:") === "Delivery: ₹40"]);
+  const rows = ["Tax:", "Container:", "Delivery:", "TOTAL:"].map((p) => t.indexOf(p));
+  checks.push(["delivery order: rows read Tax → Container → Delivery → TOTAL", rows.every((i) => i >= 0) && rows.every((v, i) => i === 0 || v > rows[i - 1])]);
+  checks.push(["delivery order: Subtotal is the food total and TOTAL foots (500+25+20+40=585)", lineOf(t, "Subtotal:") === "Subtotal: ₹500" && lineOf(t, "TOTAL:") === "*TOTAL: ₹585*"]);
+}
+{
+  const t = buildEbillText({ orderNumber: "Y2", totalAmount: "105.00", taxAmount: "5.00", subtotalAmount: "100.00", deliveryCharge: "0.00" }, []);
+  checks.push(["no delivery charge: no Delivery line", !t.includes("Delivery")]);
+}
+
 // Legacy rows written before subtotalAmount/containerCharge existed fall back to total − tax.
 {
   const t = buildEbillText({ orderNumber: "Z", totalAmount: "105.00", taxAmount: "5.00" }, []);

@@ -25,6 +25,12 @@ export interface KOTPrintSettings {
   autoKOTPrint: boolean;
   autoKOTDebounceMs: number;
   kotNumbering: boolean;
+  /**
+   * "image" (default) draws the ticket as a bitmap in a proportional sans-serif (shared/print/kotImage.ts);
+   * "text" prints it with the printer's built-in fixed-width font. An image ticket that cannot be drawn
+   * (unsupported character, absurd length) falls back to "text" for that one ticket.
+   */
+  kotStyle?: "image" | "text";
   /** categoryId (stringified) -> printerId; absent/null = fall back to kotPrinterId. */
   categoryPrinterOverrides?: Record<string, string | null>;
 }

@@ -103,6 +103,10 @@ export const orders = pgTable("orders", {
   // `totalAmount - taxAmount` for those (see its comment for why that's only an approximation).
   subtotalAmount: decimal("subtotal_amount", { precision: 10, scale: 2 }),
   containerCharge: decimal("container_charge", { precision: 10, scale: 2 }).default("0"),
+  // Staff-typed flat delivery charge for a delivery order (the POS cart's "Delivery Charge"
+  // box) — untaxed and added after tax exactly like containerCharge (shared/orderPricing.ts).
+  // Added by scripts/migrate-order-delivery-charge.mjs; 0 on every row older than the column.
+  deliveryCharge: decimal("delivery_charge", { precision: 10, scale: 2 }).default("0"),
   paymentStatus: text("payment_status").notNull().default("pending"),
   paymentMethod: text("payment_method"),
   notes: text("notes"),
