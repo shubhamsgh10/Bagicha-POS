@@ -3,6 +3,7 @@ import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, BrowserPayload, KOTPrintSettings } from "./types";
 import { deriveBillTotals } from "../orderPricing";
 import { stripKitchenNotes } from "../orderItemText";
+import { generateKOTImageBuffer } from "./kotImage";
 
 export interface KOTItem {
   name: string;
@@ -39,6 +40,13 @@ export function generateKOTBuffer(params: {
   kotSettings: KOTPrintSettings;
   width?: number;
 }): Buffer {
+  // Image style: the proportional-font ticket (see kotImage.ts). null = it can't be drawn (a character the
+  // face lacks, an absurdly long ticket) — print this one in plain text rather than not at all.
+  if (params.kotSettings.kotStyle === "image") {
+    const image = generateKOTImageBuffer(params);
+    if (image) return image;
+  }
+
   const W = params.width ?? 48;
   const M = 1;
   const bodyLine = (s: string) => E.line(" ".repeat(M) + s);
