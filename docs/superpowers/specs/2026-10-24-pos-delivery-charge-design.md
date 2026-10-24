@@ -35,7 +35,7 @@ One pure helper, `client/src/lib/chargeBoxes.ts`:
 
 ```ts
 chargeBoxVisibility({
-  isSectionMode, isTableSession,
+  isTableSession,
   activeItemMode,            // "dinein" | "pickup" | "delivery" (table "Adding as")
   orderType,                 // form orderType for standalone: "dine-in" | "takeaway" | "delivery"
   cartModes,                 // serviceMode of every cart line
@@ -47,10 +47,11 @@ Rules:
 
 | Context | showContainer | showDelivery |
 |---|---|---|
-| Section POS | n/a (SectionActionBar keeps its own Container box, unchanged) | false |
 | Table session | `activeItemMode !== "dinein"` OR any cart line pickup/delivery | `activeItemMode === "delivery"` OR any cart line delivery |
 | Standalone (posMode, or a new order with no table) | `orderType` is takeaway or delivery | `orderType === "delivery"` |
-| **Always (every context except section)** | OR `containerCharge > 0` | OR `deliveryCharge > 0` |
+| **Always** | OR `containerCharge > 0` | OR `deliveryCharge > 0` |
+
+Section POS is untouched. POS.tsx doesn't render this totals block in section mode at all. `SectionActionBar` keeps its own Container box, and no delivery box exists there, so the helper takes no section flag.
 
 The "> 0 stays visible" override guarantees no charge is ever silently in the total with its box hidden. That covers a reopened order with a saved charge, a flipped toggle, and a changed order-type tab.
 
@@ -77,7 +78,7 @@ total = (subtotal − discount) × (1 + taxRate) + containerCharge + deliveryCha
 - **`POST /api/orders` + `PUT /api/orders/:id/items`:** read `deliveryCharge` from the body, pass it to `priceOrder`, and persist `priced.deliveryCharge.toFixed(2)`.
 - **Client must resend on every save:** the create payload, the update payload, and the Auto-KOT background sync PUT. A missing field is treated as 0 and would wipe an applied charge. This is the same "only what's re-sent survives" rule as `containerCharge` / `discountAmount`.
 - **Reopen:** loading an existing order restores `deliveryCharge` into the box (like `containerCharge`, unlike discount). Every cart-clear / new-order reset sets it back to 0 alongside `containerCharge`.
-- **Audit:** the `order.items_edit` metadata gains `deliveryBefore` / `deliveryAfter`, and a delivery change counts toward `moneyChanged`.
+- **Audit:** the `order.items_edit` metadata gains `deliveryBefore` / `deliveryAfter`, and a delivery change counts toward `moneyChanged`. The "Bill Modified" rule in Reports → KOT & Bill Activity lives in three places that must stay in sync: the route, `shared/orderAudit.ts`'s `classifyItemsEditRow`, and the raw SQL in `server/services/auditService.ts`. All three compare delivery before/after the same way they already compare container before/after.
 
 ## 4. Merge / split / coupon / loyalty
 
@@ -94,7 +95,7 @@ The label is "Delivery" everywhere, and the line shows only when > 0. It always 
 | Thermal bill (ESC/POS bytes, also the browser-fallback image) | `shared/print/generators.ts` `generateBillBuffer` |
 | Bill text preview | `server/printRoutes.ts` `billTextLines` (keep in sync with the above) |
 | Order objects handed to those renderers | `server/services/printDispatch.ts`, `server/printRoutes.ts` |
-| WhatsApp e-bill / due reminder | `shared/ebillText.ts` |
+| WhatsApp e-bill (wa.me, POS) | `shared/ebillText.ts` + the inline builder in `POS.tsx` `handleSaveEBill` (the due reminder prints only items + Total, so it needs no change) |
 | Last-resort in-page bill preview | `client/src/lib/receiptText.ts` (its subtotal back-derivation must also subtract delivery) + its caller in `POS.tsx` |
 | Settle dialog summary | `client/src/components/SettlementDialog.tsx` (new `deliveryCharge` prop) |
 | Due settle dialog | `client/src/components/DueSettleDialog.tsx` (passes `bill.deliveryCharge`) |
@@ -116,6 +117,8 @@ All of these are pure and live in `npm run test:pure`.
 - `scripts/verify-bill-derivation.ts`: `deriveBillTotals` reads the delivery charge, a NULL legacy value reads as 0, and the total foots with discount + container + delivery all present.
 - `scripts/verify-merge-split.ts`: merge sums the delivery charges, and split leaves the charge on the source with no net change across the two bills.
 - `scripts/verify-ebill-text.ts`: the Delivery line appears only when > 0.
-- **New** `scripts/verify-charge-boxes.ts`: every row of the visibility table in §1, including the "> 0 stays visible" override and section mode.
+- `scripts/verify-escpos-interpret.ts`: the thermal bill prints "Delivery" after "Container" and before Grand Total.
+- `scripts/verify-kot-bill-classify.ts`: a delivery-only edit counts as Bill Modified.
+- **New** `scripts/verify-charge-boxes.ts`: every row of the visibility table in §1, including the "> 0 stays visible" override.
 
 Plus `npm run check`. Finally, check the three screenshots' scenarios in a real browser: a table on Dine-In, Pickup and Delivery, plus standalone Pickup and Delivery. Do it with an unsaved cart only, so no shared-DB writes happen. Use the dev server once the migration has run.
