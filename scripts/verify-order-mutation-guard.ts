@@ -32,6 +32,10 @@ const moneyFields = [
   { totalAmount: "0.01" },
   { taxAmount: "0" },
   { discountAmount: "9999" },
+  // The two manual flat charges are persisted only by POST /api/orders and
+  // PUT /api/orders/:id/items (clamped by shared/orderPricing.ts) — never settable here.
+  { containerCharge: "9999" },
+  { deliveryCharge: "9999" },
   { paidAmount: "0.01" },
   { paymentStatus: "paid" },
   { changeAmount: "0" },
