@@ -653,6 +653,7 @@ async function runBillAfterCatchUp(
         discountAmount: order.discountAmount,
         subtotalAmount: order.subtotalAmount,
         containerCharge: order.containerCharge,
+        deliveryCharge: order.deliveryCharge,
         paymentMethod: order.paymentMethod,
         billPrintCount: order.billPrintCount ?? 0,
         kotPrintCount: order.kotPrintCount ?? 0,
