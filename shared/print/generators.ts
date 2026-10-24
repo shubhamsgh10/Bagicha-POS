@@ -152,6 +152,7 @@ export function generateBillBuffer(params: {
     discountAmount: string | null;
     subtotalAmount?: string | null;
     containerCharge?: string | null;
+    deliveryCharge?: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
     // NOT rendered. runBillPrint (server/services/printDispatch.ts) overlaps the bill's reads with the KOT
@@ -298,7 +299,7 @@ export function generateBillBuffer(params: {
 
   parts.push(E.divider("-", W));
 
-  const { subtotal, discount, containerCharge, tax } = deriveBillTotals(order);
+  const { subtotal, discount, containerCharge, deliveryCharge, tax } = deriveBillTotals(order);
   const rawTotal = parseFloat(order.totalAmount);
   const rounded  = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
@@ -314,6 +315,9 @@ export function generateBillBuffer(params: {
   }
   if (containerCharge > 0) {
     parts.push(tw("", `Container  ${containerCharge.toFixed(2)}`));
+  }
+  if (deliveryCharge > 0) {
+    parts.push(tw("", `Delivery  ${deliveryCharge.toFixed(2)}`));
   }
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) {
     parts.push(tw("", `Round off  ${roundOff.toFixed(2)}`));
