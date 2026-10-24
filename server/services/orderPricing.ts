@@ -33,12 +33,13 @@ export function pricingRates(): { taxRate: number } {
   return { taxRate: percent / 100 };
 }
 
-/** DB-backed pricing for POST /orders and PUT /orders/:id/items. `containerChargeRaw`
- * is the staff-typed manual container charge for this order (see shared/orderPricing.ts). */
+/** DB-backed pricing for POST /orders and PUT /orders/:id/items. `containerChargeRaw` and
+ * `deliveryChargeRaw` are the staff-typed manual charges for this order (see shared/orderPricing.ts). */
 export async function priceOrder(
   items: PricingItemInput[],
   discountAmountRaw: unknown,
   containerChargeRaw: unknown = 0,
+  deliveryChargeRaw: unknown = 0,
 ): Promise<PricedOrder> {
   const list = Array.isArray(items) ? items : [];
   const ids = Array.from(
@@ -50,19 +51,21 @@ export async function priceOrder(
   const byId = new Map<number, ResolvedMenuItem>(
     rows.map((r) => [r.id, { id: r.id, price: r.price, sizes: r.sizes ?? null }]),
   );
-  return priceResolved(list, byId, pricingRates(), discountAmountRaw, containerChargeRaw);
+  return priceResolved(list, byId, pricingRates(), discountAmountRaw, containerChargeRaw, deliveryChargeRaw);
 }
 
 /**
  * Recompute totals for an order whose items already live in the DB (merge/split),
  * using the configured tax rate and a clamped discount. `containerCharge` is a
  * manually-entered flat amount, not derived from the items — pass through whatever
- * value should apply to the recomputed order (defaults to 0).
+ * value should apply to the recomputed order (defaults to 0). `deliveryCharge` follows
+ * the same rule.
  */
 export function computeTotalsFromLines(
   lineTotals: number[],
   discountAmountRaw: unknown,
   containerCharge = 0,
-): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number } {
-  return computeTotals(lineTotals, discountAmountRaw, pricingRates().taxRate, containerCharge);
+  deliveryCharge = 0,
+): { subtotal: number; discount: number; tax: number; total: number; containerCharge: number; deliveryCharge: number } {
+  return computeTotals(lineTotals, discountAmountRaw, pricingRates().taxRate, containerCharge, deliveryCharge);
 }

@@ -7,7 +7,8 @@
  * alignment, double-width/height, line spacing — comes from shared/print/receiptLayout.ts (unit
  * tested); this file only draws it. Each character is placed at its exact cell, so columns line
  * up identically to the real bill even though the glyph shapes come from a system monospace font
- * rather than the printer's built-in Font A.
+ * rather than the printer's built-in Font A. Raster graphics (GS v 0 — the image-style KOT) are copied
+ * across dot-for-dot, so that ticket is the printer's exact bitmap.
  */
 import { charCells, type EscPosDocument } from "@shared/print/escposInterpret";
 import { layoutReceipt, CELL_W, CELL_H } from "@shared/print/receiptLayout";
@@ -100,6 +101,22 @@ export function renderReceiptToDataUrl(doc: EscPosDocument): string {
       const o = (y * wDots + x) * 4;
       px[o] = px[o + 1] = px[o + 2] = v;
       px[o + 3] = 255;
+    }
+  }
+  // Raster graphics (the image-style KOT) are already 1 bit at the printer's dot grid: copy them across as-is.
+  for (let r = 0; r < layout.rasters.length; r++) {
+    const ras = layout.rasters[r];
+    const rowBytes = Math.ceil(ras.widthDots / 8);
+    for (let ry = 0; ry < ras.heightDots; ry++) {
+      const y = ras.y + ry;
+      if (y >= hDots) break;
+      for (let rx = 0; rx < ras.widthDots; rx++) {
+        if ((ras.data[ry * rowBytes + (rx >> 3)] & (0x80 >> (rx & 7))) === 0) continue;
+        const x = ras.x + rx;
+        if (x >= wDots) break;
+        const o = (y * wDots + x) * 4;
+        px[o] = px[o + 1] = px[o + 2] = 0;
+      }
     }
   }
   octx.putImageData(img, 0, 0);

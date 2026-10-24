@@ -71,6 +71,30 @@ for (const [subtotal, discount, containerCharge, taxRate] of matrix) {
   checks.push(["legacy row (no persisted columns) container defaults to 0", derived.containerCharge === 0]);
 }
 
+// 4. Delivery charge (flat, untaxed — same as container): recovered exactly, and the five
+//    components foot to the total: total = (subtotal − discount)(1 + t) + container + delivery.
+{
+  const subtotal = 1000, discount = 100, container = 20, delivery = 40, taxRate = 0.05;
+  const tax = (subtotal - discount) * taxRate; // 45
+  const total = subtotal - discount + tax + container + delivery; // 1005
+  const derived = deriveBillTotals({
+    totalAmount: total.toFixed(2), taxAmount: tax.toFixed(2), discountAmount: discount.toFixed(2),
+    subtotalAmount: subtotal.toFixed(2), containerCharge: container.toFixed(2), deliveryCharge: delivery.toFixed(2),
+  });
+  checks.push(["delivery charge recovered exactly (40)", approx(derived.deliveryCharge, 40)]);
+  checks.push(["with delivery: subtotal − discount + tax + container + delivery foots to total", approx(
+    derived.subtotal - derived.discount + derived.tax + derived.containerCharge + derived.deliveryCharge,
+    derived.total,
+  )]);
+}
+
+// 5. Rows written before delivery_charge existed (NULL or absent) read delivery as 0.
+{
+  const withNull = deriveBillTotals({ totalAmount: "1070.00", taxAmount: "50.00", discountAmount: "0", subtotalAmount: "1000.00", containerCharge: "20.00", deliveryCharge: null });
+  const absent = deriveBillTotals({ totalAmount: "1070.00", taxAmount: "50.00", discountAmount: "0", subtotalAmount: "1000.00", containerCharge: "20.00" });
+  checks.push(["delivery NULL or absent → 0", withNull.deliveryCharge === 0 && absent.deliveryCharge === 0]);
+}
+
 let failed = 0;
 for (const [name, ok] of checks) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
