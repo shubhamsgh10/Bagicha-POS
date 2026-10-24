@@ -132,7 +132,6 @@ function billTextLines(params: {
     discountAmount: string | null;
     subtotalAmount?: string | null;
     containerCharge?: string | null;
-    deliveryCharge?: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
     kotPrintCount?: number;
@@ -219,7 +218,7 @@ function billTextLines(params: {
   }
   lines.push(div("-"));
 
-  const { subtotal, discount, containerCharge, deliveryCharge, tax } = deriveBillTotals(order);
+  const { subtotal, discount, containerCharge, tax } = deriveBillTotals(order);
   const rawTotal = parseFloat(order.totalAmount);
   const rounded = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
@@ -229,7 +228,6 @@ function billTextLines(params: {
   lines.push(two("", `SGST ${cgstRate}%  ${(tax / 2).toFixed(2)}`));
   if (discount > 0) lines.push(two("", `Discount  -${discount.toFixed(2)}`));
   if (containerCharge > 0) lines.push(two("", `Container  ${containerCharge.toFixed(2)}`));
-  if (deliveryCharge > 0) lines.push(two("", `Delivery  ${deliveryCharge.toFixed(2)}`));
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) lines.push(two("", `Round off  ${roundOff.toFixed(2)}`));
   lines.push(div("="));
   lines.push(two("", `Grand Total  ${sym}${rounded.toFixed(2)}`));
@@ -562,7 +560,6 @@ export function registerPrintRoutes(app: Express): void {
           discountAmount: order.discountAmount,
           subtotalAmount: order.subtotalAmount,
           containerCharge: order.containerCharge,
-          deliveryCharge: order.deliveryCharge,
           paymentMethod: order.paymentMethod,
           billPrintCount: order.billPrintCount ?? 0,
           kotPrintCount: order.kotPrintCount ?? 0,

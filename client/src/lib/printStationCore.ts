@@ -190,22 +190,18 @@ export function ownsPrinter(printerId: string): boolean {
 }
 
 /** Atomically claims a print_jobs row so only one station ever executes a given job. */
-async function claimJob(jobId: number): Promise<{ claimed: boolean; payload?: string }> {
+export async function claimPrintJob(jobId: number): Promise<boolean> {
   try {
     const res = await fetch(apiUrl(`/api/print/jobs/${jobId}/claim`), {
       method: "POST",
       credentials: "include",
     });
-    if (!res.ok) return { claimed: false };
-    const data = (await res.json()) as { claimed: boolean; job?: { payload?: string } };
-    return { claimed: data.claimed, payload: data.job?.payload };
+    if (!res.ok) return false;
+    const data = (await res.json()) as { claimed: boolean };
+    return data.claimed;
   } catch {
-    return { claimed: false };
+    return false;
   }
-}
-
-export async function claimPrintJob(jobId: number): Promise<boolean> {
-  return (await claimJob(jobId)).claimed;
 }
 
 /** Returns a claimed-but-unprintable job to the pending pool so another station can rescue it. */
@@ -235,14 +231,10 @@ export async function claimAndExecute(
 ): Promise<void> {
   if (!job.jobId || !ownsPrinter(job.printerId)) return;
   if (canClaim && !(await canClaim(job.printerId))) return;
-  const claim = await claimJob(job.jobId);
-  if (!claim.claimed) return; // another station (or this tab's direct print path) took it
-  // A big ticket (the image-style KOT is tens of KB) is too large for the realtime broadcast (Pusher caps an
-  // event at ~10 KB), so the broadcast carries no payload and the claim response is where it comes from.
-  const payload = job.payload || claim.payload || "";
+  const claimed = await claimPrintJob(job.jobId);
+  if (!claimed) return; // another station (or this tab's direct print path) took it
   try {
-    if (!payload) throw new Error("print job has no payload");
-    await executor({ ...job, payload });
+    await executor(job);
   } catch (e: any) {
     console.warn("[printStation] executor failed, releasing job", job.jobId, e);
     await releasePrintJob(job.jobId, e?.message ?? String(e));

@@ -67,27 +67,6 @@ const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
   checks.push(["negative container charge clamped to 0", near(r.containerCharge, 0)]);
 }
 
-// 6d. Delivery charge: a manual flat amount like the container charge — added AFTER tax,
-//     never taxed.
-{
-  const r = priceResolved([{ menuItemId: 1, quantity: 2, price: 500, serviceMode: "delivery" }], menu, rates, 0, 30, 40);
-  // subtotal 1000, tax 180 (on the food only), container 30, delivery 40 → 1250
-  checks.push(["manual delivery charge added untaxed (1250)", near(r.total, 1250) && near(r.deliveryCharge, 40) && near(r.tax, 180)]);
-}
-
-// 6e. Omitting the delivery argument keeps every existing caller's total unchanged.
-{
-  const r = priceResolved([{ menuItemId: 1, quantity: 1, price: 500 }], menu, rates, 0, 30);
-  checks.push(["no delivery charge argument defaults to 0 (620)", near(r.deliveryCharge, 0) && near(r.total, 620)]);
-}
-
-// 6f. A negative or non-numeric delivery charge is clamped to 0, never reduces the total.
-{
-  const neg = priceResolved([{ menuItemId: 1, quantity: 1, price: 500 }], menu, rates, 0, 0, -25);
-  const junk = priceResolved([{ menuItemId: 1, quantity: 1, price: 500 }], menu, rates, 0, 0, "abc");
-  checks.push(["negative / non-numeric delivery charge clamped to 0", near(neg.deliveryCharge, 0) && near(junk.deliveryCharge, 0) && near(neg.total, 590)]);
-}
-
 // 7. Unknown menu item rejected.
 {
   let threw = false;
@@ -112,12 +91,6 @@ const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
 {
   const t = computeTotals([200, 300], 99999, 0.18);
   checks.push(["computeTotals clamps discount", near(t.discount, 500) && near(t.total, 0)]);
-}
-
-// 8b. computeTotals carries the delivery charge untaxed (merge/split path).
-{
-  const t = computeTotals([200, 300], 0, 0.18, 20, 40);
-  checks.push(["computeTotals adds delivery untaxed (500×1.18+20+40=650)", near(t.deliveryCharge, 40) && near(t.total, 650)]);
 }
 
 let failed = 0;

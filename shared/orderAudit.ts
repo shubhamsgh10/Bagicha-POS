@@ -122,8 +122,6 @@ export interface ItemsEditMetadata {
   discountAfter?: number;
   containerBefore?: number;
   containerAfter?: number;
-  deliveryBefore?: number;
-  deliveryAfter?: number;
 }
 
 /**
@@ -147,7 +145,6 @@ export function classifyItemsEditRow(meta: ItemsEditMetadata | null | undefined)
   const billModified =
     meta.totalBefore !== meta.totalAfter ||
     meta.discountBefore !== meta.discountAfter ||
-    meta.containerBefore !== meta.containerAfter ||
-    meta.deliveryBefore !== meta.deliveryAfter;
+    meta.containerBefore !== meta.containerAfter;
   return { kotModified, billModified };
 }

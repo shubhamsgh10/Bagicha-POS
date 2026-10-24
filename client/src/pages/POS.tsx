@@ -31,7 +31,6 @@ import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
 import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewModal";
 import { kotLines, billLines } from "@/lib/receiptText";
-import { chargeBoxVisibility } from "@/lib/chargeBoxes";
 import { printKotFallback, printBillFallback, BROWSER_BILL_TOAST, BROWSER_KOT_TOAST } from "@/lib/printBill";
 import { startPrintTap, timePrintStage, endPrintTap } from "@/lib/printPerfClient";
 import { printFieldsForSubmitMode } from "@shared/printRequest";
@@ -106,9 +105,6 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
-// Customers listed in the name-box dropdown before anything is typed (typing filters the full directory).
-const CUSTOMER_DROPDOWN_LIMIT = 50;
-
 // Order-type tab icons — inline SVG, no emoji, matching the Bagicha design system's icon style.
 function DineInIcon({ className }: { className?: string }) {
   return (
@@ -181,9 +177,6 @@ export default function POS() {
   // Manually staff-entered container charge (₹) — a flat amount typed in on the cart,
   // like a delivery charge, not computed from item quantities/serviceMode.
   const [containerCharge, setContainerCharge] = useState(0);
-  // Manually staff-entered delivery charge (₹) for delivery orders — the same contract as
-  // containerCharge: flat, untaxed, resent on every save, restored on reopen.
-  const [deliveryCharge, setDeliveryCharge] = useState(0);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
   // Unified modifier modal state (handles both add-new and edit-existing)
@@ -468,7 +461,6 @@ export default function POS() {
       taxAmount: parseFloat(order.taxAmount ?? '0'),
       discountAmount: parseFloat(order.discountAmount ?? '0'),
       containerCharge: order.containerCharge != null ? parseFloat(order.containerCharge) : containerCharge,
-      deliveryCharge: order.deliveryCharge != null ? parseFloat(order.deliveryCharge) : deliveryCharge,
       paymentMethod: paymentLabel(order) || null,
       createdAt: order.createdAt ?? new Date(),
       items: cartItems.map(i => ({ name: i.name, quantity: i.quantity, price: i.totalPrice, size: i.size ?? null, notes: i.notes || null, serviceMode: i.serviceMode })),
@@ -794,7 +786,6 @@ export default function POS() {
     // above, this must NOT reset to 0, or reopening a running order and saving again
     // without touching this field would silently wipe out a charge already applied.
     setContainerCharge(Number(existingOrder.containerCharge) || 0);
-    setDeliveryCharge(Number(existingOrder.deliveryCharge) || 0); // same reason as containerCharge
     // Section counter: point the add-mode toggle at the mode of the last saved item
     // (staff usually keep adding more of the same kind); items keep their own modes.
     if (isSectionMode && loadedItems.length > 0) {
@@ -854,7 +845,6 @@ export default function POS() {
             // preserves what's explicitly re-sent, so omitting this would silently
             // reset an already-entered manual container charge back to 0.
             containerCharge: containerCharge.toFixed(2),
-            deliveryCharge: deliveryCharge.toFixed(2), // same resend rule as containerCharge
             // Same "must be resent every save" rule — a reason given at removal time
             // (requestRemoveFromCart) is stashed in pendingKotCancellationsRef until a
             // save actually carries it through; this Auto-KOT sync is one of the saves.
@@ -946,7 +936,7 @@ export default function POS() {
         void handleSavedPrint("kot", order.id, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order saved!" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order saved!" });
@@ -956,12 +946,12 @@ export default function POS() {
           setActiveOrderId(order.id);
           setCartLoaded(false);
         } else {
-          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order saved!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "bill-print") {
         // First-ever submit for this cart — Bill created the order itself (same as
@@ -1008,18 +998,18 @@ export default function POS() {
         void handleSavedPrint("kot", vars.orderId, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "save-print") {
         toast({ title: "Order updated!" });
         void handleSavedPrint("bill", vars.orderId, order, order.print);
         if (!isSectionMode) {
-          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+          setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
         toast({ title: "Order updated!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {};
         navigate("/tables");
       } else if (mode === "bill-print") {
         // Stays on screen (unlike save-print) — plain Bill is a mid-service
@@ -1312,19 +1302,9 @@ export default function POS() {
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
   const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
   const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId || isSectionMode);
-  // Container and delivery charges are manually staff-entered flat amounts, untaxed, not
-  // computed from item quantities/serviceMode.
-  const grandTotal = total + containerCharge + deliveryCharge;
-  // Dine-in → no charge boxes, pickup → Container, delivery → Container + Delivery; a box
-  // holding an amount never hides (client/src/lib/chargeBoxes.ts).
-  const { showContainer: showContainerBox, showDelivery: showDeliveryBox } = chargeBoxVisibility({
-    isTableSession,
-    activeItemMode,
-    orderType: currentOrderType,
-    cartModes: cartItems.map((i) => i.serviceMode),
-    containerCharge,
-    deliveryCharge,
-  });
+  // Container charge is a manually staff-entered flat amount (containerCharge state),
+  // not computed from item quantities/serviceMode.
+  const grandTotal = total + containerCharge;
 
   // ── Submit ───────────────────────────────────────────────────────────────────
 
@@ -1368,7 +1348,6 @@ export default function POS() {
         items: itemsPayload,
         discountAmount: discountAmt.toFixed(2),
         containerCharge: containerCharge.toFixed(2),
-        deliveryCharge: deliveryCharge.toFixed(2),
         customerName: data.customerName || "",
         customerPhone: data.customerPhone || "",
         // Reasons for any items removed after their KOT was sent — stashed at removal
@@ -1385,7 +1364,6 @@ export default function POS() {
         taxAmount: tax.toFixed(2),
         discountAmount: discountAmt.toFixed(2),
         containerCharge: containerCharge.toFixed(2),
-        deliveryCharge: deliveryCharge.toFixed(2),
         ...(preselectedTableId ? { tableId: preselectedTableId, tableNumber: preselectedTableName || String(preselectedTableId) } : {}),
         // Section counter orders carry their section id — separates them from generic pickup
         ...(isSectionMode ? { posSectionId: sectionId } : {}),
@@ -1502,7 +1480,6 @@ export default function POS() {
         `Tax: ₹${tax.toFixed(0)}`,
 
         containerCharge > 0 ? `Container Charge: ₹${containerCharge.toFixed(0)}` : null,
-        deliveryCharge > 0 ? `Delivery Charge: ₹${deliveryCharge.toFixed(0)}` : null,
         `*TOTAL: ₹${grandTotal.toFixed(0)}*`,
         ``,
         settings?.footerNote || "Thank you for dining with us!",
@@ -1974,7 +1951,7 @@ export default function POS() {
             {/* New Order — hidden on mobile */}
             <button
               disabled={isOff("clearCart")}
-              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
+              onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {}; })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
               + New Order
@@ -2100,7 +2077,7 @@ export default function POS() {
                 ? uniqueCustomers.filter(c =>
                     c.name.toLowerCase().includes(nameValue.toLowerCase())
                   )
-                : uniqueCustomers.slice(0, CUSTOMER_DROPDOWN_LIMIT);
+                : uniqueCustomers.slice(0, 8);
               return (
                 <div className="relative">
                   <input
@@ -2118,12 +2095,7 @@ export default function POS() {
                     className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
                   />
                   {showCustomerDropdown && filtered.length > 0 && (
-                    // onMouseDown preventDefault: grabbing the scrollbar would otherwise blur the
-                    // name input and the 150ms onBlur timer would close the list mid-scroll.
-                    <div
-                      onMouseDown={(e) => e.preventDefault()}
-                      className="absolute top-full left-0 mt-1 z-50 w-56 max-h-80 overflow-y-auto overscroll-contain custom-scrollbar bg-white border border-gray-200 rounded-xl shadow-xl"
-                    >
+                    <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
                       {filtered.map((c, i) => (
                         <button
                           key={i}
@@ -2426,7 +2398,7 @@ export default function POS() {
           const nameVal = form.watch("customerName") || "";
           const filtered = nameVal.trim()
             ? uniqueCustomers.filter(c => c.name.toLowerCase().includes(nameVal.toLowerCase()))
-            : uniqueCustomers.slice(0, CUSTOMER_DROPDOWN_LIMIT);
+            : uniqueCustomers.slice(0, 8);
           return (
             <div className="relative flex-1">
               <input
@@ -2441,10 +2413,7 @@ export default function POS() {
                 className="w-full px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
               />
               {showMobileCustomerDropdown && filtered.length > 0 && (
-                <div
-                  onMouseDown={e => e.preventDefault()}
-                  className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto overscroll-contain custom-scrollbar"
-                >
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
                   {filtered.map((c, i) => (
                     <button key={i} type="button"
                       onMouseDown={e => e.preventDefault()}
@@ -2736,7 +2705,7 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
+                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); pendingKotCancellationsRef.current = {}; })}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >
@@ -2982,47 +2951,22 @@ export default function POS() {
               </div>
             </div>
 
-            {/* Charge boxes only where they apply — dine-in none, pickup Container, delivery
-                Container + Delivery (showContainerBox/showDeliveryBox, chargeBoxes.ts). */}
-            {showContainerBox && (
-              <div className="flex items-center gap-1 text-xs">
-                <span className="flex-1" style={{ color: "var(--text-2)" }}>Container Charge</span>
-                <div className="flex items-center gap-1 justify-end">
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    aria-label="Container charge"
-                    value={containerCharge || ""}
-                    onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
-                    placeholder="0"
-                    className="w-14 text-right text-xs rounded px-1.5 py-0.5 outline-none"
-                    style={{ border: "1px solid var(--line-strong)", background: "var(--paper-0)", color: "var(--text-1)" }}
-                  />
-                  <span className="w-3 text-[10px]" style={{ color: "var(--text-3)" }}>₹</span>
-                </div>
+            <div className="flex items-center gap-1 text-xs">
+              <span className="flex-1" style={{ color: "var(--text-2)" }}>Container Charge</span>
+              <div className="flex items-center gap-1 justify-end">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={containerCharge || ""}
+                  onChange={(e) => setContainerCharge(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="0"
+                  className="w-14 text-right text-xs rounded px-1.5 py-0.5 outline-none"
+                  style={{ border: "1px solid var(--line-strong)", background: "var(--paper-0)", color: "var(--text-1)" }}
+                />
+                <span className="w-3 text-[10px]" style={{ color: "var(--text-3)" }}>₹</span>
               </div>
-            )}
-
-            {showDeliveryBox && (
-              <div className="flex items-center gap-1 text-xs">
-                <span className="flex-1" style={{ color: "var(--text-2)" }}>Delivery Charge</span>
-                <div className="flex items-center gap-1 justify-end">
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    aria-label="Delivery charge"
-                    value={deliveryCharge || ""}
-                    onChange={(e) => setDeliveryCharge(Math.max(0, parseFloat(e.target.value) || 0))}
-                    placeholder="0"
-                    className="w-14 text-right text-xs rounded px-1.5 py-0.5 outline-none"
-                    style={{ border: "1px solid var(--line-strong)", background: "var(--paper-0)", color: "var(--text-1)" }}
-                  />
-                  <span className="w-3 text-[10px]" style={{ color: "var(--text-3)" }}>₹</span>
-                </div>
-              </div>
-            )}
+            </div>
 
             <div className="flex justify-between text-xs" style={{ color: "var(--text-2)" }}>
               <span>Tax ({settings?.taxRate ?? 18}%)</span>
@@ -3044,7 +2988,6 @@ export default function POS() {
             subtotal={subtotal}
             taxAmount={tax}
             containerCharge={containerCharge}
-            deliveryCharge={deliveryCharge}
             discountAmount={discountAmt}
             orderLabel={activeOrderId ? serialNum(activeOrderId) : undefined}
             initialCustomerName={form.watch("customerName") || ""}

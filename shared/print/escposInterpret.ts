@@ -15,10 +15,8 @@
  *  - Text wider than the paper wraps at the character boundary, like the print head's buffer.
  *  - Command parameter bytes (GS V 65 0, FS p 1 0, …) are consumed, never printed as text.
  *  - Unknown or truncated sequences are skipped; the interpreter never throws.
- *  - GS v 0 raster graphics become `raster` items (the image-style KOT); the rest of the
- *    bytes after a truncated image are never misread as text.
  * Not modelled (the generators never emit them): font B column counts, NV logo contents,
- * barcodes/QR — they are skipped safely.
+ * barcodes/QR/raster images — they are skipped safely.
  */
 
 export type EscPosAlign = "left" | "center" | "right";
@@ -44,13 +42,7 @@ export interface EscPosLine {
 }
 export interface EscPosFeed { type: "feed"; lines: number }
 export interface EscPosMarker { type: "logo" | "cut" }
-/**
- * GS v 0 raster graphics (the image-style KOT, see kotImage.ts). Printed at the left margin, one dot per
- * bit, MSB first, `ceil(widthDots / 8)` bytes per row. Only the normal-density mode is modelled — the
- * generators never emit double width/height raster.
- */
-export interface EscPosRaster { type: "raster"; widthDots: number; heightDots: number; data: Uint8Array }
-export type EscPosItem = EscPosLine | EscPosFeed | EscPosMarker | EscPosRaster;
+export type EscPosItem = EscPosLine | EscPosFeed | EscPosMarker;
 
 export interface EscPosDocument {
   /** Normal-width character cells per line (48 for an 80 mm roll, 32 for 58 mm). */
@@ -277,17 +269,7 @@ export function interpretEscPos(bytes: Uint8Array, cols = 48): EscPosDocument {
         case 0x76: { // GS v 0 m xL xH yL yH <raster data>
           const xL = bytes[i + 2], xH = bytes[i + 3], yL = bytes[i + 4], yH = bytes[i + 5];
           if (xL === undefined || xH === undefined || yL === undefined || yH === undefined) { i = n; break; }
-          const widthBytes = xL + xH * 256;
-          const heightDots = yL + yH * 256;
-          const start = i + 6;
-          if (!bufferEmpty()) flushLine();
-          if (widthBytes > 0 && heightDots > 0) {
-            // A truncated image keeps the rows that did arrive; the rest stays white.
-            const data = new Uint8Array(widthBytes * heightDots);
-            data.set(bytes.subarray(start, Math.min(n, start + data.length)));
-            items.push({ type: "raster", widthDots: widthBytes * 8, heightDots, data });
-          }
-          i = start + widthBytes * heightDots;
+          i += 6 + (xL + xH * 256) * (yL + yH * 256);
           break;
         }
         default:
