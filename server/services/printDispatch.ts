@@ -22,7 +22,6 @@ import {
   type MarkBilled,
   type PrintMode,
 } from "@shared/printRequest";
-import { broadcastPayload } from "@shared/printJobBroadcast";
 import { logAudit } from "./auditService";
 import { createStageTimer, type StageTimer } from "@shared/printPerf";
 
@@ -71,7 +70,7 @@ async function dispatchRemotePrintJobs(
         orderId: r.orderId,
         jobType: r.jobType,
         printerId: r.printerId,
-        payload: broadcastPayload(r.payload),
+        payload: r.payload,
       })),
     ),
   );
@@ -654,7 +653,6 @@ async function runBillAfterCatchUp(
         discountAmount: order.discountAmount,
         subtotalAmount: order.subtotalAmount,
         containerCharge: order.containerCharge,
-        deliveryCharge: order.deliveryCharge,
         paymentMethod: order.paymentMethod,
         billPrintCount: order.billPrintCount ?? 0,
         kotPrintCount: order.kotPrintCount ?? 0,

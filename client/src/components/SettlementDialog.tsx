@@ -54,8 +54,6 @@ interface Props {
   // The flat, untaxed container charge already inside grandTotal. Shown as its own row so the summary
   // foots (subtotal − discount + tax + container = total due) instead of looking ₹N too high.
   containerCharge?: number;
-  // The flat, untaxed delivery charge already inside grandTotal — its own row, same reason.
-  deliveryCharge?: number;
   discountAmount?: number;
   orderLabel?: string;             // e.g. "#110"
   initialCustomerName?: string;
@@ -86,7 +84,7 @@ interface CustomerSuggestion { name: string; phone: string | null; }
 
 export function SettlementDialog({
   open, onOpenChange, grandTotal, onSettle, isLoading,
-  items, subtotal, taxAmount, containerCharge, deliveryCharge, discountAmount, orderLabel,
+  items, subtotal, taxAmount, containerCharge, discountAmount, orderLabel,
   initialCustomerName, initialCustomerPhone, onCancelOrder,
   hideDueMode, title, lockClose,
 }: Props) {
@@ -342,9 +340,6 @@ export function SettlementDialog({
                 )}
                 {containerCharge != null && containerCharge > 0 && (
                   <div className="flex justify-between text-gray-500"><span>Container</span><span>{inr(containerCharge)}</span></div>
-                )}
-                {deliveryCharge != null && deliveryCharge > 0 && (
-                  <div className="flex justify-between text-gray-500"><span>Delivery</span><span>{inr(deliveryCharge)}</span></div>
                 )}
                 <div className="flex justify-between font-bold text-gray-800 pt-0.5"><span>Total due</span><span>{inr(grandTotal)}</span></div>
               </div>

@@ -97,24 +97,6 @@ const bill = (billPrintCount = 0, over: Partial<BillPrintSettings> = {}) =>
   check("bill: cut's parameter byte is not printed as a stray character", !lines(doc).some((l) => l.text.includes("\u0000")));
 }
 
-// ── 1b. Container + Delivery: flat, untaxed lines, Container then Delivery, before Grand Total ─
-{
-  const doc = interpretEscPos(
-    generateBillBuffer({
-      order: { ...order(0), totalAmount: "437.45", containerCharge: "20.00", deliveryCharge: "30.00" },
-      items, restaurant, billSettings, cashierName: "rajbhaghel", width: 48,
-    }),
-    48,
-  );
-  const texts = lines(doc).map((l) => l.text);
-  const ci = texts.findIndex((t) => t.includes("Container  20.00"));
-  const di = texts.findIndex((t) => t.includes("Delivery  30.00"));
-  const gi = texts.findIndex((t) => t.includes("Grand Total"));
-  check("bill: Delivery line printed when the order has a delivery charge", di >= 0);
-  check("bill: Delivery sits after Container and before Grand Total", ci >= 0 && ci < di && di < gi);
-  check("bill: no Delivery line on an order without one", !findLine(bill(), "Delivery"));
-}
-
 // ── 2. Duplicate watermark follows billPrintCount exactly like the real printer ────────────────
 {
   check("duplicate: absent on the first print", !findLine(bill(0), "DUPLICATE"));

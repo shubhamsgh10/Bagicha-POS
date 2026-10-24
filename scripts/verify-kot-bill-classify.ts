@@ -15,7 +15,6 @@ const base = (over: Partial<ItemsEditMetadata> = {}): ItemsEditMetadata => ({
   totalBefore: 500, totalAfter: 500,
   discountBefore: 0, discountAfter: 0,
   containerBefore: 0, containerAfter: 0,
-  deliveryBefore: 0, deliveryAfter: 0,
   ...over,
 });
 
@@ -37,12 +36,6 @@ const base = (over: Partial<ItemsEditMetadata> = {}): ItemsEditMetadata => ({
 {
   const r = classifyItemsEditRow(base({ containerBefore: 0, containerAfter: 30 }));
   checks.push(["container-charge-only edit: billModified true, kotModified false", !r.kotModified && r.billModified]);
-}
-
-// 3b. Delivery-charge-only edit, item lines unchanged: only Bill (same rule as container).
-{
-  const r = classifyItemsEditRow(base({ deliveryBefore: 0, deliveryAfter: 40 }));
-  checks.push(["delivery-charge-only edit: billModified true, kotModified false", !r.kotModified && r.billModified]);
 }
 
 // 4. Discount-only edit, item lines unchanged: only Bill.

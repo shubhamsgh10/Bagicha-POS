@@ -3,7 +3,6 @@ import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, BrowserPayload, KOTPrintSettings } from "./types";
 import { deriveBillTotals } from "../orderPricing";
 import { stripKitchenNotes } from "../orderItemText";
-import { generateKOTImageBuffer } from "./kotImage";
 
 export interface KOTItem {
   name: string;
@@ -40,13 +39,6 @@ export function generateKOTBuffer(params: {
   kotSettings: KOTPrintSettings;
   width?: number;
 }): Buffer {
-  // Image style: the proportional-font ticket (see kotImage.ts). null = it can't be drawn (a character the
-  // face lacks, an absurdly long ticket) — print this one in plain text rather than not at all.
-  if (params.kotSettings.kotStyle === "image") {
-    const image = generateKOTImageBuffer(params);
-    if (image) return image;
-  }
-
   const W = params.width ?? 48;
   const M = 1;
   const bodyLine = (s: string) => E.line(" ".repeat(M) + s);
@@ -160,7 +152,6 @@ export function generateBillBuffer(params: {
     discountAmount: string | null;
     subtotalAmount?: string | null;
     containerCharge?: string | null;
-    deliveryCharge?: string | null;
     paymentMethod: string | null;
     billPrintCount: number;
     // NOT rendered. runBillPrint (server/services/printDispatch.ts) overlaps the bill's reads with the KOT
@@ -307,7 +298,7 @@ export function generateBillBuffer(params: {
 
   parts.push(E.divider("-", W));
 
-  const { subtotal, discount, containerCharge, deliveryCharge, tax } = deriveBillTotals(order);
+  const { subtotal, discount, containerCharge, tax } = deriveBillTotals(order);
   const rawTotal = parseFloat(order.totalAmount);
   const rounded  = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
@@ -323,9 +314,6 @@ export function generateBillBuffer(params: {
   }
   if (containerCharge > 0) {
     parts.push(tw("", `Container  ${containerCharge.toFixed(2)}`));
-  }
-  if (deliveryCharge > 0) {
-    parts.push(tw("", `Delivery  ${deliveryCharge.toFixed(2)}`));
   }
   if (billSettings.showRoundOff && Math.abs(roundOff) >= 0.005) {
     parts.push(tw("", `Round off  ${roundOff.toFixed(2)}`));
