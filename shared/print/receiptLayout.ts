@@ -21,15 +21,26 @@ export interface PlacedRun extends EscPosRun {
   y: number;
 }
 
+/** A raster image (GS v 0) placed at the left margin. Consecutive bands butt together with no gap. */
+export interface PlacedRaster {
+  x: number;
+  y: number;
+  widthDots: number;
+  heightDots: number;
+  data: Uint8Array;
+}
+
 export interface ReceiptLayout {
   widthDots: number;
   heightDots: number;
   runs: PlacedRun[];
+  rasters: PlacedRaster[];
 }
 
 export function layoutReceipt(doc: EscPosDocument): ReceiptLayout {
   const widthDots = doc.cols * CELL_W;
   const runs: PlacedRun[] = [];
+  const rasters: PlacedRaster[] = [];
   let y = 0;
 
   for (let i = 0; i < doc.items.length; i++) {
@@ -53,10 +64,13 @@ export function layoutReceipt(doc: EscPosDocument): ReceiptLayout {
       y += lineH + LINE_GAP;
     } else if (item.type === "feed") {
       y += item.lines * (CELL_H + LINE_GAP);
+    } else if (item.type === "raster") {
+      rasters.push({ x: 0, y, widthDots: item.widthDots, heightDots: item.heightDots, data: item.data });
+      y += item.heightDots;
     }
     // "logo" and "cut" take no vertical space here: the printer's NV logo can't be read back
     // (and real bills from this restaurant print none), and a cut is just the end of the roll.
   }
 
-  return { widthDots, heightDots: y, runs };
+  return { widthDots, heightDots: y, runs, rasters };
 }

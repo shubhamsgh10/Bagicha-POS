@@ -22,6 +22,7 @@ import {
   type MarkBilled,
   type PrintMode,
 } from "@shared/printRequest";
+import { broadcastPayload } from "@shared/printJobBroadcast";
 import { logAudit } from "./auditService";
 import { createStageTimer, type StageTimer } from "@shared/printPerf";
 
@@ -70,7 +71,7 @@ async function dispatchRemotePrintJobs(
         orderId: r.orderId,
         jobType: r.jobType,
         printerId: r.printerId,
-        payload: r.payload,
+        payload: broadcastPayload(r.payload),
       })),
     ),
   );
