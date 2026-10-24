@@ -106,6 +106,9 @@ interface ModalState {
 
 const fmt = (n: number) => `₹${n.toFixed(0)}`;
 
+// Customers listed in the name-box dropdown before anything is typed (typing filters the full directory).
+const CUSTOMER_DROPDOWN_LIMIT = 50;
+
 // Order-type tab icons — inline SVG, no emoji, matching the Bagicha design system's icon style.
 function DineInIcon({ className }: { className?: string }) {
   return (
@@ -2097,7 +2100,7 @@ export default function POS() {
                 ? uniqueCustomers.filter(c =>
                     c.name.toLowerCase().includes(nameValue.toLowerCase())
                   )
-                : uniqueCustomers.slice(0, 8);
+                : uniqueCustomers.slice(0, CUSTOMER_DROPDOWN_LIMIT);
               return (
                 <div className="relative">
                   <input
@@ -2115,7 +2118,12 @@ export default function POS() {
                     className="text-xs border border-gray-200 rounded px-2.5 py-1.5 w-32 bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
                   />
                   {showCustomerDropdown && filtered.length > 0 && (
-                    <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                    // onMouseDown preventDefault: grabbing the scrollbar would otherwise blur the
+                    // name input and the 150ms onBlur timer would close the list mid-scroll.
+                    <div
+                      onMouseDown={(e) => e.preventDefault()}
+                      className="absolute top-full left-0 mt-1 z-50 w-56 max-h-80 overflow-y-auto overscroll-contain custom-scrollbar bg-white border border-gray-200 rounded-xl shadow-xl"
+                    >
                       {filtered.map((c, i) => (
                         <button
                           key={i}
@@ -2418,7 +2426,7 @@ export default function POS() {
           const nameVal = form.watch("customerName") || "";
           const filtered = nameVal.trim()
             ? uniqueCustomers.filter(c => c.name.toLowerCase().includes(nameVal.toLowerCase()))
-            : uniqueCustomers.slice(0, 8);
+            : uniqueCustomers.slice(0, CUSTOMER_DROPDOWN_LIMIT);
           return (
             <div className="relative flex-1">
               <input
@@ -2433,7 +2441,10 @@ export default function POS() {
                 className="w-full px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
               />
               {showMobileCustomerDropdown && filtered.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
+                <div
+                  onMouseDown={e => e.preventDefault()}
+                  className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl max-h-52 overflow-y-auto overscroll-contain custom-scrollbar"
+                >
                   {filtered.map((c, i) => (
                     <button key={i} type="button"
                       onMouseDown={e => e.preventDefault()}
