@@ -54,7 +54,10 @@
       "Bash(node scripts/migrate-print-jobs.mjs)",
       "Bash(npm run *)",
       "WebSearch",
-      "Bash(grep -rn \"from [\\\\\"']@shared\\\\|from [\\\\\"']\\\\.\\\\./\\\\.\\\\./server\\\\|from [\\\\\"']server/\" client/src --include=*.tsx --include=*.ts -l)"
+      "Bash(grep -rn \"from [\\\\\"']@shared\\\\|from [\\\\\"']\\\\.\\\\./\\\\.\\\\./server\\\\|from [\\\\\"']server/\" client/src --include=*.tsx --include=*.ts -l)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(npm run *)",
+      "PowerShell(Get-Content *)"
     ]
   },
   "enabledMcpjsonServers": []

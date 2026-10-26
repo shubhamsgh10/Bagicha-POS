@@ -140,6 +140,7 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     autoKOTPrint: false,
     autoKOTDebounceMs: 1500,
     kotNumbering: true,
+    kotStyle: 'image',
     categoryPrinterOverrides: {},
   },
   bill: {

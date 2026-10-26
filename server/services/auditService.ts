@@ -151,6 +151,7 @@ export async function getKotBillActivitySummary(startDate: Date, endDate: Date):
       (${auditLogs.metadata}->>'totalBefore')::numeric is distinct from (${auditLogs.metadata}->>'totalAfter')::numeric
       or (${auditLogs.metadata}->>'discountBefore')::numeric is distinct from (${auditLogs.metadata}->>'discountAfter')::numeric
       or (${auditLogs.metadata}->>'containerBefore')::numeric is distinct from (${auditLogs.metadata}->>'containerAfter')::numeric
+      or (${auditLogs.metadata}->>'deliveryBefore')::numeric is distinct from (${auditLogs.metadata}->>'deliveryAfter')::numeric
     ))`,
   }).from(auditLogs).where(inRange);
 
