@@ -69,6 +69,21 @@ const approx = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
   checks.push(["guard does NOT trigger when discount (150) is well under remaining subtotal", !guardTriggers(150)]);
 }
 
+// 6. Delivery charge gets the same aggregate-neutral treatment as the container charge:
+//    merge sums both orders' charges; split leaves the full charge on the source/remaining
+//    order and starts the new split-out order at 0 — so the two bills still add up.
+{
+  const merged = computeTotals([200, 100], "0", 0.05, 0, 30 + 20);
+  checks.push(["merge sums both orders' delivery charges (50)", merged.deliveryCharge === 50]);
+  checks.push(["merge total includes the combined delivery charge, untaxed", approx(merged.total, 300 * 1.05 + 50)]);
+  const before = computeTotals([1000], "0", 0.05, 15, 40);
+  const newOrder = computeTotals([300], "0", 0.05, 0, 0);
+  const remaining = computeTotals([700], "0", 0.05, 15, 40);
+  checks.push(["split: new order starts with no delivery charge", newOrder.deliveryCharge === 0]);
+  checks.push(["split: source keeps its full delivery charge", remaining.deliveryCharge === 40]);
+  checks.push(["split: the two bills together equal the pre-split bill", approx(newOrder.total + remaining.total, before.total)]);
+}
+
 let failed = 0;
 for (const [name, ok] of checks) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);

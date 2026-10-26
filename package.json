@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "1.0.34",
+  "version": "1.0.35",
   "description": "Bagicha POS — restaurant order, KOT, and billing system",
   "type": "module",
   "license": "MIT",
@@ -27,7 +27,7 @@
     "build:web": "vite build",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",
-    "test:pure": "tsx scripts/verify-order-pricing.ts && tsx scripts/verify-elevation.ts && tsx scripts/verify-self-scope.ts && tsx scripts/verify-order-mutation-guard.ts && tsx scripts/verify-bill-derivation.ts && tsx scripts/verify-merge-split.ts && tsx scripts/verify-ist-datemath.ts && tsx scripts/verify-week-math.ts && tsx scripts/verify-kot-delta.ts && tsx scripts/verify-order-item-text.ts && tsx scripts/verify-settlement.ts && tsx scripts/verify-order-audit.ts && tsx scripts/verify-kot-bill-classify.ts && tsx scripts/verify-kot-item-cancel.ts && tsx scripts/verify-print-perf.ts && tsx scripts/verify-print-request.ts && tsx scripts/verify-realtime-batch.ts && tsx scripts/verify-kot-style.ts && tsx scripts/verify-payment-split.ts && tsx scripts/verify-settings-cache.ts && tsx scripts/verify-escpos-interpret.ts && tsx scripts/verify-payment-edit.ts && tsx scripts/verify-due-settlement.ts && tsx scripts/verify-settle-timing.ts && tsx scripts/verify-ebill-text.ts && tsx scripts/verify-queue-check-cache.ts && tsx scripts/verify-print-queue-ack.ts && tsx scripts/verify-ps-session-init.ts && tsx scripts/verify-egress-helpers.ts",
+    "test:pure": "tsx scripts/verify-order-pricing.ts && tsx scripts/verify-elevation.ts && tsx scripts/verify-self-scope.ts && tsx scripts/verify-order-mutation-guard.ts && tsx scripts/verify-bill-derivation.ts && tsx scripts/verify-merge-split.ts && tsx scripts/verify-ist-datemath.ts && tsx scripts/verify-week-math.ts && tsx scripts/verify-kot-delta.ts && tsx scripts/verify-order-item-text.ts && tsx scripts/verify-settlement.ts && tsx scripts/verify-order-audit.ts && tsx scripts/verify-kot-bill-classify.ts && tsx scripts/verify-kot-item-cancel.ts && tsx scripts/verify-print-perf.ts && tsx scripts/verify-print-request.ts && tsx scripts/verify-realtime-batch.ts && tsx scripts/verify-kot-style.ts && tsx scripts/verify-payment-split.ts && tsx scripts/verify-settings-cache.ts && tsx scripts/verify-escpos-interpret.ts && tsx scripts/verify-kot-image.ts && tsx scripts/verify-payment-edit.ts && tsx scripts/verify-due-settlement.ts && tsx scripts/verify-settle-timing.ts && tsx scripts/verify-ebill-text.ts && tsx scripts/verify-queue-check-cache.ts && tsx scripts/verify-print-queue-ack.ts && tsx scripts/verify-ps-session-init.ts && tsx scripts/verify-egress-helpers.ts && tsx scripts/verify-charge-boxes.ts",
     "db:push": "drizzle-kit push",
     "seed": "tsx -r dotenv/config server/seed.ts",
     "dev:watch": "nodemon --watch server --ext ts,js --exec \"tsx -r dotenv/config server/index.ts\""
@@ -128,6 +128,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@fontsource/dejavu-sans": "^5.3.0",
     "@replit/vite-plugin-cartographer": "^0.2.7",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@resvg/resvg-js": "^2.6.2",
@@ -149,6 +150,7 @@
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.25.0",
+    "opentype.js": "1.3.4",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "to-ico": "^1.1.5",

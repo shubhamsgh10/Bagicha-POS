@@ -1,4 +1,8 @@
 import { execFile } from "child_process";
+import { randomBytes } from "crypto";
+import { unlink, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { promisify } from "util";
 import { sendRawFast } from "./persistentPs.js";
 
@@ -51,22 +55,29 @@ public class RawPrinterHelper {
 
 /** Fallback: spawn a fresh PowerShell per job (slower but always works). */
 async function sendRawLegacy(queueName: string, data: Buffer): Promise<void> {
-  const b64 = data.toString("base64");
   const esc = queueName.replace(/'/g, "''");
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    `Add-Type -TypeDefinition @'`,
-    RAW_PRINTER_HELPER,
-    "'@",
-    `$b=[System.Convert]::FromBase64String('${b64}')`,
-    `if(-not [RawPrinterHelper]::SendBytesToPrinter('${esc}',$b)){throw 'WritePrinter failed'}`,
-  ].join("\n");
+  // The bytes travel in a temp file, not inline in the script: an image-style KOT is 40–60 KB of base64, far
+  // past the ~32 K-character limit on a Windows command line (a text ticket was 1–3 KB).
+  const file = join(tmpdir(), `bagicha-print-${randomBytes(6).toString("hex")}.bin`);
+  await writeFile(file, data);
+  try {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `Add-Type -TypeDefinition @'`,
+      RAW_PRINTER_HELPER,
+      "'@",
+      `$b=[System.IO.File]::ReadAllBytes('${file.replace(/'/g, "''")}')`,
+      `if(-not [RawPrinterHelper]::SendBytesToPrinter('${esc}',$b)){throw 'WritePrinter failed'}`,
+    ].join("\n");
 
-  await execFileAsync(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-    { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
-  );
+    await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+    );
+  } finally {
+    await unlink(file).catch(() => {});
+  }
 }
 
 /** Send raw ESC/POS bytes to a Windows printer queue.

@@ -75,6 +75,7 @@ export function billLines(params: {
   taxAmount?: number;
   discountAmount?: number;
   containerCharge?: number;
+  deliveryCharge?: number;
   paymentMethod?: string | null;
   billPrintCount?: number;
   createdAt?: Date | string;
@@ -134,7 +135,7 @@ export function billLines(params: {
 
   lines.push(_div('-', W));
 
-  const subtotal = params.totalAmount - (params.taxAmount ?? 0) - (params.containerCharge ?? 0);
+  const subtotal = params.totalAmount - (params.taxAmount ?? 0) - (params.containerCharge ?? 0) - (params.deliveryCharge ?? 0);
   lines.push(_two('Subtotal:', `${sym}${subtotal.toFixed(0)}`, W));
   if ((params.discountAmount ?? 0) > 0) lines.push(_two('Discount:', `-${sym}${(params.discountAmount ?? 0).toFixed(0)}`, W));
   if (params.showTax !== false && (params.taxAmount ?? 0) > 0) {
@@ -142,6 +143,9 @@ export function billLines(params: {
   }
   if ((params.containerCharge ?? 0) > 0) {
     lines.push(_two('Container Charge:', `${sym}${(params.containerCharge ?? 0).toFixed(0)}`, W));
+  }
+  if ((params.deliveryCharge ?? 0) > 0) {
+    lines.push(_two('Delivery Charge:', `${sym}${(params.deliveryCharge ?? 0).toFixed(0)}`, W));
   }
   lines.push(_div('=', W), _two('TOTAL:', `${sym}${params.totalAmount.toFixed(0)}`, W));
   if (params.paymentMethod) lines.push(_two('Payment:', params.paymentMethod.toUpperCase(), W));

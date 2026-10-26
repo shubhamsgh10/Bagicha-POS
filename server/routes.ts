@@ -1940,7 +1940,7 @@ export async function registerRoutes(
       // 400 "Invalid order data" is what hid the orderNumber collision bug.
       let priced;
       try {
-        priced = await priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge);
+        priced = await priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge, orderInfo.deliveryCharge);
       } catch (pricingErr) {
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
@@ -2013,6 +2013,7 @@ export async function registerRoutes(
           discountAmount: priced.discount.toFixed(2),
           subtotalAmount: priced.subtotal.toFixed(2),
           containerCharge: priced.containerCharge.toFixed(2),
+          deliveryCharge: priced.deliveryCharge.toFixed(2),
           createdBy: isStaffMemberActor ? null : (actor?.id ?? null),
           createdByStaffMemberId: isStaffMemberActor ? (actor?.id ?? null) : null,
           createdByName: actor?.username ?? null,
@@ -2108,7 +2109,7 @@ export async function registerRoutes(
   app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { items, discountAmount, containerCharge, customerName, customerPhone } = req.body;
+      const { items, discountAmount, containerCharge, deliveryCharge, customerName, customerPhone } = req.body;
       // Reject BEFORE any pricing/DB work: a missing/non-array `items` must never be read as
       // "clear the order" (it used to replace the order's items with nothing, commit, then 500).
       // An intentional clear sends `items: []`, which is still allowed.
@@ -2128,7 +2129,7 @@ export async function registerRoutes(
       // generic 500 below.
       let priced;
       try {
-        priced = await priceOrder(lineItems, discountAmount, containerCharge);
+        priced = await priceOrder(lineItems, discountAmount, containerCharge, deliveryCharge);
       } catch (pricingErr) {
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
@@ -2238,6 +2239,7 @@ export async function registerRoutes(
         discountAmount: priced.discount.toFixed(2),
         subtotalAmount: priced.subtotal.toFixed(2),
         containerCharge: priced.containerCharge.toFixed(2),
+        deliveryCharge: priced.deliveryCharge.toFixed(2),
         ...(customerName !== undefined ? { customerName: customerName || null } : {}),
         ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
       } as any);
@@ -2270,9 +2272,12 @@ export async function registerRoutes(
         const discountAfter = priced.discount;
         const containerBefore = parseFloat(String((existingOrderRow as any)?.containerCharge ?? 0));
         const containerAfter = priced.containerCharge;
+        const deliveryBefore = parseFloat(String((existingOrderRow as any)?.deliveryCharge ?? 0));
+        const deliveryAfter = priced.deliveryCharge;
         const totalBefore = parseFloat(String((existingOrderRow as any)?.totalAmount ?? 0));
         const totalAfter = priced.total;
-        const moneyChanged = discountBefore !== discountAfter || containerBefore !== containerAfter || totalBefore !== totalAfter;
+        const moneyChanged = discountBefore !== discountAfter || containerBefore !== containerAfter
+          || deliveryBefore !== deliveryAfter || totalBefore !== totalAfter;
 
         if (!diff.isEmpty || moneyChanged) {
           logAudit(req, "order.items_edit", "order", id, {
@@ -2285,6 +2290,8 @@ export async function registerRoutes(
             discountAfter,
             containerBefore,
             containerAfter,
+            deliveryBefore,
+            deliveryAfter,
           });
         }
         // A discount is a deviation and worth its own independently-filterable row, not just
@@ -3054,10 +3061,14 @@ export async function registerRoutes(
       // orders already had, so the combined charge isn't silently dropped.
       const containerCharge = (Number((targetOrder as any).containerCharge) || 0)
         + (Number((sourceOrder as any).containerCharge) || 0);
+      // Delivery charge: same rule — the merged order carries both orders' charges.
+      const deliveryCharge = (Number((targetOrder as any).deliveryCharge) || 0)
+        + (Number((sourceOrder as any).deliveryCharge) || 0);
       const merged = computeTotalsFromLines(
         allItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (targetOrder as any).discountAmount,
         containerCharge,
+        deliveryCharge,
       );
 
       // Copy ALL item fields, not just {menuItemId, quantity, price, specialInstructions,
@@ -3087,6 +3098,7 @@ export async function registerRoutes(
           taxAmount: merged.tax.toFixed(2),
           subtotalAmount: merged.subtotal.toFixed(2),
           containerCharge: merged.containerCharge.toFixed(2),
+          deliveryCharge: merged.deliveryCharge.toFixed(2),
         } as any,
       });
 
@@ -3140,17 +3152,22 @@ export async function registerRoutes(
       // split-out order starts at 0 (staff can enter one manually for that order if
       // it needs its own container).
       const newContainerCharge = 0;
+      // Delivery charge gets the same treatment: stays on the source, new order starts at 0.
+      const newDeliveryCharge = 0;
       const splitTotals = computeTotalsFromLines(
         splitItems.map((i) => parseFloat(i.price as any) * i.quantity),
         "0",
         newContainerCharge,
+        newDeliveryCharge,
       );
 
       const srcContainerCharge = Number((sourceOrder as any).containerCharge) || 0;
+      const srcDeliveryCharge = Number((sourceOrder as any).deliveryCharge) || 0;
       const srcTotals = computeTotalsFromLines(
         remainingItems.map((i) => parseFloat(i.price as any) * i.quantity),
         (sourceOrder as any).discountAmount,
         srcContainerCharge,
+        srcDeliveryCharge,
       );
 
       // Still dine-in — a split bill is two checks for people still sitting at the same
@@ -3173,6 +3190,7 @@ export async function registerRoutes(
           taxAmount: splitTotals.tax.toFixed(2),
           subtotalAmount: splitTotals.subtotal.toFixed(2),
           containerCharge: splitTotals.containerCharge.toFixed(2),
+          deliveryCharge: splitTotals.deliveryCharge.toFixed(2),
           discountAmount: "0",
           paymentStatus: "pending",
           customerName: (sourceOrder as any).customerName || null,
@@ -3195,6 +3213,7 @@ export async function registerRoutes(
           taxAmount: srcTotals.tax.toFixed(2),
           subtotalAmount: srcTotals.subtotal.toFixed(2),
           containerCharge: srcTotals.containerCharge.toFixed(2),
+          deliveryCharge: srcTotals.deliveryCharge.toFixed(2),
         } as any,
       });
 
