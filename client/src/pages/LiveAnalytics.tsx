@@ -89,7 +89,9 @@ export default function LiveAnalytics() {
     queryFn: async () => {
       const start = businessDayRange(shiftBusinessDate(todayBusinessDate(), -1)).start;
       const r = await fetch(
-        apiUrl(`/api/orders?startDate=${start.toISOString()}`),
+        // open=true: only orders still on the floor (the list below keeps the ACTIVE ones) — not
+        // every order of the last two days. Unchanged polls are 304s (server ETag).
+        apiUrl(`/api/orders?startDate=${start.toISOString()}&open=true`),
         { credentials: "include" }
       );
       if (!r.ok) throw new Error(await r.text());

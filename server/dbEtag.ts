@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { sql, type SQL } from "drizzle-orm";
+import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { db } from "./db";
 import { ifNoneMatchHits } from "./httpConditional";
 
@@ -20,6 +20,16 @@ import { ifNoneMatchHits } from "./httpConditional";
 export function tableFingerprint(tableName: string): SQL {
   const t = sql.identifier(tableName);
   return sql`SELECT md5(coalesce(string_agg(t::text, '|' ORDER BY t.id), '')) AS h FROM ${t} t`;
+}
+
+/**
+ * Fingerprint of exactly the rows a (filtered) query returns, computed in Postgres: the query runs as a
+ * subquery and only its md5 leaves the database. For polled lists (a day's orders, today's KOTs) —
+ * unchanged polls then cost a 304 instead of the whole list. Rows are hashed in a canonical order, so
+ * the query's own ORDER BY doesn't matter; any change to any returned column changes the hash.
+ */
+export function queryFingerprint(query: SQLWrapper): SQL {
+  return sql`SELECT md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) AS h FROM (${query.getSQL()}) x`;
 }
 
 export async function sendWithDbEtag(

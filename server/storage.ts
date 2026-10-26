@@ -13,7 +13,7 @@ import {
   type StaffMember, type InsertStaffMember,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, or, gte, lte, sql, asc, inArray, ne, isNull, isNotNull, getTableColumns } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, sql, asc, inArray, ne, isNull, isNotNull, getTableColumns, type SQLWrapper } from "drizzle-orm";
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
@@ -41,6 +41,11 @@ export type OrderListFilter = {
   due?: boolean;             // an open tab: status = "served" and payment_status = "pending"
   updatedSince?: Date;       // updated_at >= updatedSince — incremental sync of a cached list
 };
+
+/** Just the columns shared/paymentSplit.ts needs to split collected money into Cash / UPI. */
+export type CollectedPaymentRow = Pick<Order,
+  "id" | "totalAmount" | "shortfallAmount" | "paymentStatus" | "paymentMethod" | "paymentBreakdown" |
+  "paidAmount" | "changeAmount" | "paidAt" | "createdAt">;
 
 /** The slim per-order row the Customers page aggregates (useCustomerIntelligence). */
 export type CustomerOrderRow = Pick<Order,
@@ -140,6 +145,9 @@ export interface IStorage {
   getOrdersByStatus(status: string): Promise<Order[]>;
   getOrdersByDateRange(startDate?: Date, endDate?: Date): Promise<Order[]>;
   findOrders(filter: OrderListFilter): Promise<Order[]>;
+  findOrdersQuery(filter: OrderListFilter): SQLWrapper & PromiseLike<Order[]>;
+  getCollectedPaymentsBetween(startDate: Date, endDate: Date): Promise<CollectedPaymentRow[]>;
+  kotTicketsQuery(filter: { status?: string; since?: Date }): SQLWrapper & PromiseLike<Array<KotTicket & { orderStatus: string | null }>>;
   getOpenOrderStats(): Promise<{ activeOrders: number; dueAmount: number }>;
   getCustomerDirectory(): Promise<Array<{ name: string; phone: string }>>;
   getCustomerOrderHistory(): Promise<CustomerOrderRow[]>;
@@ -684,6 +692,12 @@ export class DatabaseStorage implements IStorage {
 
   // See OrderListFilter. Conditions combine with AND; no conditions = the whole history.
   async findOrders(filter: OrderListFilter): Promise<Order[]> {
+    return await this.findOrdersQuery(filter);
+  }
+
+  // The unexecuted query behind findOrders — GET /api/orders hashes it in Postgres for its ETag
+  // (server/dbEtag.ts queryFingerprint) and only runs it when the hash changed.
+  findOrdersQuery(filter: OrderListFilter) {
     const conditions = [];
     if (filter.startDate) conditions.push(gte(orders.createdAt, filter.startDate));
     if (filter.endDate) conditions.push(lte(orders.createdAt, filter.endDate));
@@ -692,9 +706,34 @@ export class DatabaseStorage implements IStorage {
     if (filter.unpaid) conditions.push(ne(orders.paymentStatus, "paid"));
     if (filter.due) conditions.push(eq(orders.status, "served"), eq(orders.paymentStatus, "pending"));
     if (filter.updatedSince) conditions.push(gte(orders.updatedAt, filter.updatedSince));
-    return await db.select().from(orders)
+    return db.select().from(orders)
       .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(orders.createdAt));
+      .orderBy(desc(orders.createdAt), desc(orders.id));
+  }
+
+  // Same rows as getOrdersCollectedBetween (money RECEIVED in [start, end]), but only the columns
+  // the Cash/UPI split needs — /api/live-status is polled by every Tables screen, and a full order
+  // row is ~6x wider than this.
+  async getCollectedPaymentsBetween(startDate: Date, endDate: Date): Promise<CollectedPaymentRow[]> {
+    return await db.select({
+      id: orders.id,
+      totalAmount: orders.totalAmount,
+      shortfallAmount: orders.shortfallAmount,
+      paymentStatus: orders.paymentStatus,
+      paymentMethod: orders.paymentMethod,
+      paymentBreakdown: orders.paymentBreakdown,
+      paidAmount: orders.paidAmount,
+      changeAmount: orders.changeAmount,
+      paidAt: orders.paidAt,
+      createdAt: orders.createdAt,
+    }).from(orders)
+      .where(and(
+        eq(orders.paymentStatus, "paid"),
+        or(
+          and(isNotNull(orders.paidAt), gte(orders.paidAt, startDate), lte(orders.paidAt, endDate)),
+          and(isNull(orders.paidAt), gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)),
+        ),
+      ));
   }
 
   // The two whole-history figures on the Tables status bar, aggregated in SQL so only one row
@@ -1126,10 +1165,23 @@ export class DatabaseStorage implements IStorage {
   // existing "completed" ticket status for both cases (see CLAUDE.md), so this join
   // is the only way to distinguish them without a second ticket status value.
   async getKotTickets(): Promise<Array<KotTicket & { orderStatus: string | null }>> {
-    return await db.select({ ...getTableColumns(kotTickets), orderStatus: orders.status })
+    return await this.kotTicketsQuery({});
+  }
+
+  // `since`: tickets still being worked on (pending / in-progress, any age) plus every ticket printed
+  // at/after `since`. The Kitchen page passes today's business-day start — it used to download every
+  // KOT ever printed (1,000+ rows, ~280 KB) on each 15s poll. Unexecuted so GET /api/kot can hash it.
+  kotTicketsQuery(filter: { status?: string; since?: Date }) {
+    const conditions = [];
+    if (filter.status) conditions.push(eq(kotTickets.status, filter.status));
+    if (filter.since) {
+      conditions.push(or(inArray(kotTickets.status, ["pending", "in-progress"]), gte(kotTickets.printedAt, filter.since)));
+    }
+    return db.select({ ...getTableColumns(kotTickets), orderStatus: orders.status })
       .from(kotTickets)
       .leftJoin(orders, eq(kotTickets.orderId, orders.id))
-      .orderBy(desc(kotTickets.printedAt));
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(kotTickets.printedAt), desc(kotTickets.id));
   }
 
   async getKotTicketsByStatus(status: string): Promise<Array<KotTicket & { orderStatus: string | null }>> {
