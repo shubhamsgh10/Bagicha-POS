@@ -82,7 +82,7 @@ import { buildSpecialInstructions } from "@shared/orderItemText";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { cachedPrincipal, forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
-import { sendWithDbEtag, tableFingerprint } from "./dbEtag";
+import { sendWithDbEtag, tableFingerprint, queryFingerprint } from "./dbEtag";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs, getKotBillActivitySummary } from "./services/auditService";
@@ -1398,9 +1398,10 @@ export async function registerRoutes(
       // midnight and 5am IST, even on an IST-hosted server.
       const { start: dayStart, end: dayEnd } = businessDayRange(todayBusinessDate());
 
-      // Polled every 5s by every open Tables page, so nothing here may read the whole order
-      // history: today's paid orders come back filtered in SQL, and the two all-time figures
-      // (active count, outstanding dues) come back as one aggregated row. This route used to
+      // Polled by every open Tables screen (and refreshed on each order event), so nothing here may
+      // read the whole order history: today's paid orders come back filtered in SQL with only their
+      // payment columns, and the two all-time figures (active count, outstanding dues) come back as
+      // one aggregated row. This route used to
       // SELECT every order on each poll, which alone was most of the database's egress.
       //
       // Counted on the day the money was RECEIVED (paid_at), not the day the order was billed: a
@@ -1408,7 +1409,7 @@ export async function registerRoutes(
       // closed figures no longer change after the fact. Rows with no paid_at (older orders, Razorpay)
       // fall back to the billed day — identical to how they were always counted (collectedAt).
       const [paidToday, { activeOrders, dueAmount }] = await Promise.all([
-        storage.getOrdersCollectedBetween(dayStart, dayEnd),
+        storage.getCollectedPaymentsBetween(dayStart, dayEnd), // only the payment columns
         storage.getOpenOrderStats(),
       ]);
       // Sales nets out any written-off shortfall so it equals what was actually collected,
@@ -1832,8 +1833,13 @@ export async function registerRoutes(
       // (incremental sync of an already-loaded list, see client/src/lib/orderHistorySync.ts). With no
       // filter at all this returns the whole order history — keep that for explicit "All Dates"
       // loads only, never for a poll.
+      //
+      // ETag = md5 of exactly these rows, computed in Postgres (server/dbEtag.ts): a poll of an
+      // unchanged list (the Orders day view, Live View, even an old client re-asking for the whole
+      // history) is a 304 and the rows never leave the database. Browsers/Electron send
+      // If-None-Match on their own.
       const { status, startDate, endDate, open, unpaid, updatedSince } = req.query;
-      const orders = await storage.findOrders({
+      const query = storage.findOrdersQuery({
         startDate: startDate ? new Date(startDate as string) : undefined,
         endDate: endDate ? new Date(endDate as string) : undefined,
         status: status ? String(status) : undefined,
@@ -1841,7 +1847,7 @@ export async function registerRoutes(
         unpaid: unpaid === "true",
         updatedSince: updatedSince ? new Date(updatedSince as string) : undefined,
       });
-      res.json(orders);
+      await sendWithDbEtag(req, res, "orders", queryFingerprint(query), () => query);
     } catch (error) {
       // This swallowed the real exception with no server-side trace — a genuine schema
       // drift (orders.subtotal_amount/container_charge existing in shared/schema.ts but
@@ -3230,12 +3236,17 @@ export async function registerRoutes(
 
   app.get("/api/kot", requireAuth, async (req, res) => {
     try {
-      const { status } = req.query;
-      const tickets = status
-        ? await storage.getKotTicketsByStatus(status as string)
-        : await storage.getKotTickets();
-      res.json(tickets);
+      // since=<ISO> (the Kitchen page sends today's business-day start): active tickets of any age plus
+      // everything printed since then — not the full KOT history. Without it, every ticket (legacy).
+      // ETag'd like GET /api/orders, so an unchanged poll is a 304.
+      const { status, since } = req.query;
+      const query = storage.kotTicketsQuery({
+        status: status ? String(status) : undefined,
+        since: since ? new Date(String(since)) : undefined,
+      });
+      await sendWithDbEtag(req, res, "kot", queryFingerprint(query), () => query);
     } catch (error) {
+      console.error("GET /api/kot error:", error);
       res.status(500).json({ error: "Failed to fetch KOT tickets" });
     }
   });
