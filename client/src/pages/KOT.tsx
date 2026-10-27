@@ -1,4 +1,5 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
+import { businessDayRange, todayBusinessDate } from "@shared/businessDay";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -85,8 +86,13 @@ export default function KOT() {
 
   const [activeTab, setActiveTab] = useState("active");
 
+  // Active tickets (any age) + everything printed today — not every KOT ever printed, which this
+  // page used to download on each poll. Unchanged polls are 304s (the server ETags the list), and
+  // realtime order/KOT events refresh it immediately (RealtimeProvider); this poll is the fallback.
+  const businessDate = todayBusinessDate();
   const { data: kotTickets, isLoading } = useQuery<any[]>({
-    queryKey: ["/api/kot"],
+    queryKey: ["/api/kot", "today", businessDate],
+    queryFn: () => apiJson<any[]>(`/api/kot?since=${encodeURIComponent(businessDayRange(businessDate).start.toISOString())}`),
     refetchInterval: 15000,
   });
 
@@ -240,7 +246,7 @@ export default function KOT() {
     { id: "active",      label: `Active (${pending.length + inProgress.length})` },
     { id: "pending",     label: `Pending (${pending.length})` },
     { id: "in-progress", label: `Cooking (${inProgress.length})` },
-    { id: "all",         label: `All (${kotTickets?.length || 0})` },
+    { id: "all",         label: `Today (${kotTickets?.length || 0})` },
   ];
 
   const ticketsForTab = () => {
@@ -261,7 +267,7 @@ export default function KOT() {
   const emptyText = () => {
     if (activeTab === "pending") return "No pending orders";
     if (activeTab === "in-progress") return "Nothing cooking right now";
-    if (activeTab === "all") return "No KOT tickets found";
+    if (activeTab === "all") return "No KOT tickets today";
     return "No active orders";
   };
 
