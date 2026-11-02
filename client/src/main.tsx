@@ -4,6 +4,10 @@ import * as Sentry from "@sentry/react";
 import { queryClient } from "./lib/queryClient";
 import { RealtimeProvider } from "./hooks/RealtimeProvider";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { installSlowRequestReporter } from "./lib/slowRequest";
+
+// Every API request >= 4s (or timed out) is reported with the server's own timing — see lib/slowRequest.ts.
+installSlowRequestReporter();
 // ── Bagicha design-system fonts (self-hosted, offline-safe for Electron) ──
 import "@fontsource/plus-jakarta-sans/400.css";
 import "@fontsource/plus-jakarta-sans/500.css";

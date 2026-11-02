@@ -16,6 +16,10 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   // Diagnostic, not a business event: written by the POS when a Settle took >= 4s (POST
   // /api/perf/slow-settle) so a slow one can be explained afterwards. Not part of any report.
   "perf.slow_settle":     { label: "Slow Settle",    color: "bg-amber-100 text-amber-800" },
+  // Diagnostics too (shared/requestTiming.ts): a client request >= 4s / timed out, and a server
+  // handler >= 1.5s. Summarised by scripts/report-latency.ts.
+  "perf.slow_request":    { label: "Slow Request",   color: "bg-amber-100 text-amber-800" },
+  "perf.slow_handler":    { label: "Slow Handler",   color: "bg-amber-100 text-amber-800" },
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
@@ -83,9 +87,19 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const legs = Array.isArray(meta.legs) ? (meta.legs as Array<Record<string, unknown>>) : [];
     const slowest = legs.find((l) => l.leg === meta.slowestLeg);
     const lag = typeof meta.startLagMs === "number" && meta.startLagMs >= 1500 ? ` · nothing was sent for the first ${secs(meta.startLagMs)}` : "";
-    const slow = slowest ? ` · slowest: ${slowest.leg} ${secs(slowest.durationMs)} (server ${slowest.serverMs ?? "?"}ms${slowest.instance ? `, instance ${slowest.instance}` : ""})` : "";
+    const cold = slowest && typeof slowest.coldMs === "number" ? `, cold start ${secs(slowest.coldMs)}` : "";
+    const slow = slowest ? ` · slowest: ${slowest.leg} ${secs(slowest.durationMs)} (server ${slowest.serverMs ?? "?"}ms${cold}${slowest.instance ? `, instance ${slowest.instance}` : ""})` : "";
     const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
     return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${net}`;
+  }
+  if (action === "perf.slow_request") {
+    const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
+    const where = meta.timedOut ? "no response (timed out)" : `server ${meta.appMs ?? "?"}ms${typeof meta.coldMs === "number" ? `, cold start ${secs(meta.coldMs)}` : ""}`;
+    const retry = Number(meta.attempt) > 1 ? " · retried" : "";
+    return `${meta.method} ${meta.path} took ${secs(meta.clientMs)} (${where}) → ${meta.cause ?? "?"}${retry}${meta.connection ? ` · ${meta.connection}` : ""}`;
+  }
+  if (action === "perf.slow_handler") {
+    return `${meta.method} ${meta.path} handler took ${meta.appMs}ms (status ${meta.status}${typeof meta.coldMs === "number" ? `, cold start ${meta.coldMs}ms` : ""})`;
   }
   if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}${approvedSuffix(meta)}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;

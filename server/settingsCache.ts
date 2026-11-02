@@ -198,13 +198,18 @@ export function createSettingsCache<T>(opts: SettingsCacheOptions<T>): SettingsC
       if (live) {
         if (t - loadedAt < maxAgeMs) return;
         if (t < nextStaleAttemptAt) return;
-        // Live but old: one quick re-read to pick up edits made on other instances. A failure here
-        // is harmless — the last real value keeps serving — so never delay the request retrying.
-        const ok = await doRefresh(1);
-        if (!ok && live) {
-          nextStaleAttemptAt = now() + staleRetryMs;
-          log("[settings] refresh failed — serving the last known-good settings");
-        }
+        // Live but old: re-read in the BACKGROUND to pick up edits made on other instances, and serve
+        // the last real value right away. This used to be awaited, so every request after a minute
+        // of quiet waited for a settings read — normally ~20ms, but up to the 4s attempt timeout
+        // whenever the database connection hiccuped (one of the variable-latency sources found in
+        // the Nov 2026 review). A failure keeps the last known-good value; retried after staleRetryMs.
+        nextStaleAttemptAt = t + staleRetryMs; // one background attempt at a time
+        void doRefresh(1).then((ok) => {
+          if (!ok && live) {
+            nextStaleAttemptAt = now() + staleRetryMs;
+            log("[settings] refresh failed — serving the last known-good settings");
+          }
+        });
         return;
       }
       const ok = await doRefresh(attempts);

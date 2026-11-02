@@ -125,7 +125,16 @@ const ready = (async () => {
   });
 })();
 
+let initDoneUptimeMs = 0;
+ready.then(() => { initDoneUptimeMs = Math.round(process.uptime() * 1000); }, () => {});
+
 export default async function handler(req: any, res: any) {
+  // A request that arrived while this instance was still initialising waited for the whole start-up
+  // (module load + settings + routes, i.e. process uptime when init finished). Reported as
+  // Server-Timing cold;dur by server/serverTiming.ts so a cold start shows up in the slow-request
+  // diagnostics. A request reaching an already-initialised (or pre-warmed) instance gets none.
+  const t0 = Date.now();
   await ready;
+  if (Date.now() - t0 >= 5) req.coldMs = initDoneUptimeMs;
   app(req, res);
 }
