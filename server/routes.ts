@@ -290,7 +290,7 @@ export async function registerRoutes(
     const legs = Array.isArray(b.legs)
       ? b.legs.slice(0, 6).map((l: any) => ({
           leg: s(l?.leg, 10), startMs: n(l?.startMs), durationMs: n(l?.durationMs),
-          ttfbMs: n(l?.ttfbMs), serverMs: n(l?.serverMs), instance: s(l?.instance, 40),
+          ttfbMs: n(l?.ttfbMs), serverMs: n(l?.serverMs), instance: s(l?.instance, 40), coldMs: n(l?.coldMs),
         }))
       : [];
     const orderId = Number(b.orderId);
@@ -302,6 +302,34 @@ export async function registerRoutes(
       slowestLeg: s(b.slowestLeg, 10),
       legs,
       onlineAtClick: typeof b.onlineAtClick === "boolean" ? b.onlineAtClick : null,
+      connection: s(b.connection, 60),
+    });
+    res.status(204).end();
+  });
+
+  // Diagnostic only: any API request that took >= 4s to response headers (or timed out) on a client,
+  // with the client's time, the server's own Server-Timing for it and the resulting cause
+  // (client/src/lib/slowRequest.ts, shared/requestTiming.ts). Read with scripts/report-latency.ts.
+  app.post("/api/perf/slow-request", requireAuth, async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+    const s = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : null);
+    const bool = (v: unknown) => (typeof v === "boolean" ? v : null);
+    await logAudit(req, "perf.slow_request", "request", null, {
+      method: s(b.method, 8),
+      path: s(b.path, 120),
+      status: n(b.status),
+      clientMs: n(b.clientMs),
+      appMs: n(b.appMs),
+      coldMs: n(b.coldMs),
+      instAgeS: n(b.instAgeS),
+      instReq: n(b.instReq),
+      attempt: n(b.attempt),
+      timedOut: bool(b.timedOut),
+      failed: bool(b.failed),
+      cause: s(b.cause, 12),
+      online: bool(b.online),
+      hidden: bool(b.hidden),
       connection: s(b.connection, 60),
     });
     res.status(204).end();

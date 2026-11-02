@@ -32,6 +32,8 @@ export interface SettleLeg {
   serverMs: number | null;
   /** e.g. "age=2s req=1" — a tiny age/req means this request hit a freshly started instance. */
   instance: string | null;
+  /** Server-Timing cold;dur — time this request waited for the instance to boot (cold start). */
+  coldMs?: number | null;
 }
 
 export interface SettleTimeline {
@@ -76,6 +78,7 @@ export function summarizeSettleTimeline(
     if (!leg) continue;
     const app = e.serverTiming?.find((s) => s.name === "app");
     const inst = e.serverTiming?.find((s) => s.name === "inst");
+    const cold = e.serverTiming?.find((s) => s.name === "cold");
     legs.push({
       leg,
       startMs: Math.round(e.startTime - clickedAt),
@@ -83,6 +86,7 @@ export function summarizeSettleTimeline(
       ttfbMs: e.requestStart && e.responseStart ? Math.round(e.responseStart - e.requestStart) : null,
       serverMs: app ? Math.round(app.duration) : null,
       instance: inst?.description || null,
+      coldMs: cold ? Math.round(cold.duration) : null,
     });
   }
   legs.sort((a, b) => a.startMs - b.startMs);
