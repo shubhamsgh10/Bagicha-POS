@@ -7,4 +7,9 @@ export {
   setApiBaseUrl,
   resetApiBaseUrl,
   apiQueryKey,
+  timedFetch,
+  setRequestObserver,
+  recentRequestTimings,
+  GET_TIMEOUT_MS,
+  type RequestTiming,
 } from "../../../packages/api-client";

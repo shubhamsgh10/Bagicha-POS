@@ -36,6 +36,12 @@ export function applyCors(app: Express): void {
       "Access-Control-Allow-Headers",
       "Content-Type, Authorization, X-Requested-With",
     );
+    // Cache the preflight for 2h (Chromium's cap; the default is 5s). Without it every JSON write
+    // after a pause of >5s paid an extra OPTIONS round trip before the real request.
+    res.setHeader("Access-Control-Max-Age", "7200");
+    // Let a cross-origin client read the server's timing off the response (packages/api-client
+    // timedFetch) — Resource Timing hides it on the shop device.
+    res.setHeader("Access-Control-Expose-Headers", "Server-Timing");
 
     if (req.method === "OPTIONS") {
       return res.status(204).end();
