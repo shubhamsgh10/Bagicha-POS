@@ -132,8 +132,28 @@ async function main() {
     h.advance(61_000);
     h.state.value = { taxRate: 12, tag: "edited-elsewhere" };
     await h.cache.ensureLive();
-    check("stale cache: ensureLive reloads", h.state.loads === 2);
+    await tick(); await tick();
+    check("stale cache: ensureLive reloads (in the background)", h.state.loads === 2);
     check("stale reload picks up the edit made by another instance", h.cache.get().taxRate === 12);
+  }
+
+  // 8b. The stale re-read never holds up the request: ensureLive returns while the load is in flight,
+  //     and the last real value keeps serving until it lands.
+  {
+    let release: ((v: S) => void) | null = null;
+    let calls = 0;
+    const h = harness({
+      load: () => { calls++; return calls === 1 ? Promise.resolve(REAL) : new Promise<S>((res) => { release = res; }); },
+    });
+    await h.cache.init();
+    h.advance(61_000);
+    let returned = false;
+    await h.cache.ensureLive().then(() => { returned = true; });
+    check("stale cache: ensureLive returns before the slow re-read finishes", returned && calls === 2 && release !== null);
+    check("stale cache: serves the last real value while re-reading", h.cache.getLive().tag === "db");
+    release!({ taxRate: 9, tag: "late" });
+    await tick(); await tick();
+    check("stale cache: the background re-read lands afterwards", h.cache.get().tag === "late");
   }
 
   // 9. A failed refresh while live keeps the last real value, makes ONE attempt, and backs off.
@@ -146,13 +166,16 @@ async function main() {
     const sleepsBefore = h.sleeps.length;
     const loadsBefore = h.state.loads;
     await h.cache.ensureLive();
+    await tick(); await tick();
     check("stale + DB down: ensureLive does not throw", true);
     check("stale + DB down: keeps serving the last real value", h.cache.isLive() && h.cache.get().tag === "db");
     check("stale + DB down: a single attempt, no retry sleeps on the request path", h.state.loads === loadsBefore + 1 && h.sleeps.length === sleepsBefore);
     await h.cache.ensureLive();
+    await tick(); await tick();
     check("stale + DB down: does not hammer the DB again within staleRetryMs", h.state.loads === loadsBefore + 1);
     h.advance(11_000);
     await h.cache.ensureLive();
+    await tick(); await tick();
     check("stale + DB down: tries again after staleRetryMs", h.state.loads === loadsBefore + 2);
   }
 

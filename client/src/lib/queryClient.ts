@@ -1,6 +1,6 @@
 import { QueryClient, QueryCache, MutationCache, QueryFunction } from "@tanstack/react-query";
 import * as Sentry from "@sentry/react";
-import { apiUrl } from "./api";
+import { timedFetch } from "./api";
 import { toast } from "@/hooks/use-toast";
 
 type UnauthorizedBehavior = "returnNull" | "throw";
@@ -17,7 +17,8 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(apiUrl(url), {
+  // timedFetch: timed + reported when slow (lib/slowRequest.ts); writes are never auto-retried.
+  const res = await timedFetch(url, {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
@@ -34,7 +35,9 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const path = queryKey.join("/") as string;
-    const res = await fetch(apiUrl(path), {
+    // timedFetch: a GET with no response headers in 8s is aborted and retried once, and slow ones
+    // are reported with the server's own timing (lib/slowRequest.ts).
+    const res = await timedFetch(path, {
       credentials: "include",
     });
 
