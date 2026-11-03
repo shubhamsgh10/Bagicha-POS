@@ -1,6 +1,7 @@
 import { isSlowSettle, summarizeSettleTimeline, type ResourceEntryLike } from "@shared/settleTiming";
 import { parseServerTiming, loggablePath } from "@shared/requestTiming";
 import { apiUrl, recentRequestTimings } from "./api";
+import { msSinceLastApiResponse } from "./connectionKeepAlive";
 
 /**
  * The browser hides Server-Timing (and TTFB) from Resource Timing on the shop device — every slow-settle
@@ -37,9 +38,13 @@ function withCapturedServerTiming(entries: PerformanceResourceTiming[]): Resourc
 export interface SettleClick {
   at: number;
   online: boolean;
+  /** How long the connection had been quiet before the click (a long quiet spell is what the shop's
+   *  network silently drops — see shared/connectionKeepAlive.ts). */
+  idleMs: number | null;
 }
 
 export function markSettleClick(): SettleClick {
+  const idleMs = msSinceLastApiResponse();
   try {
     // A tab that has been polling for hours can fill the browser's resource-timing buffer (250
     // entries by default), after which new entries — including this settle's own — are dropped.
@@ -48,7 +53,7 @@ export function markSettleClick(): SettleClick {
   } catch {
     /* not supported — the report will just have fewer legs */
   }
-  return { at: performance.now(), online: typeof navigator !== "undefined" ? navigator.onLine : true };
+  return { at: performance.now(), online: typeof navigator !== "undefined" ? navigator.onLine : true, idleMs };
 }
 
 export function reportSlowSettle(args: { orderId: number; click: SettleClick; outcome: "ok" | "error" }): void {
@@ -68,6 +73,7 @@ export function reportSlowSettle(args: { orderId: number; click: SettleClick; ou
         outcome: args.outcome,
         ...timeline,
         onlineAtClick: args.click.online,
+        idleMs: args.click.idleMs,
         connection: c ? `${c.effectiveType ?? "?"} rtt=${c.rtt ?? "?"} down=${c.downlink ?? "?"}` : null,
       }),
     }).catch(() => {});

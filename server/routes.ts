@@ -301,6 +301,38 @@ export async function registerRoutes(
       betweenLegsMs: n(b.betweenLegsMs),
       slowestLeg: s(b.slowestLeg, 10),
       legs,
+      idleMs: n(b.idleMs),
+      onlineAtClick: typeof b.onlineAtClick === "boolean" ? b.onlineAtClick : null,
+      connection: s(b.connection, 60),
+    });
+    res.status(204).end();
+  });
+
+  // Same idea for a POS KOT/Bill tap that took >= 3s (client/src/lib/printPerfClient.ts): the tap's own
+  // stage times, the server's Server-Timing stages for that request, and how long the connection had
+  // been quiet before the tap — so "network stall" vs "slow server" can be told apart afterwards.
+  app.post("/api/perf/slow-print", requireAuth, async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+    const s = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : null);
+    const durations = (v: unknown) => {
+      const out: Record<string, number> = {};
+      if (v && typeof v === "object") {
+        for (const [k, val] of Object.entries(v as Record<string, unknown>).slice(0, 30)) {
+          const ms = n(val);
+          if (ms !== null && /^[A-Za-z0-9_-]{1,40}$/.test(k)) out[k] = ms;
+        }
+      }
+      return out;
+    };
+    const orderId = Number(b.orderId);
+    await logAudit(req, "perf.slow_print", "order", Number.isFinite(orderId) && orderId > 0 ? orderId : null, {
+      kind: s(b.kind, 20),
+      totalMs: n(b.totalMs),
+      stages: durations(b.stages),
+      server: durations(b.server),
+      instance: s(b.instance, 40),
+      idleMs: n(b.idleMs),
       onlineAtClick: typeof b.onlineAtClick === "boolean" ? b.onlineAtClick : null,
       connection: s(b.connection, 60),
     });
@@ -1950,6 +1982,9 @@ export async function registerRoutes(
   });
 
   app.post("/api/orders", requireAuth, async (req, res) => {
+    // Inventory reconciliation runs ALONGSIDE the print (see below); every exit after it has
+    // started waits for it, so nothing is left running once the response is sent.
+    let inventoryDone: Promise<void> = Promise.resolve();
     try {
       // `print`/`auto`/`markBilled` are print directives for the step AFTER the save — they must
       // never reach createOrderWithItems as order columns.
@@ -1966,10 +2001,25 @@ export async function registerRoutes(
       // it reports the real reason instead of a blanket message. Everything below is
       // a server fault and must surface as 5xx — mislabelling DB/counter failures as
       // 400 "Invalid order data" is what hid the orderNumber collision bug.
-      let priced;
-      try {
-        priced = await priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge, orderInfo.deliveryCharge);
-      } catch (pricingErr) {
+      //
+      // The plate-cost read is independent of pricing, so the two run together: on a KOT/Bill tap
+      // every serial round trip here sits in front of the print job.
+      //
+      // Order items with server-validated unit prices. unitCost is a snapshot of the
+      // plate cost AT SALE TIME (shared/menuCost.ts via storage.computeMenuItemCosts) —
+      // null when no full recipe cost is known, never a fabricated 0. Batched: one
+      // call computes all lines' costs in 2 DB round trips total, not 2 per line.
+      const [pricing, costResults] = await Promise.all([
+        priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge, orderInfo.deliveryCharge).then(
+          (priced) => ({ priced, pricingErr: undefined as unknown }),
+          (pricingErr: unknown) => ({ priced: undefined, pricingErr }),
+        ),
+        storage.computeMenuItemCosts(
+          lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+        ),
+      ]);
+      if (!pricing.priced) {
+        const { pricingErr } = pricing;
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
         const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
@@ -1978,25 +2028,23 @@ export async function registerRoutes(
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
+      const priced = pricing.priced;
 
       // Applying a discount is a privileged action; a bare staff session may not.
       if (priced.discount > 0 && !hasElevation(req, "manager")) {
         return res.status(403).json({ error: "Manager approval required to apply a discount" });
       }
 
-      const orderNumber = `ORD${String(await incrementBillCounter()).padStart(4, "0")}`;
+      // Both numbers are only taken once the order is known to be valid. Each is one atomic
+      // UPDATE of the settings row; issuing them together saves a round trip (Postgres queues the
+      // second behind the first's row lock).
+      const [billNo, kotNo] = await Promise.all([incrementBillCounter(), incrementKotCounter()]);
+      const orderNumber = `ORD${String(billNo).padStart(4, "0")}`;
       const actor = req.user as any;
       // Staff-member sessions ({ id, _isStaffMember }) share the integer id space with
       // users, so attribute to the right column (see CLAUDE.md id-collision gotcha).
       const isStaffMemberActor = !!actor?._isStaffMember;
 
-      // Order items with server-validated unit prices. unitCost is a snapshot of the
-      // plate cost AT SALE TIME (shared/menuCost.ts via storage.computeMenuItemCosts) —
-      // null when no full recipe cost is known, never a fabricated 0. Batched: one
-      // call computes all lines' costs in 2 DB round trips total, not 2 per line.
-      const costResults = await storage.computeMenuItemCosts(
-        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
-      );
       const itemsToInsert = lineItems.map((item: any, idx: number) => {
         const costResult = costResults[idx];
         return {
@@ -2019,7 +2067,7 @@ export async function registerRoutes(
 
       // KOT ticket lines (kotTickets.items — a write-only historical record; the actual
       // print always re-derives fresh from orderItems via /api/print/kot).
-      const kotNumber = String(await incrementKotCounter()).padStart(3, "0");
+      const kotNumber = String(kotNo).padStart(3, "0");
       const kotItems = lineItems.map((item: any) => ({
         name: item.name,
         quantity: item.quantity,
@@ -2065,16 +2113,16 @@ export async function registerRoutes(
       // Deduct inventory based on inventoryLinks for each menu item. Non-fatal at this
       // layer (the order already committed) — reconcileOrderInventory's own transaction
       // means a failure here can't leave a half-deducted state, only a fully-skipped one.
+      // Started, not awaited: stock has nothing to do with the KOT/bill, so it runs alongside
+      // the print instead of in front of it (~5 round trips). Awaited before every response.
       if (lineItems.length > 0) {
-        try {
-          await storage.reconcileOrderInventory(
+        inventoryDone = storage
+          .reconcileOrderInventory(
             order.id,
             lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
             isStaffMemberActor ? { staffMemberId: actor?.id } : { userId: actor?.id },
-          );
-        } catch (invErr) {
-          console.error("[order] inventory reconciliation error (non-fatal):", invErr);
-        }
+          )
+          .catch((invErr) => console.error("[order] inventory reconciliation error (non-fatal):", invErr));
       }
 
       // Update table status if dine-in. Non-fatal, same reasoning as the inventory
@@ -2125,16 +2173,21 @@ export async function registerRoutes(
           markBilled: printReq.markBilled,
           timer,
         });
+        await inventoryDone;
         return res.json({ ...order, print });
       }
+      await inventoryDone;
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
+      await inventoryDone;
       res.status(500).json({ error: "Failed to create order" });
     }
   });
 
   app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
+    // Same as POST /api/orders: inventory runs alongside the print and every exit waits for it.
+    let inventoryDone: Promise<void> = Promise.resolve();
     try {
       const id = parseInt(req.params.id);
       const { items, discountAmount, containerCharge, deliveryCharge, customerName, customerPhone } = req.body;
@@ -2155,10 +2208,28 @@ export async function registerRoutes(
       // bad qty / bad open-item price) is a client-data problem, not a server fault —
       // report it as 400 with the real reason instead of falling through to the
       // generic 500 below.
-      let priced;
-      try {
-        priced = await priceOrder(lineItems, discountAmount, containerCharge, deliveryCharge);
-      } catch (pricingErr) {
+      //
+      // Pricing, the snapshot of the order as it is BEFORE this save (existing items + order row —
+      // used for both the delta KOT below and the before/after audit trail) and the plate-cost read
+      // are independent reads, so they run together: on a KOT/Bill tap each serial round trip here
+      // used to sit in front of the print job (4 round trips → 1).
+      //
+      // unitCost is a snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
+      // storage.computeMenuItemCosts) — null when no full recipe cost is known, never a
+      // fabricated 0. Batched — same pattern as POST /api/orders above.
+      const [pricing, existingItems, existingOrderRow, editCostResults] = await Promise.all([
+        priceOrder(lineItems, discountAmount, containerCharge, deliveryCharge).then(
+          (priced) => ({ priced, pricingErr: undefined as unknown }),
+          (pricingErr: unknown) => ({ priced: undefined, pricingErr }),
+        ),
+        storage.getOrderItems(id),
+        storage.getOrderById(id),
+        storage.computeMenuItemCosts(
+          lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+        ),
+      ]);
+      if (!pricing.priced) {
+        const { pricingErr } = pricing;
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
         const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
@@ -2167,16 +2238,13 @@ export async function registerRoutes(
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
+      const priced = pricing.priced;
 
       // Applying a discount is a privileged action; a bare staff session may not.
       if (priced.discount > 0 && !hasElevation(req, "manager")) {
         return res.status(403).json({ error: "Manager approval required to apply a discount" });
       }
 
-      // Snapshot existing items + order totals BEFORE replacing — used for both the delta
-      // KOT below and the before/after audit trail (see the logAudit call after the replace).
-      const existingItems = await storage.getOrderItems(id);
-      const existingOrderRow = await storage.getOrderById(id);
       const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
 
       // ── Per-item KOT-cancellation guard ──────────────────────────────────────
@@ -2232,13 +2300,7 @@ export async function registerRoutes(
         }
       }
 
-      // Replace all order items with server-validated unit prices. unitCost is a
-      // snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
-      // storage.computeMenuItemCosts) — null when no full recipe cost is known,
-      // never a fabricated 0. Batched — same pattern as POST /api/orders above.
-      const editCostResults = await storage.computeMenuItemCosts(
-        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
-      );
+      // Replace all order items with server-validated unit prices and the plate costs read above.
       const itemsToInsert = lineItems.map((item: any, idx: number) => {
         const costResult = editCostResults[idx];
         return {
@@ -2363,15 +2425,15 @@ export async function registerRoutes(
       // table (adding/removing/re-quantifying items across rounds) actually touch stock;
       // previously this route had zero inventory code. Non-fatal: the order edit itself
       // already succeeded, so don't fail the request over a reconciliation hiccup.
-      try {
-        await storage.reconcileOrderInventory(
+      // Started, not awaited: it runs alongside the delta-KOT ticket and the print instead of in
+      // front of them (stock has nothing to do with the ticket); awaited before every response.
+      inventoryDone = storage
+        .reconcileOrderInventory(
           id,
           lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
           actorRefFromReq(req),
-        );
-      } catch (invErr) {
-        console.error("[order] inventory reconciliation error (non-fatal):", invErr);
-      }
+        )
+        .catch((invErr) => console.error("[order] inventory reconciliation error (non-fatal):", invErr));
 
       // Delta KOT — only print items newly added to this order
       const newItems = lineItems.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
@@ -2402,11 +2464,14 @@ export async function registerRoutes(
           markBilled: printReq.markBilled,
           timer,
         });
+        await inventoryDone;
         return res.json({ ...order, print });
       }
+      await inventoryDone;
       res.json(order);
     } catch (error) {
       console.error("Update order items error:", error);
+      await inventoryDone;
       res.status(500).json({ error: "Failed to update order items" });
     }
   });
@@ -2552,25 +2617,32 @@ export async function registerRoutes(
       // propagated straight past them to the outer catch. The table just stays stuck
       // showing "running"/"billed" instead of "free" — a real but far smaller problem
       // than losing the payment record.
-      if ((order as any).tableId) {
+      const freeTable = async () => {
+        if (!(order as any).tableId) return;
         try {
           await storage.updateTableStatus(Number((order as any).tableId), "free", null);
           broadcast({ type: "TABLE_UPDATE" });
         } catch (tableErr) {
           console.error("[payment] table free error (non-fatal):", tableErr);
         }
-      }
+      };
 
       // Non-fatal: the order is already settled above. If the kitchen KOT screen was
       // never used (or a ticket was left pending/in-progress), it would otherwise sit
       // in Active/Pending/Cooking forever even though the order is fully served.
       // Runs for BOTH full payment and Pay-Later/due, since `status` is set to
       // "served" unconditionally above — the food left the kitchen either way.
-      try {
-        await storage.completeKotTicketsForOrder(id);
-      } catch (kotErr) {
-        console.error("[payment] KOT auto-complete error (non-fatal):", kotErr);
-      }
+      const completeKots = async () => {
+        try {
+          await storage.completeKotTicketsForOrder(id);
+        } catch (kotErr) {
+          console.error("[payment] KOT auto-complete error (non-fatal):", kotErr);
+        }
+      };
+
+      // Independent writes to different tables, each catching its own error — run them together
+      // so the settle response waits one DB round trip here instead of two.
+      await Promise.all([freeTable(), completeKots()]);
 
       broadcast({ type: "ORDER_UPDATE", order });
 

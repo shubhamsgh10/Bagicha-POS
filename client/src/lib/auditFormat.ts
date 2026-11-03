@@ -16,6 +16,8 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   // Diagnostic, not a business event: written by the POS when a Settle took >= 4s (POST
   // /api/perf/slow-settle) so a slow one can be explained afterwards. Not part of any report.
   "perf.slow_settle":     { label: "Slow Settle",    color: "bg-amber-100 text-amber-800" },
+  // Same, for a KOT/Bill tap that took >= 3s (POST /api/perf/slow-print).
+  "perf.slow_print":      { label: "Slow Print",     color: "bg-amber-100 text-amber-800" },
   // Diagnostics too (shared/requestTiming.ts): a client request >= 4s / timed out, and a server
   // handler >= 1.5s. Summarised by scripts/report-latency.ts.
   "perf.slow_request":    { label: "Slow Request",   color: "bg-amber-100 text-amber-800" },
@@ -89,8 +91,22 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const lag = typeof meta.startLagMs === "number" && meta.startLagMs >= 1500 ? ` · nothing was sent for the first ${secs(meta.startLagMs)}` : "";
     const cold = slowest && typeof slowest.coldMs === "number" ? `, cold start ${secs(slowest.coldMs)}` : "";
     const slow = slowest ? ` · slowest: ${slowest.leg} ${secs(slowest.durationMs)} (server ${slowest.serverMs ?? "?"}ms${cold}${slowest.instance ? `, instance ${slowest.instance}` : ""})` : "";
+    const idle = typeof meta.idleMs === "number" ? ` · connection quiet ${secs(meta.idleMs)} before the click` : "";
     const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
-    return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${net}`;
+    return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${idle}${net}`;
+  }
+  if (action === "perf.slow_print") {
+    const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
+    const stages = (meta.stages ?? {}) as Record<string, unknown>;
+    const server = (meta.server ?? {}) as Record<string, unknown>;
+    const req = typeof stages.save_http === "number" ? stages.save_http : null;
+    const srv = typeof server.app === "number" ? server.app : typeof server.total === "number" ? server.total : null;
+    // The request's own time minus the server's handler time = time spent before/after the server
+    // (network, a dead connection being detected, a cold instance starting).
+    const split = req !== null && srv !== null ? ` · request ${secs(req)}, server ${secs(srv)} → ${secs(req - srv)} outside the server` : "";
+    const idle = typeof meta.idleMs === "number" ? ` · connection quiet ${secs(meta.idleMs)} before the tap` : "";
+    const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
+    return `${String(meta.kind ?? "print").toUpperCase()} tap took ${secs(meta.totalMs)}${split}${idle}${net}`;
   }
   if (action === "perf.slow_request") {
     const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
