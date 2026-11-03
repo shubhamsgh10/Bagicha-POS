@@ -3,7 +3,7 @@
  * [print-perf] log lines. The clock is injected so the numbers are exact.
  * Run: npx tsx scripts/verify-print-perf.ts
  */
-import { createStageTimer } from "../shared/printPerf";
+import { createStageTimer, parseServerTiming } from "../shared/printPerf";
 
 const checks: Array<[string, boolean]> = [];
 
@@ -46,6 +46,19 @@ async function main() {
     timer.toLogLine("kot order=1") ===
       "[print-perf] kot order=1 db_order=13.3 bad_name_=5 boom=2 kot_db_order=7 kot_x_y=1 total=20.3",
   ]);
+
+  // parseServerTiming — the slow-print report reads the save response's header with it. The real
+  // header is the print stages FOLLOWED by serverTiming.ts's app/inst (it appends, never replaces).
+  {
+    const p = parseServerTiming(
+      'save;dur=180.2, kot_insert_job;dur=9, total;dur=231.5, app;dur=233, inst;desc="age=61s req=15"',
+    );
+    checks.push(["parseServerTiming: stage durations", p.dur.save === 180.2 && p.dur.kot_insert_job === 9 && p.dur.total === 231.5]);
+    checks.push(["parseServerTiming: app duration from serverTiming.ts", p.dur.app === 233]);
+    checks.push(["parseServerTiming: the instance description keeps its '=' signs", p.inst === "age=61s req=15"]);
+    checks.push(["parseServerTiming: no header → empty", Object.keys(parseServerTiming(null).dur).length === 0 && parseServerTiming(undefined).inst === null]);
+    checks.push(["parseServerTiming: junk entries are skipped, not thrown on", parseServerTiming("x;dur=abc, ;dur=1, y;dur=2").dur.y === 2 && !("x" in parseServerTiming("x;dur=abc").dur)]);
+  }
 
   let failed = 0;
   for (const [name, ok] of checks) {

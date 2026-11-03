@@ -10,6 +10,7 @@ import { applyCors } from "./server/cors";
 import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
 import { serverTiming } from "./server/serverTiming";
+import { registerKeepAlivePing } from "./server/keepAlivePing";
 
 // Log-and-survive guards, same as server/index.ts — a warm serverless instance is
 // still a live Node process between invocations, so an unhandled rejection here was
@@ -42,6 +43,8 @@ app.use((req, res, next) => {
 app.use("/api", serverTiming);
 
 applyCors(app);
+// Before the session middleware: the keep-warm ping must cost no DB round trip (see the file).
+registerKeepAlivePing(app);
 
 // Sentry — init before any middleware so it can instrument everything. SENTRY_DSN is
 // optional; absent means Sentry stays a no-op, same as server/index.ts.

@@ -1,14 +1,14 @@
 /**
  * Which manual-charge boxes the POS cart totals panel offers (pure — unit-tested by
  * scripts/verify-charge-boxes.ts):
- *   dine-in  → neither box
- *   pickup   → Container Charge
- *   delivery → Container Charge + Delivery Charge
+ *   table session → Container Charge
+ *   standalone dine-in → neither box
+ *   standalone pickup  → Container Charge
+ *   standalone delivery → Container Charge + Delivery Charge
  *
- * A table session tracks service mode per item: new items take the "Adding as" toggle
- * (activeItemMode), and a saved/added line keeps its own serviceMode. So a box applies when
- * EITHER the toggle or any line already in the cart is pickup/delivery — flipping the toggle
- * back to Dine-In must not hide the Container box of a cart that still holds parcel items.
+ * A table session is always dine-in (the top bar shows a single Dine-In pill — there is no
+ * per-item Pickup/Delivery toggle any more), and staff may still need to add a container
+ * charge to a table's bill (leftovers packed to go), so that box is always offered there.
  * A standalone order (pickup/delivery mode, or a new order with no table) reads its
  * order-type tab instead.
  *
@@ -19,28 +19,17 @@
  * (SectionActionBar has its own Container box), so there is no section flag.
  */
 export interface ChargeBoxContext {
-  /** Table/edit session: items carry their own serviceMode, set by the "Adding as" strip. */
+  /** Table/edit session (always dine-in). */
   isTableSession: boolean;
-  /** "Adding as" mode for NEW items — "dinein" | "pickup" | "delivery" (table sessions). */
-  activeItemMode: string;
   /** The form's order-type tab — "dine-in" | "takeaway" | "delivery" (standalone orders). */
   orderType: string | undefined;
-  /** serviceMode of every line currently in the cart (missing = dine-in). */
-  cartModes: ReadonlyArray<string | null | undefined>;
   containerCharge: number;
   deliveryCharge: number;
 }
 
 export function chargeBoxVisibility(ctx: ChargeBoxContext): { showContainer: boolean; showDelivery: boolean } {
-  let deliveryApplies: boolean;
-  let containerApplies: boolean;
-  if (ctx.isTableSession) {
-    deliveryApplies = ctx.activeItemMode === "delivery" || ctx.cartModes.some((m) => m === "delivery");
-    containerApplies = deliveryApplies || ctx.activeItemMode === "pickup" || ctx.cartModes.some((m) => m === "pickup");
-  } else {
-    deliveryApplies = ctx.orderType === "delivery";
-    containerApplies = deliveryApplies || ctx.orderType === "takeaway";
-  }
+  const deliveryApplies = !ctx.isTableSession && ctx.orderType === "delivery";
+  const containerApplies = ctx.isTableSession || deliveryApplies || ctx.orderType === "takeaway";
   return {
     showContainer: containerApplies || ctx.containerCharge > 0,
     showDelivery: deliveryApplies || ctx.deliveryCharge > 0,

@@ -8,6 +8,7 @@ import { registerRoutes } from "./routes";
 import { initSettings, settingsGuard } from "./settingsStore";
 import { resolveSessionSecret } from "./sessionSecret";
 import { serverTiming } from "./serverTiming";
+import { registerKeepAlivePing } from "./keepAlivePing";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutomationScheduler } from "./services/customerAutomationService";
 import { startSegmentationScheduler } from "./services/crm/segmentationService";
@@ -56,6 +57,8 @@ app.use((req, res, next) => {
 app.use("/api", serverTiming);
 
 applyCors(app);
+// Before the session middleware: the keep-warm ping must cost no session/DB work (see the file).
+registerKeepAlivePing(app);
 
 // Sentry — init before any middleware so it can instrument everything.
 // SENTRY_DSN is optional; if absent, Sentry is a no-op.
