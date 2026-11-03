@@ -36,6 +36,7 @@ import { ActiveRoleProvider } from "@/context/ActiveRoleContext";
 import { NavigationProvider, useNavigation, NavDirection } from "@/context/NavigationContext";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
 import { usePrintJobBridge } from "@/hooks/usePrintJobBridge";
+import { useConnectionKeepAlive } from "@/hooks/useConnectionKeepAlive";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
@@ -234,6 +235,7 @@ function App() {
   const { toast } = useToast();
 
   usePrintJobBridge();
+  useConnectionKeepAlive();
 
   // No blanket refetch timer here: it used to invalidate EVERY query every 60s on every open
   // screen. Freshness now comes from realtime events (RealtimeProvider →

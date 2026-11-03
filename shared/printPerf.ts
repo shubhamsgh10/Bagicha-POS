@@ -62,3 +62,35 @@ export function createStageTimer(now: () => number = () => performance.now()): S
 
   return build("");
 }
+
+/**
+ * A POS print tap (click → print result handled) at or over this is reported to the audit trail as
+ * `perf.slow_print` (client/src/lib/printPerfClient.ts) — a healthy tap is ~0.5–0.8 s on Vercel.
+ */
+export const SLOW_PRINT_TAP_MS = 3000;
+
+/**
+ * Parses a Server-Timing header (`save;dur=180.2, insert_job;dur=9, app;dur=212, inst;desc="age=60s req=9"`)
+ * into stage durations plus the instance description. Read from the save response's HEADERS: the
+ * Electron thin client runs on a file:// origin, where Resource Timing hides Server-Timing even with
+ * Timing-Allow-Origin: * (checked in Chrome), but fetch can read it via Access-Control-Expose-Headers.
+ */
+export function parseServerTiming(header: string | null | undefined): { dur: Record<string, number>; inst: string | null } {
+  const dur: Record<string, number> = {};
+  let inst: string | null = null;
+  if (!header) return { dur, inst };
+  for (const part of header.split(",")) {
+    const [rawName, ...params] = part.trim().split(";");
+    const name = rawName?.trim();
+    if (!name) continue;
+    for (const p of params) {
+      const eq = p.indexOf("=");
+      if (eq < 0) continue;
+      const k = p.slice(0, eq).trim();
+      const v = p.slice(eq + 1).trim();
+      if (k === "dur" && v !== "" && Number.isFinite(Number(v))) dur[name] = Number(v);
+      if (k === "desc" && name === "inst") inst = v.replace(/^"|"$/g, "");
+    }
+  }
+  return { dur, inst };
+}

@@ -33,7 +33,7 @@ import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewM
 import { kotLines, billLines } from "@/lib/receiptText";
 import { chargeBoxVisibility } from "@/lib/chargeBoxes";
 import { printKotFallback, printBillFallback, BROWSER_BILL_TOAST, BROWSER_KOT_TOAST } from "@/lib/printBill";
-import { startPrintTap, timePrintStage, endPrintTap } from "@/lib/printPerfClient";
+import { startPrintTap, timePrintStage, endPrintTap, notePrintResponse } from "@/lib/printPerfClient";
 import { printFieldsForSubmitMode } from "@shared/printRequest";
 import { paymentLabel } from "@shared/paymentSplit";
 import { composeCartInstructions, rehydrateSelections, splitPersistedInstructions } from "@shared/orderItemText";
@@ -248,8 +248,9 @@ export default function POS() {
   // edit against via openEditPicker, so this is its only path to change qty/name/price.
   const [editingOpenItemCartKey, setEditingOpenItemCartKey] = useState<string | null>(null);
   const openItemSeqRef = useRef(-(Date.now() % 1_000_000_000));
-  // Active item mode — only relevant in table sessions; controls serviceMode of newly added items.
-  // Section counters reuse it as the big Eating Here/Parcel toggle: "pickup" = parcel
+  // Active item mode — controls serviceMode of newly added items. Table sessions have no UI
+  // to change it (a table is always dine-in), so it stays "dinein" there.
+  // Section counters use it as the big Eating Here/Parcel toggle: "pickup" = parcel
   // (container charge per item via the existing serviceMode computation), "dinein" = eating here.
   // Items keep their own mode, so one order can mix both — same per-item logic as tables.
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
@@ -711,7 +712,7 @@ export default function POS() {
     } finally {
       refreshSecondaryQueries();
       setIsPrinting(false);
-      endPrintTap();
+      endPrintTap(orderId);
     }
   };
 
@@ -926,6 +927,7 @@ export default function POS() {
   const createOrderMutation = useMutation({
     mutationFn: async (data: any) => {
       const res = await timePrintStage("save_http", () => apiRequest("POST", "/api/orders", data));
+      notePrintResponse(res);
       return res.json();
     },
     onSuccess: (order: any) => {
@@ -992,6 +994,7 @@ export default function POS() {
   const updateOrderMutation = useMutation({
     mutationFn: async (data: any) => {
       const res = await timePrintStage("save_http", () => apiRequest("PUT", `/api/orders/${data.orderId}/items`, data));
+      notePrintResponse(res);
       return res.json();
     },
     onSuccess: (order: any, vars: any) => {
@@ -1038,7 +1041,7 @@ export default function POS() {
       toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
-      endPrintTap();
+      endPrintTap(Number(vars?.orderId) || undefined);
     },
   });
 
@@ -1315,13 +1318,11 @@ export default function POS() {
   // Container and delivery charges are manually staff-entered flat amounts, untaxed, not
   // computed from item quantities/serviceMode.
   const grandTotal = total + containerCharge + deliveryCharge;
-  // Dine-in → no charge boxes, pickup → Container, delivery → Container + Delivery; a box
-  // holding an amount never hides (client/src/lib/chargeBoxes.ts).
+  // Table session → Container; standalone pickup → Container, delivery → both,
+  // dine-in → none; a box holding an amount never hides (client/src/lib/chargeBoxes.ts).
   const { showContainer: showContainerBox, showDelivery: showDeliveryBox } = chargeBoxVisibility({
     isTableSession,
-    activeItemMode,
     orderType: currentOrderType,
-    cartModes: cartItems.map((i) => i.serviceMode),
     containerCharge,
     deliveryCharge,
   });
@@ -2026,37 +2027,22 @@ export default function POS() {
                Section counters skip the whole cluster (walk-up customers, one global Parcel toggle). ── */}
           {!isSectionMode && <div className="hidden md:flex items-center gap-2 shrink-0">
 
-            {/* Order type tabs OR item-mode selector strip */}
+            {/* Order type tabs, or a fixed Dine-In pill for a table session */}
             {(() => {
               const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               if (isTableSession) {
-                // "Adding as:" strip — tab clicks change item mode, not order type
-                const modes: [ItemServiceMode, React.ComponentType<{ className?: string }>, string][] = [
-                  ["dinein",   DineInIcon,   "Dine-In" ],
-                  ["pickup",   TakeawayIcon, "Pickup"  ],
-                  ["delivery", DeliveryIcon, "Delivery"],
-                ];
+                // A table is always dine-in — one fixed pill, like the standalone Delivery /
+                // Pick Up pill. Pickup/delivery orders go through + Delivery / + Pickup on the
+                // Tables page; container/delivery charges are still in the cart totals.
                 return (
-                  <div className="flex items-center gap-1">
-                    <span className="text-[9px] font-bold uppercase tracking-wide mr-1 whitespace-nowrap" style={{ color: "var(--text-3)" }}>Adding as</span>
-                    <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
-                      {modes.map(([mode, Icon, label]) => {
-                        const active = activeItemMode === mode;
-                        return (
-                          <button
-                            key={mode}
-                            onClick={() => setActiveItemMode(mode)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold transition-all duration-150"
-                            style={active
-                              ? { background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }
-                              : { color: "var(--text-2)" }}
-                          >
-                            <Icon className="w-3 h-3" />
-                            <span>{label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
+                    <span
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded cursor-default"
+                      style={{ background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }}
+                    >
+                      <DineInIcon className="w-3.5 h-3.5" />
+                      Dine In
+                    </span>
                   </div>
                 );
               }
@@ -2472,32 +2458,6 @@ export default function POS() {
           className="w-32 px-2.5 py-2 text-base border border-gray-200 rounded-xl bg-gray-50 outline-none focus:border-green-400 placeholder-gray-400"
         />
       </div>}
-
-      {/* ── Mobile: "Adding as:" strip — table sessions only (sections use the Parcel toggle) ──── */}
-      {(!posMode && !isSectionMode && (!!preselectedTableId || isEditMode)) && (
-        <div className="md:hidden shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-gray-100/60"
-          style={{ background: "var(--paper-0)" }}>
-          <span className="text-[9px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: "var(--text-3)" }}>Adding as</span>
-          <div className="flex items-center gap-0.5 rounded-md p-[3px]" style={{ background: "var(--paper-100)", border: "1px solid var(--line)" }}>
-            {([["dinein", DineInIcon, "Dine-In"], ["pickup", TakeawayIcon, "Pickup"], ["delivery", DeliveryIcon, "Delivery"]] as [ItemServiceMode, React.ComponentType<{ className?: string }>, string][]).map(([mode, Icon, label]) => {
-              const active = activeItemMode === mode;
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setActiveItemMode(mode)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold transition-all duration-150"
-                  style={active
-                    ? { background: "var(--green-800)", color: "#fff", boxShadow: "var(--shadow-sm)" }
-                    : { color: "var(--text-2)" }}
-                >
-                  <Icon className="w-3 h-3" />
-                  <span>{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
            MAIN: Category | Items | Billing
@@ -2982,8 +2942,9 @@ export default function POS() {
               </div>
             </div>
 
-            {/* Charge boxes only where they apply — dine-in none, pickup Container, delivery
-                Container + Delivery (showContainerBox/showDeliveryBox, chargeBoxes.ts). */}
+            {/* Charge boxes only where they apply — table session Container, standalone dine-in none,
+                pickup Container, delivery Container + Delivery (showContainerBox/showDeliveryBox,
+                chargeBoxes.ts). */}
             {showContainerBox && (
               <div className="flex items-center gap-1 text-xs">
                 <span className="flex-1" style={{ color: "var(--text-2)" }}>Container Charge</span>
