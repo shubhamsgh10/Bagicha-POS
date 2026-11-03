@@ -16,6 +16,8 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   // Diagnostic, not a business event: written by the POS when a Settle took >= 4s (POST
   // /api/perf/slow-settle) so a slow one can be explained afterwards. Not part of any report.
   "perf.slow_settle":     { label: "Slow Settle",    color: "bg-amber-100 text-amber-800" },
+  // Same, for a KOT/Bill tap that took >= 3s (POST /api/perf/slow-print).
+  "perf.slow_print":      { label: "Slow Print",     color: "bg-amber-100 text-amber-800" },
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
@@ -84,8 +86,22 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const slowest = legs.find((l) => l.leg === meta.slowestLeg);
     const lag = typeof meta.startLagMs === "number" && meta.startLagMs >= 1500 ? ` · nothing was sent for the first ${secs(meta.startLagMs)}` : "";
     const slow = slowest ? ` · slowest: ${slowest.leg} ${secs(slowest.durationMs)} (server ${slowest.serverMs ?? "?"}ms${slowest.instance ? `, instance ${slowest.instance}` : ""})` : "";
+    const idle = typeof meta.idleMs === "number" ? ` · connection quiet ${secs(meta.idleMs)} before the click` : "";
     const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
-    return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${net}`;
+    return `Settle took ${secs(meta.totalMs)} (${meta.outcome ?? "?"})${lag}${slow}${idle}${net}`;
+  }
+  if (action === "perf.slow_print") {
+    const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
+    const stages = (meta.stages ?? {}) as Record<string, unknown>;
+    const server = (meta.server ?? {}) as Record<string, unknown>;
+    const req = typeof stages.save_http === "number" ? stages.save_http : null;
+    const srv = typeof server.app === "number" ? server.app : typeof server.total === "number" ? server.total : null;
+    // The request's own time minus the server's handler time = time spent before/after the server
+    // (network, a dead connection being detected, a cold instance starting).
+    const split = req !== null && srv !== null ? ` · request ${secs(req)}, server ${secs(srv)} → ${secs(req - srv)} outside the server` : "";
+    const idle = typeof meta.idleMs === "number" ? ` · connection quiet ${secs(meta.idleMs)} before the tap` : "";
+    const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
+    return `${String(meta.kind ?? "print").toUpperCase()} tap took ${secs(meta.totalMs)}${split}${idle}${net}`;
   }
   if (action === "order.write_off") return `₹${meta.shortfallAmount} written off — collected ₹${meta.paidAmount} of ₹${meta.orderTotal}${approvedSuffix(meta)}`;
   if (action === "order.cancel") return `Order ${meta.orderNumber ?? ""} table ${meta.tableNumber ?? ""}`;

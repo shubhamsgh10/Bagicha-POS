@@ -52,30 +52,47 @@ export function instrumentJson(res: any, timer: StageTimer, label: string): void
 }
 
 /**
- * Persists ALL of one tap's print_jobs rows in ONE multi-row INSERT and broadcasts them as ONE
- * Pusher batch. Returns printerId → job id (a tap never routes two jobs to the same printer).
+ * Persists ALL of one tap's print_jobs rows in ONE multi-row INSERT and starts broadcasting them
+ * as ONE Pusher batch. Returns printerId → job id (a tap never routes two jobs to the same
+ * printer) and the broadcast, which never rejects: callers run their own commit ALONGSIDE it
+ * (the commit doesn't depend on the broadcast, and the station only needs the row + the event),
+ * then await both before answering.
  */
 async function dispatchRemotePrintJobs(
   jobs: Array<{ orderId: number; jobType: "kot" | "bill"; printerId: string; payload: string }>,
   timer: StageTimer,
-): Promise<Map<string, number>> {
+): Promise<{ ids: Map<string, number>; broadcast: Promise<void> }> {
   const ids = new Map<string, number>();
-  if (jobs.length === 0) return ids;
-  const rows = await timer.time("insert_job", () => db.insert(printJobs).values(jobs).returning());
+  if (jobs.length === 0) return { ids, broadcast: Promise.resolve() };
+  // RETURNING only the id: the payload is what we just sent (a bitmap KOT is ~45 KB of base64) —
+  // returning it read the whole thing back from the database on every tap.
+  const rows = await timer.time("insert_job", () =>
+    db.insert(printJobs).values(jobs).returning({ id: printJobs.id, printerId: printJobs.printerId }),
+  );
+  const byPrinter = new Map(jobs.map((j) => [j.printerId, j]));
   for (const r of rows) ids.set(r.printerId, r.id);
-  await timer.time("pusher", () =>
+  const broadcast = timer.time("pusher", () =>
     publishRealtimeMany(
-      rows.map((r) => ({
-        type: "PRINT_JOB",
-        jobId: r.id,
-        orderId: r.orderId,
-        jobType: r.jobType,
-        printerId: r.printerId,
-        payload: broadcastPayload(r.payload),
-      })),
+      rows.map((r) => {
+        const j = byPrinter.get(r.printerId)!;
+        return {
+          type: "PRINT_JOB",
+          jobId: r.id,
+          orderId: j.orderId,
+          jobType: j.jobType,
+          printerId: j.printerId,
+          payload: broadcastPayload(j.payload),
+        };
+      }),
     ),
   );
-  return ids;
+  return { ids, broadcast };
+}
+
+/** Waits for BOTH the broadcast and the commit (so neither is left running), then rethrows a commit failure. */
+async function commitAlongside(broadcast: Promise<void>, commit: Promise<unknown>): Promise<void> {
+  const [, committed] = await Promise.allSettled([broadcast, commit]);
+  if (committed.status === "rejected") throw committed.reason;
 }
 
 /**
@@ -349,7 +366,7 @@ export async function runKotPrint(p: {
     }
   }
 
-  const jobIds = await dispatchRemotePrintJobs(
+  const { ids: jobIds, broadcast } = await dispatchRemotePrintJobs(
     remoteJobs.map((j) => ({ orderId, jobType: "kot" as const, printerId: j.printer.id, payload: j.buffer.toString("base64") })),
     timer,
   );
@@ -368,8 +385,9 @@ export async function runKotPrint(p: {
   // Commit once per tap — payloads are frozen in print_jobs, so late printing stays
   // correct and acks only flip job rows (no double-increment across multiple tickets).
   // Commit even on a partial direct failure: the printers that DID succeed already
-  // printed this delta, so a retry must not re-send it to them.
-  await timer.time("commit", commitKotState);
+  // printed this delta, so a retry must not re-send it to them. Runs alongside the
+  // broadcast (neither depends on the other); a bill's catch-up waits on both.
+  await commitAlongside(broadcast, timer.time("commit", commitKotState));
   if (reprint) {
     // Same reasoning as the browser-fallback branch above — kotPrintCount's
     // increment inside commitKotState() is skipped on reprint, so this is the only
@@ -727,13 +745,13 @@ async function runBillAfterCatchUp(
 
   let billJobId: number | undefined;
   if (escPosOk) {
-    const billJobIds = await dispatchRemotePrintJobs(
+    const { ids: billJobIds, broadcast } = await dispatchRemotePrintJobs(
       [{ orderId, jobType: "bill", printerId: printer.id, payload: buffer.toString("base64") }],
       timer,
     );
     billJobId = billJobIds.get(printer.id);
-    // Commit at dispatch — the ack (jobId) only flips the job row.
-    await timer.time("commit", commitBillState);
+    // Commit at dispatch — the ack (jobId) only flips the job row. Alongside the broadcast.
+    await commitAlongside(broadcast, timer.time("commit", commitBillState));
   }
 
   return done({

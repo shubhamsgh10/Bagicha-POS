@@ -19,7 +19,11 @@ export function serverTiming(_req: Request, res: Response, next: NextFunction): 
   (res as any).writeHead = function (this: Response, ...args: unknown[]) {
     if (!res.headersSent) {
       const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-      res.setHeader("Server-Timing", `app;dur=${ms.toFixed(0)}, inst;desc="age=${Math.round((Date.now() - BOOT_AT) / 1000)}s req=${n}"`);
+      // Append, never replace: a print request has already set its per-stage breakdown here
+      // (printDispatch.ts instrumentJson), which this used to overwrite with app/inst only.
+      const stages = res.getHeader("Server-Timing");
+      const ours = `app;dur=${ms.toFixed(0)}, inst;desc="age=${Math.round((Date.now() - BOOT_AT) / 1000)}s req=${n}"`;
+      res.setHeader("Server-Timing", stages ? `${stages}, ${ours}` : ours);
       res.setHeader("Timing-Allow-Origin", "*");
     }
     return (writeHead as (...a: unknown[]) => Response).apply(this, args);
