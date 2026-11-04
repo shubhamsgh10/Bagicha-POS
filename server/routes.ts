@@ -4139,10 +4139,14 @@ export async function registerRoutes(
    * POST /api/crm/automation/run
    * Runs the server-side rule engine (separate from the client-side engine).
    */
-  app.post("/api/crm/automation/run", requireAuth, async (req, res) => {
+  // Admin only, like POST /api/automation/run: it sends a REAL WhatsApp batch (any session could
+  // fire one, with force on by default and any batch size — a ban risk on the restaurant's number).
+  app.post("/api/crm/automation/run", requireAdmin, async (req, res) => {
     try {
       const { force, limit } = req.body as { force?: boolean; limit?: number };
-      const result = await runAutomationServerSide({ force: force ?? true, limit });
+      const n = Number(limit);
+      const safeLimit = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 50) : undefined;
+      const result = await runAutomationServerSide({ force: force === true, limit: safeLimit });
       res.json({ ok: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });

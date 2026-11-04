@@ -10,6 +10,7 @@
  * Existing sendViaWhatsAppWeb (client-side) is NOT changed.
  */
 
+import { automatedSendBlock } from "../whatsapp/outboundQueue";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { customerMessages } from "../../../shared/schema";
@@ -152,6 +153,8 @@ async function sendSMS(
 // ── Unified send interface ────────────────────────────────────────────────────
 
 export interface MessagingConfig {
+  /** An automated send (rule engine / settlement): checked against opt-outs and maxPerDay first. */
+  automated?:     boolean;
   watiApiKey?:    string;
   watiEndpoint?:  string;
   msg91AuthKey?:  string;
@@ -182,6 +185,13 @@ export async function sendMessage(
   let result: SendResult = { success: false, mode: "dry_run", error: "Unsupported channel" };
 
   // ── Route by channel ──────────────────────────────────────────────────────
+  if (payload.channel === "whatsapp" && config.automated) {
+    const block = await automatedSendBlock(payload.to);
+    if (block) {
+      console.log(`[CRM][WhatsApp] not sent to ${payload.to}: ${block}`);
+      return { success: false, mode: "dry_run", error: block === "opted_out" ? "Customer opted out" : "Daily WhatsApp limit reached" };
+    }
+  }
   if (payload.channel === "whatsapp") {
     const driver = getDriver();
     if (driver && driver.getState() === "connected") {
