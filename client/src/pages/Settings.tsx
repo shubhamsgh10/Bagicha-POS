@@ -521,43 +521,14 @@ function MachineInfoPanel() {
 // ── Generate Code panel ───────────────────────────────────────────────────────
 
 function GenerateCodePanel() {
-  const [code, setCode] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const generate = () => {
-    setLoading(true);
-    setTimeout(() => {
-      // Generate a random 8-char alphanumeric pairing code
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const c = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-      setCode(c);
-      setLoading(false);
-    }, 800);
-  };
-
+  // There is no device-pairing service on the server: this panel used to invent a random
+  // code client-side that nothing could ever accept. Say how devices actually connect.
   return (
-    <div className="space-y-4 text-center">
-      <p className="text-xs text-gray-500">
-        Generate a one-time pairing code to connect another device or sync a new terminal.
-      </p>
-      {code ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl py-6 px-4">
-          <p className="text-3xl font-mono font-bold text-emerald-600 tracking-[0.3em]">{code}</p>
-          <p className="text-[10px] text-gray-400 mt-2">This code expires in 10 minutes</p>
-        </div>
-      ) : (
-        <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl py-8 text-gray-400 text-sm">
-          No code generated yet
-        </div>
-      )}
-      <button
-        onClick={generate}
-        disabled={loading}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
-      >
-        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-        {loading ? "Generating..." : code ? "Regenerate Code" : "Generate Code"}
-      </button>
+    <div className="space-y-3 text-center">
+      <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl py-6 px-4 text-gray-500 text-sm">
+        Pairing codes aren't used. A new terminal or phone connects by opening the POS address
+        and signing in with a staff login or PIN card; the desktop app signs in the same way.
+      </div>
     </div>
   );
 }
@@ -713,9 +684,13 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
     setResult(null);
     file.text().then(text => {
       const all = parseCSV(text);
-      // Skip header row if it matches expected headers (case-insensitive check on first cell)
-      const firstCell = all[0]?.[0]?.toLowerCase() ?? "";
-      const dataRows = (firstCell === tpl.headers[0].toLowerCase() || isNaN(Number(firstCell)))
+      // Skip the first row only when it IS a header row: at least half of its cells name one
+      // of the template's columns. (The old "first cell isn't a number" test dropped the first
+      // real row of every file, since a menu/customer row starts with a name.)
+      const known = new Set(tpl.headers.map(h => h.trim().toLowerCase()));
+      const first = (all[0] ?? []).map(c => (c ?? "").trim().toLowerCase()).filter(Boolean);
+      const headerHits = first.filter(c => known.has(c)).length;
+      const dataRows = first.length > 0 && headerHits * 2 >= Math.min(first.length, known.size)
         ? all.slice(1)
         : all;
       setRows(dataRows.filter(r => r.some(c => c)));

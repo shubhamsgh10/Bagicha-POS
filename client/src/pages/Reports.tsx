@@ -1,3 +1,4 @@
+import { todayBusinessDate, shiftBusinessDate } from "@shared/businessDay";
 import { apiJson } from '@/lib/api';
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -22,25 +23,18 @@ import { collectedByMethod, paymentLabel } from "@shared/paymentSplit";
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
-function toISO(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
+// Presets are IST business days (5 AM cutoff), the same days Orders/Billing and the
+// server's report ranges use — not the UTC calendar date (wrong until 5:30 AM IST).
 function today() {
-  const d = new Date();
-  return toISO(d);
+  return todayBusinessDate();
 }
 
 function daysAgo(n: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return toISO(d);
+  return shiftBusinessDate(todayBusinessDate(), -n);
 }
 
 function startOfMonth() {
-  const d = new Date();
-  d.setDate(1);
-  return toISO(d);
+  return todayBusinessDate().slice(0, 8) + "01";
 }
 
 interface DateRange {
@@ -440,11 +434,33 @@ export default function Reports() {
   };
 
   const ebillMutation = useMutation({
-    mutationFn: async (key: string) => apiRequest("POST", "/api/dues/send-ebill", { key }),
-    onSuccess: async (res: any) => {
+    // The wa.me fallback opens a window only after the request returns, which popup blockers
+    // refuse (no longer inside the tap). So open a blank window during the tap, point it at
+    // wa.me if that's the outcome, and close it when the driver sent the message itself.
+    mutationFn: async (key: string) => {
+      let popup: Window | null = null;
+      try { popup = window.open("", "_blank"); } catch { popup = null; }
+      try {
+        const res = await apiRequest("POST", "/api/dues/send-ebill", { key });
+        return { res, popup };
+      } catch (err) {
+        try { popup?.close(); } catch { /* ignore */ }
+        throw err;
+      }
+    },
+    onSuccess: async ({ res, popup }: { res: any; popup: Window | null }) => {
       const data = await res.json().catch(() => ({}));
-      if (data?.mode === "driver") toast({ title: "E-bill sent via WhatsApp" });
-      else { if (data?.waUrl) window.open(data.waUrl, "_blank"); toast({ title: "Opening WhatsApp…" }); }
+      if (data?.mode === "driver") {
+        try { popup?.close(); } catch { /* ignore */ }
+        toast({ title: "E-bill sent via WhatsApp" });
+      } else if (data?.waUrl) {
+        if (popup && !popup.closed) popup.location.href = data.waUrl;
+        else window.open(data.waUrl, "_blank");
+        toast({ title: "Opening WhatsApp…" });
+      } else {
+        try { popup?.close(); } catch { /* ignore */ }
+        toast({ title: "E-bill not sent", description: data?.message || "No WhatsApp link was returned.", variant: "destructive" });
+      }
     },
     onError: (err: any) => toast({ title: "Failed to send e-bill", description: err.message, variant: "destructive" }),
   });

@@ -356,10 +356,34 @@ export default function POS() {
     action();
   };
 
+  // Hold / Move / Merge act on the SAVED order. Lines added since the last save live only
+  // in this tab's cart, so save it first (a plain save — no print; an unchanged cart is a
+  // server no-op). Without this, items typed in just before tapping Hold/Move/Merge were lost.
+  const saveCartBeforeOrderAction = async (): Promise<boolean> => {
+    if (!activeOrderId || cartItems.length === 0) return true;
+    lastSaveRef.current = null;
+    try {
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/items`, {
+        orderId: activeOrderId,
+        items: buildItemsPayload(cartItems),
+        discountAmount: discountAmt.toFixed(2),
+        containerCharge: containerCharge.toFixed(2),
+        deliveryCharge: deliveryCharge.toFixed(2),
+        cancelledKotItems: buildCancelledKotItemsPayload(),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
+      return true;
+    } catch (err: any) {
+      toast({ title: "Could not save the cart first", description: describeApiError(err).message, variant: "destructive" });
+      return false;
+    }
+  };
+
   const handleMoveTable = async (newTable: any) => {
     if (!activeOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("PUT", `/api/orders/${activeOrderId}/move-table`, {
         newTableId: newTable.id,
         newTableName: newTable.name,
@@ -378,6 +402,7 @@ export default function POS() {
     if (!activeOrderId || !sourceTable.currentOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("POST", "/api/orders/merge", {
         targetOrderId: activeOrderId,
         sourceOrderId: sourceTable.currentOrderId,
@@ -398,6 +423,7 @@ export default function POS() {
     if (!activeOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {});
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({ title: "Order placed on hold" });
@@ -971,7 +997,8 @@ export default function POS() {
         setActiveOrderId(order.id);
         setCartLoaded(false); // allow reload of cart from new order
       } else if (mode === "kot-print") {
-        toast({ title: "KOT sent!" });
+        // No toast here: the save succeeded but the print result isn't known yet —
+        // handleSavedPrint toasts the real outcome (sent / browser / failed / nothing new).
         setActiveOrderId(order.id);
         setCartLoaded(false);
         void handleSavedPrint("kot", order.id, order, order.print);
@@ -1046,7 +1073,7 @@ export default function POS() {
       if (mode === "kot") {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
-        toast({ title: "KOT sent!" });
+        // The print outcome toast (from handleSavedPrint) is the one that tells the truth.
         void handleSavedPrint("kot", vars.orderId, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
@@ -1608,7 +1635,10 @@ export default function POS() {
     } else {
       const hasSizes = Array.isArray(found.sizes) && found.sizes.length > 0;
       const hasAddons = found.addonsEnabled && Array.isArray(found.addons) && found.addons.length > 0;
-      if (hasSizes || hasAddons) {
+      const hasVariants = Array.isArray(found.variants) && found.variants.length > 0;
+      // Same rule as a menu tile: anything with a choice to make goes through the picker
+      // (required variant groups and notes used to be skipped from short-code entry).
+      if (hasSizes || hasAddons || hasVariants || found.notesAllowed) {
         openPicker(found);
       } else {
         directAddItem(found);
@@ -1832,8 +1862,14 @@ export default function POS() {
                 <button
                   key={o.id}
                   onClick={async () => {
+                    try {
+                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
+                    } catch (err: any) {
+                      toast({ title: "Could not recall the order", description: describeApiError(err).message, variant: "destructive" });
+                      queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
+                      return; // keep the dialog open so staff see the list again
+                    }
                     setShowRecallDialog(false);
-                    await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
                     queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
                     const modeParam = o.orderType === "delivery" ? "delivery"
                       : o.orderType === "takeaway" ? "pickup" : null;

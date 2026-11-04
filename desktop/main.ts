@@ -161,14 +161,23 @@ function spawnServer(cfg: { DATABASE_URL?: string; SESSION_SECRET?: string }): v
       ...(cfg.SESSION_SECRET ? { SESSION_SECRET: cfg.SESSION_SECRET } : {}),
     },
   });
+  const startedAt = Date.now();
   serverProc.on("exit", (code) => {
     console.warn(`[electron] embedded server exited (${code})`);
     serverProc = null;
-    if (!serverStopping && serverRestarts < 5) {
-      serverRestarts++;
-      console.log(`[electron] restarting embedded server (#${serverRestarts})…`);
-      spawnServer(cfg);
+    if (serverStopping) return;
+    // The budget is for crash LOOPS, not the app's lifetime: a server that ran for 5+ min
+    // before exiting starts a fresh budget (an always-on host used to give up for good after
+    // its 5th crash in weeks). Restarts back off 1 s, 2 s, 4 s … up to 30 s.
+    if (Date.now() - startedAt > 5 * 60_000) serverRestarts = 0;
+    if (serverRestarts >= 5) {
+      console.error("[electron] embedded server keeps crashing — not restarting again");
+      return;
     }
+    const delay = Math.min(30_000, 1000 * 2 ** serverRestarts);
+    serverRestarts++;
+    console.log(`[electron] restarting embedded server (#${serverRestarts}) in ${delay} ms…`);
+    setTimeout(() => { if (!serverStopping && !serverProc) spawnServer(cfg); }, delay);
   });
   serverProc.on("error", (err) => console.error("[electron] embedded server spawn error:", err));
 }
