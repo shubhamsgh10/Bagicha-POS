@@ -1,0 +1,146 @@
+{
+  "slice": "R09",
+  "coverage": "Read every line of client/src/pages/Reports.tsx:1-1404, client/src/pages/Settings.tsx:1-1242, client/src/pages/Staff.tsx:1-1029. Cross-checked server/routes.ts report endpoints (/api/reports/*, /api/dashboard/category-sales), /api/settings GET/PUT, /api/admin/* (migrate, reset-bill-number, clear-orders, import), server/settingsStore.ts saveSettings + counters, storage.getRoster, staffRoutes /api/staff/performance, apiRequest in client/src/lib/queryClient.ts. Child panels (PrintSettingsPanel, GrowthSettingsPanel, AuditLogPanel, TwoFactorPanel, BackupPanel, LiveAttendanceBoard, BiometricDevicePanel) not reviewed (other slices).",
+  "findings": [
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 923,
+      "severity": "high",
+      "category": "data-integrity / lost update",
+      "title": "Saving Restaurant Configuration PUTs the whole stale settings blob, rolling back billCounter/kotCounter and other settings",
+      "detail": "formData is seeded with `{...prev, ...settings}` from GET /api/settings, which returns the FULL RestaurantSettings object (billCounter, kotCounter, printSettings, posSections, cartPermissions, staffPageAccess, ...). handleSave sends all of it to PUT /api/settings, and saveSettings does `merged = {...current, ...settings}` (printSettings merged over current). The counters in formData are whatever they were when /api/settings was last fetched (settings is not refreshed by realtime order events; staleTime 30s and no refetch while the modal is open).",
+      "failure_scenario": "Admin opens Settings at 19:00 (billCounter=400), orders keep flowing on the POS (billCounter now 412), admin fixes the footer note and taps Save at 19:20. billCounter is written back to 400, so the next 12 POST /api/orders allocate ORD0401..ORD0412, which already exist -> UNIQUE violation -> 500 on real order saves during service until the counter passes the max. kotCounter rolls back too (duplicate KOT numbers in the kitchen). Any print-settings/permissions change saved by another device in the meantime is also silently reverted.",
+      "suggested_fix": "Send only the fields this panel edits (restaurantName, businessName, fssaiNumber, address, phone, email, gstNumber, taxRate, containerCharge, currency, currencySymbol, footerNote, posRoleTimeout). Server-side, strip billCounter/kotCounter from PUT /api/settings bodies (they must only change via issueCounter/reset)."
+    },
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 1104,
+      "severity": "high",
+      "category": "data loss",
+      "title": "'Sync Schema' is a one-tap `drizzle-kit push --force` labelled 'Safe and non-destructive — no data is deleted'",
+      "detail": "The button calls POST /api/admin/migrate with no confirmation step; the server spawns `npx drizzle-kit push --force`, which auto-approves any DROP Drizzle proposes. CLAUDE.md warns the shared DB carries columns applied outside Drizzle via scripts/migrate-*.mjs and that a blind push can propose destructive DROPs. The UI text tells the admin the opposite.",
+      "failure_scenario": "On the persistent/Electron-host server (where npx drizzle-kit is available) an admin taps Sync Schema after an update; if schema.ts lags any hand-applied column (or a branch with an older schema is deployed), --force drops that column and its data from the one shared production DB with no prompt.",
+      "suggested_fix": "Remove the button or make it run a dry-run diff first and require explicit confirmation of the listed statements; never pass --force. Fix the copy so it doesn't claim safety."
+    },
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 1145,
+      "severity": "medium",
+      "category": "data loss / misleading safeguard",
+      "title": "'Delete All Orders' says 'Type your admin PIN to confirm' but no PIN is asked or checked",
+      "detail": "The final ConfirmDialog has no input; onConfirm directly calls DELETE /api/admin/clear-orders, which is only requireAdmin (no fresh PIN). It wipes orders, order_items, kot_tickets, payment_transactions, feedback and coupon_redemptions.",
+      "failure_scenario": "Anyone at a device left logged in as the admin (the owner's desktop) taps Remove All Orders -> Continue -> Delete All Orders and the entire sales history is gone; the text implied a PIN would stop it.",
+      "suggested_fix": "Actually collect the admin PIN (PinGuard) and gate the route with requireFreshPin('admin'), or at minimum a typed confirmation word; fix the copy."
+    },
+    {
+      "file": "client/src/pages/Reports.tsx",
+      "line": 25,
+      "severity": "medium",
+      "category": "timezone",
+      "title": "Report date presets use UTC calendar date (toISOString), not the IST business day",
+      "detail": "today()/daysAgo()/startOfMonth() all format via `toISOString().slice(0,10)`, i.e. the UTC date. The server treats the param as a business date (5am IST cutoff) via businessDayRange. Between 05:00 and 05:30 IST the UTC date is still yesterday, so 'Today' requests the previous business day; startOfMonth builds local midnight on the 1st which in IST serialises to the previous month's last day (e.g. 1 Nov 00:00 IST -> '2026-10-31'), so 'This Month' includes the last day of the previous month. The date inputs' max=today() is also off in that window.",
+      "failure_scenario": "Owner opens Reports on any day choosing 'This Month': totals include all of 31 Oct as well (inflated monthly sales/top items/payments). Opening Reports at 05:15 IST shows yesterday's figures under 'Today'.",
+      "suggested_fix": "Use todayBusinessDate()/shiftBusinessDate() from shared/businessDay.ts for presets, and build the month start from the business date string ('YYYY-MM-01')."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 32,
+      "severity": "medium",
+      "category": "timezone / payroll data",
+      "title": "Default attendance/summary/sales range starts on the last day of the previous month",
+      "detail": "monthStart() = `new Date(y, m, 1).toISOString().slice(0,10)`: local midnight on the 1st in IST is 18:30 UTC of the previous day, so the string is e.g. '2026-10-31'. today() is also the UTC date (yesterday between 00:00 and 05:30 IST). PayrollPanel/LeavesPanel month defaults use the same UTC slice.",
+      "failure_scenario": "Manager opens Staff in November: Summary shows present days / hours including 31 Oct, the stat strip and attendance % are inflated, and the Sales tab revenue includes 31 Oct orders. On the 1st before 05:30 IST Payroll opens on the previous month.",
+      "suggested_fix": "Build dates from IST calendar helpers (istCalendarDate) or format local Y/M/D fields; month start = `${yyyy}-${mm}-01`."
+    },
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 660,
+      "severity": "medium",
+      "category": "wrong result (import)",
+      "title": "CSV import parser splits on every comma, ignoring quoted fields, shifting columns (prices) silently",
+      "detail": "parseCSV does `line.split(',')` and strips only a leading/trailing quote per cell. A standard CSV (Excel/Sheets export) with a quoted value containing a comma is split into extra cells, so later columns shift.",
+      "failure_scenario": "Menu row `\"Paneer Tikka, Half\",Starters,280,...` imports name 'Paneer Tikka', category ' Half', price 'Starters' (rejected) — or a description with a comma moves text into the wrong field; for customers an address with commas pushes locality/DOB/tags into the wrong columns and corrupts customer records.",
+      "suggested_fix": "Use a real CSV parser (the XLSX library is already a dependency server-side; or a small RFC-4180 parser handling quotes and escaped quotes)."
+    },
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 697,
+      "severity": "low",
+      "category": "data loss (import)",
+      "title": "Header-skip heuristic always drops the first row when it starts with text",
+      "detail": "`firstCell === header || isNaN(Number(firstCell))` — the first column is a name for all three import types, so it is always non-numeric and row 1 is always discarded even when the file has no header row.",
+      "failure_scenario": "Admin uploads a header-less list of 50 customers; 49 are imported and the first customer is silently skipped (preview count already excludes it, so nothing signals the loss).",
+      "suggested_fix": "Skip row 1 only when it matches the template headers (case-insensitive compare of all/most header cells)."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 498,
+      "severity": "low",
+      "category": "XSS",
+      "title": "Payroll print register interpolates staff names/roles into HTML unescaped in a same-origin blob page",
+      "detail": "handlePrint builds an HTML string with `${r.username}`/`${r.role}` and opens it as a blob: URL, which inherits the app's origin. A name containing markup executes script with the app's session.",
+      "failure_scenario": "A staff member's name is saved as `<img src=x onerror=fetch('/api/...')>` (via Admin → Accounts by any account able to edit names); when the owner prints the payroll register the script runs as the owner with full API access.",
+      "suggested_fix": "HTML-escape every interpolated value (or build the table with DOM APIs / textContent)."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 990,
+      "severity": "low",
+      "category": "React key collision",
+      "title": "Sales tab keys rows by bare staffId, which collides across users and staffMembers",
+      "detail": "/api/staff/performance returns numeric staffId from either createdByStaffMemberId or createdBy (CLAUDE.md: the two tables share the id space; the server now keeps them as separate buckets keyed by personPageKey but returns the bare number). key={p.staffId ?? 'unassigned'} duplicates when user #5 and staff member #5 both have sales.",
+      "failure_scenario": "Two people with the same numeric id both sold in range -> duplicate React keys; on a date change React reuses the wrong row/motion element, so a row can show stale data or be dropped.",
+      "suggested_fix": "Return the kind/personPageKey from the endpoint and use it as the key; similarly key Summary cards by s.key, not s.name (line 898)."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 621,
+      "severity": "low",
+      "category": "swallowed error",
+      "title": "Attendance/summary/performance queries turn any error into an empty list",
+      "detail": "The custom queryFns return [] for non-OK, non-JSON or thrown responses (retry:false), so a 403/500/network failure renders 'No attendance records for this period' / 'No order data' instead of an error.",
+      "failure_scenario": "During a DB blip the manager checks attendance before payroll, sees 'No attendance records' and concludes the biometric device stopped syncing (or that staff were absent).",
+      "suggested_fix": "Use apiJson() (throws on !ok) and render React Query's error state."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 302,
+      "severity": "low",
+      "category": "validation",
+      "title": "Leave with end date before start date is submitted as a 1-day leave",
+      "detail": "totalDays = Math.max(1, ...) masks a negative range and Submit is enabled for any two dates.",
+      "failure_scenario": "Manager picks From 20 Nov, To 12 Nov by mistake; a 1-day leave with an inverted range is stored, and once approved it is counted by payroll's approvedLeaves while the overlap check (lte/gte on start/end) can never match it.",
+      "suggested_fix": "Disable Submit (and reject server-side) when endDate < startDate."
+    },
+    {
+      "file": "client/src/pages/Staff.tsx",
+      "line": 146,
+      "severity": "low",
+      "category": "wrong result (UI)",
+      "title": "Recompute toast always reports 0 days updated",
+      "detail": "apiRequest resolves to a fetch Response, not the parsed JSON, so `res?.rows` is always undefined.",
+      "failure_scenario": "Admin runs Recompute, sees '0 attendance day(s) updated' and assumes it did nothing, re-running it or filing a bug.",
+      "suggested_fix": "`const data = await res.json()` in mutationFn and read the server's count from it."
+    },
+    {
+      "file": "client/src/pages/Reports.tsx",
+      "line": 447,
+      "severity": "low",
+      "category": "UX / popup blocking",
+      "title": "E-bill wa.me fallback opens a window after an awaited request, so it is often popup-blocked",
+      "detail": "window.open(data.waUrl) runs in onSuccess after the POST and res.json() resolve; the user activation may have expired (Safari/iOS block it outright), yet the toast says 'Opening WhatsApp…'.",
+      "failure_scenario": "Owner taps Send e-bill on an iPhone with no WhatsApp driver connected; nothing opens but the toast claims it is opening, and the customer never gets the bill.",
+      "suggested_fix": "Open a blank window synchronously in the click handler and set its location on success, or show the waUrl as a tappable link in the toast."
+    },
+    {
+      "file": "client/src/pages/Settings.tsx",
+      "line": 525,
+      "severity": "low",
+      "category": "misleading feature",
+      "title": "'Generate Pairing Code' fabricates a random client-side code that nothing on the server knows",
+      "detail": "The code is Math.random() in the browser, never sent anywhere, yet the UI says 'This code expires in 10 minutes'. 'Reset Sync Code' and 'Remove Backup Files' call endpoints that do not exist (/api/admin/reset-sync-code, /api/admin/clear-backups) and just report 'not yet configured'.",
+      "failure_scenario": "Admin tries to pair a new terminal with the generated code; it cannot work, and they lose time debugging pairing.",
+      "suggested_fix": "Remove these cards or hide them until backed by real endpoints."
+    }
+  ]
+}
