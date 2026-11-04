@@ -53,8 +53,11 @@ export async function sendViaLibusb(vendorId: number, productId: number, data: B
     }
     iface.claim();
     const out = outEndpoint as unknown as {
+      timeout?: number;
       transfer: (d: Buffer, cb: (err: Error | null) => void) => void;
     };
+    // libusb's default is 0 = wait forever; a stalled printer then hung the whole print queue.
+    out.timeout = 15_000;
     await new Promise<void>((resolve, reject) => {
       out.transfer(data, (err: Error | null) => {
         if (err) reject(err);

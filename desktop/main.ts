@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, session, dialog, shell } from "electron";
 import { spawn, type ChildProcess } from "child_process";
 import http from "http";
 import fs from "fs";
@@ -263,11 +263,16 @@ let printQueue: PrintQueue | null = null;
 let printLog: PrintLog | null = null;
 let attendanceAgent: AttendanceAgent | null = null;
 
+// 60 s cache: printer edits made from ANY other device (a phone, the web app) used to never reach
+// this queue — the cache was only cleared by this window's own Print Settings panel.
+let printerCacheAt = 0;
+const PRINTER_CACHE_MS = 60_000;
 async function getPrinters(): Promise<PrinterConfig[]> {
-  if (printerCache !== null) return printerCache;
+  if (printerCache !== null && Date.now() - printerCacheAt < PRINTER_CACHE_MS) return printerCache;
   const result = await fetchPrinters();
-  if (result === null) return []; // unauthenticated — don't cache, retry on next call
+  if (result === null) return printerCache ?? []; // unauthenticated / offline — keep the last known list
   printerCache = result;
+  printerCacheAt = Date.now();
   return printerCache;
 }
 
@@ -336,6 +341,25 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  // External links (wa.me, payment pages…) open in the system browser, never as an Electron window:
+  // a child window inherits this window's preload, so a third-party page got window.electronAPI
+  // (raw printing, print-station config, USB scan). about:blank stays in-app — the browser-print
+  // fallback writes its ticket into one.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === "about:blank" || url.startsWith("blob:")) return { action: "allow" };
+    if (/^https?:\/\//i.test(url) || url.startsWith("whatsapp:") || url.startsWith("mailto:")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const current = mainWindow?.webContents.getURL() ?? "";
+    let sameApp = url.startsWith("file://");
+    try { if (!sameApp && current) sameApp = new URL(url).origin === new URL(current).origin; } catch { sameApp = false; }
+    if (!sameApp) {
+      event.preventDefault();
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    }
   });
 
   mainWindow.once("ready-to-show", revealWindow);
