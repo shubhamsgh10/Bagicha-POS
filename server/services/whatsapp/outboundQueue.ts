@@ -99,6 +99,35 @@ async function isSuppressed(job: { customerId: string; phone: string | null }): 
   return false;
 }
 
+/**
+ * Send-time guard for automated WhatsApp sends that do NOT go through this queue (the CRM rule
+ * engine and the settlement fallback call messagingService.sendMessage, which sends through the
+ * driver directly). Those used to skip the opt-out check and the maxPerDay ban guard entirely.
+ * Opt-out is looked up by PHONE (last 10 digits), not by one customers_master key, so a STOP
+ * recorded against a duplicate/canonical row still applies. Returns why not to send, or null.
+ */
+export async function automatedSendBlock(phone: string): Promise<"opted_out" | "daily_cap" | null> {
+  const normalized = normalizeWaPhone(phone);
+  const last10 = normalized.replace(/\D/g, "").slice(-10);
+  if (last10.length === 10) {
+    const conv = await db.select({ optedOut: conversations.optedOut })
+      .from(conversations).where(eq(conversations.phone, normalized)).limit(1);
+    if (conv[0]?.optedOut) return "opted_out";
+    const masters = await db.select({ id: customersMaster.id, key: customersMaster.key })
+      .from(customersMaster)
+      .where(sql`right(regexp_replace(coalesce(${customersMaster.phone}, ${customersMaster.key}), '\\D', '', 'g'), 10) = ${last10}`);
+    if (masters.some((m) => isOptedOut(m.key))) return "opted_out";
+    if (masters.length > 0) {
+      const muted = await db.select({ id: customerProfiles.id }).from(customerProfiles)
+        .where(and(inArray(customerProfiles.customerId, masters.map((m) => m.id)), eq(customerProfiles.doNotSendUpdate, true)))
+        .limit(1);
+      if (muted.length > 0) return "opted_out";
+    }
+  }
+  if (await sentToday() >= getAutomationConfig().maxPerDay) return "daily_cap";
+  return null;
+}
+
 async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
   const driver = getDriver();
   if (!driver || driver.getState() !== "connected") return "waiting";

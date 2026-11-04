@@ -15,7 +15,7 @@
  */
 
 import { db } from "../../db";
-import { eq, and, desc, isNull, sql, or, inArray } from "drizzle-orm";
+import { eq, and, desc, isNull, sql, or, inArray, gte } from "drizzle-orm";
 import {
   orders,
   orderItems,
@@ -74,6 +74,8 @@ export interface RunServerResult {
 // ── Message templates ─────────────────────────────────────────────────────────
 
 const RESTAURANT = "Bagicha";
+/** A rule that already messaged a customer stays quiet for them this long (lapse rules stay true until the next visit). */
+const REFIRE_COOLDOWN_DAYS = 30;
 
 function buildMessage(customer: CustomerSnapshot, trigger: ServerTriggerType): string {
   const first = customer.name.split(" ")[0];
@@ -368,6 +370,22 @@ export async function runAutomationServerSide(
         message = await getMessageText(customer, defaultTrigger, config.restaurantName || RESTAURANT, config.anthropicApiKey);
       }
 
+      // Lapse / spend / milestone conditions stay true until the customer's next visit, so the
+      // same rule used to message the same person every single day. One send per trigger per
+      // customer per REFIRE_COOLDOWN_DAYS.
+      const cooldownStart = new Date(Date.now() - REFIRE_COOLDOWN_DAYS * 86400000);
+      const alreadySent = await db
+        .select({ id: automationJobs.id })
+        .from(automationJobs)
+        .where(and(
+          eq(automationJobs.customerId, customerId),
+          eq(automationJobs.triggerType, trigger),
+          eq(automationJobs.status, "sent"),
+          gte(automationJobs.executedAt, cooldownStart),
+        ))
+        .limit(1);
+      if (alreadySent.length > 0) { stats.skipped++; continue; }
+
       // Create a pending job (customerId resolved above for the dedup check)
       const [job] = await db
         .insert(automationJobs)
@@ -386,7 +404,7 @@ export async function runAutomationServerSide(
         to:      customer.phone,
         message,
         trigger,
-      }, msgConfig);
+      }, { ...msgConfig, automated: true });
 
       // Update job status
       await db
@@ -563,7 +581,7 @@ async function dispatchSettlement(args: {
     watiApiKey: config.watiApiKey, watiEndpoint: config.watiEndpoint,
     msg91AuthKey: config.msg91AuthKey, msg91SenderId: config.msg91SenderId,
   };
-  const result = await sendMessage(args.key, args.name, { channel: "whatsapp", to: args.phone, message: args.message, trigger: args.trigger }, msgConfig);
+  const result = await sendMessage(args.key, args.name, { channel: "whatsapp", to: args.phone, message: args.message, trigger: args.trigger }, { ...msgConfig, automated: true });
   await db
     .update(automationJobs)
     .set({ status: result.success ? "sent" : "failed", executedAt: new Date(), error: result.error ?? null })
