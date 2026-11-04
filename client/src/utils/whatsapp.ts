@@ -49,9 +49,13 @@ export function buildMessage(
 }
 
 /** Normalize an Indian phone number to 91XXXXXXXXXX format */
-function normalizePhone(phone: string): string {
+// By LENGTH, like the server's normalizeWaPhone: a 10-digit mobile that itself starts with 91
+// (9187654321) is not already country-coded — startsWith("91") left it 10 digits (invalid).
+export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
-  return digits.startsWith("91") ? digits : `91${digits}`;
+  if (digits.length === 10) return `91${digits}`;
+  if (digits.length === 11 && digits.startsWith("0")) return `91${digits.slice(1)}`;
+  return digits;
 }
 
 // ── Send via WhatsApp Web/App (no API key required) ───────────────────────────

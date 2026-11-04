@@ -135,9 +135,14 @@ function buildTableState(table: any, order: any | null): LiveTableState {
 
 // ── Sound alert ───────────────────────────────────────────────────────────────
 
+// ONE AudioContext for every beep — a new, never-closed context per alert piled up (browsers cap
+// them and keep an audio thread alive for each).
+let beepCtx: AudioContext | null = null;
 function playBeep() {
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    beepCtx = beepCtx ?? new (window.AudioContext || (window as any).webkitAudioContext)();
+    const ctx = beepCtx;
+    if (ctx.state === "suspended") void ctx.resume();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
@@ -166,6 +171,9 @@ export function useLiveTableOperations() {
   const { lastMessage, connectionStatus } = useRealtime();
   const mountedRef = useRef(true);
   const loadingRef = useRef(false);
+  // A change arriving mid-load (TABLE_UPDATE / ORDER_UPDATE) used to be dropped until the next
+  // 30 s poll: remember it and load once more when the current load finishes.
+  const reloadAgainRef = useRef(false);
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
 
@@ -180,7 +188,7 @@ export function useLiveTableOperations() {
 
   // ── Initial full load ──────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    if (loadingRef.current) return;
+    if (loadingRef.current) { reloadAgainRef.current = true; return; }
     loadingRef.current = true;
     try {
       const rawTables = await apiFetch<any[]>("/api/tables");
@@ -227,6 +235,10 @@ export function useLiveTableOperations() {
       if (mountedRef.current) setIsLoading(false);
     } finally {
       loadingRef.current = false;
+      if (reloadAgainRef.current && mountedRef.current) {
+        reloadAgainRef.current = false;
+        queueMicrotask(() => { void loadAll(); });
+      }
     }
   }, []);
 
@@ -234,7 +246,7 @@ export function useLiveTableOperations() {
   useEffect(() => {
     mountedRef.current = true;
     loadAll();
-    const id = setInterval(loadAll, 30_000);
+    const id = setInterval(() => { if (!document.hidden) void loadAll(); }, 30_000) /* paused while the tab is hidden */;
     return () => {
       mountedRef.current = false;
       clearInterval(id);

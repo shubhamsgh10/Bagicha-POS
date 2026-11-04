@@ -210,7 +210,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
             min={0}
             max={23}
             value={config.dailyDigestHour}
-            onChange={e => set("dailyDigestHour", Math.max(0, Math.min(23, Number(e.target.value) || 23)))}
+            onChange={e => set("dailyDigestHour", ((n) => Number.isFinite(n) ? Math.max(0, Math.min(23, n)) : 23)(Number(e.target.value)))}
             className={inputCls}
           />
         </Field>
@@ -295,7 +295,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
             min={0}
             max={23}
             value={config.birthdayHour}
-            onChange={e => set("birthdayHour", Math.max(0, Math.min(23, Number(e.target.value) || 9)))}
+            onChange={e => set("birthdayHour", ((n) => Number.isFinite(n) ? Math.max(0, Math.min(23, n)) : 9)(Number(e.target.value)))}
             className={inputCls}
           />
         </Field>

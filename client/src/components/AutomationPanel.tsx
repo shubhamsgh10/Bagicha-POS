@@ -1,5 +1,7 @@
 import { apiUrl } from '@/lib/api';
 
+import { createPatchSaver } from "@/lib/configSaver";
+import { normalizePhone } from "@/utils/whatsapp";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -164,9 +166,11 @@ function QueueCard({ item, onSent }: { item: FollowUpItem; onSent: (item: Follow
 
   const handleSend = useCallback(() => {
     if (!item.customer.phone) return;
-    const digits = item.customer.phone.replace(/\D/g, "");
-    const phone  = digits.startsWith("91") ? digits : `91${digits}`;
-    if (phone.length < 12) return;
+    const phone = normalizePhone(item.customer.phone);
+    if (phone.length !== 12) {
+      toast({ title: "Can't send", description: `${item.customer.phone} isn't a valid mobile number.`, variant: "destructive" });
+      return;
+    }
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(editedMsg)}`, "_blank", "noopener,noreferrer");
     logMessageSent(item.customer.key, item.customer.name, item.trigger as TriggerType, editedMsg, "web");
     setSent(true);
@@ -336,6 +340,8 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   // built-in defaults, and the next toggle POSTed the WHOLE default object — blank API keys,
   // flags reset, owner phone and templates wiped on the server.
   const gcLoadedRef = useRef(false);
+  const gcSaver = useMemo(() => createPatchSaver("/api/automation/config", (m) =>
+    toast({ title: "Couldn't save", description: m, variant: "destructive" })), []);
   useEffect(() => {
     fetch(apiUrl("/api/automation/config"), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
@@ -350,19 +356,8 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
       return;
     }
     setGc(prev => ({ ...prev, ...patch }));
-    setGcSaving(true);
-    try {
-      // Only what changed — never the whole snapshot.
-      const r = await fetch(apiUrl("/api/automation/config"), {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!r.ok) throw new Error(String(r.status));
-    } catch {
-      toast({ title: "Couldn't save", description: "The change didn't reach the server.", variant: "destructive" });
-    }
-    setGcSaving(false);
+    // Only what changed; typing is merged into one serialized request (lib/configSaver.ts).
+    gcSaver(patch as Record<string, unknown>);
   }, []);
 
   // Run state
