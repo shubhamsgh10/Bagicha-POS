@@ -1,0 +1,136 @@
+{
+  "slice": "R12",
+  "coverage": "Read every line of server/routes.ts:1-2264 (imports, passport strategy/serialize/deserialize, auth middlewares, WS upgrade auth, health/version, perf diagnostics, pusher auth, default-admin bootstrap, rate limiters, all auth/2FA/PIN/card-login routes, staff-members CRUD, page-access settings, user management, admin migrate/logs/cache/reset/clear/audit/backups/imports, settings, dashboard, categories, live-status, tables + shift, menu, inventory, inventory categories, GET /api/orders family, POST /api/orders in full, and PUT /api/orders/:id/items up to line 2264 — the rest of that handler (2265+) is outside this slice and was not reviewed). Cross-checked: server/selfScope.ts, server/elevation.ts ROLE_LEVEL, server/settingsStore.ts saveSettings/issueCounter/syncCounterFromMax, storage.createOrderWithItems/getUsers, shared/orderMutation.ts ORDER_CREATE_FORCED_DEFAULTS, shared/schema.ts unique constraints, client Settings.tsx save payload, TwoFactorPanel/Admin callers, server-fn.ts trust proxy.",
+  "findings": [
+    {
+      "file": "server/routes.ts",
+      "line": 927,
+      "severity": "high",
+      "category": "auth/info-leak",
+      "title": "GET /api/users (requireAuth) returns every user's totpSecret to any session, incl. staff PIN sessions",
+      "detail": "The handler strips only password and pin: `allUsers.map(({ password, pin, ...u }) => ...)`. storage.getUsers() is `db.select().from(users)`, so totp_secret (and totpEnabled) ride along in `u`. The route is only requireAuth, not requireAdmin. sanitizeUser() exists precisely to strip password/pin/totpSecret but isn't used here.",
+      "failure_scenario": "A staff-tier card-login session calls GET /api/users and receives the admin's base32 TOTP secret. Anyone who also learns the admin password (shoulder-surfed, reused) can now generate valid 2FA codes, defeating 2FA entirely.",
+      "suggested_fix": "Map through sanitizeUser() (and keep `pin: !!pin`), and consider gating the list to requireManagerOrAdmin."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 504,
+      "severity": "high",
+      "category": "auth/IDOR",
+      "title": "2FA setup/verify/disable/status key on req.user.id without requireUserAccount — staff-member session writes a users row",
+      "detail": "/api/auth/2fa/setup, /verify-setup, /disable and /status all read/write `users WHERE id = actor.id` behind requireAuth only. A staff-member session is `{ id: staffMembers.id, _isStaffMember: true }` and users/staffMembers share the integer id space (CLAUDE.md id-collision gotcha); requireUserAccount exists for exactly this and is used on /api/auth/profile and /password but not here.",
+      "failure_scenario": "Staff member id 1 logs in by PIN card, POSTs /api/auth/2fa/setup (gets a secret it controls), then /verify-setup with a code from it. The UPDATE sets totp_secret/totp_enabled on users.id = 1 (typically the owner/admin). The admin's next password login now demands a TOTP code only the staff member has — admin locked out — and the attacker holds a valid second factor for that account. /2fa/status likewise reports another user's 2FA state.",
+      "suggested_fix": "Add requireUserAccount to all four 2FA routes (after requireAuth)."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1326,
+      "severity": "high",
+      "category": "data-integrity/race",
+      "title": "PUT /api/settings persists the client's stale billCounter/kotCounter, rolling the order/KOT numbers back",
+      "detail": "saveSettings(req.body) merges the body over the locked current row (`{ ...current, ...settings }`). Settings.tsx's handleSave sends `formData`, which is `{...prev, ...settings}` from the GET /api/settings it loaded — including billCounter and kotCounter as they were at page load. The FOR UPDATE lock in saveSettings protects against a concurrent increment, but not against the client re-sending an old counter value.",
+      "failure_scenario": "Admin opens Settings at 7pm (billCounter=400), 30 orders are placed during service, admin edits the footer note and saves at 9pm: billCounter is written back to 400. The next POST /api/orders issues ORD0401, which already exists (order_number is UNIQUE) → 500 'Failed to create order'; each retry burns one number, so staff see ~30 consecutive failed orders (same for kot_number). On a persistent server nothing repairs it until restart.",
+      "suggested_fix": "In PUT /api/settings (and saveSettings generally) delete billCounter and kotCounter from the incoming object before merging; counters must only change via issueCounter / explicit reset."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 384,
+      "severity": "high",
+      "category": "security",
+      "title": "Boot re-creates a default admin/admin123 account whenever no user is literally named 'admin'",
+      "detail": "On every registerRoutes() (every Vercel cold start and every server boot) the code checks getUserByUsername('admin') and, if absent, creates role=admin with password 'admin123' (also printed to the log). Usernames are editable (PUT /api/auth/profile, PUT /api/users/:id), and an admin can delete accounts.",
+      "failure_scenario": "Owner renames the 'admin' account to their own name in Profile (a normal hardening step). The next cold start silently creates a fresh admin/admin123 account — publicly known credentials (they are in the source) with full owner rights: payroll, settings, clear-orders, user management.",
+      "suggested_fix": "Only seed when the users table has no admin at all (count of role='admin' = 0), ideally only when users is empty, and never with a hardcoded password (require an env var or force a password change)."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1687,
+      "severity": "high",
+      "category": "auth",
+      "title": "Menu, category, table and inventory writes are requireAuth only — a staff PIN session can change prices",
+      "detail": "POST/PUT/DELETE /api/menu, /api/menu/bulk-update, /api/menu/bulk-delete, POST/PUT/DELETE /api/categories (+reorder), POST/PUT/DELETE /api/tables, POST/PUT/DELETE /api/inventory and /api/inventory-categories have no role check. Page hiding for staff is client-side only. Server-side pricing (priceOrder) validates line prices against the DB floor, so whoever can write menu_items.price controls that floor; none of these writes are audited.",
+      "failure_scenario": "A staff card-login session (or anyone with a staff PIN) sends PUT /api/menu/12 {price:'1', sizes:[...1...]} for a ₹450 dish, rings orders at ₹1, pockets the difference, then restores the price — the server-recomputed bills are 'correct' against the tampered floor and no audit row exists. Equally, bulk-delete can soft-delete the whole menu mid-service.",
+      "suggested_fix": "Gate these writes with requireManagerOrAdmin (or requireAdmin for menu prices), and logAudit price changes."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1046,
+      "severity": "medium",
+      "category": "data-integrity",
+      "title": "Reset Bill Number sets billCounter=0 while old orders still exist → every new order collides with UNIQUE order_number",
+      "detail": "reset-bill-number writes billCounter 0 ('Next order will be ORD0001') without clearing orders. orders.order_number is UNIQUE, so the next ORD0001..ORD000N all already exist. syncCounterFromMax only repairs this at boot.",
+      "failure_scenario": "Admin uses the Settings 'Reset bill number' button (offered independently of Clear Orders) at day start. Every POST /api/orders then fails with 500 until the counter has been burned past the existing maximum (hundreds of failed attempts) or the server restarts; on Vercel only freshly-booted instances recover.",
+      "suggested_fix": "Refuse the reset (409) when orders exist, or reset only after/with clear-orders; alternatively make order numbers unique per business day."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1010,
+      "severity": "medium",
+      "category": "data-loss",
+      "title": "/api/admin/migrate runs `drizzle-kit push --force`, auto-approving destructive DROPs, while the UI calls it non-destructive",
+      "detail": "--force makes drizzle-kit accept data-loss statements without prompting. CLAUDE.md warns the shared DB carries columns applied outside Drizzle and that a blind push can propose DROPs; Settings.tsx labels this button 'Safe and non-destructive — no data is deleted'. Also both 'error' and 'close' handlers may respond (double res.json).",
+      "failure_scenario": "After a deploy where shared/schema.ts lags a column added via a scripts/migrate-*.mjs ALTER, the admin clicks 'Sync Schema'; drizzle-kit drops that column (and its data) on the production DB with no confirmation.",
+      "suggested_fix": "Remove --force (fail if data loss is proposed) or remove the endpoint; return the proposed diff instead of applying it."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 415,
+      "severity": "medium",
+      "category": "availability",
+      "title": "PIN rate limiter (5 per 5 min, counts successes) is shared by the whole restaurant's single public IP",
+      "detail": "pinLimiter counts every /api/auth/verify-pin request (successful ones too) keyed by client IP (trust proxy=1). CLAUDE.md notes all shop traffic comes from one Jio CGNAT network, and the same limiter instance also backs /api/auth/2fa/complete. Every discount, item cancel, write-off, cancel order, move table, payment-method edit and due settle needs a PIN.",
+      "failure_scenario": "During a busy evening, managers approve 5 PIN actions across the till and phones within 5 minutes; the 6th correct PIN gets 429 'Too many PIN attempts' and staff cannot apply a discount or cancel an item for up to 5 minutes.",
+      "suggested_fix": "Use skipSuccessfulRequests: true and key by session id (or user) plus IP; raise the limit for successful verifications."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 2093,
+      "severity": "medium",
+      "category": "auth/data-integrity",
+      "title": "POST /api/orders spreads unvalidated client orderInfo into the insert — status 'cancelled'/'served' etc. can be set at creation",
+      "detail": "Only payment fields (ORDER_CREATE_FORCED_DEFAULTS) and money/creator columns are overridden; status, cancelReason, lastKotSnapshot, kotPrintCount, billPrintCount, tableId, etc. pass straight from req.body into storage.createOrderWithItems.",
+      "failure_scenario": "A staff session posts an order with status:'cancelled': the kitchen ticket is still created, food is served and cash collected, but the order is excluded from all sales figures, cannot be settled, and there is no order.cancel audit row — bypassing the manager-elevated, audited cancel path. status:'served' likewise creates an instant phantom 'due'.",
+      "suggested_fix": "Whitelist creatable columns (orderType, tableId, tableNumber, customerName/Phone, notes, posSectionId, …) and force status:'pending' (or validate against an allowed set) in ORDER_CREATE_FORCED_DEFAULTS."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 2150,
+      "severity": "medium",
+      "category": "race",
+      "title": "Creating a dine-in order never checks the table is free; a second order silently overwrites table.currentOrderId",
+      "detail": "updateTableStatus(tableId, 'running', order.id) is unconditional. Two devices opening the same free table and saving (or a stale Tables screen) each create an order; the later one replaces currentOrderId.",
+      "failure_scenario": "Waiter on phone and cashier at the till both start an order on Table 4 within a few seconds. Two orders exist; the table card points only at the second, so the first order (with its KOT already in the kitchen) is invisible from the table and is never billed/settled from the table flow.",
+      "suggested_fix": "Inside the create transaction, conditionally claim the table (UPDATE tables SET ... WHERE id=$1 AND (status='free' OR current_order_id IS NULL)) and reject/redirect to the existing order when it is already running."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1969,
+      "severity": "medium",
+      "category": "performance",
+      "title": "GET /api/orders/:id does one SELECT * per distinct menu item (N+1) on a hot path",
+      "detail": "For each distinct menuItemId it calls storage.getMenuItemById in parallel just to get a name fallback, each returning full rows (sizes, addons, inventoryLinks). The POS loads this on every order reopen and re-fetches it after every KOT print.",
+      "failure_scenario": "Reopening a 20-line table order issues ~22 queries at once, taking up to 20 of the 10 pool connections and queueing other requests on the instance; egress is the full menu row per item each time.",
+      "suggested_fix": "Resolve names in the items query itself (leftJoin menuItems, coalesce(orderItems.name, menuItems.name)) or one `WHERE id IN (...)` select of id,name."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 2158,
+      "severity": "low",
+      "category": "realtime",
+      "title": "NEW_ORDER broadcast carries the full order row plus the raw client items array — can exceed Pusher's ~10 KB event limit",
+      "detail": "broadcast({type:'NEW_ORDER', order, items}) uses req.body.items verbatim (names, instructions, addons arrays). The publisher has no size cap (unlike PRINT_JOB via broadcastPayload).",
+      "failure_scenario": "A large party order (~40 lines with add-ons) produces an event over 10 KB; Pusher rejects it and other devices miss the NEW_ORDER until a fallback poll (15 s+).",
+      "suggested_fix": "Broadcast only {type, orderId, tableId, status} and let clients refetch, or cap payload size as printJobBroadcast does."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 584,
+      "severity": "low",
+      "category": "auth",
+      "title": "Legacy /api/auth/staff-pin-login ignores showOnMobile, so turning a person's Mobile Card off doesn't stop PIN login",
+      "detail": "card-login refuses when showOnMobile is false, but staff-pin-login (no client caller, still registered) only checks isActive + pin.",
+      "failure_scenario": "Admin switches a staff member's Mobile Card off to revoke their phone login; they (or anyone knowing their id+PIN) can still POST /api/auth/staff-pin-login and get a staff session.",
+      "suggested_fix": "Remove the unused endpoint or apply the same showOnMobile check."
+    }
+  ]
+}
