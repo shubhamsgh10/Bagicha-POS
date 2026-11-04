@@ -1,7 +1,7 @@
 import * as E from "./escpos";
 import { formatISTDateTime } from "./formatDate";
 import type { BillPrintSettings, BrowserPayload, KOTPrintSettings } from "./types";
-import { deriveBillTotals } from "../orderPricing";
+import { deriveBillTotals, effectiveTaxRatePercent } from "../orderPricing";
 import { stripKitchenNotes } from "../orderItemText";
 import { generateKOTImageBuffer } from "./kotImage";
 
@@ -264,7 +264,9 @@ export function generateBillBuffer(params: {
   if (billSettings.mergeDuplicateItems) {
     const map = new Map<string, typeof items[0] & { totalQty: number; totalAmt: number }>();
     for (const item of items) {
-      const key = `${item.name}:${item.size ?? ""}`;
+      // Add-ons/variants are part of the line: merging only by name+size printed the first line's
+      // [add-ons] for all of them (the averaged price still included the others').
+      const key = `${item.name}:${item.size ?? ""}:${stripKitchenNotes(item.specialInstructions) ?? ""}`;
       const ex = map.get(key);
       if (ex) {
         ex.totalQty += item.quantity;
@@ -311,7 +313,8 @@ export function generateBillBuffer(params: {
   const rawTotal = parseFloat(order.totalAmount);
   const rounded  = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
-  const cgstRate = restaurant.taxRate / 2;
+  // The rate this order was billed at, not today's setting (see effectiveTaxRatePercent).
+  const cgstRate = effectiveTaxRatePercent(order, restaurant.taxRate) / 2;
   const cgst     = tax / 2;
   const sgst     = tax / 2;
 

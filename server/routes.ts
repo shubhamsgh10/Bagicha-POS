@@ -2741,8 +2741,10 @@ export async function registerRoutes(
       // is a shared function rather than a hand-rolled comparison on each side.
       const paidAmt = Object.values(breakdown).reduce((a, b) => a + b, 0);
       const changeDue = isDue ? 0 : Math.max(0, paidAmt - orderTotal);
-      const shortfall = isDue ? 0 : Math.max(0, orderTotal - paidAmt);
-      const isShort = shortfall > SETTLE_TOLERANCE;
+      const gap = isDue ? 0 : Math.max(0, orderTotal - paidAmt);
+      const isShort = gap > SETTLE_TOLERANCE;
+      // Sub-tolerance gaps are rounding, not a write-off (shared/settlement.ts) — store 0.
+      const shortfall = isShort ? gap : 0;
 
       if (isShort) {
         if (!isSplitPath || !allowShortfall) {

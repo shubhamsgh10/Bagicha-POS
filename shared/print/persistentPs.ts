@@ -103,16 +103,20 @@ export function isPrinterSessionReady(): boolean {
 }
 
 function drainResponses() {
+  // Strictly in output order: whichever marker comes FIRST in the buffer answers the oldest job.
+  // It used to consume any PRINT_OK before any PRINT_FAIL, so with two responses in one chunk the
+  // oldest job got the later job's success and the later job got the earlier failure.
   while (pending.length > 0) {
-    if (stdoutBuf.includes("PRINT_OK")) {
-      stdoutBuf = stdoutBuf.replace(/PRINT_OK\r?\n?/, "");
+    const ok = stdoutBuf.indexOf("PRINT_OK");
+    const fail = stdoutBuf.indexOf("PRINT_FAIL:");
+    if (ok === -1 && fail === -1) break;
+    if (ok !== -1 && (fail === -1 || ok < fail)) {
+      stdoutBuf = stdoutBuf.slice(0, ok) + stdoutBuf.slice(ok).replace(/^PRINT_OK\r?\n?/, "");
       pending.shift()!.resolve();
-    } else if (/PRINT_FAIL:/.test(stdoutBuf)) {
-      const m = stdoutBuf.match(/PRINT_FAIL:([^\r\n]*)/);
-      stdoutBuf = stdoutBuf.replace(/PRINT_FAIL:[^\r\n]*\r?\n?/, "");
-      pending.shift()!.reject(new Error(m?.[1]?.trim() ?? "WritePrinter failed"));
     } else {
-      break;
+      const m = stdoutBuf.slice(fail).match(/^PRINT_FAIL:([^\r\n]*)\r?\n?/);
+      stdoutBuf = stdoutBuf.slice(0, fail) + stdoutBuf.slice(fail + (m?.[0].length ?? "PRINT_FAIL:".length));
+      pending.shift()!.reject(new Error(m?.[1]?.trim() || "WritePrinter failed"));
     }
   }
 }
@@ -178,12 +182,24 @@ function startSession(): Promise<void> {
       scheduleRestart();
     });
 
+    // A write to a PowerShell that just died raises EPIPE on stdin; with no listener that is an
+    // uncaught exception in the Electron main process. Fail what's pending and let it restart.
+    ps.stdin!.on("error", (err) => {
+      console.warn("[persistentPs] stdin error:", err?.message ?? err);
+      for (const p of pending) p.reject(new Error("PowerShell session exited unexpectedly"));
+      pending.length = 0;
+      try { proc.kill(); } catch { /* already gone */ }
+    });
+
     // Send C# type definition once; signal readiness with PSREADY
     ps.stdin!.write(buildSessionInitCommand());
   });
 
   return initPromise;
 }
+
+/** Thrown only when NOTHING was written to the session — the one case a fallback can't double-print. */
+export class SessionNotReadyError extends Error {}
 
 export async function sendRawFast(queueName: string, data: Buffer): Promise<void> {
   if (process.platform !== "win32") {
@@ -193,7 +209,7 @@ export async function sendRawFast(queueName: string, data: Buffer): Promise<void
   // Warm-up continues in background; subsequent prints use the fast path (~15ms).
   if (!ready || !ps) {
     if (!initPromise) startSession().catch(() => {});
-    throw new Error("PowerShell session not ready yet");
+    throw new SessionNotReadyError("PowerShell session not ready yet");
   }
   return new Promise<void>((resolve, reject) => {
     const b64 = data.toString("base64");
@@ -204,7 +220,7 @@ export async function sendRawFast(queueName: string, data: Buffer): Promise<void
       `else{Write-Output "PRINT_FAIL:WritePrinter returned false"}\n`;
 
     if (!ps?.stdin) {
-      reject(new Error("PowerShell session not available"));
+      reject(new SessionNotReadyError("PowerShell session not available"));
       return;
     }
 

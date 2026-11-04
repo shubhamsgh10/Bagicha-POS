@@ -73,6 +73,7 @@ export function summarizeSettleTimeline(
   const legs: SettleLeg[] = [];
   for (const e of entries) {
     if (e.startTime < clickedAt - 5) continue; // belongs to something before this click
+    if (e.startTime > finishedAt) continue;     // started after the settle finished (a later poll)
     const path = pathnameOf(e.name);
     const leg = path ? classify(path, orderId) : null;
     if (!leg) continue;
@@ -90,6 +91,19 @@ export function summarizeSettleTimeline(
     });
   }
   legs.sort((a, b) => a.startMs - b.startMs);
+  // "/api/orders" is the settle's leg only as the CREATE of a never-saved cart: the first one, before
+  // the payment, with no save leg. Any other hit on that path is a background list refresh
+  // (realtime invalidation, the Live orders poll) that used to be counted as part of the settle.
+  {
+    const paymentAt = legs.find((l) => l.leg === "payment")?.startMs ?? Infinity;
+    const hasSave = legs.some((l) => l.leg === "save");
+    let kept = false;
+    for (let i = 0; i < legs.length; i++) {
+      if (legs[i].leg !== "orders") continue;
+      if (!hasSave && !kept && legs[i].startMs < paymentAt) { kept = true; continue; }
+      legs.splice(i, 1); i--;
+    }
+  }
 
   const first = legs[0];
   const payment = legs.find((l) => l.leg === "payment");

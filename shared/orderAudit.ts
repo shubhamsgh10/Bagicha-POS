@@ -63,11 +63,24 @@ export interface OrderLineDiff {
 // persists the real per-line data regardless of what this diff manages to describe.
 const lineKey = (l: AuditLine) => `${l.menuItemId}:${l.size ?? ""}`;
 
+// Lines sharing a key are SUMMED (same as kotDelta): keyed last-wins, adding a second Butter Naan
+// line (or removing one of two) showed no change at all in the audit.
+// Keyed by dish + size + service mode, so two lines of one dish in different modes stay separate;
+// a pure mode flip is paired back into one "changed" entry after the diff (below).
+const aggKey = (l: AuditLine) => `${lineKey(l)}:${l.serviceMode ?? ""}`;
+function aggregateLines(lines: AuditLine[]): Map<string, AuditLine> {
+  const m = new Map<string, AuditLine>();
+  for (const l of lines) {
+    const k = aggKey(l);
+    const prev = m.get(k);
+    m.set(k, prev ? { ...l, quantity: Math.round((Number(prev.quantity) + Number(l.quantity)) * 1e6) / 1e6 } : { ...l });
+  }
+  return m;
+}
+
 export function diffOrderLines(before: AuditLine[], after: AuditLine[]): OrderLineDiff {
-  const beforeMap = new Map<string, AuditLine>();
-  for (const l of before) beforeMap.set(lineKey(l), l);
-  const afterMap = new Map<string, AuditLine>();
-  for (const l of after) afterMap.set(lineKey(l), l);
+  const beforeMap = aggregateLines(before);
+  const afterMap = aggregateLines(after);
 
   const added: AuditLine[] = [];
   const changed: ChangedLine[] = [];
@@ -97,6 +110,23 @@ export function diffOrderLines(before: AuditLine[], after: AuditLine[]): OrderLi
   const removed: AuditLine[] = [];
   for (const [key, line] of Array.from(beforeMap.entries())) {
     if (!afterMap.has(key)) removed.push(line);
+  }
+
+  // A line that only changed service mode (same dish, size, quantity, price) is one edit — a mode
+  // change — not a removal plus an addition.
+  for (let i = removed.length - 1; i >= 0; i--) {
+    const r = removed[i];
+    const j = added.findIndex((a) => lineKey(a) === lineKey(r) && a.quantity === r.quantity && a.price === r.price);
+    if (j === -1) continue;
+    const a = added[j];
+    changed.push({
+      name: a.name, size: a.size,
+      qtyBefore: r.quantity, qtyAfter: a.quantity,
+      priceBefore: r.price, priceAfter: a.price,
+      modeBefore: r.serviceMode ?? null, modeAfter: a.serviceMode ?? null,
+    });
+    removed.splice(i, 1);
+    added.splice(j, 1);
   }
 
   return {

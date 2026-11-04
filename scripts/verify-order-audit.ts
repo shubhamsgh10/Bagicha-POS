@@ -95,6 +95,15 @@ const line = (over: Partial<AuditLine> = {}): AuditLine => ({
   checks.push(["editing one of two same-key lines still reports that edit correctly", d.changed.length === 1 && d.changed[0]?.qtyBefore === 1 && d.changed[0]?.qtyAfter === 2]);
 }
 
+// 8. A second line of the same dish+size+mode (reopened order, or different add-ons) is summed:
+//    adding it shows as a quantity change, removing one of two shows as a decrease.
+{
+  const d1 = diffOrderLines([line({ quantity: 1 })], [line({ quantity: 1 }), line({ quantity: 1 })]);
+  checks.push(["adding a duplicate line reports 1 → 2", d1.changed.length === 1 && d1.changed[0]?.qtyBefore === 1 && d1.changed[0]?.qtyAfter === 2]);
+  const d2 = diffOrderLines([line({ quantity: 1 }), line({ quantity: 1 })], [line({ quantity: 1 })]);
+  checks.push(["removing one of two duplicate lines reports 2 → 1", d2.changed.length === 1 && d2.changed[0]?.qtyAfter === 1 && !d2.isEmpty]);
+}
+
 let failed = 0;
 for (const [name, ok] of checks) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
