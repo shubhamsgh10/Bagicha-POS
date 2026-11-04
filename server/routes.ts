@@ -60,11 +60,10 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { runPrintStep, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
+import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
-import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
   publishRealtime,
@@ -422,9 +421,18 @@ export async function registerRoutes(
     message: { message: "Too many login attempts. Try again in 15 minutes." },
   });
 
+  // Per SESSION, failures only. Keyed by IP it was shared by every device in the restaurant (one
+  // public CGNAT address) and counted correct PINs too, so five ordinary manager approvals across
+  // the floor in 5 minutes locked everyone out of every PIN prompt. A brute force still gets only
+  // 5 wrong guesses per session per 5 minutes (and needs a logged-in session for verify-pin).
   const pinLimiter = rateLimit({
     windowMs: 5 * 60 * 1000,    // 5 minutes
     max: 5,
+    skipSuccessfulRequests: true,
+    // A wrong PIN answers 200 {valid:false}, so "successful" is set explicitly by the handlers.
+    requestWasSuccessful: (_req: any, res: any) => res.locals?.pinOk === true,
+    keyGenerator: (req: any) => (req.sessionID ? `s:${req.sessionID}` : `ip:${req.ip}`),
+    validate: { keyGeneratorIpFallback: false },
     standardHeaders: true,
     legacyHeaders: false,
     message: { valid: false, message: "Too many PIN attempts. Try again in 5 minutes." },
@@ -484,6 +492,7 @@ export async function registerRoutes(
       }
 
       delete (req.session as any).pending2faUserId;
+      res.locals.pinOk = true;
 
       req.logIn(user, (err) => {
         if (err) return next(err);
@@ -736,6 +745,7 @@ export async function registerRoutes(
           id: `u:${match.id}`, name: match.username, role: match.role,
         });
       }
+      res.locals.pinOk = !!match;
       res.json({ valid: !!match });
     } catch (err) {
       console.error("Verify PIN error:", err);
@@ -2020,6 +2030,22 @@ export async function registerRoutes(
       // never reach createOrderWithItems as order columns.
       const { items, print: _print, auto: _auto, markBilled: _markBilled, ...orderInfo } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
+      // A table holds one running order. Creating a second one (two phones opening the same free
+      // table, or a stale Tables page) silently re-pointed the table at the new order and left the
+      // first one open with nowhere to reach it from — billed by nobody.
+      if (orderInfo.tableId) {
+        const table = await storage.getTableById(Number(orderInfo.tableId));
+        if (table?.currentOrderId) {
+          const current = await storage.getOrderById(table.currentOrderId);
+          if (current && current.status !== "cancelled" && current.paymentStatus !== "paid" && current.status !== "hold") {
+            return res.status(409).json({
+              error: `${table.name ?? "This table"} already has an open order (#${current.id}). Open it from the Tables page instead.`,
+              code: "table_busy",
+              orderId: current.id,
+            });
+          }
+        }
+      }
       // Print instrumentation exists ONLY when a print was requested — a plain save keeps its
       // exact pre-existing response (no Server-Timing header, no [print-perf] log line).
       const printReq = parseSavePrintRequest(req.body);
@@ -2815,29 +2841,34 @@ export async function registerRoutes(
 
       broadcast({ type: "ORDER_UPDATE", order });
 
+      // Awaited (bounded) before the response: on Vercel work still running after res.json can be
+      // frozen and lost — loyalty points, the settlement WhatsApp and the feedback request used to
+      // be fire-and-forget here. Points and feedback are plain DB writes and are awaited fully;
+      // the message (which may compose text with the AI) gets at most 1.5 s, then continues
+      // best-effort, so Settle never waits on it for long. All never reject.
+      const quiet = (label: string, p: Promise<unknown>) => p.catch((e: any) => console.warn(`[settle] ${label} failed:`, e));
+      const bounded = (p: Promise<unknown>, ms: number) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+      const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
+      const after: Array<Promise<unknown>> = [];
       if (!isDue) {
-        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
         if (key) {
-          earnPointsForOrder(
+          after.push(quiet("loyalty earn", earnPointsForOrder(
             key,
             (order as any).customerName ?? key,
             id,
             parseFloat(String((order as any).totalAmount ?? 0)),
-          ).catch((e: any) => console.warn("[Loyalty] earn failed:", e));
-
+          )));
           // Settlement relationship message — welcome (new) / admin template (returning)
-          triggerSettlementMessage(key, (order as any).customerName ?? key, (order as any).customerPhone)
-            .catch((e: any) => console.warn("[CRM] settlement message failed:", e));
+          after.push(bounded(quiet("settlement message",
+            triggerSettlementMessage(key, (order as any).customerName ?? key, (order as any).customerPhone)), 1500));
         }
-        scheduleFeedbackForOrder(id).catch((e: any) => console.warn("[Feedback] schedule failed:", e));
-      } else {
+        after.push(quiet("feedback schedule", scheduleFeedbackForOrder(id)));
+      } else if (key) {
         // Bill left unpaid → itemized due-bill reminder with the customer's order details
-        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
-        if (key) {
-          triggerDueBillMessage(id, (order as any).customerName ?? key, (order as any).customerPhone)
-            .catch((e: any) => console.warn("[CRM] due reminder failed:", e));
-        }
+        after.push(bounded(quiet("due reminder",
+          triggerDueBillMessage(id, (order as any).customerName ?? key, (order as any).customerPhone)), 1500));
       }
+      await Promise.all(after);
 
       res.json(order);
     } catch (error) {
@@ -3269,40 +3300,20 @@ export async function registerRoutes(
       });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
-      res.json({ success: true });
 
-      // Fire-and-forget KOT print after table move if setting enabled
-      const settings = getSettings();
-      if (settings.printSettings.kot.printOnTableMove && settings.printSettings.kot.kotPrinterId) {
-        const printer = settings.printSettings.printers.find(p => p.id === settings.printSettings.kot.kotPrinterId);
-        if (printer) {
-          (async () => {
-            try {
-              const [movedOrder] = await db.select().from(orders).where(eq(orders.id, id));
-              if (!movedOrder) return;
-              const rawItems = await db
-                .select({ menuItemId: orderItems.menuItemId, name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`, quantity: orderItems.quantity, size: orderItems.size, specialInstructions: orderItems.specialInstructions })
-                .from(orderItems)
-                .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-                .where(eq(orderItems.orderId, id));
-              const buf = generateKOTBuffer({
-                orderNumber: movedOrder.orderNumber,
-                tableNumber: movedOrder.tableNumber,
-                isReprint: false,
-                isDelta: false,
-                newItems: rawItems.map(i => ({ itemId: i.menuItemId, name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null })),
-                modifiedItems: [],
-                cancelledItems: [],
-                kotSettings: settings.printSettings.kot,
-                width: printer.width ?? 32,
-              });
-              await sendToPrinter(printer, buf);
-            } catch (e) {
-              console.warn('[Print/TableMove]', e);
-            }
-          })();
+      // KOT after a table move (setting) goes through the normal print pipeline — live settings,
+      // category routing, the print_jobs bridge to the desktop host — as a full reprint showing the
+      // new table, and finishes BEFORE the response. It used to be built from the fallback
+      // settings and sent straight to the printer after res.json: on Vercel it could neither reach
+      // a LAN/USB printer nor survive the function being frozen. A print failure never fails the move.
+      if (getSettings().printSettings.kot.printOnTableMove) {
+        try {
+          await runKotPrint({ req, orderId: id, reprint: true });
+        } catch (e) {
+          console.warn("[Print/TableMove]", e);
         }
       }
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to move table" });
     }
