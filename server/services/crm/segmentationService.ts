@@ -170,25 +170,67 @@ export async function runSegmentationForAll(): Promise<{ processed: number; fail
   let failed    = 0;
 
   try {
-    // Get all unique customer keys from the orders table
-    const uniqueKeys = await db
-      .selectDistinct({
-        key:   sql<string>`COALESCE(${orders.customerPhone}, ${orders.customerName})`,
-        name:  orders.customerName,
-        phone: orders.customerPhone,
-      })
-      .from(orders)
-      .where(sql`${orders.customerPhone} IS NOT NULL OR ${orders.customerName} IS NOT NULL`);
+    // ONE grouped query for every customer's visits / spend / last visit. This used to run, per
+    // distinct (phone, name) pair: resolveCustomerId, an orders scan, a segment read and a write —
+    // thousands of round trips every hour. Same key rule as the rest of the CRM (phone || name).
+    const agg: any = await db.execute(sql`
+      SELECT COALESCE(NULLIF(customer_phone, ''), NULLIF(customer_name, '')) AS key,
+             MAX(customer_name)  AS name,
+             MAX(customer_phone) AS phone,
+             COUNT(*)::int       AS visits,
+             SUM(total_amount::numeric - COALESCE(shortfall_amount::numeric, 0))::float AS spend,
+             MAX(created_at)     AS last_at
+      FROM orders
+      WHERE status <> 'cancelled'
+        AND COALESCE(NULLIF(customer_phone, ''), NULLIF(customer_name, '')) IS NOT NULL
+      GROUP BY 1`);
+    const customers: Array<{ key: string; name: string | null; phone: string | null; visits: number; spend: number; last_at: string }> = agg?.rows ?? [];
 
-    for (const row of uniqueKeys) {
-      if (!row.key) continue;
-      const result = await runSegmentationForCustomer(
-        row.key,
-        row.name ?? row.key,
-        row.phone
-      );
-      if (result) processed++;
-      else failed++;
+    // Existing master ids + segments in two reads.
+    const masters = await db.select({ id: customersMaster.id, key: customersMaster.key }).from(customersMaster);
+    const idByKey = new Map(masters.map((m) => [m.key, m.id]));
+    const segs = await db.select({ customerId: customerSegments.customerId, segment: customerSegments.segment, updatedAt: customerSegments.updatedAt }).from(customerSegments);
+    const segById = new Map(segs.map((r) => [r.customerId, r]));
+
+    const upserts: Array<typeof customerSegments.$inferInsert> = [];
+    for (const c of customers) {
+      try {
+        const customerId = idByKey.get(c.key) ?? await resolveCustomerId(c.key, c.name ?? c.key, c.phone);
+        const lastVisit = new Date(c.last_at);
+        const daysSinceLast = Math.floor((Date.now() - lastVisit.getTime()) / 86_400_000);
+        const avgSpend = c.visits > 0 ? Number(c.spend) / c.visits : 0;
+        const rScore = recencyScore(daysSinceLast);
+        const fScore = frequencyScore(c.visits);
+        const mScore = monetaryScore(avgSpend);
+        const seg = segmentFrom(c.visits, avgSpend, daysSinceLast);
+        const prev = segById.get(customerId);
+        upserts.push({ customerId, segment: seg, rfmScore: rScore + fScore + mScore, recencyScore: rScore, frequencyScore: fScore, monetaryScore: mScore, updatedAt: new Date() });
+
+        // Milestones only for a NEW visit since the last computation — the old loop re-logged
+        // "10th visit" every hour for as long as the count stayed at 10.
+        const newVisit = !prev || lastVisit > new Date(prev.updatedAt);
+        if (prev && prev.segment !== "VIP" && seg === "VIP") await logMilestone(c.key, c.name ?? c.key, "SEGMENT_UPGRADE", "VIP");
+        if (newVisit && [5, 10, 25, 50].includes(c.visits)) await logMilestone(c.key, c.name ?? c.key, "VISIT_MILESTONE", c.visits);
+        processed++;
+      } catch (err) {
+        console.warn(`[CRM] Segmentation failed for ${c.key}:`, err);
+        failed++;
+      }
+    }
+
+    // Batched upserts (customer_segments.customer_id is UNIQUE).
+    for (let i = 0; i < upserts.length; i += 200) {
+      await db.insert(customerSegments).values(upserts.slice(i, i + 200)).onConflictDoUpdate({
+        target: customerSegments.customerId,
+        set: {
+          segment: sql`excluded.segment`,
+          rfmScore: sql`excluded.rfm_score`,
+          recencyScore: sql`excluded.recency_score`,
+          frequencyScore: sql`excluded.frequency_score`,
+          monetaryScore: sql`excluded.monetary_score`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      });
     }
   } catch (err) {
     console.error("[CRM] Batch segmentation failed:", err);

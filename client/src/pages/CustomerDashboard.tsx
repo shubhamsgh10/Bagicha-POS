@@ -611,8 +611,9 @@ function CustomerCard({ customer, index, onClick }: {
   customer: CustomerProfile; index: number; onClick: () => void;
 }) {
   const ring = TAG_CONFIG[customer.tag].cardRing;
-  const { crmData } = useCrmProfile(customer.key);
-  const rfm = crmData?.segment;
+  // One shared request for every card (React Query dedupes the key), not one per customer.
+  const { data: segments } = useQuery<Record<string, CrmSegment>>({ queryKey: ["/api/crm/segments"], staleTime: 60_000 });
+  const rfm = segments?.[customer.key];
 
   return (
     <motion.div
