@@ -32,7 +32,8 @@ import { serialNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
-import { paymentLabel } from "@shared/paymentSplit";
+import { paymentLabel, isDueOrder } from "@shared/paymentSplit";
+import { DueSettleDialog } from "@/components/DueSettleDialog";
 import type { PrintApiResponse } from "@shared/print/types";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
@@ -62,6 +63,11 @@ function ensureRazorpayScript(): Promise<boolean> {
 export default function Billing() {
   const { toast } = useToast();
   const [payingOrder, setPayingOrder] = useState<any | null>(null);
+  // An open due (served + unpaid) settles through the PIN-gated, audited settle-due route — the
+  // same dialog Order History uses. Billing's own "Mark as Paid" goes through the POS payment
+  // route, which also frees the order's table (a new party may be seated there now) and re-fires
+  // loyalty points and the settlement WhatsApp for a bill that was closed long ago.
+  const [settlingDue, setSettlingDue] = useState<any | null>(null);
   const [paymentMethod, setPaymentMethod] = useState("cash");
 
   // ── Coupon state ─────────────────────────────────────────────────────────
@@ -580,7 +586,10 @@ export default function Billing() {
                       <Button
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => { setPayingOrder(order); setPaymentMethod(order.paymentMethod || "cash"); }}
+                        onClick={() => {
+                          if (isDueOrder(order)) { setSettlingDue(order); return; }
+                          setPayingOrder(order); setPaymentMethod(order.paymentMethod || "cash");
+                        }}
                       >
                         <CreditCard className="w-3 h-3 mr-1" />
                         Collect Payment
@@ -619,6 +628,9 @@ export default function Billing() {
       {/* Payment Dialog */}
       <Dialog open={!!payingOrder} onOpenChange={() => setPayingOrder(null)}>
         <DialogContent className="max-w-md">
+          {settlingDue && (
+            <DueSettleDialog order={settlingDue} onClose={() => { setSettlingDue(null); queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); }} />
+          )}
           <DialogHeader>
             <DialogTitle>Collect Payment</DialogTitle>
             <DialogDescription>
