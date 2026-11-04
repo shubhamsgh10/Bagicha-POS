@@ -10,7 +10,7 @@
  */
 
 import { db } from "../db";
-import { and, or, gte, lte, sql, eq, desc, isNotNull, isNull } from "drizzle-orm";
+import { and, or, gte, lte, sql, eq, ne, desc, isNotNull, isNull } from "drizzle-orm";
 import {
   orders,
   orderItems,
@@ -24,7 +24,7 @@ import {
 import { getAutomationConfig } from "./automationStore";
 import { sendWhatsAppMessage } from "./whatsappService";
 import { istCalendarDate, istCalendarDayRange, istHour } from "../../shared/businessDay";
-import { summarizeCollected } from "../../shared/paymentSplit";
+import { summarizeCollected, isDueOrder } from "../../shared/paymentSplit";
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
@@ -61,15 +61,21 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   const dateStr = istCalendarDate(date);
   const { start, end } = istCalendarDayRange(dateStr);
 
+  // Same rules as Reports: cancelled orders are not sales, revenue nets write-offs, and a "due"
+  // is a served-but-unpaid bill (isDueOrder) — not every running table or held order that just
+  // hadn't been settled yet when the digest ran, and not every cancelled order (cancel leaves
+  // paymentStatus 'pending').
   const dayOrders = await db
     .select()
     .from(orders)
-    .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)));
+    .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end), ne(orders.status, "cancelled")));
 
-  const totalRevenue = dayOrders.reduce((s, o) => s + parseFloat(String(o.totalAmount ?? 0)), 0);
+  const net = (o: typeof dayOrders[number]) =>
+    parseFloat(String(o.totalAmount ?? 0)) - parseFloat(String((o as any).shortfallAmount ?? 0));
+  const totalRevenue = dayOrders.reduce((s, o) => s + net(o), 0);
   const paidOrders   = dayOrders.filter(o => o.paymentStatus === "paid");
-  const dueOrders    = dayOrders.filter(o => o.paymentStatus === "pending");
-  const paidRevenue  = paidOrders.reduce((s, o) => s + parseFloat(String(o.totalAmount ?? 0)), 0);
+  const dueOrders    = dayOrders.filter(o => isDueOrder(o as any));
+  const paidRevenue  = paidOrders.reduce((s, o) => s + net(o), 0);
   const dueRevenue   = dueOrders.reduce((s, o) => s + parseFloat(String(o.totalAmount ?? 0)), 0);
 
   // Payment mix by what was actually collected per method (shared/paymentSplit.ts) — the old
@@ -101,7 +107,7 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
     .from(orderItems)
     .innerJoin(orders,    eq(orderItems.orderId, orders.id))
     .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-    .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end)))
+    .where(and(gte(orders.createdAt, start), lte(orders.createdAt, end), ne(orders.status, "cancelled")))
     .groupBy(sql`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`)
     .orderBy(sql`sum(${orderItems.quantity}) desc`)
     .limit(5);

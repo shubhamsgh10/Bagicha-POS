@@ -36,6 +36,12 @@ export interface EnqueueInput {
   ruleId?: number | null;
 }
 
+/** Triggers that nudge a lapsed/at-risk customer — at most one of these per customer per day. */
+const REENGAGEMENT_TRIGGERS = ["WIN_BACK", "AT_RISK", "INACTIVITY", "INACTIVITY_7", "INACTIVITY_14", "INACTIVITY_30", "HIGH_SPEND", "VISIT_MILESTONE"] as const;
+function isReengagementTrigger(t: string): boolean {
+  return (REENGAGEMENT_TRIGGERS as readonly string[]).includes(t) || t.startsWith("INACTIVITY");
+}
+
 export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
   // Dedup so no path double-sends the same template to a customer in a day:
   //  - any pending/sending job for this customer + trigger (offline driver can't
@@ -53,7 +59,12 @@ export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
     .from(automationJobs)
     .where(and(
       eq(automationJobs.customerId, input.customerId),
-      eq(automationJobs.triggerType, input.trigger),
+      // Re-engagement messages are ONE per customer per day whichever engine sends them: the daily
+      // rule engine stores its rule's trigger (INACTIVITY / HIGH_SPEND…) and the hourly engine
+      // WIN_BACK / AT_RISK, so a same-trigger check let both reach the same customer on one day.
+      isReengagementTrigger(input.trigger)
+        ? inArray(automationJobs.triggerType, REENGAGEMENT_TRIGGERS as unknown as string[])
+        : eq(automationJobs.triggerType, input.trigger),
       or(
         inArray(automationJobs.status, ["pending", "sending"]),
         and(eq(automationJobs.status, "sent"), gte(automationJobs.executedAt, todayStart)),
