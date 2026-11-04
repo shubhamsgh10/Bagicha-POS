@@ -1,0 +1,76 @@
+{
+  "slice": "R07",
+  "coverage": "Read every line of client/src/pages/Login.tsx:1-737, client/src/pages/Menu.tsx:1-815, client/src/pages/MyAttendance.tsx:1-378, client/src/pages/Orders.tsx:1-774. Cross-checked server PUT /api/orders/:id (server/routes.ts ~2577), storage.updateOrder and shared/orderMutation.ts orderUpdateAllowlist for reachability of the Orders status select. Did not read child components (PaymentTag, PaymentMethodDialog, DueSettleDialog, DayPicker, AddMenuItemModal, CategoriesTab, printGateway) beyond their call sites.",
+  "findings": [
+    {
+      "file": "client/src/pages/Orders.tsx",
+      "line": 229,
+      "severity": "high",
+      "category": "auth/elevation bypass, money",
+      "title": "Status dropdown un-cancels a cancelled order (and can hide/resurrect dues) with no PIN",
+      "detail": "Every row, including cancelled and paid orders, renders an enabled status Select. Only the 'cancelled' option is disabled; pending/preparing/ready/served/delivered stay selectable on a cancelled row. onStatusChange sends PUT /api/orders/:id {status}, which the server accepts for any requireAuth session (orderUpdateAllowlist includes status; storage.updateOrder has no WHERE guard on current status). Cancellation is a PIN-gated, audited deviation that also reversed inventory, freed the table and completed KOT tickets.",
+      "failure_scenario": "A staff-tier session opens Order History, finds a cancelled order (status cancelled, paymentStatus pending) and picks 'served'. The order becomes served+pending, i.e. a Due (isDueOrder), reappears in the Pay-Later/dues totals and the Tables Due pill, and no longer counts as cancelled in reports \u2014 without a PIN or audit row, and with stock already reversed. Conversely picking 'pending' on a served+unpaid due drops it out of every Due list (isDueOrder requires served), hiding a customer's debt; picking 'pending' on a paid order puts it back into ACTIVE_ORDER_STATUSES on Live View.",
+      "suggested_fix": "Disable the Select entirely for cancelled orders and for paid orders (render a read-only badge), and do not allow moving a served+unpaid due back to an active status from here. Mirror on the server: in PUT /api/orders/:id refuse status changes when the current status is cancelled or the order is settled, and refuse status='cancelled' (must go through /cancel)."
+    },
+    {
+      "file": "client/src/pages/Menu.tsx",
+      "line": 207,
+      "severity": "medium",
+      "category": "wrong result",
+      "title": "Bulk 'Change %' rejects negative percentages, so prices can never be reduced in bulk",
+      "detail": "handleBulkPrice rejects `val < 0` for both modes. That check is right for 'Set \u20b9' but in percent mode a negative value is the only way to express a decrease (factor = 1 + val/100).",
+      "failure_scenario": "Admin selects 20 items and enters -10 in 'Change %' to cut prices by 10%; the page toasts 'Invalid value' and nothing changes, so every item must be edited individually.",
+      "suggested_fix": "In percent mode allow val > -100 (reject only val <= -100 or NaN); keep the >= 0 check for fixed mode."
+    },
+    {
+      "file": "client/src/pages/Menu.tsx",
+      "line": 244,
+      "severity": "medium",
+      "category": "partial failure / data integrity",
+      "title": "Percent bulk price update is non-atomic; a retry after partial failure compounds the change",
+      "detail": "Percent mode fires one POST /api/menu/bulk-update per item via Promise.all. If any request fails, the catch only toasts 'Price update failed' \u2014 no invalidation, selection kept, and the already-applied items are not reported. rawItems still holds the old prices for the items that succeeded.",
+      "failure_scenario": "Admin applies +10% to 15 items; 12 succeed, 3 fail on a network blip. The toast says it failed and the grid is not refreshed. After the next refetch (or immediately, if the admin reselects and retries) the admin taps Update again: the 12 already-raised items get a second +10% (\u2248+21% total) while the 3 failed ones get +10%.",
+      "suggested_fix": "Use Promise.allSettled, invalidate ['/api/menu?all=true'] in all cases, and report exactly which items failed (or send one bulk request with per-item updates handled transactionally on the server)."
+    },
+    {
+      "file": "client/src/pages/Login.tsx",
+      "line": 449,
+      "severity": "low",
+      "category": "wrong result",
+      "title": "Login card keys use bare id, but staff-member and user cards share the id space",
+      "detail": "GET /api/staff-members returns unified cards tagged kind 'staff'|'user'; CLAUDE.md notes users and staffMembers share integer ids. Both card grids (lines 449 and 646) key on s.id only.",
+      "failure_scenario": "Staff member id 4 and a manager account id 4 both have mobile cards: React sees duplicate keys, warns, and on any re-render/reorder can reuse the wrong element (stale animation/initial state, or a card dropped from reconciliation).",
+      "suggested_fix": "key={`${s.kind ?? 'staff'}:${s.id}`}."
+    },
+    {
+      "file": "client/src/pages/Orders.tsx",
+      "line": 760,
+      "severity": "low",
+      "category": "dead UI",
+      "title": "Cancelled tab content exists but has no TabsTrigger",
+      "detail": "TabsContent is rendered for 'cancelled' but the TabsList only lists all/pending/preparing/ready/served/delivered, so the cancelled-orders view is unreachable (and its OrderList still filters on every render).",
+      "failure_scenario": "A manager wants to see only cancelled orders in Order History; there is no tab for it, they must scroll the All list.",
+      "suggested_fix": "Add 'cancelled' to the TabsList array, or drop the unreachable TabsContent."
+    },
+    {
+      "file": "client/src/pages/Orders.tsx",
+      "line": 131,
+      "severity": "low",
+      "category": "error handling",
+      "title": "Reprint Bill failure silently shows an unprintable text preview with no error",
+      "detail": "On a non-2xx /api/print/bill (e.g. 503 settings unavailable, 500) reprintBill just opens the text preview, which CLAUDE.md says cannot be printed; no toast explains the failure. res.json() is also called before the ok check, so a non-JSON error body throws into the same silent path.",
+      "failure_scenario": "Settings are briefly unavailable (503); staff tap Reprint Bill, get a preview modal and assume it is the bill, with no indication the print request failed.",
+      "suggested_fix": "On !res.ok toast the server's message (describeApiError) before/instead of the preview; parse JSON defensively."
+    },
+    {
+      "file": "client/src/pages/Orders.tsx",
+      "line": 323,
+      "severity": "low",
+      "category": "UX / error handling",
+      "title": "Expanded row shows 'Loading\u2026' spinner forever when the detail fetch fails or the order has no items",
+      "detail": "The items area keys only on items.length === 0, not on the query's loading/error state.",
+      "failure_scenario": "An order whose items were all cancelled (items: []) or whose /api/orders/:id fetch 404s/500s shows a perpetual spinner instead of 'No items' or an error.",
+      "suggested_fix": "Use the query's isLoading/isError and render 'No items' when loaded and empty."
+    }
+  ]
+}

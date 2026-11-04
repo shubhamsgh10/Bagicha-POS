@@ -106,12 +106,16 @@ export class PrintQueue {
     // since it repeats the same order+type+printer.
     if (spec.orderId && spec.ackType) {
       const printerId = spec.printJob?.printerId;
+      // A job that carries its server print_jobs id is only a duplicate of the SAME id: the server
+      // creates a second KOT job for an order only when there is a real new delta, so collapsing on
+      // order+type+printer dropped genuinely new items (B added while A's ticket was printing).
+      const jobId = spec.printJob?.jobId;
       const duplicate = this.queue.find(
         (j) =>
-          j.orderId === spec.orderId &&
-          j.ackType === spec.ackType &&
-          j.printJob.printerId === printerId &&
-          (j.status === "pending" || j.status === "processing" || j.status === "retrying"),
+          (j.status === "pending" || j.status === "processing" || j.status === "retrying") &&
+          (jobId != null
+            ? j.printJob.jobId === jobId
+            : j.orderId === spec.orderId && j.ackType === spec.ackType && j.printJob.printerId === printerId),
       );
       if (duplicate) {
         console.log(
@@ -155,7 +159,13 @@ export class PrintQueue {
 
     try {
       const printers = await this.getPrinters();
-      await this.execute(job.printJob, printers);
+      // Bounded: one printer that stops accepting data (paper out, cover open, a stalled USB
+      // transfer) left this promise pending forever and wedged every ticket queued behind it.
+      // A timeout fails into the normal retry / release path.
+      await Promise.race([
+        this.execute(job.printJob, printers),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Print timed out after 45 s")), 45_000)),
+      ]);
       // Ack if needed. The print itself already physically happened (ink/paper spent) —
       // a failed ack must NOT be retried via the normal job-retry path below, since that
       // re-runs the print and would print the ticket a second time. Instead retry just the

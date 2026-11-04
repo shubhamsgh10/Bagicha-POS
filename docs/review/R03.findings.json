@@ -1,0 +1,86 @@
+{
+  "slice": "R03",
+  "coverage": "Read every line of: client/src/components/Sidebar.tsx 1-169, TopNav.tsx 1-248, TwoFactorPanel.tsx 1-203, UpdateNotification.tsx 1-180, conversations/ChatView.tsx 1-198, conversations/ConversationsView.tsx 1-109, conversations/CustomerContextSidebar.tsx 1-120, conversations/ThreadList.tsx 1-100, conversations/WhatsAppConnectionCard.tsx 1-269, crm/CustomerTimeline.tsx 1-170, live-tables/DeliveryCard.tsx 1-206, ItemRow.tsx 1-118, LiveOrdersPanel.tsx 1-351, OrderCard.tsx 1-489, PickupCard.tsx 1-192, SectionOrdersFlyout.tsx 1-112, TableCard.tsx 1-360, TableDrawer.tsx 1-255, loyalty/LoyaltyCard.tsx 1-93. Also read for reachability: hooks/useLoyalty.ts, hooks/useConversations.ts (useConversationActions), hooks/useLiveOrders.ts (types), LiveTablesDashboard.tsx handleStatusChange, server/routes.ts 2FA routes. Grep shows Sidebar, TableCard, ItemRow (only used by TableCard), TableDrawer, DeliveryCard and PickupCard are not imported by any page (dead code) so defects in them were not reported as reachable except the one latent note below.",
+  "findings": [
+    {
+      "file": "client/src/components/conversations/ConversationsView.tsx",
+      "line": 83,
+      "severity": "medium",
+      "category": "wrong-recipient / stale state",
+      "title": "Reply draft carries over when switching WhatsApp threads, so a message meant for one customer can be sent to another",
+      "detail": "ChatView is rendered without key={selected.id}, so the same component instance is reused across conversations and its local `draft` state (ChatView.tsx line 60) survives a thread switch. On desktop the thread list stays visible next to the chat, so switching threads is one click.",
+      "failure_scenario": "Agent types 'Your order #123 refund is processed' into customer A's thread, clicks customer B in the thread list to check something, comes back to the box (now showing B's chat) and presses Enter: the text is sent to customer B over WhatsApp. Also, a reply still pending for A clears B's draft on success.",
+      "suggested_fix": "Render <ChatView key={selected.id} .../> (or reset draft in an effect on conversation.id)."
+    },
+    {
+      "file": "client/src/components/loyalty/LoyaltyCard.tsx",
+      "line": 18,
+      "severity": "medium",
+      "category": "money / misleading state",
+      "title": "Loyalty 'Redeem' only writes localStorage and shows 'Applied!' — no discount is applied anywhere and points diverge from the server ledger",
+      "detail": "handleRedeem calls useLoyalty().redeem, which just adds to a per-browser localStorage map (useLoyalty.ts lines 73-81); earned points are recomputed client-side as totalSpend*0.1. Nothing calls /api/loyalty/redeem or attaches a discount to an order, yet the UI says 'Redeem 100 pts → ₹10 off' then 'Applied!'. The server has a real append-only loyalty ledger (loyaltyService.redeemPoints) that this card neither reads nor writes.",
+      "failure_scenario": "Manager on Customers page taps Redeem for a customer, sees 'Applied!' and tells the customer ₹10 is off; the bill is unchanged. On another device/browser the same points still show as available, and the server ledger balance shown elsewhere disagrees with this card.",
+      "suggested_fix": "Drive the card from the server loyalty balance and route redemption through the existing elevation-gated /api/loyalty/redeem on a specific order, or remove the Redeem button."
+    },
+    {
+      "file": "client/src/components/conversations/WhatsAppConnectionCard.tsx",
+      "line": 224,
+      "severity": "medium",
+      "category": "broken input / unordered writes",
+      "title": "Numeric settings clamp and POST on every keystroke, making many values untypeable and persisting intermediate caps (incl. maxPerDay)",
+      "detail": "onChange does saveConfig({ botReturnMinutes: Math.max(5, Number(v) || 30) }) and saveConfig({ maxPerDay: Math.max(1, Number(v) || 100) }) (line 232) per keystroke; the controlled value is replaced by the clamped number and each keystroke fires an independent fire-and-forget POST to /api/automation/config.",
+      "failure_scenario": "Admin wants 'Return to bot after' = 15: typing '1' immediately becomes 5, then '5' yields 55 — any value 10-49 starting with 1-4 can't be typed. Clearing maxPerDay to retype it instantly saves 100 (the ban-risk cap the card warns about); several in-flight POSTs can land out of order, persisting an intermediate value.",
+      "suggested_fix": "Keep a local string while editing; validate/clamp and save once on blur (like the text fields), and await/serialize the save."
+    },
+    {
+      "file": "client/src/components/conversations/WhatsAppConnectionCard.tsx",
+      "line": 84,
+      "severity": "low",
+      "category": "swallowed error",
+      "title": "saveConfig updates the UI optimistically and swallows every save failure",
+      "detail": "saveConfig sets local state then fetch(...).catch(() => {}) without checking res.ok. /api/automation/config POST is requireAdmin and can also fail (network, 500, CSRF).",
+      "failure_scenario": "A non-admin (or a failed request) flips 'Auto-send follow-ups' on: the toggle shows ON, server returns 403/500, nothing is saved, and the user believes automated sending is enabled.",
+      "suggested_fix": "Check res.ok, revert the local state and show the error on failure."
+    },
+    {
+      "file": "client/src/components/TwoFactorPanel.tsx",
+      "line": 15,
+      "severity": "low",
+      "category": "error handling",
+      "title": "2FA status query parses error bodies as status, showing 'Disabled' when 2FA is actually enabled",
+      "detail": "The custom queryFn returns r.json() without checking r.ok; a 401/500 body {message} yields totpEnabled undefined → 'Disabled' + 'Enable 2FA'.",
+      "failure_scenario": "Status fetch 500s for an admin with 2FA on; the panel says Disabled. Admin re-runs setup, which issues a new secret; after verifying, the old authenticator entry stops working, causing confusion at next login.",
+      "suggested_fix": "Use apiJson (throws on !ok) and render an error state instead of the Disabled view."
+    },
+    {
+      "file": "client/src/components/UpdateNotification.tsx",
+      "line": 54,
+      "severity": "low",
+      "category": "error handling",
+      "title": "Install button stays stuck on 'Restarting…' if installUpdate rejects",
+      "detail": "handleInstall awaits api.installUpdate() without try/catch; an IPC rejection leaves installing=true (button disabled forever) and surfaces as an unhandled rejection.",
+      "failure_scenario": "The main-process install handler throws (e.g. updater error); the toast stays at 'Restarting…' disabled until the app is restarted manually.",
+      "suggested_fix": "Wrap in try/finally and reset installing on any non-ok outcome."
+    },
+    {
+      "file": "client/src/components/conversations/ThreadList.tsx",
+      "line": 9,
+      "severity": "low",
+      "category": "date display",
+      "title": "Relative day labels use elapsed 24h periods instead of calendar days",
+      "detail": "relativeTime (and CustomerTimeline.formatTime line 47) compute Math.floor(ms/86_400_000); a message from yesterday 11 PM viewed at 9 AM is <24h old so it shows a bare time as if it were today; 'Yesterday' then covers 24-48h.",
+      "failure_scenario": "Agent sees '11:00 pm' on a thread at 9 AM and assumes the customer wrote last night vs. today inconsistently with ChatView's calendar-based 'Today/Yesterday' separator.",
+      "suggested_fix": "Compare calendar dates (IST) like ChatView.dayLabel does."
+    },
+    {
+      "file": "client/src/components/live-tables/TableDrawer.tsx",
+      "line": 223,
+      "severity": "low",
+      "category": "dead code / latent money display",
+      "title": "Unused live-tables components; TableDrawer derives subtotal as total − tax",
+      "detail": "TableDrawer, TableCard, ItemRow, DeliveryCard, PickupCard and Sidebar (which polls /api/live-status every 5 s) are not imported anywhere. TableDrawer computes Subtotal = totalAmount − taxAmount, which CLAUDE.md forbids (must use deriveBillTotals; wrong with discount/container/delivery charges). TableCard's auto-expand effect calls the toggle on every hasNewItems change, collapsing an already-open card.",
+      "failure_scenario": "Not reachable today; if anyone re-mounts TableDrawer, a ₹500 order with ₹50 discount and ₹20 container shows a Subtotal that doesn't foot to Total.",
+      "suggested_fix": "Delete the dead components (or switch to deriveBillTotals before reuse)."
+    }
+  ]
+}

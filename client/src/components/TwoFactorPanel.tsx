@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,9 @@ export function TwoFactorPanel() {
 
   const { data: status, isLoading } = useQuery<Status>({
     queryKey: ["/api/auth/2fa/status"],
-    queryFn: async () => {
-      const r = await fetch(apiUrl("/api/auth/2fa/status"), { credentials: "include" });
-      return r.json();
-    },
+    // apiJson throws on a non-2xx, so an error shows as an error — its body used to be read as the
+    // status (totpEnabled undefined → "Disabled" while 2FA was actually on).
+    queryFn: () => apiJson<Status>("/api/auth/2fa/status"),
   });
 
   const [phase, setPhase] = useState<"idle" | "setup" | "disable">("idle");

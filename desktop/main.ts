@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, session, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, session, dialog, shell } from "electron";
 import { spawn, type ChildProcess } from "child_process";
 import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as E from "../shared/print/escpos.js";
+import { formatISTDateTime } from "../shared/print/formatDate.js";
 import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig, type PrintStationConfig } from "../shared/electron/ipc.js";
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
@@ -160,14 +161,23 @@ function spawnServer(cfg: { DATABASE_URL?: string; SESSION_SECRET?: string }): v
       ...(cfg.SESSION_SECRET ? { SESSION_SECRET: cfg.SESSION_SECRET } : {}),
     },
   });
+  const startedAt = Date.now();
   serverProc.on("exit", (code) => {
     console.warn(`[electron] embedded server exited (${code})`);
     serverProc = null;
-    if (!serverStopping && serverRestarts < 5) {
-      serverRestarts++;
-      console.log(`[electron] restarting embedded server (#${serverRestarts})…`);
-      spawnServer(cfg);
+    if (serverStopping) return;
+    // The budget is for crash LOOPS, not the app's lifetime: a server that ran for 5+ min
+    // before exiting starts a fresh budget (an always-on host used to give up for good after
+    // its 5th crash in weeks). Restarts back off 1 s, 2 s, 4 s … up to 30 s.
+    if (Date.now() - startedAt > 5 * 60_000) serverRestarts = 0;
+    if (serverRestarts >= 5) {
+      console.error("[electron] embedded server keeps crashing — not restarting again");
+      return;
     }
+    const delay = Math.min(30_000, 1000 * 2 ** serverRestarts);
+    serverRestarts++;
+    console.log(`[electron] restarting embedded server (#${serverRestarts}) in ${delay} ms…`);
+    setTimeout(() => { if (!serverStopping && !serverProc) spawnServer(cfg); }, delay);
   });
   serverProc.on("error", (err) => console.error("[electron] embedded server spawn error:", err));
 }
@@ -263,11 +273,16 @@ let printQueue: PrintQueue | null = null;
 let printLog: PrintLog | null = null;
 let attendanceAgent: AttendanceAgent | null = null;
 
+// 60 s cache: printer edits made from ANY other device (a phone, the web app) used to never reach
+// this queue — the cache was only cleared by this window's own Print Settings panel.
+let printerCacheAt = 0;
+const PRINTER_CACHE_MS = 60_000;
 async function getPrinters(): Promise<PrinterConfig[]> {
-  if (printerCache !== null) return printerCache;
+  if (printerCache !== null && Date.now() - printerCacheAt < PRINTER_CACHE_MS) return printerCache;
   const result = await fetchPrinters();
-  if (result === null) return []; // unauthenticated — don't cache, retry on next call
+  if (result === null) return printerCache ?? []; // unauthenticated / offline — keep the last known list
   printerCache = result;
+  printerCacheAt = Date.now();
   return printerCache;
 }
 
@@ -280,10 +295,11 @@ function buildTestBuffer(printer: PrinterConfig): Buffer {
     E.line("TEST PRINT"),
     E.BOLD_OFF,
     E.divider("-", W),
-    E.centered(printer.name, W),
-    E.centered(new Date().toLocaleString("en-IN"), W),
+    // Plain lines under the printer's own ALIGN_CENTER (E.centered double-centres), and IST time.
+    E.line(printer.name),
+    E.line((({ dateStr, timeStr }) => `${dateStr} ${timeStr}`)(formatISTDateTime(new Date()))),
     E.divider("=", W),
-    E.centered("Printer is working correctly!", W),
+    E.line("Printer is working correctly!"),
     E.feed(3),
     E.CUT,
   );
@@ -336,6 +352,25 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  // External links (wa.me, payment pages…) open in the system browser, never as an Electron window:
+  // a child window inherits this window's preload, so a third-party page got window.electronAPI
+  // (raw printing, print-station config, USB scan). about:blank stays in-app — the browser-print
+  // fallback writes its ticket into one.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === "about:blank" || url.startsWith("blob:")) return { action: "allow" };
+    if (/^https?:\/\//i.test(url) || url.startsWith("whatsapp:") || url.startsWith("mailto:")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const current = mainWindow?.webContents.getURL() ?? "";
+    let sameApp = url.startsWith("file://");
+    try { if (!sameApp && current) sameApp = new URL(url).origin === new URL(current).origin; } catch { sameApp = false; }
+    if (!sameApp) {
+      event.preventDefault();
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    }
   });
 
   mainWindow.once("ready-to-show", revealWindow);

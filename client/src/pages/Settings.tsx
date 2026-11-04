@@ -1,4 +1,6 @@
 import { apiUrl } from '@/lib/api';
+import { PinGuard } from "@/components/PinGuard";
+import { describeApiError } from "@/lib/apiError";
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -519,43 +521,14 @@ function MachineInfoPanel() {
 // ── Generate Code panel ───────────────────────────────────────────────────────
 
 function GenerateCodePanel() {
-  const [code, setCode] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const generate = () => {
-    setLoading(true);
-    setTimeout(() => {
-      // Generate a random 8-char alphanumeric pairing code
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const c = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-      setCode(c);
-      setLoading(false);
-    }, 800);
-  };
-
+  // There is no device-pairing service on the server: this panel used to invent a random
+  // code client-side that nothing could ever accept. Say how devices actually connect.
   return (
-    <div className="space-y-4 text-center">
-      <p className="text-xs text-gray-500">
-        Generate a one-time pairing code to connect another device or sync a new terminal.
-      </p>
-      {code ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl py-6 px-4">
-          <p className="text-3xl font-mono font-bold text-emerald-600 tracking-[0.3em]">{code}</p>
-          <p className="text-[10px] text-gray-400 mt-2">This code expires in 10 minutes</p>
-        </div>
-      ) : (
-        <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl py-8 text-gray-400 text-sm">
-          No code generated yet
-        </div>
-      )}
-      <button
-        onClick={generate}
-        disabled={loading}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-[var(--green-700)] hover:bg-[var(--green-800)] transition-colors disabled:opacity-60"
-      >
-        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-        {loading ? "Generating..." : code ? "Regenerate Code" : "Generate Code"}
-      </button>
+    <div className="space-y-3 text-center">
+      <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl py-6 px-4 text-gray-500 text-sm">
+        Pairing codes aren't used. A new terminal or phone connects by opening the POS address
+        and signing in with a staff login or PIN card; the desktop app signs in the same way.
+      </div>
     </div>
   );
 }
@@ -657,13 +630,32 @@ const TEMPLATES: Record<ImportType, { headers: string[]; sample: string[][] }> =
   },
 };
 
+// RFC 4180: quoted fields may hold commas, newlines and doubled quotes (""). The old version split
+// every line on every comma, so a spreadsheet export with "Paneer, Butter" shifted the later
+// columns — prices landed in the wrong field with no error.
 function parseCSV(text: string): string[][] {
-  return text
-    .split(/\r?\n/)
-    .filter(l => l.trim())
-    .map(line =>
-      line.split(",").map(cell => cell.trim().replace(/^["']|["']$/g, ""))
-    );
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"' && cell.trim() === "") { quoted = true; cell = ""; }
+    else if (c === ",") { row.push(cell.trim()); cell = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell.trim()); cell = "";
+      if (row.some((x) => x !== "")) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  row.push(cell.trim());
+  if (row.some((x) => x !== "")) rows.push(row);
+  return rows;
 }
 
 function toCSVBlob(headers: string[], rows: string[][]): Blob {
@@ -692,9 +684,13 @@ function DataImportPanel({ onClose }: { onClose: () => void }) {
     setResult(null);
     file.text().then(text => {
       const all = parseCSV(text);
-      // Skip header row if it matches expected headers (case-insensitive check on first cell)
-      const firstCell = all[0]?.[0]?.toLowerCase() ?? "";
-      const dataRows = (firstCell === tpl.headers[0].toLowerCase() || isNaN(Number(firstCell)))
+      // Skip the first row only when it IS a header row: at least half of its cells name one
+      // of the template's columns. (The old "first cell isn't a number" test dropped the first
+      // real row of every file, since a menu/customer row starts with a name.)
+      const known = new Set(tpl.headers.map(h => h.trim().toLowerCase()));
+      const first = (all[0] ?? []).map(c => (c ?? "").trim().toLowerCase()).filter(Boolean);
+      const headerHits = first.filter(c => known.has(c)).length;
+      const dataRows = first.length > 0 && headerHits * 2 >= Math.min(first.length, known.size)
         ? all.slice(1)
         : all;
       setRows(dataRows.filter(r => r.some(c => c)));
@@ -923,7 +919,16 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await apiRequest("PUT", "/api/settings", formData);
+      // Send only what this form changed: PUTting the whole blob loaded at page open overwrote
+      // settings changed elsewhere since (print settings, sections, page access…) and used to roll
+      // the bill/KOT counters back (the server now ignores those either way).
+      const changed: Record<string, any> = {};
+      for (const k of Object.keys(formData)) {
+        if (k === "billCounter" || k === "kotCounter") continue;
+        const v = (formData as any)[k];
+        if (JSON.stringify(v) !== JSON.stringify((settings as any)?.[k])) changed[k] = v;
+      }
+      await apiRequest("PUT", "/api/settings", changed);
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Settings saved", description: "Restaurant settings updated successfully" });
       closeModal();
@@ -935,6 +940,8 @@ export default function Settings() {
   };
 
   // Generic destructive action handler
+  const [clearOrdersPin, setClearOrdersPin] = useState(false);
+
   const handleDestructiveAction = async (
     endpoint: string,
     method: "POST" | "DELETE",
@@ -952,9 +959,10 @@ export default function Settings() {
       closeModal();
     } catch (err: any) {
       // If endpoint doesn't exist yet, show a friendly message
-      const msg = err.message?.includes("404") || err.message?.includes("not found")
+      const info = describeApiError(err);
+      const msg = info.status === 404
         ? "This feature is not yet configured on this server."
-        : err.message || "Action failed";
+        : info.message || "Action failed";
       toast({ title: "Could not complete action", description: msg, variant: "destructive" });
     } finally {
       setActionLoading(false);
@@ -1096,22 +1104,27 @@ export default function Settings() {
         </Modal>
       )}
 
+      {clearOrdersPin && (
+        <PinGuard
+          actionLabel="Delete all orders"
+          requiredRole="admin"
+          onCancel={() => setClearOrdersPin(false)}
+          onSuccess={() => { setClearOrdersPin(false); void handleDestructiveAction("/api/admin/clear-orders", "DELETE", "All orders and KOT records removed"); }}
+        />
+      )}
+
       {/* Sync Schema (developer tool) */}
       {activeModal === "sync-schema" && (
         <Modal title="Sync Database Schema" onClose={closeModal}>
           <div className="space-y-4">
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700">
-              Compares the current schema definition with the live database and applies any pending structural changes (new tables, new columns). Safe and non-destructive — no data is deleted.
+            {/* This used to run `drizzle-kit push --force` from one tap: --force auto-approves DROPs,
+                and the live database has tables the schema doesn't define (the login sessions table,
+                columns added by scripts/migrate-*.mjs), so it could delete them. Disabled; the
+                server refuses it too. */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              Schema changes are no longer applied from this screen — a one-tap sync could drop tables the
+              app still uses. Database updates ship with the software as reviewed migration scripts.
             </div>
-            <p className="text-xs text-gray-400">Use this after a software update that adds new features requiring schema changes.</p>
-            <button
-              onClick={() => handleDestructiveAction("/api/admin/migrate", "POST", "Schema synced successfully")}
-              disabled={actionLoading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-500 hover:bg-purple-600 transition-colors disabled:opacity-60"
-            >
-              {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-              {actionLoading ? "Syncing..." : "Sync Schema"}
-            </button>
           </div>
         </Modal>
       )}
@@ -1146,7 +1159,8 @@ export default function Settings() {
               confirmLabel="Delete All Orders"
               loading={actionLoading}
               onCancel={() => setConfirmStep(false)}
-              onConfirm={() => handleDestructiveAction("/api/admin/clear-orders", "DELETE", "All orders and KOT records removed")}
+              // The admin PIN the copy asks for is now actually collected (server: requireFreshPin("admin")).
+              onConfirm={() => setClearOrdersPin(true)}
             />
           )}
         </Modal>

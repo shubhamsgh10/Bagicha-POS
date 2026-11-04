@@ -8,6 +8,7 @@
 
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 import QRCode from "qrcode";
 import { logAudit } from "./services/auditService";
 import { getAutomationConfig } from "./services/automationStore";
@@ -48,6 +49,15 @@ function requireAdmin(req: any, res: any, next: any) {
 // ── Authenticated routes ──────────────────────────────────────────────────────
 
 export function registerWhatsAppRoutes(app: Express): void {
+  const replyLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 20,
+    keyGenerator: (req: any) => (req.sessionID ? `s:${req.sessionID}` : `ip:${req.ip}`),
+    validate: { keyGeneratorIpFallback: false },
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many replies in a minute — wait a moment." },
+  });
   // Driver status + QR (rendered server-side as a data URL)
   app.get("/api/whatsapp/status", requireAuth, async (_req: Request, res: Response) => {
     try {
@@ -124,7 +134,9 @@ export function registerWhatsAppRoutes(app: Express): void {
   });
 
   // Agent reply — silences the bot and stamps lastAgentReplyAt
-  app.post("/api/whatsapp/conversations/:id/reply", requireAuth, async (req: Request, res: Response) => {
+  // Free-text sends from the inbox: rate-limited per session (a script could otherwise message every
+  // conversation — sequential ids — and get the number banned) and audited.
+  app.post("/api/whatsapp/conversations/:id/reply", requireAuth, replyLimiter, async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
       const { message } = req.body as { message: string };
@@ -142,6 +154,7 @@ export function registerWhatsAppRoutes(app: Express): void {
       if (!result.success) return res.status(502).json({ error: result.error ?? "Send failed" });
 
       const agentName = (req.user as any)?.username ?? "agent";
+      await logAudit(req, "whatsapp.reply", "conversation", id, { phone: conversation.phone, chars: message.trim().length });
       const msg = await recordMessage({
         conversationId: id,
         direction: "out",

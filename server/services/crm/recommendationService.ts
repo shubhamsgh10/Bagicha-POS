@@ -130,46 +130,35 @@ export async function getRecommendations(key: string): Promise<RecommendationRes
       .slice(0, 3)
       .map(([catId, count]) => ({ category: catId, count }));
 
-    // ── 3. Co-purchased items (items ordered in the same order) ───────────────
-    const coFreq: Record<number, number> = {};
-    const orderedItemsByOrder: Record<number, number[]> = {};
-
-    for (const item of rawItems) {
-      if (!orderedItemsByOrder[item.orderId]) orderedItemsByOrder[item.orderId] = [];
-      orderedItemsByOrder[item.orderId].push(item.menuItemId);
+    // ── 3/4. Upsells: what OTHER customers order together with this customer's favourites ──
+    // The old pass counted co-occurrence only inside this customer's own orders while skipping
+    // every item they'd ordered — which is all of them — so the score was always 0 and "upsells"
+    // were the first 3 rows of an unordered menu read (deleted items included).
+    const triedIds = new Set(Object.keys(itemFreq).map(Number).filter((n) => n > 0));
+    const favIds = topItems.slice(0, 3).map((t) => t.itemId).filter((n) => n > 0);
+    let upsells: RecommendedItem[] = [];
+    if (favIds.length > 0) {
+      const co: any = await db.execute(sql`
+        SELECT oi2.menu_item_id AS id, m.name AS name, COUNT(DISTINCT oi1.order_id)::int AS score
+        FROM order_items oi1
+        JOIN order_items oi2 ON oi2.order_id = oi1.order_id AND oi2.menu_item_id <> oi1.menu_item_id
+        JOIN orders o ON o.id = oi1.order_id AND o.status <> 'cancelled'
+        JOIN menu_items m ON m.id = oi2.menu_item_id AND m.is_available = true AND m.is_deleted = false
+        WHERE oi1.menu_item_id IN (${sql.join(favIds.map((id) => sql`${id}`), sql`, `)})
+        GROUP BY oi2.menu_item_id, m.name
+        ORDER BY score DESC
+        LIMIT 20`);
+      upsells = (co?.rows ?? [])
+        .filter((r: any) => !triedIds.has(Number(r.id)))
+        .slice(0, 3)
+        .map((r: any) => ({
+          itemId: Number(r.id),
+          itemName: String(r.name),
+          score: Number(r.score),
+          count: 0,
+          reason: "Co-purchased" as RecommendedItem["reason"],
+        }));
     }
-
-    const orderedIds = new Set(Object.keys(itemFreq).map(Number));
-
-    for (const itemsInOrder of Object.values(orderedItemsByOrder)) {
-      for (const a of itemsInOrder) {
-        for (const b of itemsInOrder) {
-          if (a !== b && !orderedIds.has(b)) {
-            coFreq[b] = (coFreq[b] ?? 0) + 1;
-          }
-        }
-      }
-    }
-
-    // ── 4. Upsell items (popular in the restaurant but not tried by this customer) ──
-    const topMenuItems = await db
-      .select({ id: menuItems.id, name: menuItems.name, price: menuItems.price })
-      .from(menuItems)
-      .where(sql`${menuItems.isAvailable} = true`)
-      .limit(20);
-
-    const triedIds = new Set(Object.keys(itemFreq).map(Number));
-    const upsells: RecommendedItem[] = topMenuItems
-      .filter(m => !triedIds.has(m.id))
-      .map(m => ({
-        itemId:   m.id,
-        itemName: m.name,
-        score:    coFreq[m.id] ?? 0,
-        count:    0,
-        reason:   "Co-purchased" as RecommendedItem["reason"],
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
 
     return {
       topItems:      topItems.slice(0, 3),

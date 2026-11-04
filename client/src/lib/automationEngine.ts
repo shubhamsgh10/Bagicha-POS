@@ -1,3 +1,4 @@
+import { istHour, istMonthDay } from "@shared/businessDay";
 import { apiUrl } from '@/lib/api';
 import { type CustomerProfile } from "@/hooks/useCustomerIntelligence";
 
@@ -52,7 +53,13 @@ export function loadAutomationSettings(): AutomationSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // Provider secrets live on the server only. Older builds stored them here
+    // in plaintext — drop them from this browser on first read.
+    if (parsed && (parsed.watiApiKey || parsed.metaAccessToken)) {
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(withoutSecrets(parsed))); } catch { /* ignore */ }
+    }
+    return { ...DEFAULT_SETTINGS, ...withoutSecrets(parsed) };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -61,8 +68,13 @@ export function loadAutomationSettings(): AutomationSettings {
 // Backward-compat alias
 export const getAutomationSettings = loadAutomationSettings;
 
+/** The WATI key and Meta token are sent to the server config and never kept in localStorage. */
+function withoutSecrets<T extends Partial<AutomationSettings>>(s: T): T {
+  return { ...s, watiApiKey: "", metaAccessToken: "" };
+}
+
 export function saveAutomationSettings(settings: AutomationSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(withoutSecrets(settings))); } catch { /* storage unavailable */ }
   // Sync provider credentials to server in background when API/Meta mode is active
   if (settings.whatsappMode === "api" || settings.whatsappMode === "meta") {
     syncSettingsToServer(settings).catch(e =>
@@ -185,9 +197,8 @@ interface CustomerExtra {
 function isBirthdayToday(dob: string): boolean {
   const parts = dob.split("-");
   if (parts.length < 3) return false;
-  const today = new Date();
-  return parseInt(parts[1], 10) === today.getMonth() + 1 &&
-         parseInt(parts[2], 10) === today.getDate();
+  // IST month-day ("MM-DD"), not the browser's local date.
+  return `${parts[1].padStart(2, "0")}-${parts[2].slice(0, 2).padStart(2, "0")}` === istMonthDay(new Date());
 }
 
 /**
@@ -467,11 +478,11 @@ export const sendFollowUpMessage = sendFollowUpViaWeb;
 
 /** Push relevant settings to server automation-config.json. */
 export async function syncSettingsToServer(settings: AutomationSettings): Promise<void> {
-  const body: Record<string, unknown> = {
-    enabled:        settings.enabled,
-    maxPerRun:      settings.maxPerRun || settings.dailyLimit,
-    restaurantName: "Bagicha",
-  };
+  // Credentials only. enabled / maxPerRun / restaurantName came from THIS browser's local copy and
+  // overwrote the server's on every Run Now — silently re-enabling the scheduled WhatsApp
+  // automation an admin had turned off, and resetting its batch size. Those are edited on the
+  // server config (Admin → Automation), not synced from here.
+  const body: Record<string, unknown> = {};
   // Only send credentials when non-empty (never overwrite with empty string)
   if (settings.watiApiKey)        body.watiApiKey        = settings.watiApiKey;
   if (settings.watiEndpoint)      body.watiEndpoint      = settings.watiEndpoint;
@@ -591,7 +602,7 @@ export function refreshAutomationState(): void { /* triggers via component state
 // ── Quiet-hours check ─────────────────────────────────────────────────────────
 
 export function isInQuietHours(quietHours: { start: number; end: number }): boolean {
-  const h = new Date().getHours();
+  const h = istHour(new Date());
   const { start, end } = quietHours;
   if (start > end) return h >= start || h < end;   // wraps midnight e.g. 22–09
   return h >= start && h < end;

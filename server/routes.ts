@@ -2,13 +2,14 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
-import { spawn } from "child_process";
 import { storage, OrderNotEditableError } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
-import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
+import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS, planStatusChange } from "@shared/orderMutation";
+import { mergeBlock } from "@shared/orderStatusChange";
+import { weekStringOf } from "@shared/weekMath";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
-import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
+import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate, istCalendarDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
 import { summarizeCollected, collectedBusinessDate } from "@shared/paymentSplit";
 import { planPaymentEdit } from "@shared/paymentEdit";
@@ -60,11 +61,10 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { runPrintStep, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
+import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
-import { generateKOTBuffer, sendToPrinter } from "./printService";
 import {
   createRealtimePublisher,
   publishRealtime,
@@ -79,6 +79,7 @@ import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsapp
 import { registerStaffRoutes } from "./staffRoutes";
 import { priceOrderWithMenu, computeTotalsFromLines, type PricedOrder } from "./services/orderPricing";
 import { computeLineCosts } from "@shared/menuCost";
+import { menuPriceError, menuSizesError } from "@shared/menuValidation";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { orderEditBlock, isNoopItemsSave, kitchenTicketLines, discountNeedsApproval } from "@shared/orderItemsSave";
 import { buildSpecialInstructions } from "@shared/orderItemText";
@@ -381,13 +382,22 @@ export async function registerRoutes(
     res.json(auth);
   });
 
-  // Ensure admin user exists on startup
+  // Bootstrap an admin ONLY on an empty install (no accounts at all). This used to run on every
+  // boot/cold start whenever no account was literally named "admin" — so renaming or deleting the
+  // real admin silently recreated admin/admin123 on production. In production the password must
+  // come from BOOTSTRAP_ADMIN_PASSWORD; the well-known default is only used outside production.
   try {
-    const adminUser = await storage.getUserByUsername("admin");
-    if (!adminUser) {
-      const hashed = await hashPassword("admin123");
-      await storage.createUser({ username: "admin", password: hashed, role: "admin" });
-      console.log("Created default admin user (username: admin, password: admin123)");
+    const existingUsers = await storage.getUsers();
+    if (existingUsers.length === 0) {
+      const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD
+        || (process.env.NODE_ENV === "production" ? null : "admin123");
+      if (bootstrapPassword) {
+        const hashed = await hashPassword(bootstrapPassword);
+        await storage.createUser({ username: "admin", password: hashed, role: "admin" });
+        console.log("Created bootstrap admin user (username: admin) — change its password now.");
+      } else {
+        console.error("[auth] No user accounts exist. Set BOOTSTRAP_ADMIN_PASSWORD to create the first admin.");
+      }
     }
   } catch (err: any) {
     if (err.code === 'ENOTFOUND') {
@@ -412,9 +422,18 @@ export async function registerRoutes(
     message: { message: "Too many login attempts. Try again in 15 minutes." },
   });
 
+  // Per SESSION, failures only. Keyed by IP it was shared by every device in the restaurant (one
+  // public CGNAT address) and counted correct PINs too, so five ordinary manager approvals across
+  // the floor in 5 minutes locked everyone out of every PIN prompt. A brute force still gets only
+  // 5 wrong guesses per session per 5 minutes (and needs a logged-in session for verify-pin).
   const pinLimiter = rateLimit({
     windowMs: 5 * 60 * 1000,    // 5 minutes
     max: 5,
+    skipSuccessfulRequests: true,
+    // A wrong PIN answers 200 {valid:false}, so "successful" is set explicitly by the handlers.
+    requestWasSuccessful: (_req: any, res: any) => res.locals?.pinOk === true,
+    keyGenerator: (req: any) => (req.sessionID ? `s:${req.sessionID}` : `ip:${req.ip}`),
+    validate: { keyGeneratorIpFallback: false },
     standardHeaders: true,
     legacyHeaders: false,
     message: { valid: false, message: "Too many PIN attempts. Try again in 5 minutes." },
@@ -474,6 +493,7 @@ export async function registerRoutes(
       }
 
       delete (req.session as any).pending2faUserId;
+      res.locals.pinOk = true;
 
       req.logIn(user, (err) => {
         if (err) return next(err);
@@ -486,7 +506,9 @@ export async function registerRoutes(
   });
 
   // ── 2FA setup: generate secret + QR (admin, already logged in) ───────────────
-  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+  // requireUserAccount on setup/verify-setup/disable: same users/staff_members id-collision IDOR
+  // as PUT /api/auth/profile (server/selfScope.ts).
+  app.post("/api/auth/2fa/setup", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const secret = generateSecret();
@@ -501,7 +523,7 @@ export async function registerRoutes(
   });
 
   // ── 2FA setup: verify first code, then persist secret ────────────────────────
-  app.post("/api/auth/2fa/verify-setup", requireAuth, async (req, res) => {
+  app.post("/api/auth/2fa/verify-setup", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const { token } = req.body;
@@ -523,7 +545,7 @@ export async function registerRoutes(
   });
 
   // ── 2FA disable ───────────────────────────────────────────────────────────────
-  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+  app.post("/api/auth/2fa/disable", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const { token } = req.body;
@@ -547,6 +569,10 @@ export async function registerRoutes(
   app.get("/api/auth/2fa/status", requireAuth, async (req, res) => {
     try {
       const actor = req.user as any;
+      // A staff-member (PIN card) session has no users row of its own — its id belongs to
+      // staff_members, and reading users by it returned (and setup/disable WROTE) whichever
+      // account shares the number. 2FA is for user accounts only.
+      if (actor?._isStaffMember) return res.json({ totpEnabled: false, available: false });
       const [user] = await db.select().from(users).where(eq(users.id, actor.id));
       res.json({ totpEnabled: !!user?.totpEnabled });
     } catch {
@@ -587,7 +613,8 @@ export async function registerRoutes(
       if (!staffId || !pin) return res.status(400).json({ message: "staffId and pin required" });
 
       const sm = await storage.getStaffMember(Number(staffId));
-      if (!sm || !sm.isActive) return res.status(401).json({ message: "Staff member not found" });
+      // Same rule as card-login: turning a person's Mobile Card off must also stop this login.
+      if (!sm || !sm.isActive || !sm.showOnMobile) return res.status(401).json({ message: "Staff member not found" });
       if (!sm.pin) return res.status(401).json({ message: "No PIN set. Ask manager to set one in Settings → Staff Selector." });
       if (sm.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
 
@@ -720,6 +747,7 @@ export async function registerRoutes(
           id: `u:${match.id}`, name: match.username, role: match.role,
         });
       }
+      res.locals.pinOk = !!match;
       res.json({ valid: !!match });
     } catch (err) {
       console.error("Verify PIN error:", err);
@@ -927,7 +955,8 @@ export async function registerRoutes(
   app.get("/api/users", requireAuth, async (_req, res) => {
     try {
       const allUsers = await storage.getUsers();
-      const safeUsers = allUsers.map(({ password, pin, ...u }) => ({ ...u, pin: !!pin }));
+      // totpSecret too: it used to go to every session (staff PIN cards included).
+      const safeUsers = allUsers.map(({ password, pin, totpSecret, ...u }) => ({ ...u, pin: !!pin }));
       res.json(safeUsers);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch users" });
@@ -1007,28 +1036,12 @@ export async function registerRoutes(
 
   // ── Database migration ────────────────────────────────────────────────────────
 
+  // Disabled: this ran `drizzle-kit push --force`, which auto-approves destructive statements.
+  // The live DB holds tables/columns the schema doesn't declare (the connect-pg-simple sessions
+  // table; columns added by scripts/migrate-*.mjs), so one tap could DROP them. Schema changes go
+  // through reviewed scripts/migrate-*.mjs files instead (CLAUDE.md, Database).
   app.post("/api/admin/migrate", requireAdmin, (_req, res) => {
-    const child = spawn("npx", ["drizzle-kit", "push", "--force"], {
-      cwd: process.cwd(),
-      env: process.env,
-      shell: true,
-    });
-
-    let output = "";
-    child.stdout.on("data", (d: Buffer) => { output += d.toString(); });
-    child.stderr.on("data", (d: Buffer) => { output += d.toString(); });
-
-    child.on("close", (code: number) => {
-      if (code === 0) {
-        res.json({ success: true, output });
-      } else {
-        res.status(500).json({ message: "Migration failed", output });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      res.status(500).json({ message: err.message });
-    });
+    res.status(410).json({ message: "Schema sync from the app is disabled — run the reviewed migration script instead." });
   });
 
   // ── Server logs ───────────────────────────────────────────────────────────────
@@ -1043,16 +1056,27 @@ export async function registerRoutes(
     res.json({ ok: true, clients: clientCount });
   });
 
-  app.post("/api/admin/reset-bill-number", requireAdmin, async (_req, res) => {
+  app.post("/api/admin/reset-bill-number", requireAdmin, async (req, res) => {
     try {
-      await saveSettings({ billCounter: 0 } as any);
+      // order_number is UNIQUE: restarting at ORD0001 while old orders exist made every new order
+      // collide (500 "Failed to create order") until the counter caught up. Only allowed once no
+      // order would collide — i.e. after Clear All Orders.
+      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(orders);
+      if (n > 0) {
+        return res.status(409).json({
+          message: `Bill numbers can't restart while ${n} past orders exist — every new order would reuse an existing number. Clear all orders first.`,
+        });
+      }
+      await saveSettings({ billCounter: 0 } as any, { allowCounters: true });
+      await logAudit(req, "settings.bill_number_reset", "settings", null, {});
       res.json({ success: true, message: "Bill number reset. Next order will be ORD0001." });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Reset failed" });
     }
   });
 
-  app.delete("/api/admin/clear-orders", requireAdmin, async (req, res) => {
+  // Wipes every order, ticket and payment: a fresh admin PIN, not just an admin session.
+  app.delete("/api/admin/clear-orders", requireAdmin, requireFreshPin("admin"), async (req, res) => {
     try {
       // 1. Delete all order-related data
       await db.delete(paymentTransactions);
@@ -1069,10 +1093,10 @@ export async function registerRoutes(
       });
 
       // Reset KOT counter back to 0
-      await saveSettings({ kotCounter: 0 } as any);
+      await saveSettings({ kotCounter: 0 } as any, { allowCounters: true });
 
       // 3. Log audit event
-      logAudit(req, "orders.clear_all", "system", null, {
+      await logAudit(req, "orders.clear_all", "system", null, {
         message: "All orders, KOT records, payment transactions, feedback, and table occupancy states cleared.",
       });
 
@@ -1395,7 +1419,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/categories", requireAuth, async (req, res) => {
+  app.post("/api/categories", requireManagerOrAdmin, async (req, res) => {
     try {
       const categoryData = insertCategorySchema.parse(req.body);
       const category = await storage.createCategory(categoryData);
@@ -1409,7 +1433,7 @@ export async function registerRoutes(
   // Registered before /:id — Express matches routes in registration order, so a literal path
   // (like /reorder) registered AFTER a param path (/:id) is unreachable; it was previously being
   // swallowed by /:id (parseInt("reorder") -> NaN), silently breaking drag-to-reorder.
-  app.put("/api/categories/reorder", requireAuth, async (req, res) => {
+  app.put("/api/categories/reorder", requireManagerOrAdmin, async (req, res) => {
     try {
       const { orderedIds } = req.body;
       if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
@@ -1424,7 +1448,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/categories/:id", requireAuth, async (req, res) => {
+  app.put("/api/categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, description } = req.body;
@@ -1437,7 +1461,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/categories/:id", requireAuth, async (req, res) => {
+  app.delete("/api/categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteCategory(id);
@@ -1511,7 +1535,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/tables", requireAuth, async (req, res) => {
+  app.post("/api/tables", requireManagerOrAdmin, async (req, res) => {
     try {
       const { name, capacity, section } = req.body;
       if (!name) return res.status(400).json({ error: "Table name is required" });
@@ -1526,7 +1550,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/tables/:id", requireAuth, async (req, res) => {
+  app.put("/api/tables/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, capacity, section } = req.body;
@@ -1541,9 +1565,16 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/tables/:id", requireAuth, async (req, res) => {
+  app.delete("/api/tables/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      // Server-side, not just the Tables page's cached check: a table holding an order can't go
+      // (the order would lose its table and the Tables page its running card).
+      const table = await storage.getTableById(id);
+      if (!table) return res.status(404).json({ error: "Table not found" });
+      if (table.currentOrderId || (table.status && table.status !== "free")) {
+        return res.status(409).json({ error: "This table has an active order — settle or move it first.", code: "table_busy" });
+      }
       await storage.deleteTable(id);
       res.json({ success: true });
     } catch (error) {
@@ -1583,7 +1614,7 @@ export async function registerRoutes(
         console.error("[table] shift: destination table status update error (non-fatal):", tableErr);
       }
       try {
-        await storage.updateTableStatus(fromTableId, "free", null);
+        await storage.freeTableIfHeldBy(Number(fromTableId), fromTable.currentOrderId);
       } catch (tableErr) {
         console.error("[table] shift: source table status update error (non-fatal):", tableErr);
       }
@@ -1657,15 +1688,18 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/menu", requireAuth, async (req, res) => {
+  app.post("/api/menu", requireManagerOrAdmin, async (req, res) => {
     try {
       const b = req.body;
       if (!b.name || !b.categoryId) {
         return res.status(400).json({ error: "Name and category are required" });
       }
+      const priceErr = menuPriceError(b.price ?? "0") ?? menuSizesError(Array.isArray(b.sizes) ? b.sizes : null);
+      if (priceErr) return res.status(400).json({ error: priceErr });
       const addonsEnabled = b.addonsEnabled === true;
       const menuItem = await storage.createMenuItem({
         name: String(b.name).trim(),
+        shortCode: b.shortCode ? String(b.shortCode).trim().toUpperCase() : null,
         description: b.description ? String(b.description).trim() : null,
         price: String(b.price ?? "0"),
         categoryId: Number(b.categoryId),
@@ -1684,20 +1718,27 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/menu/:id", requireAuth, async (req, res) => {
+  app.put("/api/menu/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const b = req.body;
+      const priceErr = (b.price !== undefined ? menuPriceError(b.price) : null) ?? (b.sizes !== undefined ? menuSizesError(b.sizes) : null);
+      if (priceErr) return res.status(400).json({ error: priceErr });
       const updatePayload: any = {};
       if (b.name !== undefined)            updatePayload.name = String(b.name).trim();
+      if (b.shortCode !== undefined)       updatePayload.shortCode = b.shortCode ? String(b.shortCode).trim().toUpperCase() : null;
       if (b.description !== undefined)     updatePayload.description = b.description ? String(b.description).trim() : null;
       if (b.price !== undefined)           updatePayload.price = String(b.price);
       if (b.categoryId !== undefined)      updatePayload.categoryId = Number(b.categoryId);
       if (b.isAvailable !== undefined)     updatePayload.isAvailable = b.isAvailable !== false;
       if (b.preparationTime !== undefined) updatePayload.preparationTime = Number(b.preparationTime) || 15;
-      updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
-      updatePayload.addonsEnabled = b.addonsEnabled === true;
-      updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
+      // Only what was sent: an edit that doesn't mention sizes/add-ons (a description fix) used to
+      // null the sizes and clear the add-ons of the item.
+      if (b.sizes !== undefined)           updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
+      if (b.addonsEnabled !== undefined)   updatePayload.addonsEnabled = b.addonsEnabled === true;
+      if (b.addonsEnabled !== undefined || b.addons !== undefined) {
+        updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
+      }
       if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = sanitizeInventoryLinks(b.inventoryLinks);
       const menuItem = await storage.updateMenuItem(id, updatePayload);
       broadcast({ type: "MENU_UPDATE" });
@@ -1708,7 +1749,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/menu/:id", requireAuth, async (req, res) => {
+  app.delete("/api/menu/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteMenuItem(id);
@@ -1720,14 +1761,22 @@ export async function registerRoutes(
   });
 
   // Bulk update menu items
-  app.post("/api/menu/bulk-update", requireAuth, async (req, res) => {
+  app.post("/api/menu/bulk-update", requireManagerOrAdmin, async (req, res) => {
     try {
       const { ids, updates } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
       const allowed: any = {};
       if (updates.isAvailable !== undefined) allowed.isAvailable = Boolean(updates.isAvailable);
       if (updates.categoryId !== undefined) allowed.categoryId = Number(updates.categoryId);
-      if (updates.price !== undefined) allowed.price = String(updates.price);
+      if (updates.price !== undefined) {
+        const e = menuPriceError(updates.price);
+        if (e) return res.status(400).json({ error: e });
+        allowed.price = String(updates.price);
+      }
+      if (Array.isArray(updates.sizes)) {
+        const e = menuSizesError(updates.sizes);
+        if (e) return res.status(400).json({ error: e });
+      }
       // A size-priced item's actual sale price comes from sizes[].price, never the base
       // `price` column (see shared/orderPricing.ts's floor logic) — bulk price updates
       // used to only ever send `price`, so they silently no-op for every sized item
@@ -1753,7 +1802,7 @@ export async function registerRoutes(
   });
 
   // Bulk delete menu items
-  app.post("/api/menu/bulk-delete", requireAuth, async (req, res) => {
+  app.post("/api/menu/bulk-delete", requireManagerOrAdmin, async (req, res) => {
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
@@ -1798,7 +1847,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/inventory", requireAuth, async (req, res) => {
+  app.post("/api/inventory", requireManagerOrAdmin, async (req, res) => {
     try {
       const inventoryData = insertInventorySchema.parse(req.body);
       const inventory = await storage.createInventoryItem(inventoryData);
@@ -1808,7 +1857,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/inventory/:id", requireAuth, async (req, res) => {
+  app.put("/api/inventory/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const inventoryData = insertInventorySchema.partial().parse(req.body);
@@ -1819,7 +1868,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/inventory/:id", requireAuth, async (req, res) => {
+  app.delete("/api/inventory/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteInventoryItem(id);
@@ -1841,7 +1890,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/inventory-categories", requireAuth, async (req, res) => {
+  app.post("/api/inventory-categories", requireManagerOrAdmin, async (req, res) => {
     try {
       const categoryData = insertInventoryCategorySchema.parse(req.body);
       const category = await storage.createInventoryCategory(categoryData);
@@ -1853,7 +1902,7 @@ export async function registerRoutes(
 
   // Registered before /:id — a literal path after a param path is unreachable in Express (see the
   // /api/categories/reorder bug fixed below in this same file).
-  app.put("/api/inventory-categories/reorder", requireAuth, async (req, res) => {
+  app.put("/api/inventory-categories/reorder", requireManagerOrAdmin, async (req, res) => {
     try {
       const { orderedIds } = req.body;
       if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
@@ -1864,7 +1913,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+  app.put("/api/inventory-categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, description } = req.body;
@@ -1876,7 +1925,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+  app.delete("/api/inventory-categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteInventoryCategory(id);
@@ -1965,15 +2014,11 @@ export async function registerRoutes(
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
       const rawItems = await storage.getOrderItems(id);
-      // Build name map from all referenced menu items in one batch
-      const menuItemIds = Array.from(new Set(rawItems.map((i: any) => i.menuItemId)));
+      // Names for lines without a stored one: ONE query for just id+name (it was one full-row
+      // SELECT per menu item, on every POS reopen and after every KOT print).
+      const menuRows = await storage.getMenuRowsForOrder(rawItems.map((i: any) => i.menuItemId));
       const menuNameMap: Record<number, string> = {};
-      await Promise.all(
-        menuItemIds.map(async (mid: any) => {
-          const m = await storage.getMenuItemById(mid);
-          if (m) menuNameMap[m.id] = m.name;
-        })
-      );
+      for (const m of menuRows) menuNameMap[m.id] = m.name;
       const items = rawItems.map((item: any) => ({
         ...item,
         name: item.name || menuNameMap[item.menuItemId] || "Deleted Item",
@@ -1993,6 +2038,22 @@ export async function registerRoutes(
       // never reach createOrderWithItems as order columns.
       const { items, print: _print, auto: _auto, markBilled: _markBilled, ...orderInfo } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
+      // A table holds one running order. Creating a second one (two phones opening the same free
+      // table, or a stale Tables page) silently re-pointed the table at the new order and left the
+      // first one open with nowhere to reach it from — billed by nobody.
+      if (orderInfo.tableId) {
+        const table = await storage.getTableById(Number(orderInfo.tableId));
+        if (table?.currentOrderId) {
+          const current = await storage.getOrderById(table.currentOrderId);
+          if (current && current.status !== "cancelled" && current.paymentStatus !== "paid" && current.status !== "hold") {
+            return res.status(409).json({
+              error: `${table.name ?? "This table"} already has an open order (#${current.id}). Open it from the Tables page instead.`,
+              code: "table_busy",
+              orderId: current.id,
+            });
+          }
+        }
+      }
       // Print instrumentation exists ONLY when a print was requested — a plain save keeps its
       // exact pre-existing response (no Server-Timing header, no [print-perf] log line).
       const printReq = parseSavePrintRequest(req.body);
@@ -2155,7 +2216,9 @@ export async function registerRoutes(
           console.error("[order] table status update error (non-fatal):", tableErr);
         }
       }
-      broadcast({ type: 'NEW_ORDER', order, items });
+      // The order row only — the raw client items array could push the event past Pusher's ~10 KB
+      // limit (rejected = no live update anywhere), and no screen reads it.
+      broadcast({ type: 'NEW_ORDER', order });
 
       // ── CRM: log ORDER_PLACED event + update segmentation (fire-and-forget) ──
       const crmKey = (order.customerPhone?.trim() || order.customerName?.trim());
@@ -2461,13 +2524,16 @@ export async function registerRoutes(
         const diff = diffOrderLines(beforeLines, afterLines);
 
         const discountBefore = parseFloat(String((existingOrderRow as any)?.discountAmount ?? 0));
-        const discountAfter = priced.discount;
+        // Compared at the 2 decimals the order row STORES: the unrounded priced total (690.795) vs the
+        // stored 690.80 logged a spurious "Bill Modified" row on saves that changed no money.
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const discountAfter = r2(priced.discount);
         const containerBefore = parseFloat(String((existingOrderRow as any)?.containerCharge ?? 0));
-        const containerAfter = priced.containerCharge;
+        const containerAfter = r2(priced.containerCharge);
         const deliveryBefore = parseFloat(String((existingOrderRow as any)?.deliveryCharge ?? 0));
-        const deliveryAfter = priced.deliveryCharge;
+        const deliveryAfter = r2(priced.deliveryCharge);
         const totalBefore = parseFloat(String((existingOrderRow as any)?.totalAmount ?? 0));
-        const totalAfter = priced.total;
+        const totalAfter = Number(priced.total.toFixed(2));
         const moneyChanged = discountBefore !== discountAfter || containerBefore !== containerAfter
           || deliveryBefore !== deliveryAfter || totalBefore !== totalAfter;
 
@@ -2577,12 +2643,29 @@ export async function registerRoutes(
   app.put("/api/orders/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const orderData = orderUpdateAllowlist.parse(req.body);
-      const order = await storage.updateOrder(id, orderData);
+      const parsed = orderUpdateAllowlist.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid order data" });
+      const orderData = parsed.data;
+      const existing = await storage.getOrderById(id);
+      if (!existing) return res.status(404).json({ error: "Order not found", code: "not_found" });
+      // Status is only a kitchen-progress label here — cancel, recall and settle each have their own
+      // PIN-gated, audited route (shared/orderMutation.ts planStatusChange).
+      if (orderData.status !== undefined) {
+        const block = planStatusChange(existing as any, orderData.status as string);
+        if (block) return res.status(block.status).json({ error: block.error, code: block.code });
+      }
+      const order = await storage.updateOrderIfState(id, orderData, {
+        status: (existing as any).status,
+        paymentStatus: (existing as any).paymentStatus,
+      });
+      if (!order) {
+        return res.status(409).json({ error: "This order changed while you were editing it — refresh and try again.", code: "conflict" });
+      }
       broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
     } catch (error) {
-      res.status(400).json({ error: "Invalid order data" });
+      console.error("[order] PUT /api/orders/:id failed:", error);
+      res.status(500).json({ error: "Failed to update order" });
     }
   });
 
@@ -2630,7 +2713,11 @@ export async function registerRoutes(
       let primaryMethod = "cash";
 
       if (isSplitPath) {
-        // Rich split-payment path — amounts come from the entered breakdown.
+        // Rich split-payment path — amounts come from the entered breakdown. Cash and UPI only:
+        // any other label was counted in Sales but in neither the Cash nor the UPI figure.
+        if (payments.some((p: any) => Number(p?.amount) > 0 && p?.method !== "cash" && p?.method !== "upi")) {
+          return res.status(400).json({ error: "Only Cash and UPI payments are accepted.", code: "bad_method" });
+        }
         for (const p of payments) {
           if (Number(p.amount) > 0) {
             breakdown[p.method] = (breakdown[p.method] || 0) + Number(p.amount);
@@ -2643,6 +2730,9 @@ export async function registerRoutes(
         // concept exists here — Billing.tsx's own dialog never sends payments[], so it
         // can't reach the write-off branch below regardless.
         primaryMethod = paymentMethod || "cash";
+        if (!["cash", "upi", "due", "other"].includes(primaryMethod)) {
+          return res.status(400).json({ error: "Only Cash and UPI payments are accepted.", code: "bad_method" });
+        }
         if (!isDue) breakdown = { [primaryMethod]: orderTotal };
       }
 
@@ -2651,8 +2741,10 @@ export async function registerRoutes(
       // is a shared function rather than a hand-rolled comparison on each side.
       const paidAmt = Object.values(breakdown).reduce((a, b) => a + b, 0);
       const changeDue = isDue ? 0 : Math.max(0, paidAmt - orderTotal);
-      const shortfall = isDue ? 0 : Math.max(0, orderTotal - paidAmt);
-      const isShort = shortfall > SETTLE_TOLERANCE;
+      const gap = isDue ? 0 : Math.max(0, orderTotal - paidAmt);
+      const isShort = gap > SETTLE_TOLERANCE;
+      // Sub-tolerance gaps are rounding, not a write-off (shared/settlement.ts) — store 0.
+      const shortfall = isShort ? gap : 0;
 
       if (isShort) {
         if (!isSplitPath || !allowShortfall) {
@@ -2721,7 +2813,7 @@ export async function registerRoutes(
       const freeTable = async () => {
         if (!(order as any).tableId) return;
         try {
-          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number((order as any).tableId), id);
           broadcast({ type: "TABLE_UPDATE" });
         } catch (tableErr) {
           console.error("[payment] table free error (non-fatal):", tableErr);
@@ -2771,29 +2863,34 @@ export async function registerRoutes(
 
       broadcast({ type: "ORDER_UPDATE", order });
 
+      // Awaited (bounded) before the response: on Vercel work still running after res.json can be
+      // frozen and lost — loyalty points, the settlement WhatsApp and the feedback request used to
+      // be fire-and-forget here. Points and feedback are plain DB writes and are awaited fully;
+      // the message (which may compose text with the AI) gets at most 1.5 s, then continues
+      // best-effort, so Settle never waits on it for long. All never reject.
+      const quiet = (label: string, p: Promise<unknown>) => p.catch((e: any) => console.warn(`[settle] ${label} failed:`, e));
+      const bounded = (p: Promise<unknown>, ms: number) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+      const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
+      const after: Array<Promise<unknown>> = [];
       if (!isDue) {
-        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
         if (key) {
-          earnPointsForOrder(
+          after.push(quiet("loyalty earn", earnPointsForOrder(
             key,
             (order as any).customerName ?? key,
             id,
             parseFloat(String((order as any).totalAmount ?? 0)),
-          ).catch((e: any) => console.warn("[Loyalty] earn failed:", e));
-
+          )));
           // Settlement relationship message — welcome (new) / admin template (returning)
-          triggerSettlementMessage(key, (order as any).customerName ?? key, (order as any).customerPhone)
-            .catch((e: any) => console.warn("[CRM] settlement message failed:", e));
+          after.push(bounded(quiet("settlement message",
+            triggerSettlementMessage(key, (order as any).customerName ?? key, (order as any).customerPhone)), 1500));
         }
-        scheduleFeedbackForOrder(id).catch((e: any) => console.warn("[Feedback] schedule failed:", e));
-      } else {
+        after.push(quiet("feedback schedule", scheduleFeedbackForOrder(id)));
+      } else if (key) {
         // Bill left unpaid → itemized due-bill reminder with the customer's order details
-        const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
-        if (key) {
-          triggerDueBillMessage(id, (order as any).customerName ?? key, (order as any).customerPhone)
-            .catch((e: any) => console.warn("[CRM] due reminder failed:", e));
-        }
+        after.push(bounded(quiet("due reminder",
+          triggerDueBillMessage(id, (order as any).customerName ?? key, (order as any).customerPhone)), 1500));
       }
+      await Promise.all(after);
 
       res.json(order);
     } catch (error) {
@@ -3089,7 +3186,7 @@ export async function registerRoutes(
       await storage.updateOrder(id, { status: "hold", tableId: null, tableNumber: null } as any);
       if (tableId) {
         try {
-          await storage.updateTableStatus(Number(tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number(tableId), id);
         } catch (tableErr) {
           console.error("[order] table free error on hold (non-fatal):", tableErr);
         }
@@ -3131,14 +3228,30 @@ export async function registerRoutes(
       if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      await storage.updateOrder(id, { status: "cancelled", cancelReason: reason } as any);
+      if ((order as any).status === "cancelled") {
+        return res.status(409).json({ error: "This order is already cancelled.", code: "cancelled" });
+      }
+      // A paid order's money is already in the day's takings; cancelling it would drop the sale
+      // while the cash stays in the drawer. (A due may be cancelled — that forgives the tab.)
+      if ((order as any).paymentStatus === "paid") {
+        return res.status(409).json({ error: "This order is already paid — it can't be cancelled.", code: "settled" });
+      }
+      // Conditional: a settle landing between the read above and this write wins (409), instead of
+      // the cancel silently wiping a payment that was just recorded.
+      const cancelled = await storage.updateOrderIfState(id, { status: "cancelled", cancelReason: reason } as any, {
+        status: (order as any).status,
+        paymentStatus: (order as any).paymentStatus,
+      });
+      if (!cancelled) {
+        return res.status(409).json({ error: "This order changed while it was being cancelled — refresh and try again.", code: "conflict" });
+      }
       // Non-fatal — the order is already marked cancelled above; a failure here must not
       // report "Failed to cancel order" for an order that genuinely IS cancelled now
       // (same reasoning as the settlement/creation table-status fixes elsewhere in this
       // file). Worst case the table is left showing "running" and needs a manual fix.
       if ((order as any).tableId) {
         try {
-          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number((order as any).tableId), id);
         } catch (tableErr) {
           console.error("[order] table free error on cancel (non-fatal):", tableErr);
         }
@@ -3177,11 +3290,19 @@ export async function registerRoutes(
   app.put("/api/orders/:id/move-table", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { newTableId, newTableName } = req.body;
-      if (!newTableId) return res.status(400).json({ error: "newTableId required" });
+      const { newTableName } = req.body;
+      const newTableId = Number(req.body?.newTableId);
+      if (!Number.isInteger(newTableId) || newTableId <= 0) return res.status(400).json({ error: "newTableId required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
+      if ((order as any).paymentStatus === "paid" || ["cancelled", "hold"].includes((order as any).status)) {
+        return res.status(409).json({ error: "Only an open order can be moved.", code: "not_open" });
+      }
       const oldTableId = (order as any).tableId;
+      // Claim the target first, conditionally: it must still be free.
+      if (!(await storage.claimFreeTable(newTableId, id))) {
+        return res.status(409).json({ error: "That table is no longer free — pick another.", code: "table_busy" });
+      }
       // Update order with new table FIRST — this is the authoritative write (same
       // reasoning as /api/tables/:id/shift above: order.tableId is what other reads key
       // off). The two table-status flips are best-effort display bookkeeping on top of
@@ -3192,15 +3313,10 @@ export async function registerRoutes(
       await storage.updateOrder(id, { tableId: newTableId, tableNumber: newTableName || String(newTableId) } as any);
       if (oldTableId) {
         try {
-          await storage.updateTableStatus(Number(oldTableId), "free", null);
+          await storage.freeTableIfHeldBy(Number(oldTableId), id);
         } catch (tableErr) {
           console.error("[table] move: old table status update error (non-fatal):", tableErr);
         }
-      }
-      try {
-        await storage.updateTableStatus(newTableId, "running", id);
-      } catch (tableErr) {
-        console.error("[table] move: new table status update error (non-fatal):", tableErr);
       }
       await logAudit(req, "order.move_table", "order", id, {
         orderNumber: (order as any).orderNumber,
@@ -3209,40 +3325,20 @@ export async function registerRoutes(
       });
       broadcast({ type: "TABLE_UPDATE" });
       broadcast({ type: "ORDER_UPDATE" });
-      res.json({ success: true });
 
-      // Fire-and-forget KOT print after table move if setting enabled
-      const settings = getSettings();
-      if (settings.printSettings.kot.printOnTableMove && settings.printSettings.kot.kotPrinterId) {
-        const printer = settings.printSettings.printers.find(p => p.id === settings.printSettings.kot.kotPrinterId);
-        if (printer) {
-          (async () => {
-            try {
-              const [movedOrder] = await db.select().from(orders).where(eq(orders.id, id));
-              if (!movedOrder) return;
-              const rawItems = await db
-                .select({ menuItemId: orderItems.menuItemId, name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`, quantity: orderItems.quantity, size: orderItems.size, specialInstructions: orderItems.specialInstructions })
-                .from(orderItems)
-                .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
-                .where(eq(orderItems.orderId, id));
-              const buf = generateKOTBuffer({
-                orderNumber: movedOrder.orderNumber,
-                tableNumber: movedOrder.tableNumber,
-                isReprint: false,
-                isDelta: false,
-                newItems: rawItems.map(i => ({ itemId: i.menuItemId, name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null })),
-                modifiedItems: [],
-                cancelledItems: [],
-                kotSettings: settings.printSettings.kot,
-                width: printer.width ?? 32,
-              });
-              await sendToPrinter(printer, buf);
-            } catch (e) {
-              console.warn('[Print/TableMove]', e);
-            }
-          })();
+      // KOT after a table move (setting) goes through the normal print pipeline — live settings,
+      // category routing, the print_jobs bridge to the desktop host — as a full reprint showing the
+      // new table, and finishes BEFORE the response. It used to be built from the fallback
+      // settings and sent straight to the printer after res.json: on Vercel it could neither reach
+      // a LAN/USB printer nor survive the function being frozen. A print failure never fails the move.
+      if (getSettings().printSettings.kot.printOnTableMove) {
+        try {
+          await runKotPrint({ req, orderId: id, reprint: true });
+        } catch (e) {
+          console.warn("[Print/TableMove]", e);
         }
       }
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to move table" });
     }
@@ -3257,6 +3353,8 @@ export async function registerRoutes(
       const targetOrder = await storage.getOrderById(targetOrderId);
       const sourceOrder = await storage.getOrderById(sourceOrderId);
       if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
+      const mergeErr = mergeBlock(targetOrder as any, sourceOrder as any);
+      if (mergeErr) return res.status(mergeErr.status).json({ error: mergeErr.error, code: mergeErr.code });
 
       const sourceItems = await storage.getOrderItems(sourceOrderId);
       const targetExistingItems = await storage.getOrderItems(targetOrderId);
@@ -3270,9 +3368,14 @@ export async function registerRoutes(
       // Delivery charge: same rule — the merged order carries both orders' charges.
       const deliveryCharge = (Number((targetOrder as any).deliveryCharge) || 0)
         + (Number((sourceOrder as any).deliveryCharge) || 0);
+      // Discount: the merged bill keeps BOTH orders' discounts (aggregate-neutral, like the
+      // charges). It used to keep only the target's, so merging a discounted table into another
+      // charged the customer more than the two bills it replaced.
+      const discount = (Number((targetOrder as any).discountAmount) || 0)
+        + (Number((sourceOrder as any).discountAmount) || 0);
       const merged = computeTotalsFromLines(
         allItems.map((i) => parseFloat(i.price as any) * i.quantity),
-        (targetOrder as any).discountAmount,
+        discount,
         containerCharge,
         deliveryCharge,
       );
@@ -3302,11 +3405,15 @@ export async function registerRoutes(
         targetTotals: {
           totalAmount: merged.total.toFixed(2),
           taxAmount: merged.tax.toFixed(2),
+          discountAmount: merged.discount.toFixed(2),
           subtotalAmount: merged.subtotal.toFixed(2),
           containerCharge: merged.containerCharge.toFixed(2),
           deliveryCharge: merged.deliveryCharge.toFixed(2),
         } as any,
       });
+      if (!updatedTarget) {
+        return res.status(409).json({ error: "One of these orders changed while merging — refresh and try again.", code: "conflict" });
+      }
 
       await logAudit(req, "order.merge", "order", targetOrderId, {
         targetOrderNumber: (targetOrder as any).orderNumber,
@@ -3333,6 +3440,9 @@ export async function registerRoutes(
       if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: "itemIds required" });
       const sourceOrder = await storage.getOrderById(id);
       if (!sourceOrder) return res.status(404).json({ error: "Order not found" });
+      if ((sourceOrder as any).paymentStatus === "paid" || ["cancelled", "hold", "served", "delivered"].includes((sourceOrder as any).status)) {
+        return res.status(409).json({ error: "Only an open, unpaid order can be split.", code: "not_open" });
+      }
       const allItems = await storage.getOrderItems(id);
       const splitItems = allItems.filter((i) => itemIds.includes(i.id));
       if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
@@ -3423,6 +3533,18 @@ export async function registerRoutes(
         } as any,
       });
 
+      // Move the split-out items' stock with them: the new order deducts them, the source's next
+      // reconcile would otherwise have RESTORED them (its ledger still held their 'sale' rows while
+      // its items no longer did). Net zero, and each order's ledger now matches its own items.
+      // Non-fatal, like every other post-commit reconcile.
+      try {
+        await storage.reconcileOrderInventory(newOrder.id, splitItems.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity, size: i.size })), actorRefFromReq(req));
+        const remaining = await storage.getOrderItems(id);
+        await storage.reconcileOrderInventory(id, remaining.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity, size: i.size })), actorRefFromReq(req));
+      } catch (invErr) {
+        console.error("[order] split inventory reconcile error (non-fatal):", invErr);
+      }
+
       await logAudit(req, "order.split", "order", id, {
         sourceOrderNumber: (sourceOrder as any).orderNumber,
         newOrderNumber,
@@ -3461,17 +3583,31 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
+      if (!["pending", "in-progress", "completed"].includes(status)) {
+        return res.status(400).json({ error: "Invalid KOT status" });
+      }
       const updateData: any = { status };
       if (status === 'completed') updateData.completedAt = new Date();
       const ticket = await storage.updateKotTicket(id, updateData);
+      if (!ticket) return res.status(404).json({ error: "KOT not found" });
 
-      // When KOT is completed, update the associated order to "ready"
-      if (status === 'completed' && ticket.orderId) {
-        await storage.updateOrder(ticket.orderId, { status: "ready" } as any);
-      }
-      // When KOT starts (in-progress), update order to "preparing"
-      if (status === 'in-progress' && ticket.orderId) {
-        await storage.updateOrder(ticket.orderId, { status: "preparing" } as any);
+      // Starting a ticket moves its order to "preparing", completing it to "ready" — but only while
+      // the order is still on the floor. A stale tap on an old ticket used to flip a cancelled or
+      // settled order back to ready/preparing, putting it back into sales and onto the Tables page.
+      // Same rule as PUT /api/orders/:id (planStatusChange), conditional write, never fatal.
+      const nextOrderStatus = status === 'completed' ? "ready" : status === 'in-progress' ? "preparing" : null;
+      if (nextOrderStatus && ticket?.orderId) {
+        try {
+          const ord = await storage.getOrderById(ticket.orderId);
+          if (ord && !planStatusChange(ord as any, nextOrderStatus) && (ord as any).status !== nextOrderStatus) {
+            await storage.updateOrderIfState(ticket.orderId, { status: nextOrderStatus } as any, {
+              status: (ord as any).status,
+              paymentStatus: (ord as any).paymentStatus,
+            });
+          }
+        } catch (e) {
+          console.error("[kot] order status follow-up failed (non-fatal):", e);
+        }
       }
 
       broadcast({ type: 'KOT_UPDATE', ticket });
@@ -3752,7 +3888,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/logs — get automation logs, newest first */
-  app.get("/api/automation/logs", requireAuth, (req, res) => {
+  app.get("/api/automation/logs", requireManagerOrAdmin, (req, res) => {
     const limit  = parseInt(String(req.query.limit  ?? "200"), 10);
     const offset = parseInt(String(req.query.offset ?? "0"),   10);
     const logs   = loadLogs().slice().reverse(); // newest first
@@ -3769,7 +3905,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/stats — campaign performance summary */
-  app.get("/api/automation/stats", requireAuth, (_req, res) => {
+  app.get("/api/automation/stats", requireManagerOrAdmin, (_req, res) => {
     res.json(getAutomationStats());
   });
 
@@ -3784,7 +3920,7 @@ export async function registerRoutes(
   });
 
   /** POST /api/automation/prefs/:customerId — update customer opt-out pref */
-  app.post("/api/automation/prefs/:customerId", requireAuth, (req, res) => {
+  app.post("/api/automation/prefs/:customerId", requireManagerOrAdmin, (req, res) => {
     const { customerId } = req.params;
     const { doNotSend, mutedUntil } = req.body as { doNotSend?: boolean; mutedUntil?: string };
     setCustomerPref(decodeURIComponent(customerId), { doNotSend, mutedUntil });
@@ -3792,7 +3928,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/prefs — all customer preferences */
-  app.get("/api/automation/prefs", requireAuth, (_req, res) => {
+  app.get("/api/automation/prefs", requireManagerOrAdmin, (_req, res) => {
     res.json(loadCustomerPrefs());
   });
 
@@ -3828,6 +3964,33 @@ export async function registerRoutes(
       res.json(results.filter(r => r.phone));
     } catch (error) {
       res.status(500).json({ error: "Search failed" });
+    }
+  });
+
+  /**
+   * GET /api/crm/segments — every customer's RFM segment in ONE query, keyed by customer key.
+   * The Intelligence grid used to fire GET /api/crm/customers/:key per card (several queries each)
+   * just to draw the RFM chip.
+   */
+  app.get("/api/crm/segments", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db
+        .select({
+          key: customersMaster.key,
+          segment: customerSegments.segment,
+          rfmScore: customerSegments.rfmScore,
+          recencyScore: customerSegments.recencyScore,
+          frequencyScore: customerSegments.frequencyScore,
+          monetaryScore: customerSegments.monetaryScore,
+          updatedAt: customerSegments.updatedAt,
+        })
+        .from(customerSegments)
+        .innerJoin(customersMaster, eq(customersMaster.id, customerSegments.customerId));
+      const byKey: Record<string, Omit<typeof rows[number], "key">> = {};
+      for (const { key, ...seg } of rows) byKey[key] = seg;
+      res.json(byKey);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
     }
   });
 
@@ -3904,10 +4067,13 @@ export async function registerRoutes(
       const customerId = await resolveCustomerId(key, name, phone);
       const profile    = await upsertCustomerProfile(customerId, extra as any);
 
-      // Backfill phone into any past orders that had no phone for this customer
+      // Backfill phone into past phone-less orders ONLY when a phone was just added to a customer
+      // that had none (backfillPhone), and only for orders under this customer's exact key. It ran on
+      // every save and matched the free-text display name too, so walk-ins of other people sharing
+      // a first name were given this customer's phone (merging them into one customer).
       let backfilled = 0;
-      if (phone && (key || name)) {
-        backfilled = await backfillOrderPhone(key, name, phone);
+      if (phone && key && (extra as any).backfillPhone === true) {
+        backfilled = await backfillOrderPhone(key, key, phone);
       }
 
       res.json({ ok: true, id: customerId, profile: dbProfileToExtra(profile), backfilled });
@@ -4026,6 +4192,21 @@ export async function registerRoutes(
     }
   });
 
+  // Registered BEFORE /api/crm/segment/:key — Express matches in order, so "batch" was being
+  // captured as a customer key and this admin route was unreachable.
+  /**
+   * POST /api/crm/segment/batch
+   * Runs full batch segmentation for all customers.
+   */
+  app.post("/api/crm/segment/batch", requireAdmin, async (_req, res) => {
+    try {
+      const result = await runSegmentationForAll();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   /**
    * POST /api/crm/segment/:key
    * Recomputes the RFM segment for a single customer.
@@ -4045,18 +4226,6 @@ export async function registerRoutes(
     }
   });
 
-  /**
-   * POST /api/crm/segment/batch
-   * Runs full batch segmentation for all customers.
-   */
-  app.post("/api/crm/segment/batch", requireAdmin, async (_req, res) => {
-    try {
-      const result = await runSegmentationForAll();
-      res.json({ ok: true, ...result });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message });
-    }
-  });
 
   // ── Server-side automation ─────────────────────────────────────────────────
 
@@ -4064,10 +4233,14 @@ export async function registerRoutes(
    * POST /api/crm/automation/run
    * Runs the server-side rule engine (separate from the client-side engine).
    */
-  app.post("/api/crm/automation/run", requireAuth, async (req, res) => {
+  // Admin only, like POST /api/automation/run: it sends a REAL WhatsApp batch (any session could
+  // fire one, with force on by default and any batch size — a ban risk on the restaurant's number).
+  app.post("/api/crm/automation/run", requireAdmin, async (req, res) => {
     try {
       const { force, limit } = req.body as { force?: boolean; limit?: number };
-      const result = await runAutomationServerSide({ force: force ?? true, limit });
+      const n = Number(limit);
+      const safeLimit = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 50) : undefined;
+      const result = await runAutomationServerSide({ force: force === true, limit: safeLimit });
       res.json({ ok: true, ...result });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
@@ -4198,7 +4371,7 @@ export async function registerRoutes(
   // GET /api/attendance/report?month=YYYY-MM
   app.get("/api/attendance/report", requireAuth, async (req, res) => {
     try {
-      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      const month = (req.query.month as string) || istCalendarDate().slice(0, 7);
       res.json(await storage.getAttendanceReport(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -4468,12 +4641,8 @@ export async function registerRoutes(
   // GET /api/shifts/roster?week=YYYY-WW
   app.get("/api/shifts/roster", requireAuth, async (req, res) => {
     try {
-      const week = req.query.week as string || (() => {
-        const now = new Date();
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-        return `${now.getFullYear()}-${String(weekNum).padStart(2, '0')}`;
-      })();
+      // shared/weekMath.ts, the same week rule as the Staff page (the inline formula disagreed with it).
+      const week = (req.query.week as string) || weekStringOf(new Date(`${istCalendarDate()}T12:00:00`));
       res.json(await storage.getRoster(week));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -4504,7 +4673,7 @@ export async function registerRoutes(
   // month from stored punch endpoints. Body { month?: "YYYY-MM" } (defaults to current month).
   app.post("/api/attendance/recompute-shifts", requireAdmin, async (req, res) => {
     try {
-      const month = (req.body?.month as string) || new Date().toISOString().slice(0, 7);
+      const month = (req.body?.month as string) || istCalendarDate().slice(0, 7);
       res.json(await recomputeShiftSessions(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });

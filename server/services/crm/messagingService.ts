@@ -10,8 +10,10 @@
  * Existing sendViaWhatsAppWeb (client-side) is NOT changed.
  */
 
+import { normalizeWaPhone } from "../whatsapp/types";
+import { automatedSendBlock } from "../whatsapp/outboundQueue";
 import { db } from "../../db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { customerMessages } from "../../../shared/schema";
 import { resolveCustomerId } from "./customerIdService";
 import { logMessageSentEvent } from "./eventService";
@@ -48,7 +50,9 @@ async function sendWhatsAppWATI(
   watiEndpoint: string
 ): Promise<SendResult> {
   const normalised = phone.replace(/\D/g, "");
-  const e164       = normalised.startsWith("91") ? normalised : `91${normalised}`;
+  // Same rule as normalizeWaPhone: a 10-digit mobile that itself starts with 91 (9187654321) is
+  // NOT already country-coded — the startsWith("91") test sent it to a 10-digit, invalid number.
+  const e164       = normalizeWaPhone(normalised);
 
   try {
     const res = await fetch(`${watiEndpoint}/api/v1/sendSessionMessage/${e164}`, {
@@ -124,7 +128,7 @@ async function sendSMS(
   }
 
   const normalised = to.replace(/\D/g, "");
-  const mobile     = normalised.startsWith("91") ? normalised : `91${normalised}`;
+  const mobile     = normalizeWaPhone(normalised);
 
   try {
     const url = new URL("https://api.msg91.com/api/sendhttp.php");
@@ -152,6 +156,8 @@ async function sendSMS(
 // ── Unified send interface ────────────────────────────────────────────────────
 
 export interface MessagingConfig {
+  /** An automated send (rule engine / settlement): checked against opt-outs and maxPerDay first. */
+  automated?:     boolean;
   watiApiKey?:    string;
   watiEndpoint?:  string;
   msg91AuthKey?:  string;
@@ -182,6 +188,13 @@ export async function sendMessage(
   let result: SendResult = { success: false, mode: "dry_run", error: "Unsupported channel" };
 
   // ── Route by channel ──────────────────────────────────────────────────────
+  if (payload.channel === "whatsapp" && config.automated) {
+    const block = await automatedSendBlock(payload.to);
+    if (block) {
+      console.log(`[CRM][WhatsApp] not sent to ${payload.to}: ${block}`);
+      return { success: false, mode: "dry_run", error: block === "opted_out" ? "Customer opted out" : "Daily WhatsApp limit reached" };
+    }
+  }
   if (payload.channel === "whatsapp") {
     const driver = getDriver();
     if (driver && driver.getState() === "connected") {
@@ -239,7 +252,10 @@ async function logToDb(
   result:       SendResult
 ): Promise<void> {
   try {
-    const customerId = await resolveCustomerId(customerKey, customerName);
+    // Pass the phone: without it a name-keyed customer got a SECOND customers_master row whenever
+    // the key differed from the canonical one, splitting their history and opt-out.
+    const phone = payload.channel !== "email" ? payload.to : undefined;
+    const customerId = await resolveCustomerId(customerKey, customerName, phone);
 
     await db.insert(customerMessages).values({
       customerId,
@@ -275,6 +291,8 @@ export async function getCustomerMessages(
     .select()
     .from(customerMessages)
     .where(eq(customerMessages.customerId, customerId))
-    .orderBy(customerMessages.createdAt)
-    .limit(limit);
+    // The LATEST messages (it returned the oldest 50, so recent ones never showed).
+    .orderBy(desc(customerMessages.createdAt))
+    .limit(limit)
+    .then((rows) => rows.reverse()); // back to oldest → newest for display
 }

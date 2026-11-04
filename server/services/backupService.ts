@@ -9,6 +9,8 @@ import { gzip } from "zlib";
 import { promisify } from "util";
 import { db } from "../db";
 import * as T from "../../shared/schema";
+import { is } from "drizzle-orm";
+import { PgTable } from "drizzle-orm/pg-core";
 
 const gzipAsync = promisify(gzip);
 const MAX_RETAINED = 30;
@@ -45,56 +47,19 @@ export function isConfigured(): boolean {
   return false;
 }
 
+// EVERY table shared/schema.ts defines, discovered from its exports. The hand-kept list this
+// replaced had drifted: no restaurant_settings (tax rate, printers, counters — the single source
+// of truth), staff_profiles, attendance, leaves, shifts, conversations or print_jobs. Four at a
+// time so a backup never holds more than four pool connections.
 async function dumpAllTables() {
-  const [
-    users, categories, inventoryCategories, menuItems, inventory, stockMovements, orders, orderItems,
-    kotTickets, tables, sales, deliveryIntegrations,
-    customersMaster, customerProfiles, customerEvents, customerSegments,
-    automationRules, automationJobs, customerMessages,
-    coupons, couponRedemptions, loyaltyPoints, feedback,
-    paymentTransactions, dailyDigests,
-    attendanceRecords, attendanceSyncLog, staffMembers, auditLogs,
-  ] = await Promise.all([
-    db.select().from(T.users),
-    db.select().from(T.categories),
-    db.select().from(T.inventoryCategories),
-    db.select().from(T.menuItems),
-    db.select().from(T.inventory),
-    db.select().from(T.stockMovements),
-    db.select().from(T.orders),
-    db.select().from(T.orderItems),
-    db.select().from(T.kotTickets),
-    db.select().from(T.tables),
-    db.select().from(T.sales),
-    db.select().from(T.deliveryIntegrations),
-    db.select().from(T.customersMaster),
-    db.select().from(T.customerProfiles),
-    db.select().from(T.customerEvents),
-    db.select().from(T.customerSegments),
-    db.select().from(T.automationRules),
-    db.select().from(T.automationJobs),
-    db.select().from(T.customerMessages),
-    db.select().from(T.coupons),
-    db.select().from(T.couponRedemptions),
-    db.select().from(T.loyaltyPoints),
-    db.select().from(T.feedback),
-    db.select().from(T.paymentTransactions),
-    db.select().from(T.dailyDigests),
-    db.select().from(T.attendanceRecords),
-    db.select().from(T.attendanceSyncLog),
-    db.select().from(T.staffMembers),
-    db.select().from(T.auditLogs),
-  ]);
-
-  return {
-    users, categories, inventoryCategories, menuItems, inventory, stockMovements, orders, orderItems,
-    kotTickets, tables, sales, deliveryIntegrations,
-    customersMaster, customerProfiles, customerEvents, customerSegments,
-    automationRules, automationJobs, customerMessages,
-    coupons, couponRedemptions, loyaltyPoints, feedback,
-    paymentTransactions, dailyDigests,
-    attendanceRecords, attendanceSyncLog, staffMembers, auditLogs,
-  };
+  const entries = Object.entries(T).filter(([, v]) => is(v as any, PgTable)) as Array<[string, PgTable]>;
+  const out: Record<string, unknown[]> = {};
+  for (let i = 0; i < entries.length; i += 4) {
+    const batch = entries.slice(i, i + 4);
+    const rows = await Promise.all(batch.map(([, t]) => db.select().from(t as any)));
+    batch.forEach(([name], j) => { out[name] = rows[j]; });
+  }
+  return out;
 }
 
 export async function runBackup(): Promise<{ key: string; sizeBytes: number; durationMs: number }> {
@@ -104,7 +69,7 @@ export async function runBackup(): Promise<{ key: string; sizeBytes: number; dur
   const bucket = getBucket();
 
   const tables = await dumpAllTables();
-  const payload = JSON.stringify({ timestamp: new Date().toISOString(), version: 1, tables });
+  const payload = JSON.stringify({ timestamp: new Date().toISOString(), version: 2, tables });
   const compressed = await gzipAsync(Buffer.from(payload, "utf-8"));
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-");

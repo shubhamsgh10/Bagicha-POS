@@ -103,7 +103,9 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
   async function action(label: string, url: string, body?: any) {
     setBusyAction(label);
     try {
-      const res = await fetch(url, {
+      // apiUrl(): a bare relative path never reached the API from the Electron thin client
+      // (file:// origin) or any host with VITE_API_BASE_URL.
+      const res = await fetch(apiUrl(url), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -166,7 +168,9 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
         <Field label="Key Secret">
           <input
             type="password"
-            value={config.razorpayKeySecret}
+            // The server returns a saved secret as "***configured***". Shown as the value, typing
+            // appended to it and saved "***configured***<new>" as the real secret; blank instead.
+            value={config.razorpayKeySecret === "***configured***" ? "" : config.razorpayKeySecret}
             onChange={e => set("razorpayKeySecret", e.target.value.trim())}
             placeholder={config.razorpayKeySecret === "***configured***" ? "(saved — type to replace)" : "secret"}
             className={inputCls}
@@ -175,7 +179,9 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
         <Field label="Webhook Secret (optional)">
           <input
             type="password"
-            value={config.razorpayWebhookSecret}
+            // The server returns a saved secret as "***configured***". Shown as the value, typing
+            // appended to it and saved "***configured***<new>" as the real secret; blank instead.
+            value={config.razorpayWebhookSecret === "***configured***" ? "" : config.razorpayWebhookSecret}
             onChange={e => set("razorpayWebhookSecret", e.target.value.trim())}
             placeholder={config.razorpayWebhookSecret === "***configured***" ? "(saved — type to replace)" : "for /api/razorpay/webhook"}
             className={inputCls}
@@ -204,7 +210,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
             min={0}
             max={23}
             value={config.dailyDigestHour}
-            onChange={e => set("dailyDigestHour", Math.max(0, Math.min(23, Number(e.target.value) || 23)))}
+            onChange={e => set("dailyDigestHour", ((n) => Number.isFinite(n) ? Math.max(0, Math.min(23, n)) : 23)(Number(e.target.value)))}
             className={inputCls}
           />
         </Field>
@@ -289,7 +295,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
             min={0}
             max={23}
             value={config.birthdayHour}
-            onChange={e => set("birthdayHour", Math.max(0, Math.min(23, Number(e.target.value) || 9)))}
+            onChange={e => set("birthdayHour", ((n) => Number.isFinite(n) ? Math.max(0, Math.min(23, n)) : 9)(Number(e.target.value)))}
             className={inputCls}
           />
         </Field>
@@ -314,7 +320,7 @@ export function GrowthSettingsPanel({ onClose }: { onClose: () => void }) {
           onClick={async () => {
             setBusyAction("Run birthday scan");
             try {
-              const res = await fetch("/api/automation/birthday/run", {
+              const res = await fetch(apiUrl("/api/automation/birthday/run"), {
                 method: "POST", credentials: "include",
               });
               const data = await res.json() as {

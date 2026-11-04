@@ -356,10 +356,34 @@ export default function POS() {
     action();
   };
 
+  // Hold / Move / Merge act on the SAVED order. Lines added since the last save live only
+  // in this tab's cart, so save it first (a plain save — no print; an unchanged cart is a
+  // server no-op). Without this, items typed in just before tapping Hold/Move/Merge were lost.
+  const saveCartBeforeOrderAction = async (): Promise<boolean> => {
+    if (!activeOrderId || cartItems.length === 0) return true;
+    lastSaveRef.current = null;
+    try {
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/items`, {
+        orderId: activeOrderId,
+        items: buildItemsPayload(cartItems),
+        discountAmount: discountAmt.toFixed(2),
+        containerCharge: containerCharge.toFixed(2),
+        deliveryCharge: deliveryCharge.toFixed(2),
+        cancelledKotItems: buildCancelledKotItemsPayload(),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
+      return true;
+    } catch (err: any) {
+      toast({ title: "Could not save the cart first", description: describeApiError(err).message, variant: "destructive" });
+      return false;
+    }
+  };
+
   const handleMoveTable = async (newTable: any) => {
     if (!activeOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("PUT", `/api/orders/${activeOrderId}/move-table`, {
         newTableId: newTable.id,
         newTableName: newTable.name,
@@ -378,6 +402,7 @@ export default function POS() {
     if (!activeOrderId || !sourceTable.currentOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("POST", "/api/orders/merge", {
         targetOrderId: activeOrderId,
         sourceOrderId: sourceTable.currentOrderId,
@@ -398,6 +423,7 @@ export default function POS() {
     if (!activeOrderId) return;
     setActionLoading(true);
     try {
+      if (!(await saveCartBeforeOrderAction())) return;
       await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {});
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({ title: "Order placed on hold" });
@@ -766,7 +792,14 @@ export default function POS() {
     const loadedItems: CartItem[] = (existingOrder.items || []).map((item: any) => {
       const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
       // Open items (negative menuItemId) and deleted menu items fall back to the name stored on the row
-      const name = menuItem?.name || item.name || "Unknown Item";
+      // A sized line is stored as "Name (Size)"; with no menu row (open item, or the item is Out of
+      // Stock and missing from /api/menu) strip that suffix, or every save appended the size again
+      // ("Pizza (L) (L)") and the doubled name reached the KOT and bill.
+      const storedName: string = item.name || "";
+      const sizeSuffix = item.size ? ` (${item.size})` : "";
+      const name = menuItem?.name
+        || (sizeSuffix && storedName.endsWith(sizeSuffix) ? storedName.slice(0, -sizeSuffix.length) : storedName)
+        || "Unknown Item";
       const price = parseFloat(item.price);
       const sm = (item.serviceMode as ItemServiceMode) || "dinein";
       // The saved string is variants | "Note: <text>" | + addons. Putting all of it into
@@ -964,7 +997,8 @@ export default function POS() {
         setActiveOrderId(order.id);
         setCartLoaded(false); // allow reload of cart from new order
       } else if (mode === "kot-print") {
-        toast({ title: "KOT sent!" });
+        // No toast here: the save succeeded but the print result isn't known yet —
+        // handleSavedPrint toasts the real outcome (sent / browser / failed / nothing new).
         setActiveOrderId(order.id);
         setCartLoaded(false);
         void handleSavedPrint("kot", order.id, order, order.print);
@@ -995,6 +1029,11 @@ export default function POS() {
         setCartLoaded(false);
         void handleSavedPrint("bill", order.id, order, order.print, "always");
       } else if (mode === "settle") {
+        // Record the order this cart now IS before paying. Otherwise a payment that fails (network
+        // stall, 503, an expired write-off PIN) left activeOrderId null, and the retry created a
+        // SECOND order — a duplicate kitchen ticket and stock deduction — while this one stayed
+        // open on the table.
+        setActiveOrderId(order.id);
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
           ? { orderId: order.id, order, ...sd }
@@ -1004,7 +1043,7 @@ export default function POS() {
     },
     onError: (error: any) => {
       if (submitModeRef.current === "settle") finishSettleTiming(0, "error");
-      toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
+      toast({ title: "Failed to place order", description: describeApiError(error).message, variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
       endPrintTap();
@@ -1034,7 +1073,7 @@ export default function POS() {
       if (mode === "kot") {
         toast({ title: "KOT sent!", description: "Kitchen notified with updated items" });
       } else if (mode === "kot-print") {
-        toast({ title: "KOT sent!" });
+        // The print outcome toast (from handleSavedPrint) is the one that tells the truth.
         void handleSavedPrint("kot", vars.orderId, order, order.print);
       } else if (mode === "save") {
         toast({ title: "Order updated!" });
@@ -1183,7 +1222,7 @@ export default function POS() {
     const addonPart = [...addons].map(a => a.name).sort().join(",");
     const variantPart = Object.values(variants).join("-");
     // Include activeItemMode in mergeKey so same item in different modes stays separate
-    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}-${activeItemMode}`;
+    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}-${newLineMode}`;
     const uniqueKey = notes ? `${mergeKey}-${Date.now()}` : mergeKey;
 
     if (isEdit) {
@@ -1196,7 +1235,7 @@ export default function POS() {
       setCartItems(prev => {
         const existing = !notes ? prev.find(c => c.cartKey === mergeKey) : null;
         if (existing) return prev.map(c => c.cartKey === mergeKey ? { ...c, quantity: c.quantity + qty } : c);
-        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined, serviceMode: activeItemMode }];
+        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined, serviceMode: newLineMode }];
       });
     }
     setModal(null);
@@ -1206,11 +1245,11 @@ export default function POS() {
 
   const directAddItem = (item: any) => {
     const basePrice = parseFloat(item.price || "0");
-    const cartKey = `${item.id}-${activeItemMode}`;
+    const cartKey = `${item.id}-${newLineMode}`;
     setCartItems(prev => {
       const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1, serviceMode: activeItemMode }];
+      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1, serviceMode: newLineMode }];
     });
   };
 
@@ -1294,9 +1333,9 @@ export default function POS() {
       openItemSeqRef.current -= 1;
       const id = openItemSeqRef.current;
       setCartItems(prev => [...prev, {
-        cartKey: `open-${id}-${activeItemMode}`,
+        cartKey: `open-${id}-${newLineMode}`,
         id, name: openItemName.trim(), basePrice: price, addons: [], variants: {},
-        notes: "", totalPrice: price, quantity: openItemQty, serviceMode: activeItemMode,
+        notes: "", totalPrice: price, quantity: openItemQty, serviceMode: newLineMode,
       }]);
     }
     closeOpenItemDialog();
@@ -1354,6 +1393,13 @@ export default function POS() {
   // "dinein"). Today every standalone entry carries ?mode=, so this only removes a trap; the two
   // render blocks below used to keep their own copies of this rule, now they read this one.
   const isTableSession = !posMode && (!!preselectedTableId || !!editOrderId || isSectionMode);
+  // The service mode a NEW cart line gets — the same value buildItemsPayload persists for it.
+  // Outside table/section sessions the line used to keep "dinein" in the cart while the server
+  // stored "pickup"/"delivery", so after the first save wasItemKotd() missed it: removing it
+  // skipped the cancel-reason dialog and every later save was refused with a 400.
+  const newLineMode: ItemServiceMode = isTableSession
+    ? activeItemMode
+    : (isDeliveryOrPickup ? (currentOrderType === "delivery" ? "delivery" : "pickup") : "dinein");
   // Container and delivery charges are manually staff-entered flat amounts, untaxed, not
   // computed from item quantities/serviceMode.
   const grandTotal = total + containerCharge + deliveryCharge;
@@ -1589,7 +1635,10 @@ export default function POS() {
     } else {
       const hasSizes = Array.isArray(found.sizes) && found.sizes.length > 0;
       const hasAddons = found.addonsEnabled && Array.isArray(found.addons) && found.addons.length > 0;
-      if (hasSizes || hasAddons) {
+      const hasVariants = Array.isArray(found.variants) && found.variants.length > 0;
+      // Same rule as a menu tile: anything with a choice to make goes through the picker
+      // (required variant groups and notes used to be skipped from short-code entry).
+      if (hasSizes || hasAddons || hasVariants || found.notesAllowed) {
         openPicker(found);
       } else {
         directAddItem(found);
@@ -1813,8 +1862,14 @@ export default function POS() {
                 <button
                   key={o.id}
                   onClick={async () => {
+                    try {
+                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
+                    } catch (err: any) {
+                      toast({ title: "Could not recall the order", description: describeApiError(err).message, variant: "destructive" });
+                      queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
+                      return; // keep the dialog open so staff see the list again
+                    }
                     setShowRecallDialog(false);
-                    await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
                     queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
                     const modeParam = o.orderType === "delivery" ? "delivery"
                       : o.orderType === "takeaway" ? "pickup" : null;
@@ -2033,7 +2088,10 @@ export default function POS() {
 
             {/* New Order — hidden on mobile */}
             <button
-              disabled={isOff("clearCart")}
+              disabled={isOff("clearCart") || !!activeOrderId}
+              // Disabled while editing a saved order: it cleared the cart but kept activeOrderId, so the
+              // "new" order was saved INTO the previous one (and refused with a cancel-reason 400).
+              title={activeOrderId ? "Finish or leave this order first — this screen is editing a saved order" : undefined}
               onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
@@ -2608,7 +2666,7 @@ export default function POS() {
                   // notes) there can be MULTIPLE simultaneous lines for the same item.id — only show
                   // a working pill when there's exactly one, so +/- never has to guess which line to
                   // touch; otherwise fall back to the existing plain "+" (opens the picker, as today).
-                  const plainCartKey = `${item.id}-${activeItemMode}`;
+                  const plainCartKey = `${item.id}-${newLineMode}`;
                   const matchingLines = needsPicker ? cartItems.filter(c => c.id === item.id) : [];
                   const singleLine = matchingLines.length === 1 ? matchingLines[0] : null;
                   const pillCartKey = needsPicker ? (singleLine ? singleLine.cartKey : null) : plainCartKey;
@@ -2754,7 +2812,18 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
+                  onClick={() => go("clearCart", "Clear All Items", () => {
+                    // On a saved order, only lines not yet saved can go here — removing a line the
+                    // kitchen already has needs its own cancel reason (× on the row), and clearing
+                    // everything used to make every later save fail with a 400.
+                    if (activeOrderId) {
+                      const kept = cartItems.filter(wasItemKotd);
+                      setCartItems(kept);
+                      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
+                      return;
+                    }
+                    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+                  })}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >

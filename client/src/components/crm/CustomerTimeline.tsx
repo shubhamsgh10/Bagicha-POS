@@ -10,6 +10,7 @@
  * Drop-in addition to CustomerDrawer via the useCrmProfile hook.
  */
 
+import { istCalendarDate } from "@shared/businessDay";
 import { useMemo } from "react";
 import {
   ShoppingBag, MessageCircle, Zap, Star, User, Info,
@@ -47,7 +48,9 @@ const DEFAULT_META = { Icon: Info, dot: "bg-gray-300", label: "Event" };
 function formatTime(ts: string): string {
   const d = new Date(ts);
   const today = new Date();
-  const diff  = Math.floor((today.getTime() - d.getTime()) / 86_400_000);
+  // Calendar days (IST), same as the thread list — not elapsed 24-hour blocks.
+  const dayNum = (x: Date) => { const [y, m, dd] = istCalendarDate(x).split("-").map(Number); return Date.UTC(y, m - 1, dd) / 86_400_000; };
+  const diff  = dayNum(today) - dayNum(d);
 
   if (diff === 0) return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   if (diff === 1) return "Yesterday";

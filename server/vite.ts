@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { inspect } from "util";
 import fs from "fs";
 import path from "path";
 import { createServer as createViteServer, createLogger } from "vite";
@@ -14,9 +15,17 @@ import { pushLog } from "./logBuffer";
 
 // Capture console.error into the buffer as well
 const _origError = console.error.bind(console);
+// Never throws: JSON.stringify blew up on circular objects (sockets, req/res) and BigInt — inside
+// the very catch blocks that log errors, so the handler then failed to send its 500 — and printed
+// every Error as "{}".
 console.error = (...args: any[]) => {
   _origError(...args);
-  pushLog("error", args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
+  try {
+    pushLog("error", args.map((a) =>
+      a instanceof Error ? `${a.name}: ${a.message}${a.stack ? `\n${a.stack}` : ""}`
+        : typeof a === "object" && a !== null ? inspect(a, { depth: 3, breakLength: 160 })
+        : String(a)).join(" "));
+  } catch { /* logging must never fail the caller */ }
 };
 
 export function log(message: string, source = "express") {

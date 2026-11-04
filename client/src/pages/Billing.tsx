@@ -32,7 +32,12 @@ import { serialNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
-import { paymentLabel } from "@shared/paymentSplit";
+import { paymentLabel, isDueOrder } from "@shared/paymentSplit";
+import { useRole, ROLE_LEVEL } from "@/hooks/useRole";
+import { PinGuard } from "@/components/PinGuard";
+import { lockedDialogProps } from "@/lib/dialogLock";
+import { describeApiError } from "@/lib/apiError";
+import { DueSettleDialog } from "@/components/DueSettleDialog";
 import type { PrintApiResponse } from "@shared/print/types";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 
@@ -62,6 +67,20 @@ function ensureRazorpayScript(): Promise<boolean> {
 export default function Billing() {
   const { toast } = useToast();
   const [payingOrder, setPayingOrder] = useState<any | null>(null);
+  // An open due (served + unpaid) settles through the PIN-gated, audited settle-due route — the
+  // same dialog Order History uses. Billing's own "Mark as Paid" goes through the POS payment
+  // route, which also frees the order's table (a new party may be seated there now) and re-fires
+  // loyalty points and the settlement WhatsApp for a bill that was closed long ago.
+  const [settlingDue, setSettlingDue] = useState<any | null>(null);
+  // Coupon / loyalty redeem apply a discount, so the server requires manager elevation. A staff
+  // session had no way to give it (no PIN step) and always got a raw 403. Managers/admins go
+  // straight through; everyone else types a manager/admin PIN first (verify-pin grants it).
+  const loginRole = useRole();
+  const [pinFor, setPinFor] = useState<null | { label: string; run: () => void }>(null);
+  const withManagerPin = (label: string, run: () => void) => {
+    if ((ROLE_LEVEL[loginRole] ?? 0) >= ROLE_LEVEL.manager) run();
+    else setPinFor({ label, run });
+  };
   const [paymentMethod, setPaymentMethod] = useState("cash");
 
   // ── Coupon state ─────────────────────────────────────────────────────────
@@ -144,10 +163,12 @@ export default function Billing() {
     if (!payingOrder) return;
     const key = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
     if (!key) return;
+    let cancelled = false;
     fetch(apiUrl(`/api/loyalty/${encodeURIComponent(key)}`), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setLoyalty(d); })
+      .then(d => { if (d && !cancelled) setLoyalty(d); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [payingOrder?.id]);
 
   const processPaymentMutation = useMutation({
@@ -163,9 +184,12 @@ export default function Billing() {
         body: JSON.stringify({ orderId: vars.id }),
         credentials: 'include',
       })
-        .then((res) => res.json().then((data) => ({ res, data })))
+        .then((res) => res.json().catch(() => ({})).then((data: any) => ({ res, data })))
         .then(async ({ res, data }) => {
-          if (!res.ok) return;
+          if (!res.ok) {
+            toast({ title: 'Bill print failed', description: data?.message || `Print service answered ${res.status}. Reprint from the order.`, variant: 'destructive' });
+            return;
+          }
           const { handlePrintResponse } = await import('@/lib/printGateway');
           const outcome = await handlePrintResponse(data, {
             orderId: vars.id,
@@ -179,7 +203,9 @@ export default function Billing() {
             toast(BROWSER_BILL_TOAST);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          toast({ title: 'Bill print failed', description: 'Payment is saved. Could not reach the print service — reprint from the order.', variant: 'destructive' });
+        });
       setPayingOrder(null);
     },
     onError: (error: any) => {
@@ -243,19 +269,6 @@ export default function Billing() {
     setCouponMsg(null);
     try {
       const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
-      const res = await apiRequest("POST", "/api/coupons/apply", {
-        // First validate to get id
-        couponId: 0,
-        orderId:  payingOrder.id,
-        customerKey,
-      });
-      // We instead use validate then apply
-      void res;
-    } catch {
-      // ignore — fall through to two-step flow below
-    }
-    try {
-      const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
       const orderAmount = deriveBillTotals(payingOrder).subtotal;
 
       const validateRes = await apiRequest("POST", "/api/coupons/validate", {
@@ -283,7 +296,7 @@ export default function Billing() {
         setCouponMsg({ ok: false, text: applyData.error || "Could not apply" });
       }
     } catch (e: any) {
-      setCouponMsg({ ok: false, text: e?.message || "Coupon error" });
+      setCouponMsg({ ok: false, text: describeApiError(e).message || "Coupon error" });
     } finally {
       setCouponBusy(false);
     }
@@ -580,7 +593,10 @@ export default function Billing() {
                       <Button
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => { setPayingOrder(order); setPaymentMethod(order.paymentMethod || "cash"); }}
+                        onClick={() => {
+                          if (isDueOrder(order)) { setSettlingDue(order); return; }
+                          setPayingOrder(order); setPaymentMethod(order.paymentMethod || "cash");
+                        }}
                       >
                         <CreditCard className="w-3 h-3 mr-1" />
                         Collect Payment
@@ -618,7 +634,18 @@ export default function Billing() {
 
       {/* Payment Dialog */}
       <Dialog open={!!payingOrder} onOpenChange={() => setPayingOrder(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" {...lockedDialogProps(!!pinFor)}>
+          {pinFor && (
+            <PinGuard
+              actionLabel={pinFor.label}
+              requiredRole="manager"
+              onSuccess={() => { const run = pinFor.run; setPinFor(null); run(); }}
+              onCancel={() => setPinFor(null)}
+            />
+          )}
+          {settlingDue && (
+            <DueSettleDialog order={settlingDue} onClose={() => { setSettlingDue(null); queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); }} />
+          )}
           <DialogHeader>
             <DialogTitle>Collect Payment</DialogTitle>
             <DialogDescription>
@@ -642,7 +669,7 @@ export default function Billing() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={applyCoupon}
+                  onClick={() => withManagerPin("Apply coupon", () => void applyCoupon())}
                   disabled={couponBusy || !couponCode.trim()}
                 >
                   {couponBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
@@ -667,7 +694,7 @@ export default function Billing() {
                     <Button
                       size="sm"
                       className="h-7 text-xs bg-amber-500 hover:bg-amber-600"
-                      onClick={redeemLoyalty}
+                      onClick={() => withManagerPin("Redeem points", () => void redeemLoyalty())}
                       disabled={loyaltyBusy}
                     >
                       {loyaltyBusy
@@ -690,10 +717,10 @@ export default function Billing() {
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  {/* Cash and UPI only: Card / Online money was counted in Sales but in neither the
+                      Cash nor the UPI tile (Reports, Tables), so the day never balanced. */}
                   <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="card">Card</SelectItem>
                   <SelectItem value="upi">UPI (manual)</SelectItem>
-                  <SelectItem value="online">Online</SelectItem>
                   <SelectItem value="due">Due / Pay later</SelectItem>
                 </SelectContent>
               </Select>

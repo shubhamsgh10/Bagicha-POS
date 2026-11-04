@@ -97,12 +97,15 @@ export function useLiveOrders() {
   const { lastMessage, connectionStatus } = useRealtime();
   const mountedRef  = useRef(true);
   const loadingRef  = useRef(false);
+  // A change arriving mid-load (TABLE_UPDATE / ORDER_UPDATE) used to be dropped until the next
+  // 30 s poll: remember it and load once more when the current load finishes.
+  const reloadAgainRef = useRef(false);
   const ordersRef   = useRef<LiveOrder[]>([]);
   useEffect(() => { ordersRef.current = orders; }, [orders]);
 
   // ── Full load ─────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    if (loadingRef.current) return;
+    if (loadingRef.current) { reloadAgainRef.current = true; return; }
     loadingRef.current = true;
     try {
       // open=true: the server returns only orders that are neither served nor cancelled. This
@@ -146,13 +149,17 @@ export function useLiveOrders() {
       if (mountedRef.current) setIsLoading(false);
     } finally {
       loadingRef.current = false;
+      if (reloadAgainRef.current && mountedRef.current) {
+        reloadAgainRef.current = false;
+        queueMicrotask(() => { void loadAll(); });
+      }
     }
   }, []);
 
   useEffect(() => {
     mountedRef.current = true;
     loadAll();
-    const id = setInterval(loadAll, 30_000);
+    const id = setInterval(() => { if (!document.hidden) void loadAll(); }, 30_000) /* paused while the tab is hidden */;
     return () => {
       mountedRef.current = false;
       clearInterval(id);

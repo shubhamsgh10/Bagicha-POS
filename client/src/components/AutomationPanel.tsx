@@ -1,6 +1,9 @@
 import { apiUrl } from '@/lib/api';
 
+import { createPatchSaver } from "@/lib/configSaver";
+import { normalizePhone } from "@/utils/whatsapp";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { toast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, CheckCircle, Zap, MessageSquare, ChevronDown, ChevronUp,
@@ -163,9 +166,11 @@ function QueueCard({ item, onSent }: { item: FollowUpItem; onSent: (item: Follow
 
   const handleSend = useCallback(() => {
     if (!item.customer.phone) return;
-    const digits = item.customer.phone.replace(/\D/g, "");
-    const phone  = digits.startsWith("91") ? digits : `91${digits}`;
-    if (phone.length < 12) return;
+    const phone = normalizePhone(item.customer.phone);
+    if (phone.length !== 12) {
+      toast({ title: "Can't send", description: `${item.customer.phone} isn't a valid mobile number.`, variant: "destructive" });
+      return;
+    }
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(editedMsg)}`, "_blank", "noopener,noreferrer");
     logMessageSent(item.customer.key, item.customer.name, item.trigger as TriggerType, editedMsg, "web");
     setSent(true);
@@ -331,27 +336,29 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   const [gcLoading, setGcLoading] = useState(true);
   const [gcSaving, setGcSaving]   = useState(false);
 
+  // Saves are allowed only after the real config loaded: if the GET failed the panel showed the
+  // built-in defaults, and the next toggle POSTed the WHOLE default object — blank API keys,
+  // flags reset, owner phone and templates wiped on the server.
+  const gcLoadedRef = useRef(false);
+  const gcSaver = useMemo(() => createPatchSaver("/api/automation/config", (m) =>
+    toast({ title: "Couldn't save", description: m, variant: "destructive" })), []);
   useEffect(() => {
     fetch(apiUrl("/api/automation/config"), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setGc(prev => ({ ...prev, ...d })); })
+      .then(d => { if (d) { setGc(prev => ({ ...prev, ...d })); gcLoadedRef.current = true; } })
       .catch(() => {})
       .finally(() => setGcLoading(false));
   }, []);
 
   const saveGc = useCallback(async (patch: Partial<GrowthConfig>) => {
-    const updated = { ...gc, ...patch };
-    setGc(updated);
-    setGcSaving(true);
-    try {
-      await fetch(apiUrl("/api/automation/config"), {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated),
-      });
-    } catch { /* silent */ }
-    setGcSaving(false);
-  }, [gc]);
+    if (!gcLoadedRef.current) {
+      toast({ title: "Settings not loaded", description: "Reload the page before changing these.", variant: "destructive" });
+      return;
+    }
+    setGc(prev => ({ ...prev, ...patch }));
+    // Only what changed; typing is merged into one serialized request (lib/configSaver.ts).
+    gcSaver(patch as Record<string, unknown>);
+  }, []);
 
   // Run state
   const [running, setRunning]     = useState(false);

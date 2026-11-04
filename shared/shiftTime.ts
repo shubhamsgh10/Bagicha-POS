@@ -57,6 +57,9 @@ export function matchShift(clockIn: string, shifts: ShiftDef[]): ShiftDef | null
   return best;
 }
 
+/** Punches this close (minutes) to the previous one are a re-scan, not a new in/out. */
+export const PUNCH_DEBOUNCE_MIN = 10;
+
 export interface DetectedSession { shiftId: number; clockIn: string; clockOut?: string; workingHours: number; }
 
 /**
@@ -65,9 +68,19 @@ export interface DetectedSession { shiftId: number; clockIn: string; clockOut?: 
  * punch is an open session (no out yet, 0h) — and matches each pair to a shift.
  */
 export function detectSessions(punchPool: string[], shifts: ShiftDef[]): DetectedSession[] {
-  const valid = Array.from(new Set(
+  const sorted = Array.from(new Set(
     punchPool.filter((t) => /^\d{1,2}:\d{2}/.test(t)).map((t) => t.slice(0, 5)),
   )).sort((a, b) => minutesOf(a) - minutesOf(b));
+  // Collapse re-scans: staff often scan twice a minute or two apart when unsure the first one
+  // registered. Paired strictly in sequence, that one extra punch flipped every later in/out pair
+  // of the day (an out read as an in, the day's hours collapsing to a half-day). A punch within
+  // PUNCH_DEBOUNCE_MIN of the last kept one is the same scan.
+  const valid: string[] = [];
+  for (const t of sorted) {
+    const last = valid[valid.length - 1];
+    if (last !== undefined && minutesOf(t) - minutesOf(last) <= PUNCH_DEBOUNCE_MIN) continue;
+    valid.push(t);
+  }
 
   const sessions: DetectedSession[] = [];
   for (let i = 0; i < valid.length; i += 2) {
