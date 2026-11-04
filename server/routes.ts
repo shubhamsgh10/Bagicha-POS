@@ -3953,6 +3953,33 @@ export async function registerRoutes(
   });
 
   /**
+   * GET /api/crm/segments — every customer's RFM segment in ONE query, keyed by customer key.
+   * The Intelligence grid used to fire GET /api/crm/customers/:key per card (several queries each)
+   * just to draw the RFM chip.
+   */
+  app.get("/api/crm/segments", requireAuth, async (_req, res) => {
+    try {
+      const rows = await db
+        .select({
+          key: customersMaster.key,
+          segment: customerSegments.segment,
+          rfmScore: customerSegments.rfmScore,
+          recencyScore: customerSegments.recencyScore,
+          frequencyScore: customerSegments.frequencyScore,
+          monetaryScore: customerSegments.monetaryScore,
+          updatedAt: customerSegments.updatedAt,
+        })
+        .from(customerSegments)
+        .innerJoin(customersMaster, eq(customersMaster.id, customerSegments.customerId));
+      const byKey: Record<string, Omit<typeof rows[number], "key">> = {};
+      for (const { key, ...seg } of rows) byKey[key] = seg;
+      res.json(byKey);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  /**
    * GET /api/crm/customers/:key
    * Returns the master record + DB profile + current segment for a customer.
    * Falls back gracefully if the customer hasn't been synced to DB yet.
