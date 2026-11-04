@@ -33,8 +33,19 @@ function onRealtimeConnected() {
   hasConnectedOnce = true;
 }
 
+// Synchronous listeners (RealtimeContextValue.subscribe) — they see every message, unlike the
+// single lastMessage state slot, which collapses events that arrive in the same render.
+const listeners = new Set<(m: RealtimeMessage) => void>();
+function subscribe(listener: (m: RealtimeMessage) => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
 function handleMessage(msg: RealtimeMessage, setLastMessage: (m: RealtimeMessage | null) => void) {
   if (isOrderEvent(msg.type)) scheduleOrderRefresh(); // and still delivered to listeners below
+  Array.from(listeners).forEach((l) => {
+    try { l(msg); } catch (err) { console.error("[realtime] listener failed:", err); }
+  });
 
   if (msg.type === "CACHE_BUST") {
     queryClient.invalidateQueries();
@@ -228,7 +239,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <RealtimeContext.Provider value={{ socket, lastMessage, connectionStatus, sendMessage }}>
+    <RealtimeContext.Provider value={{ socket, lastMessage, connectionStatus, sendMessage, subscribe }}>
       {children}
     </RealtimeContext.Provider>
   );

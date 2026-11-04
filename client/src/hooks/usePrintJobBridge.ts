@@ -36,7 +36,7 @@ async function electronExecutor(job: RemotePrintJob): Promise<void> {
  */
 export function usePrintJobBridge(): void {
   const { isAuthenticated } = useAuth();
-  const { lastMessage, connectionStatus } = useRealtime();
+  const { connectionStatus, subscribe } = useRealtime();
   const lastStatusRef = useRef<string>(connectionStatus);
 
   // Self-heal ownedPrinterIds/enabled from the durable, file-backed store before any
@@ -114,10 +114,14 @@ export function usePrintJobBridge(): void {
     lastStatusRef.current = connectionStatus;
   }, [connectionStatus, isAuthenticated]);
 
-  useEffect(() => {
+  // Every PRINT_JOB, through subscribe() — the lastMessage slot dropped the first of two jobs
+  // broadcast back to back (one KOT tap routed to two printers), which then waited for the
+  // catch-up poll. Latest executor/claim gate via a ref so the subscription stays stable.
+  const printJobHandlerRef = useRef<(msg: RealtimeMessage) => void>(() => {});
+  printJobHandlerRef.current = (m: RealtimeMessage) => {
     if (!window.electronAPI?.isElectron || !isAuthenticated) return;
-    if (!lastMessage || lastMessage.type !== "PRINT_JOB") return;
-    const msg = lastMessage as RealtimeMessage & RemotePrintJob;
+    if (m.type !== "PRINT_JOB") return;
+    const msg = m as RealtimeMessage & RemotePrintJob;
     void claimAndExecute(
       {
         jobId: msg.jobId,
@@ -126,9 +130,8 @@ export function usePrintJobBridge(): void {
         printerId: msg.printerId,
         payload: msg.payload,
       },
-      electronExecutor,
-      canClaim,
+      electronExecutor, canClaim,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to new messages only
-  }, [lastMessage]);
+  };
+  useEffect(() => subscribe((m) => printJobHandlerRef.current(m)), [subscribe]);
 }

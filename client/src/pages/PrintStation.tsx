@@ -113,7 +113,7 @@ export default function PrintStation() {
   };
 
   // ── Live PRINT_JOB handling + catch-up ──────────────────────────────────────
-  const { lastMessage, connectionStatus } = useRealtime();
+  const { connectionStatus, subscribe } = useRealtime();
   const lastStatusRef = useRef<string>(connectionStatus);
 
   useEffect(() => {
@@ -129,10 +129,14 @@ export default function PrintStation() {
     lastStatusRef.current = connectionStatus;
   }, [connectionStatus, enabled, isElectron, rawbtExecutor]);
 
-  useEffect(() => {
+  // Every PRINT_JOB, through subscribe() — the lastMessage slot dropped the first of two jobs
+  // broadcast back to back (one KOT tap routed to two printers), which then waited for the
+  // catch-up poll. Latest executor/claim gate via a ref so the subscription stays stable.
+  const printJobHandlerRef = useRef<(msg: RealtimeMessage) => void>(() => {});
+  printJobHandlerRef.current = (m: RealtimeMessage) => {
     if (!enabled || isElectron) return;
-    if (!lastMessage || lastMessage.type !== "PRINT_JOB") return;
-    const msg = lastMessage as RealtimeMessage & RemotePrintJob;
+    if (m.type !== "PRINT_JOB") return;
+    const msg = m as RealtimeMessage & RemotePrintJob;
     void claimAndExecute(
       {
         jobId: msg.jobId,
@@ -143,8 +147,8 @@ export default function PrintStation() {
       },
       rawbtExecutor,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to new messages only
-  }, [lastMessage]);
+  };
+  useEffect(() => subscribe((m) => printJobHandlerRef.current(m)), [subscribe]);
 
   // ── Keep the screen awake while the station is on ──────────────────────────
   useEffect(() => {
