@@ -35,6 +35,9 @@ export interface CustomerExtraPayload {
   remark?:              string;
   notificationEnabled?: boolean;
   doNotSendUpdate?:     boolean;
+  /** The browser's names for dob / anniversary (CustomerDashboard / useCrmProfile). */
+  dateOfBirth?:         string;
+  dateOfAnniversary?:   string;
 }
 
 // ── Core: resolve or create a customer UUID ───────────────────────────────────
@@ -179,39 +182,58 @@ export async function getCustomerMaster(key: string): Promise<CustomerMaster | n
  */
 export async function upsertCustomerProfile(
   customerId: string,
-  extra: CustomerExtraPayload
+  extra: CustomerExtraPayload,
+  opts: { fillGapsOnly?: boolean } = {},
 ): Promise<CustomerProfile_DB> {
-  // Normalise tags from comma-separated string → text[]
-  const tagsArray = extra.tags
-    ? extra.tags.split(",").map(t => t.trim()).filter(Boolean)
-    : [];
-
-  // Check if profile exists
-  const existing = await db
-    .select({ id: customerProfiles.id })
+  const [existing] = await db
+    .select()
     .from(customerProfiles)
     .where(eq(customerProfiles.customerId, customerId))
     .limit(1);
 
-  const payload = {
-    email:               extra.email               ?? null,
-    dob:                 extra.dob                 ?? null,
-    anniversary:         extra.anniversary         ?? null,
-    locality:            extra.locality            ?? null,
-    gstNo:               extra.gstNo               ?? null,
-    address:             extra.address             ?? null,
-    isFavorite:          extra.isFavorite          ?? false,
-    tags:                tagsArray,
-    remark:              extra.remark              ?? null,
-    notificationEnabled: extra.notificationEnabled ?? true,
-    doNotSendUpdate:     extra.doNotSendUpdate     ?? false,
-    updatedAt:           new Date(),
-  };
+  // Only the fields actually sent. The browser names the dates dateOfBirth/dateOfAnniversary;
+  // this read only dob/anniversary, so every save stored NULL over the real birthday and
+  // anniversary (and birthday messages stopped). A missing field is left as it is — it used to
+  // be reset to null/false/[].
+  const str = (v: unknown) => (typeof v === "string" ? (v.trim() || null) : null);
+  const incoming: Record<string, unknown> = {};
+  const put = (col: string, present: boolean, value: unknown) => { if (present) incoming[col] = value; };
+  const dobIn = extra.dateOfBirth !== undefined ? extra.dateOfBirth : extra.dob;
+  const annIn = extra.dateOfAnniversary !== undefined ? extra.dateOfAnniversary : extra.anniversary;
+  put("email",       extra.email !== undefined,    str(extra.email));
+  put("dob",         dobIn !== undefined,          str(dobIn));
+  put("anniversary", annIn !== undefined,          str(annIn));
+  put("locality",    extra.locality !== undefined, str(extra.locality));
+  put("gstNo",       extra.gstNo !== undefined,    str(extra.gstNo));
+  put("address",     extra.address !== undefined,  str(extra.address));
+  put("remark",      extra.remark !== undefined,   str(extra.remark));
+  put("tags",        extra.tags !== undefined,
+      extra.tags ? String(extra.tags).split(",").map(t => t.trim()).filter(Boolean) : []);
+  put("isFavorite",          typeof extra.isFavorite === "boolean",          extra.isFavorite);
+  put("notificationEnabled", typeof extra.notificationEnabled === "boolean", extra.notificationEnabled);
+  put("doNotSendUpdate",     typeof extra.doNotSendUpdate === "boolean",     extra.doNotSendUpdate);
 
-  if (existing.length > 0) {
+  let payload: Record<string, unknown> = incoming;
+  if (opts.fillGapsOnly) {
+    // Background sync of a device's localStorage: it may only FILL fields the database doesn't
+    // have yet. It used to write each device's old copy over the database — undoing edits made
+    // on other devices and, worst, switching a customer who texted STOP back to receiving
+    // WhatsApp messages. Opt-out / notification flags are never touched by it.
+    payload = {};
+    for (const [col, v] of Object.entries(incoming)) {
+      if (col === "doNotSendUpdate" || col === "notificationEnabled" || col === "isFavorite") continue;
+      const cur = (existing as any)?.[col];
+      const empty = cur == null || cur === "" || (Array.isArray(cur) && cur.length === 0);
+      const hasValue = v != null && v !== "" && !(Array.isArray(v) && v.length === 0);
+      if (empty && hasValue) payload[col] = v;
+    }
+  }
+
+  if (existing) {
+    if (Object.keys(payload).length === 0) return existing;
     const updated = await db
       .update(customerProfiles)
-      .set(payload)
+      .set({ ...(payload as any), updatedAt: new Date() })
       .where(eq(customerProfiles.customerId, customerId))
       .returning();
     return updated[0];
@@ -219,7 +241,7 @@ export async function upsertCustomerProfile(
 
   const inserted = await db
     .insert(customerProfiles)
-    .values({ customerId, ...payload })
+    .values({ customerId, ...(payload as any), updatedAt: new Date() })
     .returning();
   return inserted[0];
 }
@@ -263,7 +285,7 @@ export async function syncLocalStorageExtras(
       const phone = extra.phone ?? (key.match(/^\d{10,}$/) ? key : undefined);
 
       const customerId = await resolveCustomerId(key, name, phone);
-      await upsertCustomerProfile(customerId, extra);
+      await upsertCustomerProfile(customerId, extra, { fillGapsOnly: true });
       synced++;
     } catch {
       failed++;
@@ -284,6 +306,9 @@ export function dbProfileToExtra(profile: CustomerProfile_DB): CustomerExtraPayl
     email:               profile.email               ?? "",
     dob:                 profile.dob                 ?? "",
     anniversary:         profile.anniversary         ?? "",
+    // The browser reads these names (useCrmProfile mergeExtras) — it used to never see the DB dates.
+    dateOfBirth:         profile.dob                 ?? "",
+    dateOfAnniversary:   profile.anniversary         ?? "",
     locality:            profile.locality            ?? "",
     gstNo:               profile.gstNo               ?? "",
     address:             profile.address             ?? "",
