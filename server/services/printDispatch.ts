@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { db } from "../db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
-import { eq, asc, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, inArray, sql } from "drizzle-orm";
 import type { PrinterConfig } from "@shared/print/types";
 import { getLiveSettings } from "../settingsStore";
 import { computeDelta, instructionsByKey, snapKey, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
@@ -250,6 +250,32 @@ export async function runKotPrint(p: {
 
   const lastSnapshot = order.lastKotSnapshot as KotSnapshot | null;
 
+  // Claim this delta BEFORE any ticket goes out: a conditional write on the kotPrintCount this
+  // request read. Two KOT taps on one order at the same moment (a manual KOT racing the Auto-KOT
+  // timer, two phones) both computed the same delta from the same snapshot and BOTH sent it to the
+  // kitchen. The loser now finds 0 rows and answers no_delta. Undone (claimRollback) if nothing
+  // could be printed at all, so a retry still sends the items.
+  const readKotCount = order.kotPrintCount ?? 0;
+  const claimKot = async (): Promise<boolean> => {
+    if (reprint) return true;
+    const rows = await db
+      .update(orders)
+      .set({
+        kotPrintCount: sql`${orders.kotPrintCount} + 1`,
+        lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
+      })
+      .where(and(eq(orders.id, orderId), eq(orders.kotPrintCount, readKotCount)))
+      .returning({ id: orders.id });
+    return rows.length > 0;
+  };
+  const claimRollback = async () => {
+    if (reprint) return;
+    await db
+      .update(orders)
+      .set({ kotPrintCount: readKotCount, lastKotSnapshot: (order.lastKotSnapshot ?? null) as any })
+      .where(and(eq(orders.id, orderId), eq(orders.kotPrintCount, readKotCount + 1)));
+  };
+
   if (!reprint && lastSnapshot?.items?.length) {
     const delta = computeDelta(currentSnapshot, lastSnapshot.items);
     const hasNew = delta.newItems.length > 0;
@@ -281,15 +307,9 @@ export async function runKotPrint(p: {
       ? (reprint ? browserKotTickets[0].kotNumber : browserKotTickets[browserKotTickets.length - 1].kotNumber)
       : undefined;
     if (!reprint) {
-      await timer.time("commit", () =>
-        db
-          .update(orders)
-          .set({
-            kotPrintCount: sql`${orders.kotPrintCount} + 1`,
-            lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
-          })
-          .where(eq(orders.id, orderId)),
-      );
+      if (!(await timer.time("commit", claimKot))) {
+        return { ok: true, body: { printed: false, reason: "no_delta" } };
+      }
     } else {
       // A genuine KOT reprint — deliberately NOT counted by kotPrintCount (that
       // increment is skipped above `if (!reprint)`), so this audit row is the ONLY
@@ -374,17 +394,8 @@ export async function runKotPrint(p: {
   for (const it of cancelledItems) groupFor(resolveKotPrinter(it.itemId)).cancelledItems.push(it);
   if (groups.size === 0) groupFor(printer);
 
-  const commitKotState = async () => {
-    if (!reprint) {
-      await db
-        .update(orders)
-        .set({
-          kotPrintCount: sql`${orders.kotPrintCount} + 1`,
-          lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
-        })
-        .where(eq(orders.id, orderId));
-    }
-  };
+  // Started now so it overlaps building the tickets (the bitmap KOT takes 15–55 ms).
+  const claimed = timer.time("commit", claimKot);
 
   const browserItems = newItems.map((i) => ({
     name: i.name,
@@ -394,7 +405,8 @@ export async function runKotPrint(p: {
   }));
 
   // One ticket per routed printer — same KOT number on every ticket.
-  const kotJobs = await timer.time("build", async () =>
+  let kotJobs: Awaited<ReturnType<typeof buildKotJobs>>;
+  const buildKotJobs = () => timer.time("build", async () =>
     Array.from(groups.values()).map((g) => ({
       printer: g.printer,
       escPosOk: supportsRawEscPos(g.printer),
@@ -412,6 +424,17 @@ export async function runKotPrint(p: {
       }),
     })),
   );
+  try {
+    kotJobs = await buildKotJobs();
+  } catch (e) {
+    // Nothing was sent — give the claimed delta back so a retry prints it.
+    await claimed.then((ok) => (ok ? claimRollback() : undefined)).catch(() => {});
+    throw e;
+  }
+
+  if (!(await claimed)) {
+    return { ok: true, body: { printed: false, reason: "no_delta" } };
+  }
 
   const directJobs = kotJobs.filter((j) => canExecutePrintOnServer() && j.escPosOk && j.printer.type !== "usb");
   const remoteJobs = kotJobs.filter((j) => j.escPosOk && !(canExecutePrintOnServer() && j.printer.type !== "usb"));
@@ -447,6 +470,7 @@ export async function runKotPrint(p: {
   // — throw so the client gets its "KOT print failed" toast + preview fallback.
   if (directFailures.length > 0 && directFailures.length === directJobs.length
     && dispatchedJobs.length === 0 && nonEscPosJobs.length === 0) {
+    await claimRollback().catch((e) => console.error("[Print/KOT] claim rollback failed:", e));
     throw new Error(`Printer error: ${directFailures.map((f) => f.error).join("; ")}`);
   }
 
@@ -455,7 +479,8 @@ export async function runKotPrint(p: {
   // Commit even on a partial direct failure: the printers that DID succeed already
   // printed this delta, so a retry must not re-send it to them. Runs alongside the
   // broadcast (neither depends on the other); a bill's catch-up waits on both.
-  await commitAlongside(broadcast, timer.time("commit", commitKotState));
+  // The KOT state was committed up front (claimKot); only the broadcast is left to await.
+  await commitAlongside(broadcast, Promise.resolve());
   if (reprint) {
     // Same reasoning as the browser-fallback branch above — kotPrintCount's
     // increment inside commitKotState() is skipped on reprint, so this is the only
