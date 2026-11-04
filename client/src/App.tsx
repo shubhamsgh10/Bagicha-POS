@@ -44,9 +44,9 @@ import { useState, useEffect, useRef } from "react";
 const PUSH_DURATION = 480; // ms — login↔app panel push transition
 
 // Page-level slide variants — x in pixels (subtle, app-like feel).
-// Both exiting and entering divs will render the new Switch content
-// (Switch re-evaluates wouter location immediately). The exiting div
-// fades to opacity:0 so only the entering slide is visually dominant.
+// The exiting div keeps showing the page being left (its Switch is pinned to the location it
+// was rendered with — see the <Switch location> below) and fades to opacity:0 while the
+// entering page slides in.
 const pageVariants = {
   enter: (dir: NavDirection) => ({
     x: dir === "forward" ? 60 : -60,
@@ -198,7 +198,15 @@ function Router() {
                       willChange: "transform, opacity",
                     }}
                   >
-                    <Switch>
+                    {/* location={location}: each page wrapper renders the URL it was CREATED for.
+                        Without it the wrapper that is animating OUT re-rendered the NEW page (Switch
+                        read the live URL), mounting a second copy of every page on every navigation —
+                        and with framer-motion 11.18 (what Vercel installs) that exiting wrapper was
+                        then never removed: every page visited stayed mounted, each rendering the
+                        current page with its own polling (14 copies of Tables after one round of the
+                        nav bar, measured on production). AnimatePresence keeps the exiting child's
+                        last element, so this prop freezes it on the page it is animating away. */}
+                    <Switch location={location}>
                       <Route path="/"               component={Tables} />
                       <Route path="/tables"         component={Tables} />
                       <Route path="/dashboard"      component={Dashboard} />

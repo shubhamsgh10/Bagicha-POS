@@ -178,8 +178,16 @@ export default function KOT() {
                   </span>
                 )}
               </div>
-              <span className="font-bold text-emerald-600 shrink-0">×{item.quantity}</span>
+              <span className="font-bold text-emerald-600 shrink-0">
+                {typeof item.previousQty === "number" ? `+${item.quantity}` : `×${item.quantity}`}
+              </span>
             </div>
+            {/* More of a dish already on the order: the ticket asks for the increment only. */}
+            {typeof item.previousQty === "number" && (
+              <p className="text-xs text-gray-500 ml-2">
+                now {item.previousQty + Number(item.quantity)} (was {item.previousQty})
+              </p>
+            )}
             {item.instructions && (
               <p className="text-xs text-gray-400 ml-2 italic">{item.instructions}</p>
             )}

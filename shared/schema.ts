@@ -176,6 +176,8 @@ export const kotTickets = pgTable("kot_tickets", {
     quantity: number;
     instructions?: string;
     serviceMode?: string | null;
+    /** More of a dish already on the order: `quantity` is the increment, this the earlier total. */
+    previousQty?: number;
   }>>(),
 }, (t) => [
   index("idx_kot_tickets_order_id").on(t.orderId), // scripts/migrate-perf-indexes.mjs
