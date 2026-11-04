@@ -4,6 +4,7 @@
  * Run: npx tsx scripts/verify-order-mutation-guard.ts
  */
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS, planStatusChange } from "../shared/orderMutation";
+import { mergeBlock } from "../shared/orderStatusChange";
 
 const checks: Array<[string, boolean]> = [];
 
@@ -85,6 +86,16 @@ checks.push(["ORDER_CREATE_FORCED_DEFAULTS forces status pending and clears canc
   checks.push(["an open due can't go back to the kitchen", P("served", "pending", "ready")?.code === "due"]);
   checks.push(["an unpaid running order can't be marked served without settling", P("ready", "pending", "served")?.code === "unpaid"]);
   checks.push(["unknown status is a 400", P("pending", "pending", "paid")?.status === 400]);
+}
+
+// ── mergeBlock ──
+{
+  const o = (id: number, status = "pending", paymentStatus = "pending") => ({ id, status, paymentStatus });
+  checks.push(["merge two running orders is fine", mergeBlock(o(1), o(2)) === null]);
+  checks.push(["merge into itself refused", mergeBlock(o(5), o(5))?.code === "same_order"]);
+  checks.push(["merge a paid order refused", mergeBlock(o(1), o(2, "served", "paid"))?.code === "settled"]);
+  checks.push(["merge a cancelled order refused", mergeBlock(o(1, "cancelled"), o(2))?.code === "cancelled"]);
+  checks.push(["merge a due refused", mergeBlock(o(1), o(2, "served"))?.code === "due"]);
 }
 
 let failed = 0;

@@ -45,3 +45,24 @@ export function planStatusChange(
   }
   return null;
 }
+
+/**
+ * May `source` be merged into `target`? Merging an order into itself deleted it (the source is
+ * deleted after its items are copied), and merge never looked at status, so a paid, cancelled,
+ * held or due order could be merged — and then deleted. Both must be open, unpaid, running orders.
+ */
+export function mergeBlock(
+  target: { id: number; status?: string | null; paymentStatus?: string | null },
+  source: { id: number; status?: string | null; paymentStatus?: string | null },
+): StatusChangeBlock | null {
+  if (Number(target.id) === Number(source.id)) {
+    return { status: 400, code: "same_order", error: "An order can't be merged into itself." };
+  }
+  for (const [o, label] of [[target, "target"], [source, "source"]] as const) {
+    if (o.paymentStatus === "paid") return { status: 409, code: "settled", error: `The ${label} order is already paid.` };
+    if (o.status === "cancelled") return { status: 409, code: "cancelled", error: `The ${label} order was cancelled.` };
+    if (o.status === "hold") return { status: 409, code: "hold", error: `The ${label} order is on hold — recall it first.` };
+    if (o.status === "served" || o.status === "delivered") return { status: 409, code: "due", error: `The ${label} order is already billed as a due.` };
+  }
+  return null;
+}

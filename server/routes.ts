@@ -6,6 +6,7 @@ import { storage, OrderNotEditableError } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS, planStatusChange } from "@shared/orderMutation";
+import { mergeBlock } from "@shared/orderStatusChange";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
@@ -3316,6 +3317,8 @@ export async function registerRoutes(
       const targetOrder = await storage.getOrderById(targetOrderId);
       const sourceOrder = await storage.getOrderById(sourceOrderId);
       if (!targetOrder || !sourceOrder) return res.status(404).json({ error: "Order not found" });
+      const mergeErr = mergeBlock(targetOrder as any, sourceOrder as any);
+      if (mergeErr) return res.status(mergeErr.status).json({ error: mergeErr.error, code: mergeErr.code });
 
       const sourceItems = await storage.getOrderItems(sourceOrderId);
       const targetExistingItems = await storage.getOrderItems(targetOrderId);
@@ -3329,9 +3332,14 @@ export async function registerRoutes(
       // Delivery charge: same rule — the merged order carries both orders' charges.
       const deliveryCharge = (Number((targetOrder as any).deliveryCharge) || 0)
         + (Number((sourceOrder as any).deliveryCharge) || 0);
+      // Discount: the merged bill keeps BOTH orders' discounts (aggregate-neutral, like the
+      // charges). It used to keep only the target's, so merging a discounted table into another
+      // charged the customer more than the two bills it replaced.
+      const discount = (Number((targetOrder as any).discountAmount) || 0)
+        + (Number((sourceOrder as any).discountAmount) || 0);
       const merged = computeTotalsFromLines(
         allItems.map((i) => parseFloat(i.price as any) * i.quantity),
-        (targetOrder as any).discountAmount,
+        discount,
         containerCharge,
         deliveryCharge,
       );
@@ -3361,11 +3369,15 @@ export async function registerRoutes(
         targetTotals: {
           totalAmount: merged.total.toFixed(2),
           taxAmount: merged.tax.toFixed(2),
+          discountAmount: merged.discount.toFixed(2),
           subtotalAmount: merged.subtotal.toFixed(2),
           containerCharge: merged.containerCharge.toFixed(2),
           deliveryCharge: merged.deliveryCharge.toFixed(2),
         } as any,
       });
+      if (!updatedTarget) {
+        return res.status(409).json({ error: "One of these orders changed while merging — refresh and try again.", code: "conflict" });
+      }
 
       await logAudit(req, "order.merge", "order", targetOrderId, {
         targetOrderNumber: (targetOrder as any).orderNumber,
