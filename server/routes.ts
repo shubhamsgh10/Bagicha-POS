@@ -1044,9 +1044,19 @@ export async function registerRoutes(
     res.json({ ok: true, clients: clientCount });
   });
 
-  app.post("/api/admin/reset-bill-number", requireAdmin, async (_req, res) => {
+  app.post("/api/admin/reset-bill-number", requireAdmin, async (req, res) => {
     try {
-      await saveSettings({ billCounter: 0 } as any);
+      // order_number is UNIQUE: restarting at ORD0001 while old orders exist made every new order
+      // collide (500 "Failed to create order") until the counter caught up. Only allowed once no
+      // order would collide — i.e. after Clear All Orders.
+      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(orders);
+      if (n > 0) {
+        return res.status(409).json({
+          message: `Bill numbers can't restart while ${n} past orders exist — every new order would reuse an existing number. Clear all orders first.`,
+        });
+      }
+      await saveSettings({ billCounter: 0 } as any, { allowCounters: true });
+      await logAudit(req, "settings.bill_number_reset", "settings", null, {});
       res.json({ success: true, message: "Bill number reset. Next order will be ORD0001." });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Reset failed" });
@@ -1070,7 +1080,7 @@ export async function registerRoutes(
       });
 
       // Reset KOT counter back to 0
-      await saveSettings({ kotCounter: 0 } as any);
+      await saveSettings({ kotCounter: 0 } as any, { allowCounters: true });
 
       // 3. Log audit event
       logAudit(req, "orders.clear_all", "system", null, {
