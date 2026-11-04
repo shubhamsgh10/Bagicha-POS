@@ -216,11 +216,15 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
           ...(Number.isFinite(m) && m > 0 ? { stockMultiplier: m } : {}),
         };
       });
+      // Keep any other sizes the item already had (e.g. "Regular") — this editor only shows
+      // Small/Medium/Large, and dropping the rest silently erased their prices.
+      const extraSizes = (Array.isArray(editItem?.sizes) ? editItem.sizes : [])
+        .filter((z: any) => z && !PIZZA_SIZES.includes(z.size));
       const minPrice = Math.min(...sizes.map(s => s.price));
       createMenuItemMutation.mutate({
         ...data,
         price: minPrice.toString(),
-        sizes,
+        sizes: [...sizes, ...extraSizes],
         addonsEnabled,
         addons: buildAddons(),
         inventoryLinks: buildInventoryLinks(),
@@ -230,9 +234,12 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
         toast({ title: "Invalid price", description: "Please enter a valid price", variant: "destructive" });
         return;
       }
+      // The size editor only shows for Woodfire Pizza. Editing any other sized item (Cold Coffee
+      // Regular/Large…) used to send sizes:null and wipe its size prices — now an existing item's
+      // sizes are left alone (key omitted); only a NEW item is created with none.
       createMenuItemMutation.mutate({
         ...data,
-        sizes: null,
+        ...(editItem ? {} : { sizes: null }),
         addonsEnabled,
         addons: buildAddons(),
         inventoryLinks: buildInventoryLinks(),
