@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
-import { spawn } from "child_process";
 import { storage, OrderNotEditableError } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
@@ -1024,28 +1023,12 @@ export async function registerRoutes(
 
   // ── Database migration ────────────────────────────────────────────────────────
 
+  // Disabled: this ran `drizzle-kit push --force`, which auto-approves destructive statements.
+  // The live DB holds tables/columns the schema doesn't declare (the connect-pg-simple sessions
+  // table; columns added by scripts/migrate-*.mjs), so one tap could DROP them. Schema changes go
+  // through reviewed scripts/migrate-*.mjs files instead (CLAUDE.md, Database).
   app.post("/api/admin/migrate", requireAdmin, (_req, res) => {
-    const child = spawn("npx", ["drizzle-kit", "push", "--force"], {
-      cwd: process.cwd(),
-      env: process.env,
-      shell: true,
-    });
-
-    let output = "";
-    child.stdout.on("data", (d: Buffer) => { output += d.toString(); });
-    child.stderr.on("data", (d: Buffer) => { output += d.toString(); });
-
-    child.on("close", (code: number) => {
-      if (code === 0) {
-        res.json({ success: true, output });
-      } else {
-        res.status(500).json({ message: "Migration failed", output });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      res.status(500).json({ message: err.message });
-    });
+    res.status(410).json({ message: "Schema sync from the app is disabled — run the reviewed migration script instead." });
   });
 
   // ── Server logs ───────────────────────────────────────────────────────────────

@@ -1111,18 +1111,14 @@ export default function Settings() {
       {activeModal === "sync-schema" && (
         <Modal title="Sync Database Schema" onClose={closeModal}>
           <div className="space-y-4">
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700">
-              Compares the current schema definition with the live database and applies any pending structural changes (new tables, new columns). Safe and non-destructive — no data is deleted.
+            {/* This used to run `drizzle-kit push --force` from one tap: --force auto-approves DROPs,
+                and the live database has tables the schema doesn't define (the login sessions table,
+                columns added by scripts/migrate-*.mjs), so it could delete them. Disabled; the
+                server refuses it too. */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              Schema changes are no longer applied from this screen — a one-tap sync could drop tables the
+              app still uses. Database updates ship with the software as reviewed migration scripts.
             </div>
-            <p className="text-xs text-gray-400">Use this after a software update that adds new features requiring schema changes.</p>
-            <button
-              onClick={() => handleDestructiveAction("/api/admin/migrate", "POST", "Schema synced successfully")}
-              disabled={actionLoading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-500 hover:bg-purple-600 transition-colors disabled:opacity-60"
-            >
-              {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-              {actionLoading ? "Syncing..." : "Sync Schema"}
-            </button>
           </div>
         </Modal>
       )}

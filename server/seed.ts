@@ -1,7 +1,17 @@
 import { db } from "./db";
 import { categories, menuItems, inventory } from "@shared/schema";
+import { sql } from "drizzle-orm";
 
 async function seedDatabase() {
+  // DATABASE_URL is the one shared production DB (CLAUDE.md). This script hard-deletes the menu,
+  // categories and inventory, so it refuses to touch a DB that already has a menu unless the
+  // operator explicitly asks for the wipe.
+  const [{ n }] = (await db.execute(sql`SELECT count(*)::int AS n FROM menu_items`) as any).rows;
+  if (n > 0 && process.env.SEED_WIPE_EXISTING !== "yes") {
+    console.error(`Refusing to seed: this database already has ${n} menu items (it may be production).`);
+    console.error("Seeding DELETES the menu, categories and inventory. To really do that: SEED_WIPE_EXISTING=yes npm run seed");
+    process.exit(1);
+  }
   console.log("Seeding database...");
 
   // Clear existing data
