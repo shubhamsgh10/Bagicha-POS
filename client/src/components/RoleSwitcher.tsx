@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { toast } from "@/hooks/use-toast";
 import { ChevronDown, Lock, ShieldCheck, User, UserCog, CreditCard } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -83,11 +84,15 @@ export function RoleSwitcher({ activeRole, loginRole, secondsLeft, isElevated, o
     const targetLevel = ROLE_LEVEL[role] ?? 0;
     const currentLevel = ROLE_LEVEL[activeRole] ?? 0;
     const isUpward = targetLevel > currentLevel;
-    const hasPin = rolesWithPin.includes(role);
-    if (isUpward && hasPin) {
-      setPinTarget(role); // upward + PIN configured → ask for PIN
+    if (!isUpward) { onElevate(role); return; }   // downward never needs a PIN
+    // Upward ALWAYS needs a PIN. verify-pin accepts the target role OR higher (an admin PIN unlocks
+    // Manager), so look for any qualifying PIN — this used to check only the exact role and, when no
+    // manager had a PIN, switched a staff login to Manager with no prompt at all.
+    const hasQualifyingPin = rolesWithPin.some((r) => (ROLE_LEVEL[r as UserRole] ?? 0) >= targetLevel);
+    if (hasQualifyingPin) {
+      setPinTarget(role);
     } else {
-      onElevate(role);   // downward, or upward with no PIN → direct switch
+      toast({ title: "PIN needed", description: `Set a ${role} or admin PIN in Admin → Accounts to switch to ${role} mode.`, variant: "destructive" });
     }
   };
 

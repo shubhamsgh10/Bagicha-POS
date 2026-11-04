@@ -1689,6 +1689,7 @@ export async function registerRoutes(
       const addonsEnabled = b.addonsEnabled === true;
       const menuItem = await storage.createMenuItem({
         name: String(b.name).trim(),
+        shortCode: b.shortCode ? String(b.shortCode).trim().toUpperCase() : null,
         description: b.description ? String(b.description).trim() : null,
         price: String(b.price ?? "0"),
         categoryId: Number(b.categoryId),
@@ -1715,6 +1716,7 @@ export async function registerRoutes(
       if (priceErr) return res.status(400).json({ error: priceErr });
       const updatePayload: any = {};
       if (b.name !== undefined)            updatePayload.name = String(b.name).trim();
+      if (b.shortCode !== undefined)       updatePayload.shortCode = b.shortCode ? String(b.shortCode).trim().toUpperCase() : null;
       if (b.description !== undefined)     updatePayload.description = b.description ? String(b.description).trim() : null;
       if (b.price !== undefined)           updatePayload.price = String(b.price);
       if (b.categoryId !== undefined)      updatePayload.categoryId = Number(b.categoryId);
