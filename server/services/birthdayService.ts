@@ -22,6 +22,8 @@ import {
 } from "../../shared/schema";
 import { getAutomationConfig } from "./automationStore";
 import { sendWhatsAppMessage } from "./whatsappService";
+import { automatedSendBlock, enqueueWhatsApp } from "./whatsapp/outboundQueue";
+import { getDriver } from "./whatsapp/driverManager";
 import { issueCoupon } from "./couponService";
 import { logEventByKey } from "./crm/eventService";
 import { CRM_EVENT_TYPES } from "../../shared/schema";
@@ -130,6 +132,9 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
       // automationJobs table not yet migrated — skip duplicate check and proceed
     }
 
+    // Opt-out and the daily cap BEFORE a coupon is issued — this path skipped both.
+    if (c.phone && await automatedSendBlock(c.phone)) { stats.skipped++; continue; }
+
     // Issue coupon
     let coupon: { code: string } | null = null;
     try {
@@ -157,6 +162,16 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
         `🎁 Celebrate with us — use *${coupon?.code ?? "ANNI GIFT"}* for 20% off (up to ₹500), valid this week.\n\n` +
         `Hope to host you & your loved ones soon! 🌹`;
 
+    // Driver connected (Baileys / Meta): through the outbound queue like every other automated
+    // message — pacing, maxPerDay, the send-time opt-out re-check. It used to call the Meta/WATI
+    // sender directly, which on a Baileys-only setup was a dry run recorded as "sent".
+    const driver = getDriver();
+    if (driver && driver.getState() === "connected" && c.phone) {
+      await enqueueWhatsApp({ customerId: c.customerId, phone: c.phone, message, trigger });
+      if (isBday) stats.birthdaysSent++; else stats.anniversariesSent++;
+      continue;
+    }
+
     const result = await sendWhatsAppMessage(c.phone, message, {
       watiApiKey:        config.watiApiKey,
       watiEndpoint:      config.watiEndpoint,
@@ -168,7 +183,8 @@ export async function runBirthdayAutomation(options: { force?: boolean } = {}): 
       await db.insert(automationJobs).values({
         customerId:  c.customerId,
         triggerType: trigger,
-        status:      result.success ? "sent" : "failed",
+        // A dry run (no sender configured) is not a sent message.
+        status:      result.success ? (result.mode === "dry_run" ? "dry_run" : "sent") : "failed",
         message,
         scheduledAt: new Date(),
         executedAt:  new Date(),

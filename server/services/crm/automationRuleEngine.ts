@@ -220,7 +220,8 @@ function evaluateRule(rule: AutomationRule, c: CustomerSnapshot): boolean {
 // ── DB snapshot builder ───────────────────────────────────────────────────────
 
 async function buildSnapshots(): Promise<CustomerSnapshot[]> {
-  const rawOrders = await db.select().from(orders);
+  // Cancelled orders are not visits or spend (CLAUDE.md).
+  const rawOrders = await db.select().from(orders).where(sql`${orders.status} <> 'cancelled'`);
   if (!rawOrders.length) return [];
 
   const map = new Map<string, typeof rawOrders>();

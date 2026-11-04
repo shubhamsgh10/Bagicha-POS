@@ -12,7 +12,7 @@
  */
 
 import { db } from "../../db";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, sql, ne, and } from "drizzle-orm";
 import {
   orders,
   customersMaster,
@@ -101,9 +101,10 @@ export async function runSegmentationForCustomer(
         createdAt:   orders.createdAt,
       })
       .from(orders)
-      .where(
-        sql`(${orders.customerPhone} = ${key} OR ${orders.customerName} = ${key})`
-      )
+      .where(and(
+        sql`(${orders.customerPhone} = ${key} OR ${orders.customerName} = ${key})`,
+        ne(orders.status, "cancelled"), // a cancelled order is not a visit or spend
+      ))
       .orderBy(desc(orders.createdAt));
 
     if (!customerOrders.length) return null;

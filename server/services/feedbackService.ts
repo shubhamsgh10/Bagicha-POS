@@ -15,7 +15,7 @@
 
 import crypto from "crypto";
 import { db } from "../db";
-import { eq, and, isNull, lte, desc } from "drizzle-orm";
+import { eq, and, isNull, lte, desc, asc } from "drizzle-orm";
 import {
   feedback,
   orders,
@@ -25,6 +25,7 @@ import { getAutomationConfig } from "./automationStore";
 import { sendWhatsAppMessage } from "./whatsappService";
 import { issueCoupon } from "./couponService";
 import { logEventByKey } from "./crm/eventService";
+import { automatedSendBlock } from "./whatsapp/outboundQueue";
 
 // ── Token + URL helpers ───────────────────────────────────────────────────────
 
@@ -112,11 +113,7 @@ async function sendFeedbackMessage(row: SendableFeedback, restaurantName: string
   });
 
   if (result.success) {
-    await db
-      .update(feedback)
-      .set({ sentAt: new Date() })
-      .where(eq(feedback.id, row.id));
-
+    // sentAt was already stamped when the row was claimed (processPendingFeedback).
     if (row.customerKey) {
       logEventByKey(
         row.customerKey,
@@ -134,7 +131,21 @@ async function sendFeedbackMessage(row: SendableFeedback, restaurantName: string
  * Background scheduler — picks up pending feedback rows whose grace window
  * has elapsed and sends them.
  */
+// One pass at a time: the scheduler ticks every minute and a pass with a backlog (1 s pacing +
+// API latency) can outlast it — the next tick then picked the same unsent rows and sent them again.
+let feedbackPassRunning = false;
+
 export async function processPendingFeedback(): Promise<{ sent: number; skipped: number }> {
+  if (feedbackPassRunning) return { sent: 0, skipped: 0 };
+  feedbackPassRunning = true;
+  try {
+    return await processPendingFeedbackOnce();
+  } finally {
+    feedbackPassRunning = false;
+  }
+}
+
+async function processPendingFeedbackOnce(): Promise<{ sent: number; skipped: number }> {
   const config = getAutomationConfig();
   if (!config.feedbackEnabled) return { sent: 0, skipped: 0 };
 
@@ -161,13 +172,24 @@ export async function processPendingFeedback(): Promise<{ sent: number; skipped:
         eq(orders.paymentStatus, "paid"),
       ),
     )
+    .orderBy(asc(feedback.id))
     .limit(50);
 
   let sent = 0;
   let skipped = 0;
 
   for (const row of pending) {
-    if (!row.customerPhone) { skipped++; continue; }
+    // A row is tried ONCE: it is marked sent before the attempt (claim), so a failed number
+    // (invalid / not on WhatsApp) no longer retries every minute forever and fills the batch.
+    const markDone = () => db.update(feedback).set({ sentAt: new Date() })
+      .where(and(eq(feedback.id, row.id), isNull(feedback.sentAt))).returning({ id: feedback.id });
+    if (!row.customerPhone) { await markDone(); skipped++; continue; }
+    // Same opt-out / daily-cap rule as every other automated WhatsApp send.
+    const block = await automatedSendBlock(row.customerPhone);
+    if (block === "daily_cap") break;            // try again tomorrow
+    if (block === "opted_out") { await markDone(); skipped++; continue; }
+    const claimedRow = await markDone();
+    if (claimedRow.length === 0) continue;       // another pass/instance took it
     await sendFeedbackMessage(row, config.restaurantName);
     sent++;
     // Pace sends
@@ -187,7 +209,12 @@ export async function submitFeedback(
   npsScore: number | null,
 ): Promise<{ ok: boolean; reason?: string; recoveryCoupon?: string }> {
   if (!token) return { ok: false, reason: "Missing token" };
-  if (rating < 1 || rating > 5) return { ok: false, reason: "Rating must be 1-5" };
+  // Whole numbers only: 2.5 passed the range check, then failed the integer column write AFTER the
+  // coupon was issued — so the same link could be replayed for coupons forever.
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return { ok: false, reason: "Rating must be 1-5" };
+  if (npsScore != null && (!Number.isInteger(npsScore) || npsScore < 0 || npsScore > 10)) {
+    return { ok: false, reason: "Score must be 0-10" };
+  }
 
   const rows = await db.select().from(feedback).where(eq(feedback.token, token)).limit(1);
   const row = rows[0];
@@ -195,6 +222,22 @@ export async function submitFeedback(
   if (row.submittedAt) return { ok: false, reason: "Already submitted" };
 
   const sentiment = rating >= 4 ? "positive" : rating === 3 ? "neutral" : "negative";
+
+  // Claim the row FIRST (conditional on not yet submitted), then issue any coupon. Two taps of
+  // Submit used to both pass the submittedAt check above and both issue a ₹100 coupon.
+  const claimed = await db
+    .update(feedback)
+    .set({
+      rating,
+      comment:        comment ?? null,
+      npsScore:       npsScore ?? null,
+      sentiment,
+      submittedAt:    new Date(),
+      recoveryStatus: rating <= 3 ? "pending" : "none",
+    })
+    .where(and(eq(feedback.id, row.id), isNull(feedback.submittedAt)))
+    .returning({ id: feedback.id });
+  if (claimed.length === 0) return { ok: false, reason: "Already submitted" };
 
   let recoveryCouponId: number | null = null;
   let recoveryCode: string | undefined;
@@ -214,23 +257,11 @@ export async function submitFeedback(
       });
       recoveryCouponId = issued.id;
       recoveryCode     = issued.code;
+      await db.update(feedback).set({ recoveryCouponId }).where(eq(feedback.id, row.id));
     } catch (e) {
       console.warn("[Feedback] recovery coupon issue failed:", e);
     }
   }
-
-  await db
-    .update(feedback)
-    .set({
-      rating,
-      comment:          comment ?? null,
-      npsScore:         npsScore ?? null,
-      sentiment,
-      submittedAt:      new Date(),
-      recoveryStatus:   rating <= 3 ? "pending" : "none",
-      recoveryCouponId,
-    })
-    .where(eq(feedback.id, row.id));
 
   if (row.customerKey) {
     logEventByKey(
