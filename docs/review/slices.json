@@ -1,0 +1,359 @@
+[
+ {
+  "id": "R01",
+  "lines": 3614,
+  "files": [
+   "_tmp-raw-print-test.mjs:1-39",
+   "api/index.ts:1-4",
+   "client/src/App.tsx:1-281",
+   "client/src/components/AddInventoryModal.tsx:1-288",
+   "client/src/components/AddMenuItemModal.tsx:1-693",
+   "client/src/components/AnimatedContainer.tsx:1-32",
+   "client/src/components/AppLayout.tsx:1-18",
+   "client/src/components/AuditLogPanel.tsx:1-129",
+   "client/src/components/AutomationPanel.tsx:1-1100",
+   "client/src/components/BackupPanel.tsx:1-150",
+   "client/src/components/BagichaLogo.tsx:1-39",
+   "client/src/components/BottomNav.tsx:1-72",
+   "client/src/components/CategoriesTab.tsx:1-345",
+   "client/src/components/DayPicker.tsx:1-147",
+   "client/src/components/DueSettleDialog.tsx:1-110",
+   "client/src/components/ErrorBoundary.tsx:1-81",
+   "client/src/components/FeedbackWidget.tsx:1-86"
+  ]
+ },
+ {
+  "id": "R02",
+  "lines": 3985,
+  "files": [
+   "client/src/components/GrowthSettingsPanel.tsx:1-425",
+   "client/src/components/Header.tsx:1-60",
+   "client/src/components/MobileNav.tsx:1-147",
+   "client/src/components/NewOrderModal.tsx:1-581",
+   "client/src/components/PaymentMethodDialog.tsx:1-241",
+   "client/src/components/PaymentTag.tsx:1-84",
+   "client/src/components/PinGuard.tsx:1-316",
+   "client/src/components/PrintPreviewModal.tsx:1-62",
+   "client/src/components/PrintSettingsPanel.tsx:1-1243",
+   "client/src/components/PrintStationStatusBadge.tsx:1-41",
+   "client/src/components/RoleSwitcher.tsx:1-176",
+   "client/src/components/RouteGuard.tsx:1-54",
+   "client/src/components/SettlementDialog.tsx:1-555"
+  ]
+ },
+ {
+  "id": "R03",
+  "lines": 3942,
+  "files": [
+   "client/src/components/Sidebar.tsx:1-169",
+   "client/src/components/TopNav.tsx:1-248",
+   "client/src/components/TwoFactorPanel.tsx:1-203",
+   "client/src/components/UpdateNotification.tsx:1-180",
+   "client/src/components/conversations/ChatView.tsx:1-198",
+   "client/src/components/conversations/ConversationsView.tsx:1-109",
+   "client/src/components/conversations/CustomerContextSidebar.tsx:1-120",
+   "client/src/components/conversations/ThreadList.tsx:1-100",
+   "client/src/components/conversations/WhatsAppConnectionCard.tsx:1-269",
+   "client/src/components/crm/CustomerTimeline.tsx:1-170",
+   "client/src/components/live-tables/DeliveryCard.tsx:1-206",
+   "client/src/components/live-tables/ItemRow.tsx:1-118",
+   "client/src/components/live-tables/LiveOrdersPanel.tsx:1-351",
+   "client/src/components/live-tables/OrderCard.tsx:1-489",
+   "client/src/components/live-tables/PickupCard.tsx:1-192",
+   "client/src/components/live-tables/SectionOrdersFlyout.tsx:1-112",
+   "client/src/components/live-tables/TableCard.tsx:1-360",
+   "client/src/components/live-tables/TableDrawer.tsx:1-255",
+   "client/src/components/loyalty/LoyaltyCard.tsx:1-93"
+  ]
+ },
+ {
+  "id": "R04",
+  "lines": 3673,
+  "files": [
+   "client/src/components/recommendations/RecommendationBox.tsx:1-88",
+   "client/src/components/section-pos/SectionActionBar.tsx:1-96",
+   "client/src/components/section-pos/SectionOpenOrdersButton.tsx:1-74",
+   "client/src/components/section-pos/SectionParcelToggle.tsx:1-54",
+   "client/src/components/staff/BiometricDevicePanel.tsx:1-203",
+   "client/src/components/staff/LiveAttendanceBoard.tsx:1-111",
+   "client/src/context/ActiveRoleContext.tsx:1-30",
+   "client/src/context/NavigationContext.tsx:1-73",
+   "client/src/hooks/RealtimeProvider.tsx:1-235",
+   "client/src/hooks/realtimeContext.ts:1-24",
+   "client/src/hooks/use-mobile.tsx:1-19",
+   "client/src/hooks/use-toast.ts:1-191",
+   "client/src/hooks/useActiveRole.ts:1-84",
+   "client/src/hooks/useAllowedPages.ts:1-24",
+   "client/src/hooks/useAuth.ts:1-38",
+   "client/src/hooks/useConnectionKeepAlive.ts:1-17",
+   "client/src/hooks/useConversations.ts:1-161",
+   "client/src/hooks/useCrmProfile.ts:1-261",
+   "client/src/hooks/useCustomerIntelligence.ts:1-237",
+   "client/src/hooks/useLiveOrders.ts:1-256",
+   "client/src/hooks/useLiveTableOperations.ts:1-378",
+   "client/src/hooks/useLiveTables.ts:1-148",
+   "client/src/hooks/useLoyalty.ts:1-84",
+   "client/src/hooks/useManagerAuth.ts:1-49",
+   "client/src/hooks/usePermission.ts:1-136",
+   "client/src/hooks/usePrintJobBridge.ts:1-134",
+   "client/src/hooks/useRealtime.ts:1-11",
+   "client/src/hooks/useRecommendations.ts:1-76",
+   "client/src/hooks/useRole.ts:1-26",
+   "client/src/hooks/useSwipeBack.ts:1-60",
+   "client/src/hooks/useWebSocket.ts:1-75",
+   "client/src/lib/api.ts:1-15",
+   "client/src/lib/apiError.ts:1-34",
+   "client/src/lib/appRouter.tsx:1-26",
+   "client/src/lib/auditFormat.ts:1-145"
+  ]
+ },
+ {
+  "id": "R05",
+  "lines": 3407,
+  "files": [
+   "client/src/lib/automationEngine.ts:1-719",
+   "client/src/lib/chargeBoxes.ts:1-37",
+   "client/src/lib/connectionKeepAlive.ts:1-75",
+   "client/src/lib/constants.ts:1-33",
+   "client/src/lib/dialogLock.ts:1-20",
+   "client/src/lib/orderDisplay.ts:1-7",
+   "client/src/lib/orderHistorySync.ts:1-58",
+   "client/src/lib/orderTypeColors.ts:1-31",
+   "client/src/lib/printBill.ts:1-128",
+   "client/src/lib/printGateway.ts:1-195",
+   "client/src/lib/printPerfClient.ts:1-75",
+   "client/src/lib/printStationCore.ts:1-266",
+   "client/src/lib/queryClient.ts:1-100",
+   "client/src/lib/queueCheckCache.ts:1-83",
+   "client/src/lib/receiptRaster.ts:1-124",
+   "client/src/lib/receiptText.ts:1-155",
+   "client/src/lib/routePermissions.ts:1-47",
+   "client/src/lib/settleSkip.ts:1-62",
+   "client/src/lib/slowRequest.ts:1-57",
+   "client/src/lib/slowSettle.ts:1-83",
+   "client/src/lib/utils.ts:1-6",
+   "client/src/main.tsx:1-61",
+   "client/src/pages/Admin.tsx:1-985"
+  ]
+ },
+ {
+  "id": "R06",
+  "lines": 3911,
+  "files": [
+   "client/src/pages/Billing.tsx:1-762",
+   "client/src/pages/CustomerDashboard.tsx:1-1186",
+   "client/src/pages/Dashboard.tsx:1-319",
+   "client/src/pages/Inventory.tsx:1-558",
+   "client/src/pages/KOT.tsx:1-329",
+   "client/src/pages/LiveAnalytics.tsx:1-257",
+   "client/src/pages/LiveTablesDashboard.tsx:1-500"
+  ]
+ },
+ {
+  "id": "R07",
+  "lines": 2704,
+  "files": [
+   "client/src/pages/Login.tsx:1-737",
+   "client/src/pages/Menu.tsx:1-815",
+   "client/src/pages/MyAttendance.tsx:1-378",
+   "client/src/pages/Orders.tsx:1-774"
+  ]
+ },
+ {
+  "id": "R08",
+  "lines": 3725,
+  "files": [
+   "client/src/pages/POS.tsx:1-3219",
+   "client/src/pages/PrintStation.tsx:1-323",
+   "client/src/pages/PublicFeedback.tsx:1-183"
+  ]
+ },
+ {
+  "id": "R09",
+  "lines": 3675,
+  "files": [
+   "client/src/pages/Reports.tsx:1-1404",
+   "client/src/pages/Settings.tsx:1-1242",
+   "client/src/pages/Staff.tsx:1-1029"
+  ]
+ },
+ {
+  "id": "R10",
+  "lines": 3932,
+  "files": [
+   "client/src/pages/Tables.tsx:1-829",
+   "client/src/pages/not-found.tsx:1-21",
+   "client/src/utils/whatsapp.ts:1-121",
+   "desktop/attendance/attendanceAgent.ts:1-276",
+   "desktop/attendance/zkAdapter.ts:1-119",
+   "desktop/build.mjs:1-79",
+   "desktop/dev.mjs:1-159",
+   "desktop/main.ts:1-571",
+   "desktop/preload.ts:1-125",
+   "desktop/print/executor.ts:1-60",
+   "desktop/print/printLog.ts:1-53",
+   "desktop/print/printQueue.ts:1-292",
+   "desktop/print/usbLibusb.ts:1-93",
+   "desktop/print/usbNamesWindows.ts:1-19",
+   "desktop/print/usbScan.ts:1-167",
+   "desktop/print/usbSend.ts:1-62",
+   "desktop/scripts/generate-icons.mjs:1-44",
+   "desktop/types.ts:1-20",
+   "desktop/updater.ts:1-152",
+   "drizzle.config.ts:1-12",
+   "packages/api-client/index.ts:1-194",
+   "server-fn.ts:1-148",
+   "server/advisoryLocks.ts:1-31",
+   "server/cors.ts:1-51",
+   "server/csrf.ts:1-92",
+   "server/dataDir.ts:1-18",
+   "server/db.ts:1-73",
+   "server/dbEtag.ts:1-51"
+  ]
+ },
+ {
+  "id": "R11",
+  "lines": 1846,
+  "files": [
+   "server/elevation.ts:1-79",
+   "server/escpos.ts:1-1",
+   "server/growthRoutes.ts:1-552",
+   "server/httpConditional.ts:1-6",
+   "server/index.ts:1-205",
+   "server/keepAlivePing.ts:1-16",
+   "server/logBuffer.ts:1-11",
+   "server/principalCache.ts:1-56",
+   "server/printRoutes.ts:1-635",
+   "server/printService.ts:1-115",
+   "server/realtime/publisher.ts:1-170"
+  ]
+ },
+ {
+  "id": "R12",
+  "lines": 2264,
+  "files": [
+   "server/routes.ts:1-2264"
+  ]
+ },
+ {
+  "id": "R13",
+  "lines": 3786,
+  "files": [
+   "server/routes.ts:2265-4527",
+   "server/seed.ts:1-92",
+   "server/selfScope.ts:1-32",
+   "server/serverTiming.ts:1-55",
+   "server/services/aiMessageService.ts:1-195",
+   "server/services/auditService.ts:1-182",
+   "server/services/automationStore.ts:1-299",
+   "server/services/backupService.ts:1-144",
+   "server/services/birthdayService.ts:1-203",
+   "server/services/couponService.ts:1-321"
+  ]
+ },
+ {
+  "id": "R14",
+  "lines": 3569,
+  "files": [
+   "server/services/crm/automationRuleEngine.ts:1-711",
+   "server/services/crm/customerIdService.ts:1-296",
+   "server/services/crm/eventService.ts:1-151",
+   "server/services/crm/messagingService.ts:1-280",
+   "server/services/crm/recommendationService.ts:1-184",
+   "server/services/crm/segmentationService.ts:1-227",
+   "server/services/customerAutomationService.ts:1-454",
+   "server/services/dailyDigestService.ts:1-354",
+   "server/services/dailyScheduler.ts:1-127",
+   "server/services/deviceAttendanceService.ts:1-244",
+   "server/services/feedbackService.ts:1-294",
+   "server/services/loyaltyService.ts:1-158",
+   "server/services/orderPricing.ts:1-89"
+  ]
+ },
+ {
+  "id": "R15",
+  "lines": 3544,
+  "files": [
+   "server/services/printDispatch.ts:1-898",
+   "server/services/razorpayService.ts:1-231",
+   "server/services/totpService.ts:1-26",
+   "server/services/whatsapp/baileysDriver.ts:1-252",
+   "server/services/whatsapp/botService.ts:1-117",
+   "server/services/whatsapp/conversationStore.ts:1-222",
+   "server/services/whatsapp/deliveryService.ts:1-74",
+   "server/services/whatsapp/driverManager.ts:1-118",
+   "server/services/whatsapp/inboundService.ts:1-170",
+   "server/services/whatsapp/metaDriver.ts:1-70",
+   "server/services/whatsapp/outboundQueue.ts:1-271",
+   "server/services/whatsapp/types.ts:1-87",
+   "server/services/whatsappService.ts:1-189",
+   "server/sessionSecret.ts:1-20",
+   "server/settingsCache.ts:1-219",
+   "server/settingsStore.ts:1-464",
+   "server/staffRoutes.ts:1-116"
+  ]
+ },
+ {
+  "id": "R16",
+  "lines": 3879,
+  "files": [
+   "server/storage.ts:1-2163",
+   "server/vite.ts:1-102",
+   "server/whatsappRoutes.ts:1-285",
+   "shared/businessDay.ts:1-77",
+   "shared/connectionKeepAlive.ts:1-53",
+   "shared/dueSettlement.ts:1-134",
+   "shared/ebillText.ts:1-43",
+   "shared/electron/ipc.ts:1-121",
+   "shared/kotDelta.ts:1-134",
+   "shared/kotItemCancel.ts:1-61",
+   "shared/menuCost.ts:1-78",
+   "shared/orderAudit.ts:1-153",
+   "shared/orderHistorySync.ts:1-40",
+   "shared/orderItemText.ts:1-177",
+   "shared/orderItemsSave.ts:1-220",
+   "shared/orderMutation.ts:1-38"
+  ]
+ },
+ {
+  "id": "R17",
+  "lines": 3931,
+  "files": [
+   "shared/orderPricing.ts:1-195",
+   "shared/orderStatus.ts:1-4",
+   "shared/pageAccess.ts:1-54",
+   "shared/paymentEdit.ts:1-184",
+   "shared/paymentSplit.ts:1-189",
+   "shared/print/browserPayload.ts:1-35",
+   "shared/print/escpos.ts:1-104",
+   "shared/print/escposInterpret.ts:1-325",
+   "shared/print/formatDate.ts:1-9",
+   "shared/print/generators.ts:1-365",
+   "shared/print/kotImage.ts:1-480",
+   "shared/print/persistentPs.ts:1-256",
+   "shared/print/printerCapabilities.ts:1-34",
+   "shared/print/receiptLayout.ts:1-76",
+   "shared/print/types.ts:1-126",
+   "shared/print/windowsPrinters.ts:1-177",
+   "shared/print/windowsRawPrint.ts:1-96",
+   "shared/printJobBroadcast.ts:1-15",
+   "shared/printPerf.ts:1-75",
+   "shared/printRequest.ts:1-80",
+   "shared/realtimeInvalidation.ts:1-42",
+   "shared/requestTiming.ts:1-99",
+   "shared/schema.ts:1-911"
+  ]
+ },
+ {
+  "id": "R18",
+  "lines": 598,
+  "files": [
+   "shared/settleTiming.ts:1-106",
+   "shared/settlement.ts:1-96",
+   "shared/shiftTime.ts:1-86",
+   "shared/weekMath.ts:1-79",
+   "tailwind.config.ts:1-141",
+   "vite.config.ts:1-90"
+  ]
+ }
+]
