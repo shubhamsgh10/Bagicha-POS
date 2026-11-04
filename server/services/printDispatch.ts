@@ -4,7 +4,7 @@ import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/sc
 import { eq, asc, inArray, sql } from "drizzle-orm";
 import type { PrinterConfig } from "@shared/print/types";
 import { getLiveSettings } from "../settingsStore";
-import { computeDelta, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
+import { computeDelta, instructionsByKey, snapKey, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
 import {
   generateKOTBuffer,
   generateBillBuffer,
@@ -37,6 +37,62 @@ export type PrintResult =
   | { ok: false; status: number; message: string };
 
 type OrderRow = typeof orders.$inferSelect;
+
+/**
+ * What a save-with-print already holds when its print starts: the committed order row, its
+ * order_items rows (as RETURNED by the save, with the menu name/category it read for pricing) and
+ * the order's KOT numbers. With it the print reads nothing back — the order, items and tickets
+ * used to be re-read from the database right after this same request wrote them (one round trip
+ * and up to 4 pool connections per Bill tap, on top of the stock reconcile running alongside).
+ */
+export interface SavedOrderSnapshot {
+  order: OrderRow;
+  /** order_items of this order in id order (= the order they were inserted in). */
+  items: Array<{
+    id: number;
+    menuItemId: number;
+    /** coalesce(order_items.name, menu_items.name, 'Item') — same rule as the print's own reads. */
+    name: string;
+    categoryId: number | null;
+    quantity: number;
+    price: string;
+    size: string | null;
+    specialInstructions: string | null;
+    serviceMode: string | null;
+  }>;
+  kotTickets: Array<{ kotNumber: string }>;
+}
+
+/** Builds the snapshot from the save's rows and the menu rows it read (name/category lookup). */
+export function savedOrderSnapshot(
+  order: OrderRow,
+  items: Array<{ id: number; menuItemId: number; name: string | null; quantity: number; price: string; size: string | null; specialInstructions: string | null; serviceMode: string | null }>,
+  menuRows: Array<{ id: number; name: string; categoryId: number }>,
+  kotTickets: Array<{ kotNumber: string }>,
+): SavedOrderSnapshot {
+  const menuById = new Map(menuRows.map((m) => [m.id, m]));
+  return {
+    order,
+    items: items
+      .slice()
+      .sort((a, b) => a.id - b.id)
+      .map((i) => {
+        const menu = menuById.get(i.menuItemId);
+        return {
+          id: i.id,
+          menuItemId: i.menuItemId,
+          name: i.name ?? menu?.name ?? "Item",
+          categoryId: menu?.categoryId ?? null,
+          quantity: i.quantity,
+          price: i.price,
+          size: i.size,
+          specialInstructions: i.specialInstructions,
+          serviceMode: i.serviceMode,
+        };
+      }),
+    kotTickets,
+  };
+}
 
 /**
  * Wraps res.json ONCE so every return path of a handler emits the Server-Timing header
@@ -107,6 +163,8 @@ export async function runKotPrint(p: {
   auto?: boolean;
   /** The order row just written by a save-with-print — skips the db_order read. */
   order?: OrderRow;
+  /** Everything a save-with-print committed — skips ALL three reads (see SavedOrderSnapshot). */
+  snapshot?: SavedOrderSnapshot;
   timer?: StageTimer;
 }): Promise<PrintResult> {
   const { req, orderId, reprint = false, auto = false } = p;
@@ -125,12 +183,26 @@ export async function runKotPrint(p: {
   }
 
   // The three reads are independent (all keyed by orderId) — run them concurrently so the
-  // tap waits for the slowest of the three round trips, not their sum.
+  // tap waits for the slowest of the three round trips, not their sum. A save-with-print hands
+  // over what it just committed instead (p.snapshot), and nothing is read at all.
+  const snap = p.snapshot;
   const [[order], rawItems, orderKotTickets] = await Promise.all([
-    p.order
+    snap
+      ? Promise.resolve([snap.order])
+      : p.order
       ? Promise.resolve([p.order])
       : timer.time("db_order", () => db.select().from(orders).where(eq(orders.id, orderId))),
-    timer.time("db_items", () =>
+    snap
+      ? Promise.resolve(snap.items.map((i) => ({
+          menuItemId: i.menuItemId,
+          categoryId: i.categoryId,
+          name: i.name,
+          quantity: i.quantity,
+          size: i.size,
+          specialInstructions: i.specialInstructions,
+          serviceMode: i.serviceMode,
+        })))
+      : timer.time("db_items", () =>
       db
         .select({
           menuItemId: orderItems.menuItemId,
@@ -145,9 +217,11 @@ export async function runKotPrint(p: {
         .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
         .where(eq(orderItems.orderId, orderId)),
     ),
-    timer.time("db_tickets", () =>
-      db.select().from(kotTickets).where(eq(kotTickets.orderId, orderId)).orderBy(asc(kotTickets.id)),
-    ),
+    snap
+      ? Promise.resolve(snap.kotTickets)
+      : timer.time("db_tickets", () =>
+          db.select({ kotNumber: kotTickets.kotNumber }).from(kotTickets).where(eq(kotTickets.orderId, orderId)).orderBy(asc(kotTickets.id)),
+        ),
   ]);
   if (!order) return { ok: false, status: 404, message: "Order not found" };
 
@@ -159,16 +233,16 @@ export async function runKotPrint(p: {
     serviceMode: i.serviceMode ?? null,
   }));
 
-  const kotItemMap = new Map(
-    rawItems.map((i) => [
-      `${i.menuItemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`,
-      { name: i.name, quantity: i.quantity, size: i.size ?? null, instructions: i.specialInstructions ?? null, serviceMode: i.serviceMode ?? null },
-    ]),
+  // A delta entry stands for EVERY line of its dish key (computeDelta sums them), so its
+  // instructions are those lines' merged instructions — never just the last line's.
+  const instrByKey = instructionsByKey(
+    rawItems.map((i) => ({ itemId: i.menuItemId, size: i.size ?? null, serviceMode: i.serviceMode ?? null, quantity: i.quantity, instructions: i.specialInstructions ?? null })),
   );
 
-  let newItems: Array<SnapshotItem & { instructions?: string | null; previousQty?: number }> = currentSnapshot.map((i) => ({
+  // A full (non-delta) ticket prints each line as it is, with that line's OWN instructions.
+  let newItems: Array<SnapshotItem & { instructions?: string | null; previousQty?: number }> = currentSnapshot.map((i, idx) => ({
     ...i,
-    instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`)?.instructions ?? null,
+    instructions: rawItems[idx].specialInstructions ?? null,
   }));
   let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
   let cancelledItems: SnapshotItem[] = [];
@@ -189,14 +263,8 @@ export async function runKotPrint(p: {
       return { ok: true, body: { printed: false, reason: "no_delta" } };
     }
 
-    newItems = delta.newItems.map((ni) => ({
-      ...ni,
-      instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}:${ni.serviceMode ?? ""}`)?.instructions ?? null,
-    }));
-    modifiedItems = delta.modifiedItems.map((mi) => ({
-      ...mi,
-      instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}:${mi.serviceMode ?? ""}`)?.instructions ?? null,
-    }));
+    newItems = delta.newItems.map((ni) => ({ ...ni, instructions: instrByKey.get(snapKey(ni)) ?? null }));
+    modifiedItems = delta.modifiedItems.map((mi) => ({ ...mi, instructions: instrByKey.get(snapKey(mi)) ?? null }));
     cancelledItems = delta.cancelledItems;
     isDelta = true;
   }
@@ -439,9 +507,14 @@ type KotCatchUp = Record<string, unknown> | { error: string };
  * run the normal KOT delta check and surface the result ONLY when it actually did something
  * (a genuine send, a browser-preview fallback, or a failure). Never throws.
  */
-async function runKotCatchUp(req: Request, orderId: number, timer: StageTimer): Promise<KotCatchUp | undefined> {
+async function runKotCatchUp(
+  req: Request,
+  orderId: number,
+  timer: StageTimer,
+  snapshot?: SavedOrderSnapshot,
+): Promise<KotCatchUp | undefined> {
   try {
-    const k = await runKotPrint({ req, orderId, reprint: false, auto: false, timer });
+    const k = await runKotPrint({ req, orderId, reprint: false, auto: false, snapshot, timer });
     if (!k.ok) return { error: k.message };
     return isSkippableKotResult(k.body) ? undefined : k.body;
   } catch (err: any) {
@@ -479,6 +552,8 @@ export async function runBillPrint(p: {
    * with a catch-up: the bill renders no column the catch-up writes (see the comment below).
    */
   order?: OrderRow;
+  /** Everything the save committed — the bill AND its catch-up read nothing (SavedOrderSnapshot). */
+  snapshot?: SavedOrderSnapshot;
 }): Promise<PrintResult> {
   const { req, orderId } = p;
   const timer = p.timer ?? createStageTimer();
@@ -487,8 +562,11 @@ export async function runBillPrint(p: {
   // in the same request as the bill — a safety net that now costs zero extra round trips.
   //
   // The bill's own read (order row + items, ONE query — see readBillData) runs CONCURRENTLY with
-  // the catch-up, not after it, so a Bill-with-catch-up tap peaks at 4 DB connections (catch-up's
-  // 3 reads + the bill's 1) against the pool's max of 10.
+  // the catch-up, not after it. A standalone bill tap (no snapshot) peaks at 4 DB connections
+  // (catch-up's 3 reads + the bill's 1). A save-with-print passes the snapshot of what it just
+  // committed, and then neither half reads anything: the save's stock reconcile (1 connection,
+  // running alongside) plus the print's job INSERT / commit are all that's left, against the
+  // pool's max of 10 — two simultaneous Bill taps on one instance used to need ~12.
   // Safe because the two touch disjoint data: the catch-up only writes print_jobs and the order's
   // kotPrintCount / lastKotSnapshot (and reads kot_tickets / order_items); the bill renders from
   // order_items (which the catch-up never writes) and from order columns the catch-up never
@@ -496,9 +574,21 @@ export async function runBillPrint(p: {
   // generateBillBuffer's order type but never printed. Kitchen-first ordering is kept where it
   // matters: nothing of the bill is dispatched until the catch-up has fully finished.
   const catchUpPromise: Promise<KotCatchUp | undefined> = p.withKotCatchUp
-    ? runKotCatchUp(req, orderId, timer.scoped("kot"))
+    ? runKotCatchUp(req, orderId, timer.scoped("kot"), p.snapshot)
     : Promise.resolve(undefined);
-  const readsPromise = readBillData(orderId, timer, p.order);
+  const readsPromise = p.snapshot
+    ? Promise.resolve({
+        order: p.snapshot.order as OrderRow | undefined,
+        rawItems: p.snapshot.items.map((i): BillItem => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price,
+          size: i.size,
+          specialInstructions: i.specialInstructions,
+          categoryId: i.categoryId,
+        })),
+      })
+    : readBillData(orderId, timer, p.order);
   // allSettled, not all: a rejected bill read must never orphan an in-flight (or already
   // committed) catch-up — wait for both, keep the catch-up result, then rethrow the read error
   // below with the catch-up attached.
@@ -779,6 +869,8 @@ export async function runPrintStep(p: {
   /** The row the save just returned. Optional on purpose: `replaceOrderItems` returns undefined for an
    *  unknown id, in which case the print falls back to its own read (and reports "Order not found"). */
   order?: OrderRow;
+  /** What the save committed (order row, items, KOT numbers) — the print then reads nothing back. */
+  snapshot?: SavedOrderSnapshot;
   mode: PrintMode;
   auto: boolean;
   markBilled: MarkBilled | null;
@@ -787,7 +879,8 @@ export async function runPrintStep(p: {
   return executePrintStep(
     p.mode,
     {
-      kot: () => runKotPrint({ req: p.req, orderId: p.orderId, reprint: false, auto: p.auto, order: p.order, timer: p.timer }),
+      kot: () =>
+        runKotPrint({ req: p.req, orderId: p.orderId, reprint: false, auto: p.auto, order: p.order, snapshot: p.snapshot, timer: p.timer }),
       bill: () =>
         runBillPrint({
           req: p.req,
@@ -795,6 +888,7 @@ export async function runPrintStep(p: {
           withKotCatchUp: true,
           markBilled: p.markBilled,
           order: p.order,
+          snapshot: p.snapshot,
           timer: p.timer,
         }),
     },

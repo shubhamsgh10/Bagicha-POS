@@ -3,7 +3,7 @@ import { db } from "./db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
 import { eq, asc, and, gt, or, lt, inArray, isNull, sql } from "drizzle-orm";
 import { getSettings, getLiveSettings } from "./settingsStore";
-import { computeDelta, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
+import { computeDelta, instructionsByKey, snapKey, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
 import {
   sendToPrinter,
   canExecutePrintOnServer,
@@ -485,13 +485,15 @@ export function registerPrintRoutes(app: Express): void {
           size: i.size ?? null,
           serviceMode: i.serviceMode ?? null,
         }));
-        const kotItemMap = new Map(
-          rawItems.map((i) => [`${i.menuItemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`, { instructions: i.specialInstructions ?? null, serviceMode: i.serviceMode ?? null }]),
+        // Same rule as printDispatch.ts's runKotPrint: a full ticket shows each line's own
+        // instructions; a delta entry (all lines of its dish summed) shows them merged.
+        const instrByKey = instructionsByKey(
+          rawItems.map((i) => ({ itemId: i.menuItemId, size: i.size ?? null, serviceMode: i.serviceMode ?? null, quantity: i.quantity, instructions: i.specialInstructions ?? null })),
         );
 
-        let newItems = currentSnapshot.map((i) => ({
+        let newItems = currentSnapshot.map((i, idx) => ({
           ...i,
-          instructions: kotItemMap.get(`${i.itemId}:${i.size ?? ""}:${i.serviceMode ?? ""}`)?.instructions ?? null,
+          instructions: rawItems[idx].specialInstructions ?? null,
         }));
         let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
         let cancelledItems: SnapshotItem[] = [];
@@ -500,14 +502,8 @@ export function registerPrintRoutes(app: Express): void {
         const lastSnapshot = order.lastKotSnapshot as KotSnapshot | null;
         if (!reprint && lastSnapshot?.items?.length) {
           const delta = computeDelta(currentSnapshot, lastSnapshot.items);
-          newItems = delta.newItems.map((ni) => ({
-            ...ni,
-            instructions: kotItemMap.get(`${ni.itemId}:${ni.size ?? ""}:${ni.serviceMode ?? ""}`)?.instructions ?? null,
-          }));
-          modifiedItems = delta.modifiedItems.map((mi) => ({
-            ...mi,
-            instructions: kotItemMap.get(`${mi.itemId}:${mi.size ?? ""}:${mi.serviceMode ?? ""}`)?.instructions ?? null,
-          }));
+          newItems = delta.newItems.map((ni) => ({ ...ni, instructions: instrByKey.get(snapKey(ni)) ?? null }));
+          modifiedItems = delta.modifiedItems.map((mi) => ({ ...mi, instructions: instrByKey.get(snapKey(mi)) ?? null }));
           cancelledItems = delta.cancelledItems;
           isDelta = true;
         }

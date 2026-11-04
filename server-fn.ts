@@ -7,6 +7,7 @@ import * as Sentry from "@sentry/node";
 import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
+import { applyCsrfGuard } from "./server/csrf";
 import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
 import { serverTiming } from "./server/serverTiming";
@@ -43,6 +44,9 @@ app.use((req, res, next) => {
 app.use("/api", serverTiming);
 
 applyCors(app);
+// Before any body parsing or session work: a forged cross-site write is refused for free. This entry
+// matters most — its cookie is SameSite=None (see server/csrf.ts).
+applyCsrfGuard(app);
 // Before the session middleware: the keep-warm ping must cost no DB round trip (see the file).
 registerKeepAlivePing(app);
 
@@ -128,16 +132,17 @@ const ready = (async () => {
   });
 })();
 
-let initDoneUptimeMs = 0;
-ready.then(() => { initDoneUptimeMs = Math.round(process.uptime() * 1000); }, () => {});
-
 export default async function handler(req: any, res: any) {
-  // A request that arrived while this instance was still initialising waited for the whole start-up
-  // (module load + settings + routes, i.e. process uptime when init finished). Reported as
-  // Server-Timing cold;dur by server/serverTiming.ts so a cold start shows up in the slow-request
-  // diagnostics. A request reaching an already-initialised (or pre-warmed) instance gets none.
+  // A request that arrived while this instance was still initialising (settings + routes) is
+  // reported with Server-Timing cold;dur = how long IT waited for that (server/serverTiming.ts),
+  // so a cold start shows up in the slow-request diagnostics. A request reaching an
+  // already-initialised instance gets none. It used to report the process uptime when init
+  // finished — which includes the time a pre-warmed instance sat frozen before its first request:
+  // production showed cold;dur=40453 on requests that took 480 ms end to end, so
+  // classifySlowRequest blamed "cold start" for time that never happened.
   const t0 = Date.now();
   await ready;
-  if (Date.now() - t0 >= 5) req.coldMs = initDoneUptimeMs;
+  const waited = Date.now() - t0;
+  if (waited >= 5) req.coldMs = waited;
   app(req, res);
 }

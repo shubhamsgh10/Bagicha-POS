@@ -9,7 +9,7 @@
  * computeDelta now nets out exactly this pair.
  * Run: npx tsx scripts/verify-kot-delta.ts
  */
-import { computeDelta, type SnapshotItem } from "../shared/kotDelta";
+import { computeDelta, mergedInstructions, instructionsByKey, snapKey, type SnapshotItem } from "../shared/kotDelta";
 
 const checks: Array<[string, boolean]> = [];
 
@@ -77,6 +77,63 @@ const item = (over: Partial<SnapshotItem>): SnapshotItem => ({
   const delta = computeDelta(current, last);
   checks.push(["different dishes, same qty: both reported (no false net)",
     delta.newItems.length === 1 && delta.cancelledItems.length === 1]);
+}
+
+// ── Duplicate lines of the same dish key are SUMMED, not last-wins ─────────────
+// (same dish with different add-ons, or the same dish added again after reopening the order)
+{
+  const last = [item({ itemId: 7, name: "Butter Naan", quantity: 1 })];
+  const current = [item({ itemId: 7, name: "Butter Naan", quantity: 1 }), item({ itemId: 7, name: "Butter Naan", quantity: 1 })];
+  const delta = computeDelta(current, last);
+  checks.push(["second Naan added as its own line → +1 (now 2, was 1)",
+    delta.newItems.length === 1 && delta.newItems[0].quantity === 1 && delta.newItems[0].previousQty === 1]);
+}
+{
+  const last = [item({ itemId: 7, quantity: 1 }), item({ itemId: 7, quantity: 1 })];
+  const current = [item({ itemId: 7, quantity: 1 })];
+  const delta = computeDelta(current, last);
+  checks.push(["removing one of two duplicate lines → a decrease (2 → 1), not unnoticed",
+    delta.modifiedItems.length === 1 && delta.modifiedItems[0].quantity === 1 && delta.modifiedItems[0].previousQty === 2 && delta.cancelledItems.length === 0]);
+}
+{
+  const current = [item({ itemId: 7, quantity: 1 }), item({ itemId: 7, quantity: 2 })];
+  const delta = computeDelta(current, []);
+  checks.push(["two new lines of one dish → one entry of 3", delta.newItems.length === 1 && delta.newItems[0].quantity === 3]);
+}
+{
+  const last = [item({ itemId: 7, quantity: 1 }), item({ itemId: 7, quantity: 1 })];
+  const current = [item({ itemId: 7, quantity: 2 })];
+  checks.push(["two lines merged into one of the same total → no change", (() => {
+    const d = computeDelta(current, last);
+    return d.newItems.length === 0 && d.modifiedItems.length === 0 && d.cancelledItems.length === 0;
+  })()]);
+}
+{
+  const last = [item({ itemId: 7, quantity: 0.3 })];
+  const current = [item({ itemId: 7, quantity: 0.1 }), item({ itemId: 7, quantity: 0.2 })];
+  const d = computeDelta(current, last);
+  checks.push(["0.1 + 0.2 equals 0.3 (no float-noise increment)", d.newItems.length === 0 && d.modifiedItems.length === 0]);
+}
+{
+  // A summed flip still nets: two dine-in lines (1 + 1) re-tagged as one parcel line of 2.
+  const last = [item({ itemId: 7, quantity: 1, serviceMode: "dinein" }), item({ itemId: 7, quantity: 1, serviceMode: "dinein" })];
+  const current = [item({ itemId: 7, quantity: 2, serviceMode: "pickup" })];
+  const d = computeDelta(current, last);
+  checks.push(["flip of summed lines still nets out", d.newItems.length === 0 && d.cancelledItems.length === 0]);
+}
+
+// ── mergedInstructions / instructionsByKey ────────────────────────────────────
+checks.push(["same instructions on every line → that text", mergedInstructions([{ quantity: 1, instructions: "Note: less oil" }, { quantity: 2, instructions: "Note: less oil" }]) === "Note: less oil"]);
+checks.push(["no instructions anywhere → null", mergedInstructions([{ quantity: 1, instructions: "" }, { quantity: 1, instructions: null }]) === null]);
+checks.push(["different instructions → each variant with its quantity",
+  mergedInstructions([{ quantity: 1, instructions: null }, { quantity: 2, instructions: "+ Extra Cheese" }]) === "1x regular; 2x + Extra Cheese"]);
+{
+  const m = instructionsByKey([
+    { itemId: 7, size: null, serviceMode: "dinein", quantity: 1, instructions: "" },
+    { itemId: 7, size: null, serviceMode: "dinein", quantity: 1, instructions: "+ Ghee" },
+    { itemId: 9, size: "L", serviceMode: "dinein", quantity: 1, instructions: "Note: hot" },
+  ]);
+  checks.push(["instructionsByKey groups by dish key", m.get(snapKey({ itemId: 7, size: null, serviceMode: "dinein" })) === "1x regular; 1x + Ghee" && m.get(snapKey({ itemId: 9, size: "L", serviceMode: "dinein" })) === "Note: hot"]);
 }
 
 let failed = 0;

@@ -10,6 +10,7 @@
  */
 
 import { db } from "../db";
+import { advisoryXactLock, LOCK_NS } from "../advisoryLocks";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import {
   coupons,
@@ -189,7 +190,7 @@ export async function redeemCoupon(
   // limits AND insert the redemption atomically under a per-coupon advisory lock, which
   // serializes concurrent redemptions of THIS coupon without blocking other coupons.
   const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${couponId}::bigint)`);
+    await tx.execute(advisoryXactLock(LOCK_NS.couponRedemption, couponId));
 
     const [{ totalUsed }] = await tx
       .select({ totalUsed: sql<number>`count(*)::int` })

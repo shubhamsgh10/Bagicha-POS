@@ -15,6 +15,7 @@
  */
 
 import { db } from "../db";
+import { advisoryXactLockText, LOCK_NS } from "../advisoryLocks";
 import { eq, sql } from "drizzle-orm";
 import { loyaltyPoints, CRM_EVENT_TYPES } from "../../shared/schema";
 import { resolveCustomerId } from "./crm/customerIdService";
@@ -124,7 +125,7 @@ export async function redeemPoints(
   // customerId serializes redemptions for THIS customer specifically without blocking
   // unrelated customers, and releases automatically on commit/rollback.
   const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${customerId})::bigint)`);
+    await tx.execute(advisoryXactLockText(LOCK_NS.loyaltyCustomer, customerId));
     const [row] = await tx
       .select({ total: sql<number>`coalesce(sum(${loyaltyPoints.points}), 0)::int` })
       .from(loyaltyPoints)

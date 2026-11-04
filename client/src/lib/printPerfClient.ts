@@ -1,5 +1,6 @@
-import { createStageTimer, parseServerTiming, SLOW_PRINT_TAP_MS, type StageTimer } from "@shared/printPerf";
-import { apiUrl } from "@/lib/api";
+import { createStageTimer, SLOW_PRINT_TAP_MS, type StageTimer } from "@shared/printPerf";
+import { parseServerTimingStages } from "@shared/requestTiming";
+import { timedFetch } from "@/lib/api";
 import { msSinceLastApiResponse } from "@/lib/connectionKeepAlive";
 
 /**
@@ -49,12 +50,12 @@ export function endPrintTap(orderId?: number): void {
     console.log(tap.timer.toLogLine(`tap:${tap.kind}`));
     const totalMs = tap.timer.totalMs();
     if (totalMs < SLOW_PRINT_TAP_MS) return;
-    const server = parseServerTiming(tap.serverTiming);
+    const server = parseServerTimingStages(tap.serverTiming);
     const c = (navigator as unknown as { connection?: { effectiveType?: string; rtt?: number; downlink?: number } }).connection;
-    void fetch(apiUrl("/api/perf/slow-print"), {
+    // timedFetch like every API call (lib/slowRequest.ts never reports /api/perf/*, so no loop).
+    void timedFetch("/api/perf/slow-print", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       keepalive: true, // survives the navigate("/tables") that follows Save & Print
       body: JSON.stringify({
         orderId: orderId ?? null,
