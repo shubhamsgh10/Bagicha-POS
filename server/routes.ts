@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "child_process";
-import { storage } from "./storage";
+import { storage, OrderNotEditableError } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
@@ -60,7 +60,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
-import { runPrintStep, instrumentJson } from "./services/printDispatch";
+import { runPrintStep, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -77,7 +77,10 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
-import { priceOrder, computeTotalsFromLines } from "./services/orderPricing";
+import { priceOrderWithMenu, computeTotalsFromLines, type PricedOrder } from "./services/orderPricing";
+import { computeLineCosts } from "@shared/menuCost";
+import { deriveBillTotals } from "@shared/orderPricing";
+import { orderEditBlock, isNoopItemsSave, kitchenTicketLines, discountNeedsApproval } from "@shared/orderItemsSave";
 import { buildSpecialInstructions } from "@shared/orderItemText";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
@@ -1588,7 +1591,7 @@ export async function registerRoutes(
       // and metadata shape — deliberate, so both routes' shifts count together under one
       // "Shifted" metric on Reports.tsx's KOT & Bill Activity tab, entityId is the
       // ORDER id (matching that route's convention), not the table id.
-      logAudit(req, "order.move_table", "order", fromTable.currentOrderId, {
+      await logAudit(req, "order.move_table", "order", fromTable.currentOrderId, {
         orderNumber: (shiftedOrder as any)?.orderNumber,
         fromTable: fromTable.name,
         toTable: toTable.name,
@@ -1996,30 +1999,26 @@ export async function registerRoutes(
       const timer = printReq.mode ? createStageTimer() : null;
       if (timer) instrumentJson(res, timer, `save+${printReq.mode} (new order)`);
 
+      // ONE read of the menu rows this order needs — pricing, the plate-cost snapshot, the stock
+      // reconcile and the KOT's names/categories all use it (each used to SELECT * the same rows
+      // itself) — and, alongside it, the costs of just the ingredients those items link to.
+      // Junk ids never reach Postgres (getMenuRowsForOrder drops them), so a bad line is the
+      // pricing step's 400 below, never a cast-error 500.
+      const menuIds = lineItems.map((item: any) => Number(item.menuItemId));
+      const [menuRows, ingredientCosts] = await Promise.all([
+        storage.getMenuRowsForOrder(menuIds),
+        storage.getIngredientCostsForMenuItems(menuIds),
+      ]);
+
       // Recompute all money server-side from DB prices — never trust client totals.
       // This is the ONLY genuine "invalid order data" case (unknown item / bad qty);
       // it reports the real reason instead of a blanket message. Everything below is
       // a server fault and must surface as 5xx — mislabelling DB/counter failures as
       // 400 "Invalid order data" is what hid the orderNumber collision bug.
-      //
-      // The plate-cost read is independent of pricing, so the two run together: on a KOT/Bill tap
-      // every serial round trip here sits in front of the print job.
-      //
-      // Order items with server-validated unit prices. unitCost is a snapshot of the
-      // plate cost AT SALE TIME (shared/menuCost.ts via storage.computeMenuItemCosts) —
-      // null when no full recipe cost is known, never a fabricated 0. Batched: one
-      // call computes all lines' costs in 2 DB round trips total, not 2 per line.
-      const [pricing, costResults] = await Promise.all([
-        priceOrder(lineItems, orderInfo.discountAmount, orderInfo.containerCharge, orderInfo.deliveryCharge).then(
-          (priced) => ({ priced, pricingErr: undefined as unknown }),
-          (pricingErr: unknown) => ({ priced: undefined, pricingErr }),
-        ),
-        storage.computeMenuItemCosts(
-          lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
-        ),
-      ]);
-      if (!pricing.priced) {
-        const { pricingErr } = pricing;
+      let priced: PricedOrder;
+      try {
+        priced = priceOrderWithMenu(lineItems, menuRows, orderInfo.discountAmount, orderInfo.containerCharge, orderInfo.deliveryCharge);
+      } catch (pricingErr) {
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
         const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
@@ -2028,12 +2027,21 @@ export async function registerRoutes(
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
-      const priced = pricing.priced;
 
       // Applying a discount is a privileged action; a bare staff session may not.
       if (priced.discount > 0 && !hasElevation(req, "manager")) {
         return res.status(403).json({ error: "Manager approval required to apply a discount" });
       }
+
+      // Order items with server-validated unit prices. unitCost is a snapshot of the
+      // plate cost AT SALE TIME (shared/menuCost.ts) — null when no full recipe cost is known,
+      // never a fabricated 0. Pure: computed from the reads above, no DB work.
+      const menuById = new Map(menuRows.map((m) => [m.id, m]));
+      const costResults = computeLineCosts(
+        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+        menuById,
+        ingredientCosts,
+      );
 
       // Both numbers are only taken once the order is known to be valid. Each is one atomic
       // UPDATE of the settings row; issuing them together saves a round trip (Postgres queues the
@@ -2065,8 +2073,8 @@ export async function registerRoutes(
         };
       });
 
-      // KOT ticket lines (kotTickets.items — a write-only historical record; the actual
-      // print always re-derives fresh from orderItems via /api/print/kot).
+      // KOT ticket lines (kotTickets.items — what the Kitchen screen lists; the printed KOT
+      // re-derives from orderItems via the print pipeline).
       const kotNumber = String(kotNo).padStart(3, "0");
       const kotItems = lineItems.map((item: any) => ({
         name: item.name,
@@ -2080,7 +2088,7 @@ export async function registerRoutes(
       // paymentMethod/paymentBreakdown must never come from the client body — an order used
       // to be creatable already marked "paid" by simply including that field in orderInfo.
       // Real payment state is only ever set by POST /api/orders/:id/payment (settlement).
-      const order = await storage.createOrderWithItems(
+      const created = await storage.createOrderWithItems(
         {
           ...orderInfo,
           orderNumber,
@@ -2098,32 +2106,38 @@ export async function registerRoutes(
         itemsToInsert,
         { kotNumber, items: kotItems as any },
       );
+      const order = created.order;
 
       // A discount applied at order-creation time is the same class of deviation as one
       // applied later via an edit — see the identical logAudit call in
       // PUT /api/orders/:id/items. Plain order creation itself stays unlogged (it's the
       // baseline, not a post-generation edit — logging every order would swamp the trail).
+      // Awaited before the response (with the stock reconcile), never left running after it:
+      // on Vercel a promise still pending once the response is sent can be frozen and lost.
+      const audits: Array<Promise<void>> = [];
       if (priced.discount > 0) {
-        logAudit(req, "order.discount_applied", "order", order.id, {
+        audits.push(logAudit(req, "order.discount_applied", "order", order.id, {
           discountBefore: 0,
           discountAfter: priced.discount,
-        });
+        }));
       }
 
       // Deduct inventory based on inventoryLinks for each menu item. Non-fatal at this
       // layer (the order already committed) — reconcileOrderInventory's own transaction
       // means a failure here can't leave a half-deducted state, only a fully-skipped one.
       // Started, not awaited: stock has nothing to do with the KOT/bill, so it runs alongside
-      // the print instead of in front of it (~5 round trips). Awaited before every response.
+      // the print instead of in front of it. Awaited before every response.
       if (lineItems.length > 0) {
         inventoryDone = storage
           .reconcileOrderInventory(
             order.id,
             lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
             isStaffMemberActor ? { staffMemberId: actor?.id } : { userId: actor?.id },
+            menuRows,
           )
           .catch((invErr) => console.error("[order] inventory reconciliation error (non-fatal):", invErr));
       }
+      const settled = () => Promise.all([inventoryDone, ...audits]);
 
       // Update table status if dine-in. Non-fatal, same reasoning as the inventory
       // reconciliation above: the order is ALREADY committed by this point
@@ -2162,21 +2176,23 @@ export async function registerRoutes(
       // One request per tap: when the client asked for a print, run it NOW — after the save has
       // committed — and return its result on the same response. runPrintStep never rejects: a
       // print failure comes back as `print.error`, so the committed order above stays a 200.
+      // It gets the rows this save just committed, so it reads nothing back.
       if (printReq.mode && timer) {
         timer.add("save", timer.totalMs());
         const print = await runPrintStep({
           req,
           orderId: order.id,
           order,
+          snapshot: savedOrderSnapshot(order, created.items, menuRows, [created.kotTicket]),
           mode: printReq.mode,
           auto: printReq.auto,
           markBilled: printReq.markBilled,
           timer,
         });
-        await inventoryDone;
+        await settled();
         return res.json({ ...order, print });
       }
-      await inventoryDone;
+      await settled();
       res.json(order);
     } catch (error) {
       console.error("Create order error:", error);
@@ -2190,6 +2206,7 @@ export async function registerRoutes(
     let inventoryDone: Promise<void> = Promise.resolve();
     try {
       const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
       const { items, discountAmount, containerCharge, deliveryCharge, customerName, customerPhone } = req.body;
       // Reject BEFORE any pricing/DB work: a missing/non-array `items` must never be read as
       // "clear the order" (it used to replace the order's items with nothing, commit, then 500).
@@ -2197,39 +2214,44 @@ export async function registerRoutes(
       if (!Array.isArray(items)) {
         return res.status(400).json({ error: "items must be an array" });
       }
-      const lineItems = Array.isArray(items) ? items : [];
+      const lineItems = items;
       // Same as POST /api/orders: instrumentation only when a print was requested.
       const printReq = parseSavePrintRequest(req.body);
       const timer = printReq.mode ? createStageTimer() : null;
       if (timer) instrumentJson(res, timer, `save+${printReq.mode} order=${id}`);
+
+      // Every read this save needs, at once (one round trip): the menu rows (pricing, plate cost,
+      // stock, the KOT's names/categories — read once, see POST /api/orders), the linked
+      // ingredients' costs, the order as it is BEFORE this save (items + row — for the
+      // editability check, the no-op check, the kitchen ticket, the cancel guard and the
+      // before/after audit) and, only when a print follows, the order's KOT numbers.
+      const menuIds = lineItems.map((item: any) => Number(item.menuItemId));
+      const [menuRows, ingredientCosts, existingItems, existingOrderRow, existingTickets] = await Promise.all([
+        storage.getMenuRowsForOrder(menuIds),
+        storage.getIngredientCostsForMenuItems(menuIds),
+        storage.getOrderItems(id),
+        storage.getOrderById(id),
+        printReq.mode ? storage.getKotTicketNumbers(id) : Promise.resolve([] as Array<{ kotNumber: string }>),
+      ]);
+
+      // A missing order (deleted by a merge) or a cancelled one is never written to — saving to
+      // one used to insert orphan order_items, deduct real stock for a ghost order and put a
+      // ticket on the Kitchen screen. (A settled order is checked below, once we know whether
+      // this save changes anything.)
+      const gone = orderEditBlock(existingOrderRow, false);
+      if (gone || !existingOrderRow) {
+        return res.status(gone?.status ?? 404).json({ error: gone?.error ?? "Order not found", code: gone?.code ?? "not_found" });
+      }
 
       // Recompute all money server-side from DB prices — never trust client totals.
       // Same shape as POST /api/orders: a genuine pricing rejection (unknown item /
       // bad qty / bad open-item price) is a client-data problem, not a server fault —
       // report it as 400 with the real reason instead of falling through to the
       // generic 500 below.
-      //
-      // Pricing, the snapshot of the order as it is BEFORE this save (existing items + order row —
-      // used for both the delta KOT below and the before/after audit trail) and the plate-cost read
-      // are independent reads, so they run together: on a KOT/Bill tap each serial round trip here
-      // used to sit in front of the print job (4 round trips → 1).
-      //
-      // unitCost is a snapshot of the plate cost AT SALE TIME (shared/menuCost.ts via
-      // storage.computeMenuItemCosts) — null when no full recipe cost is known, never a
-      // fabricated 0. Batched — same pattern as POST /api/orders above.
-      const [pricing, existingItems, existingOrderRow, editCostResults] = await Promise.all([
-        priceOrder(lineItems, discountAmount, containerCharge, deliveryCharge).then(
-          (priced) => ({ priced, pricingErr: undefined as unknown }),
-          (pricingErr: unknown) => ({ priced: undefined, pricingErr }),
-        ),
-        storage.getOrderItems(id),
-        storage.getOrderById(id),
-        storage.computeMenuItemCosts(
-          lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
-        ),
-      ]);
-      if (!pricing.priced) {
-        const { pricingErr } = pricing;
+      let priced: PricedOrder;
+      try {
+        priced = priceOrderWithMenu(lineItems, menuRows, discountAmount, containerCharge, deliveryCharge);
+      } catch (pricingErr) {
         // A genuinely bad line (unknown item / qty) is a 400. SettingsUnavailableError carries
         // its own status (503): that is a server condition, not a bad order — staff just retry.
         const pricingStatus = typeof (pricingErr as any)?.status === "number" ? (pricingErr as any).status : 400;
@@ -2238,33 +2260,112 @@ export async function registerRoutes(
           error: pricingErr instanceof Error ? pricingErr.message : "Invalid order data",
         });
       }
-      const priced = pricing.priced;
 
-      // Applying a discount is a privileged action; a bare staff session may not.
-      if (priced.discount > 0 && !hasElevation(req, "manager")) {
-        return res.status(403).json({ error: "Manager approval required to apply a discount" });
+      // Replace all order items with server-validated unit prices. unitCost is a snapshot of the
+      // plate cost AT SALE TIME (shared/menuCost.ts) — null when no full recipe cost is known,
+      // never a fabricated 0. Pure: computed from the reads above.
+      const menuById = new Map(menuRows.map((m) => [m.id, m]));
+      const editCostResults = computeLineCosts(
+        lineItems.map((item: any) => ({ menuItemId: Number(item.menuItemId), size: item.size || null })),
+        menuById,
+        ingredientCosts,
+      );
+      const itemsToInsert = lineItems.map((item: any, idx: number) => {
+        const costResult = editCostResults[idx];
+        return {
+          menuItemId: Number(item.menuItemId),
+          name: item.name ?? null,
+          quantity: Number(item.quantity),
+          price: String(priced.lines[idx].unitPrice),
+          // Same fold as POST /api/orders — this route had NO addon awareness at all
+          // (not even for the transient kotItems below), so any item added or edited
+          // via a running-table edit lost its addon selection on the printed KOT/bill
+          // from the very first print, not just on reprint.
+          specialInstructions: buildSpecialInstructions(item.specialInstructions, item.addons),
+          size: item.size || null,
+          serviceMode: item.serviceMode || null,
+          parcelLeftover: item.parcelLeftover ?? false,
+          unitCost: costResult && !costResult.hasIncompleteCost ? costResult.cost.toFixed(2) : null,
+        };
+      });
+      const totals = {
+        totalAmount: priced.total.toFixed(2),
+        taxAmount: priced.tax.toFixed(2),
+        discountAmount: priced.discount.toFixed(2),
+        subtotalAmount: priced.subtotal.toFixed(2),
+        containerCharge: priced.containerCharge.toFixed(2),
+        deliveryCharge: priced.deliveryCharge.toFixed(2),
+      };
+
+      // Unchanged cart (Settle right after a Bill, a reprint, the Auto-KOT timer re-sending what
+      // is already saved): nothing to write. It used to delete and reinsert every item, re-run
+      // the stock reconcile (~5 round trips) and the audit diff each time — all in front of the
+      // payment on every Settle. The existing rows stay (with their original sale-time plate
+      // cost); the print below still runs, from those rows.
+      const noop = isNoopItemsSave({
+        existingLines: existingItems as any,
+        nextLines: itemsToInsert as any,
+        existingOrder: existingOrderRow as any,
+        nextMoney: totals,
+        customerName,
+        customerPhone,
+      });
+      // A settled order may be reprinted (the no-op above) but never changed.
+      const settledBlock = orderEditBlock(existingOrderRow, !noop);
+      if (settledBlock) {
+        return res.status(settledBlock.status).json({ error: settledBlock.error, code: settledBlock.code });
       }
 
-      const existingMenuItemIds = new Set(existingItems.map((i) => i.menuItemId));
+      if (noop) {
+        if (!printReq.mode || !timer) return res.json(existingOrderRow);
+        timer.add("save", timer.totalMs());
+        const print = await runPrintStep({
+          req,
+          orderId: id,
+          order: existingOrderRow,
+          snapshot: savedOrderSnapshot(existingOrderRow, existingItems, menuRows, existingTickets),
+          mode: printReq.mode,
+          auto: printReq.auto,
+          markBilled: printReq.markBilled,
+          timer,
+        });
+        return res.json({ ...existingOrderRow, print });
+      }
+
+      // Applying a discount is a privileged action; a bare staff session may not. "Applying" = more
+      // than the rate already approved on this order (shared/orderItemsSave.ts): the POS discount is
+      // a percentage, so adding a dish to an approved-10% table raises the rupee amount without
+      // anyone applying anything new — that used to 403 a staff session 90 s after the approval.
+      const before = deriveBillTotals(existingOrderRow as any);
+      if (
+        discountNeedsApproval({
+          discountAfter: priced.discount,
+          subtotalAfter: priced.subtotal,
+          discountBefore: before.discount,
+          subtotalBefore: before.subtotal,
+        }) &&
+        !hasElevation(req, "manager")
+      ) {
+        return res.status(403).json({ error: "Manager approval required to apply a discount" });
+      }
 
       // ── Per-item KOT-cancellation guard ──────────────────────────────────────
       // Deliberately compares against existingItems (this order's PERSISTED state
       // immediately before this save), NOT orders.lastKotSnapshot. Found live: this
-      // route's own ticket-creation block below (search "newItems.length > 0")
-      // unconditionally creates a kitchen-visible kot_tickets row for any item the
-      // FIRST time it's ever saved — at order creation (storage.createOrderWithItems)
-      // or at the PUT that first adds it — completely independent of whether anyone
-      // ever actually PRINTS via /api/print/kot, which is the ONLY thing that writes
-      // lastKotSnapshot. A real order was observed with 2 items visibly on the
-      // Kitchen KOT screen (kot_tickets row existed) but lastKotSnapshot still null
-      // (no print had happened) — a lastKotSnapshot-based check let the removal
-      // through with no guard at all, the opposite of what this feature exists for.
-      // Since EVERY item ever persisted to order_items has, by construction, already
-      // triggered a kitchen-visible ticket at the moment it was first saved,
-      // "was this item in existingItems" is the strictly correct signal — a superset
-      // of "was it in lastKotSnapshot," and correct even when no printer is
-      // configured or Auto-KOT never fires. Reuses computeDelta directly
-      // (shared/kotDelta.ts) so the exact same identity key and flip-netting
+      // route's own ticket-creation step below (kitchenTicketLines) creates a
+      // kitchen-visible kot_tickets row for any item the FIRST time it's ever saved —
+      // at order creation (storage.createOrderWithItems) or at the PUT that first adds
+      // it — completely independent of whether anyone ever actually PRINTS via
+      // /api/print/kot, which is the ONLY thing that writes lastKotSnapshot. A real
+      // order was observed with 2 items visibly on the Kitchen KOT screen (kot_tickets
+      // row existed) but lastKotSnapshot still null (no print had happened) — a
+      // lastKotSnapshot-based check let the removal through with no guard at all, the
+      // opposite of what this feature exists for. Since EVERY item ever persisted to
+      // order_items has, by construction, already triggered a kitchen-visible ticket at
+      // the moment it was first saved, "was this item in existingItems" is the strictly
+      // correct signal — a superset of "was it in lastKotSnapshot," and correct even
+      // when no printer is configured or Auto-KOT never fires. Reuses computeDelta
+      // directly (shared/kotDelta.ts) so the exact same identity key and flip-netting
       // behavior (a pure dine-in<->parcel flip is never treated as a cancellation)
       // apply here for free — see shared/kotItemCancel.ts's own comment on why this
       // is a direct reuse, not a parallel diff (contrast with diffOrderLines below,
@@ -2300,45 +2401,46 @@ export async function registerRoutes(
         }
       }
 
-      // Replace all order items with server-validated unit prices and the plate costs read above.
-      const itemsToInsert = lineItems.map((item: any, idx: number) => {
-        const costResult = editCostResults[idx];
-        return {
-          menuItemId: Number(item.menuItemId),
-          name: item.name ?? null,
-          quantity: Number(item.quantity),
-          price: String(priced.lines[idx].unitPrice),
-          // Same fold as POST /api/orders — this route had NO addon awareness at all
-          // (not even for the transient kotItems below), so any item added or edited
-          // via a running-table edit lost its addon selection on the printed KOT/bill
-          // from the very first print, not just on reprint.
-          specialInstructions: buildSpecialInstructions(item.specialInstructions, item.addons),
-          size: item.size || null,
-          serviceMode: item.serviceMode || null,
-          parcelLeftover: item.parcelLeftover ?? false,
-          unitCost: costResult && !costResult.hasIncompleteCost ? costResult.cost.toFixed(2) : null,
-        };
-      });
+      // The Kitchen-screen ticket for this save: new dishes, new sizes/modes of existing ones and
+      // quantity increases (as the increment) — same rule as the printed KOT delta. It used to key
+      // on menuItemId alone, so "1 → 3 naan" or "a Large next to the Regular" never reached the
+      // screen (and the print then reused the previous ticket's KOT number).
+      const ticketLines = kitchenTicketLines(lineItems, existingItems);
+      // The KOT number is issued ALONGSIDE the replace transaction (independent rows), and the
+      // ticket is inserted inside it — the counter and the ticket used to be two more round trips
+      // after the commit, in front of the print. A number burnt by a failed save is a gap, the same
+      // as POST /api/orders.
+      const kotNumberPromise = ticketLines.length > 0
+        ? incrementKotCounter().then((n) => String(n).padStart(3, "0"))
+        : null;
+      kotNumberPromise?.catch(() => {}); // awaited inside the transaction; never an unhandled rejection
 
-      // Delete + reinsert + totals update in one transaction (storage.replaceOrderItems)
-      // — previously three separate statements, so a crash between the delete and the
-      // reinsert left the order with zero items.
-      const order = await storage.replaceOrderItems(id, itemsToInsert as any, {
-        totalAmount: priced.total.toFixed(2),
-        taxAmount: priced.tax.toFixed(2),
-        discountAmount: priced.discount.toFixed(2),
-        subtotalAmount: priced.subtotal.toFixed(2),
-        containerCharge: priced.containerCharge.toFixed(2),
-        deliveryCharge: priced.deliveryCharge.toFixed(2),
-        ...(customerName !== undefined ? { customerName: customerName || null } : {}),
-        ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
-      } as any);
+      // Delete + reinsert + totals update (+ the ticket) in one transaction, and only while the
+      // order is still editable at write time (storage.replaceOrderItems).
+      let saved: Awaited<ReturnType<typeof storage.replaceOrderItems>>;
+      try {
+        saved = await storage.replaceOrderItems(id, itemsToInsert as any, {
+          ...totals,
+          ...(customerName !== undefined ? { customerName: customerName || null } : {}),
+          ...(customerPhone !== undefined ? { customerPhone: customerPhone || null } : {}),
+        } as any, kotNumberPromise ? { kotNumber: kotNumberPromise, items: ticketLines as any } : undefined);
+      } catch (err) {
+        if (!(err instanceof OrderNotEditableError)) throw err;
+        // Settled / cancelled / merged away between our read and our write.
+        const block = orderEditBlock(await storage.getOrderById(id), true);
+        return res.status(block?.status ?? 409).json({
+          error: block?.error ?? "This order changed while it was being saved — reopen it and try again.",
+          code: block?.code ?? "conflict",
+        });
+      }
+      const order = saved.order;
 
       // Bill-edit audit trail — the before/after half of CLAUDE.md's "immutable audit log"
-      // invariant. This route (item add/remove/re-quantify on a running order) previously
-      // logged nothing at all. Deliberately NOT unconditional: the POS Auto-KOT timer PUTs
-      // the unchanged cart on a debounce every few minutes for every open order, and logging
-      // every one of those no-op syncs would bury genuine edits under thousands of rows.
+      // invariant. Only reached when something changed (the no-op save returned above), so the
+      // Auto-KOT timer's unchanged syncs never bury genuine edits. Awaited before the response
+      // (alongside the stock reconcile): a promise still pending after the response is sent can be
+      // frozen and lost on Vercel.
+      const audits: Array<Promise<void>> = [];
       try {
         const beforeLines: AuditLine[] = existingItems.map((i: any) => ({
           menuItemId: i.menuItemId,
@@ -2370,7 +2472,7 @@ export async function registerRoutes(
           || deliveryBefore !== deliveryAfter || totalBefore !== totalAfter;
 
         if (!diff.isEmpty || moneyChanged) {
-          logAudit(req, "order.items_edit", "order", id, {
+          audits.push(logAudit(req, "order.items_edit", "order", id, {
             added: diff.added.map((l) => ({ name: l.name, size: l.size, quantity: l.quantity })),
             removed: diff.removed.map((l) => ({ name: l.name, size: l.size, quantity: l.quantity })),
             changed: diff.changed,
@@ -2382,12 +2484,12 @@ export async function registerRoutes(
             containerAfter,
             deliveryBefore,
             deliveryAfter,
-          });
+          }));
         }
         // A discount is a deviation and worth its own independently-filterable row, not just
         // buried inside the item-edit payload above — same reasoning as order.write_off.
         if (discountBefore !== discountAfter) {
-          logAudit(req, "order.discount_applied", "order", id, { discountBefore, discountAfter });
+          audits.push(logAudit(req, "order.discount_applied", "order", id, { discountBefore, discountAfter }));
         }
       } catch (auditErr) {
         // Never let an audit-trail bug block a genuinely successful order edit.
@@ -2397,9 +2499,9 @@ export async function registerRoutes(
       // One order.item_cancel row per item dropped since the last KOT — kept deliberately
       // distinct from order.cancel (whole-order cancellation, a different thing) and from
       // the aggregate order.items_edit above, so Reports.tsx's KOT & Bill Activity tab can
-      // count it on its own (kotItemCancelled, not kotCancelled). Uses the LAST-KNOWN-GOOD
-      // name/quantity from lastKotSnapshot (droppedKotItems), never the client-sent reason
-      // payload's own itemId/size fields beyond the reason text itself — can't be spoofed.
+      // count it on its own (kotItemCancelled, not kotCancelled). Uses the server's own
+      // persisted name/quantity (droppedKotItems), never the client-sent reason payload's
+      // own itemId/size fields beyond the reason text itself — can't be spoofed.
       if (droppedKotItems.length > 0) {
         try {
           const reasonByKey = new Map<string, string>();
@@ -2408,13 +2510,13 @@ export async function registerRoutes(
             if (r) reasonByKey.set(`${Number(c.itemId)}:${c.size ?? ""}:${c.serviceMode ?? ""}`, r);
           }
           for (const d of droppedKotItems) {
-            logAudit(req, "order.item_cancel", "order", id, {
+            audits.push(logAudit(req, "order.item_cancel", "order", id, {
               itemName: d.name,
               size: d.size,
               serviceMode: d.serviceMode,
               quantity: d.quantity,
               reason: reasonByKey.get(`${d.itemId}:${d.size ?? ""}:${d.serviceMode ?? ""}`) ?? "",
-            });
+            }));
           }
         } catch (auditErr) {
           console.error("[order] item_cancel audit error (non-fatal):", auditErr);
@@ -2425,49 +2527,43 @@ export async function registerRoutes(
       // table (adding/removing/re-quantifying items across rounds) actually touch stock;
       // previously this route had zero inventory code. Non-fatal: the order edit itself
       // already succeeded, so don't fail the request over a reconciliation hiccup.
-      // Started, not awaited: it runs alongside the delta-KOT ticket and the print instead of in
-      // front of them (stock has nothing to do with the ticket); awaited before every response.
+      // Started, not awaited: it runs alongside the print instead of in front of it (stock has
+      // nothing to do with the ticket); awaited before every response.
       inventoryDone = storage
         .reconcileOrderInventory(
           id,
           lineItems.map((i: any) => ({ menuItemId: Number(i.menuItemId), quantity: Number(i.quantity), size: i.size || null })),
           actorRefFromReq(req),
+          menuRows,
         )
         .catch((invErr) => console.error("[order] inventory reconciliation error (non-fatal):", invErr));
+      const settled = () => Promise.all([inventoryDone, ...audits]);
 
-      // Delta KOT — only print items newly added to this order
-      const newItems = lineItems.filter((i: any) => !existingMenuItemIds.has(Number(i.menuItemId)));
-      if (newItems.length > 0) {
-        const next = await incrementKotCounter();
-        const kotNumber = String(next).padStart(3, "0");
-        const kotItems = newItems.map((item: any) => ({
-          name: item.name,
-          quantity: Number(item.quantity),
-          instructions: buildSpecialInstructions(item.specialInstructions, item.addons) || undefined,
-          serviceMode: item.serviceMode || undefined,
-        }));
-        await storage.createKotTicket({ orderId: id, kotNumber, items: kotItems });
-        broadcast({ type: "KOT_UPDATE", action: "created" });
-      }
-
+      if (saved.kotTicket) broadcast({ type: "KOT_UPDATE", action: "created" });
       broadcast({ type: "ORDER_UPDATE", order });
-      // One request per tap — see the identical block in POST /api/orders. Runs after the delta
-      // KOT ticket above exists, so the printed kotNumber is the one this save just created.
+      // One request per tap — see the identical block in POST /api/orders. The ticket above is in
+      // the snapshot, so the printed kotNumber is the one this save just created.
       if (printReq.mode && timer) {
         timer.add("save", timer.totalMs());
         const print = await runPrintStep({
           req,
           orderId: id,
           order,
+          snapshot: savedOrderSnapshot(
+            order,
+            saved.items,
+            menuRows,
+            saved.kotTicket ? [...existingTickets, { kotNumber: saved.kotTicket.kotNumber }] : existingTickets,
+          ),
           mode: printReq.mode,
           auto: printReq.auto,
           markBilled: printReq.markBilled,
           timer,
         });
-        await inventoryDone;
+        await settled();
         return res.json({ ...order, print });
       }
-      await inventoryDone;
+      await settled();
       res.json(order);
     } catch (error) {
       console.error("Update order items error:", error);
@@ -2509,6 +2605,11 @@ export async function registerRoutes(
 
       const existingOrder = await storage.getOrderById(id);
       if (!existingOrder) return res.status(404).json({ error: "Order not found" });
+      // A cancelled order is never settled — that flipped it back to "served" + paid and into the
+      // day's sales. (settleOrderIfUnpaid refuses it too; this gives the real reason.)
+      if ((existingOrder as any).status === "cancelled") {
+        return res.status(409).json({ error: "This order was cancelled — it can't be settled.", code: "cancelled" });
+      }
       const orderTotal = parseFloat(String((existingOrder as any).totalAmount ?? 0));
 
       // A due settle on the rich payments[] path must always carry a reachable customer —
@@ -2641,29 +2742,34 @@ export async function registerRoutes(
       };
 
       // Independent writes to different tables, each catching its own error — run them together
-      // so the settle response waits one DB round trip here instead of two.
-      await Promise.all([freeTable(), completeKots()]);
+      // so the settle response waits one DB round trip here instead of two. The audit rows go in
+      // the same batch and are AWAITED: written fire-and-forget right before res.json, a write-off
+      // row could be lost when Vercel froze the function after the response — the one deviation
+      // the accountability trail exists to show. logAudit never rejects.
+      await Promise.all([
+        freeTable(),
+        completeKots(),
+        logAudit(req, "order.payment", "order", id, {
+          paymentMethod: primaryMethod,
+          paymentStatus: isDue ? "pending" : "paid",
+          paidAmount: paidAmt,
+          changeAmount: changeDue,
+          shortfallAmount: shortfall,
+          paymentBreakdown: breakdown,
+        }),
+        // A separate, independently filterable audit entry for the write-off itself — the
+        // whole point of a "deviation" control is that a manager can review just these, not
+        // hunt for them inside every ordinary payment row.
+        shortfall > 0
+          ? logAudit(req, "order.write_off", "order", id, {
+              orderTotal,
+              paidAmount: paidAmt,
+              shortfallAmount: shortfall,
+            })
+          : Promise.resolve(),
+      ]);
 
       broadcast({ type: "ORDER_UPDATE", order });
-
-      logAudit(req, "order.payment", "order", id, {
-        paymentMethod: primaryMethod,
-        paymentStatus: isDue ? "pending" : "paid",
-        paidAmount: paidAmt,
-        changeAmount: changeDue,
-        shortfallAmount: shortfall,
-        paymentBreakdown: breakdown,
-      });
-      // A separate, independently filterable audit entry for the write-off itself — the
-      // whole point of a "deviation" control is that a manager can review just these, not
-      // hunt for them inside every ordinary payment row.
-      if (shortfall > 0) {
-        logAudit(req, "order.write_off", "order", id, {
-          orderTotal,
-          paidAmount: paidAmt,
-          shortfallAmount: shortfall,
-        });
-      }
 
       if (!isDue) {
         const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
@@ -2745,7 +2851,7 @@ export async function registerRoutes(
         });
       }
 
-      logAudit(req, "order.payment_method_edit", "order", id, {
+      await logAudit(req, "order.payment_method_edit", "order", id, {
         orderNumber: (existing as any).orderNumber,
         beforeLabel: plan.before.label,
         afterLabel: plan.after.label,
@@ -2815,7 +2921,7 @@ export async function registerRoutes(
       }
 
       const approvedBy = freshPinApprover(req);
-      logAudit(req, "order.due_settled", "order", id, {
+      await logAudit(req, "order.due_settled", "order", id, {
         orderNumber: (existing as any).orderNumber,
         customerName: (existing as any).customerName ?? null,
         orderTotal: plan.orderTotal,
@@ -2831,7 +2937,7 @@ export async function registerRoutes(
       // Same convention as the POS payment route: any recorded shortfall gets its own, independently
       // filterable write-off row (Reports → KOT & Bill Activity counts these).
       if (Number(plan.shortfallAmount) > 0) {
-        logAudit(req, "order.write_off", "order", id, {
+        await logAudit(req, "order.write_off", "order", id, {
           orderTotal: plan.orderTotal,
           paidAmount: Number(plan.paidAmount),
           shortfallAmount: Number(plan.shortfallAmount),
@@ -2988,7 +3094,7 @@ export async function registerRoutes(
           console.error("[order] table free error on hold (non-fatal):", tableErr);
         }
       }
-      logAudit(req, "order.hold", "order", id, {
+      await logAudit(req, "order.hold", "order", id, {
         orderNumber: (order as any).orderNumber,
         tableNumber: (order as any).tableNumber,
       });
@@ -3053,7 +3159,7 @@ export async function registerRoutes(
       } catch (kotErr) {
         console.error("[order] KOT auto-complete error on cancel (non-fatal):", kotErr);
       }
-      logAudit(req, "order.cancel", "order", id, {
+      await logAudit(req, "order.cancel", "order", id, {
         orderNumber: (order as any).orderNumber,
         tableNumber: (order as any).tableNumber,
         totalAmount: (order as any).totalAmount,
@@ -3096,7 +3202,7 @@ export async function registerRoutes(
       } catch (tableErr) {
         console.error("[table] move: new table status update error (non-fatal):", tableErr);
       }
-      logAudit(req, "order.move_table", "order", id, {
+      await logAudit(req, "order.move_table", "order", id, {
         orderNumber: (order as any).orderNumber,
         fromTable: (order as any).tableNumber,
         toTable: newTableName || String(newTableId),
@@ -3202,7 +3308,7 @@ export async function registerRoutes(
         } as any,
       });
 
-      logAudit(req, "order.merge", "order", targetOrderId, {
+      await logAudit(req, "order.merge", "order", targetOrderId, {
         targetOrderNumber: (targetOrder as any).orderNumber,
         sourceOrderNumber: (sourceOrder as any).orderNumber,
         sourceOrderId,
@@ -3317,7 +3423,7 @@ export async function registerRoutes(
         } as any,
       });
 
-      logAudit(req, "order.split", "order", id, {
+      await logAudit(req, "order.split", "order", id, {
         sourceOrderNumber: (sourceOrder as any).orderNumber,
         newOrderNumber,
         newOrderId: newOrder.id,

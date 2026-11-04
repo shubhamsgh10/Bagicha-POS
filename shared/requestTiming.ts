@@ -25,23 +25,46 @@ export interface ServerTimingInfo {
   instReq: number | null;
 }
 
-export function parseServerTiming(header: string | null | undefined): ServerTimingInfo {
-  const out: ServerTimingInfo = { appMs: null, coldMs: null, instAgeS: null, instReq: null };
-  if (!header) return out;
+/**
+ * THE Server-Timing parser — every reader goes through this one (the slow-request / slow-settle
+ * reports via parseServerTiming below, the slow-print report directly). Parses
+ * `save;dur=180.2, insert_job;dur=9, app;dur=212, inst;desc="age=60s req=9"` into each entry's
+ * duration plus the instance description. Junk entries are skipped, never thrown on.
+ */
+export function parseServerTimingStages(header: string | null | undefined): { dur: Record<string, number>; inst: string | null } {
+  const dur: Record<string, number> = {};
+  let inst: string | null = null;
+  if (!header) return { dur, inst };
   for (const part of header.split(",")) {
-    const [rawName, ...params] = part.split(";").map((s) => s.trim());
-    const dur = params.find((p) => p.startsWith("dur="));
-    const desc = params.find((p) => p.startsWith("desc="));
-    const ms = dur ? Number(dur.slice(4)) : NaN;
-    if (rawName === "app" && Number.isFinite(ms)) out.appMs = Math.round(ms);
-    if (rawName === "cold" && Number.isFinite(ms)) out.coldMs = Math.round(ms);
-    if (rawName === "inst" && desc) {
-      const d = desc.slice(5).replace(/^"|"$/g, "");
-      const age = /age=(\d+)s/.exec(d);
-      const req = /req=(\d+)/.exec(d);
-      if (age) out.instAgeS = Number(age[1]);
-      if (req) out.instReq = Number(req[1]);
+    const [rawName, ...params] = part.trim().split(";");
+    const name = rawName?.trim();
+    if (!name) continue;
+    for (const p of params) {
+      const eq = p.indexOf("=");
+      if (eq < 0) continue;
+      const k = p.slice(0, eq).trim();
+      const v = p.slice(eq + 1).trim();
+      if (k === "dur" && v !== "" && Number.isFinite(Number(v))) dur[name] = Number(v);
+      if (k === "desc" && name === "inst") inst = v.replace(/^"|"$/g, "");
     }
+  }
+  return { dur, inst };
+}
+
+/** The summary the latency reports need: our handler's time, a cold start, the instance age/sequence. */
+export function parseServerTiming(header: string | null | undefined): ServerTimingInfo {
+  const { dur, inst } = parseServerTimingStages(header);
+  const out: ServerTimingInfo = {
+    appMs: dur.app !== undefined ? Math.round(dur.app) : null,
+    coldMs: dur.cold !== undefined ? Math.round(dur.cold) : null,
+    instAgeS: null,
+    instReq: null,
+  };
+  if (inst) {
+    const age = /age=(\d+)s/.exec(inst);
+    const req = /req=(\d+)/.exec(inst);
+    if (age) out.instAgeS = Number(age[1]);
+    if (req) out.instReq = Number(req[1]);
   }
   return out;
 }

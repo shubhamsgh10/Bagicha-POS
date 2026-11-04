@@ -55,6 +55,24 @@ export async function priceOrder(
 }
 
 /**
+ * Same as priceOrder, from menu rows the caller already read (storage.getMenuRowsForOrder) — the
+ * order save reads them once for pricing, plate cost, stock and the KOT. Synchronous; throws on a
+ * bad line exactly like priceOrder (and SettingsUnavailableError when the tax rate isn't live).
+ */
+export function priceOrderWithMenu(
+  items: PricingItemInput[],
+  menuRows: Array<{ id: number; price: string; sizes: Array<{ size: string; price: number }> | null }>,
+  discountAmountRaw: unknown,
+  containerChargeRaw: unknown = 0,
+  deliveryChargeRaw: unknown = 0,
+): PricedOrder {
+  const byId = new Map<number, ResolvedMenuItem>(
+    menuRows.map((r) => [r.id, { id: r.id, price: r.price, sizes: r.sizes ?? null }]),
+  );
+  return priceResolved(Array.isArray(items) ? items : [], byId, pricingRates(), discountAmountRaw, containerChargeRaw, deliveryChargeRaw);
+}
+
+/**
  * Recompute totals for an order whose items already live in the DB (merge/split),
  * using the configured tax rate and a clamped discount. `containerCharge` is a
  * manually-entered flat amount, not derived from the items — pass through whatever

@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiUrl, timedFetch } from "@/lib/api";
 import {
   KEEPALIVE_TICK_MS,
   isApiResourceUrl,
@@ -43,9 +43,13 @@ function observeApiResponses(): void {
 
 function ping(): void {
   state.lastPingAt = performance.now();
-  // credentials "include", like every API call: Chromium keeps credentialed and uncredentialed
-  // requests on DIFFERENT connections, so an uncredentialed ping would keep the wrong one warm.
-  void fetch(apiUrl("/api/ping"), { credentials: "include", cache: "no-store" }).catch(() => {});
+  // credentials "include", like every API call (timedFetch's default): Chromium keeps credentialed
+  // and uncredentialed requests on DIFFERENT connections, so an uncredentialed ping would keep the
+  // wrong one warm. Through timedFetch on purpose: once the keep-warm works, a dead connection's
+  // ~10 s stall lands on THIS request instead of a staff tap — so the ping must be timed and, when
+  // slow, reported (perf.slow_request, path /api/ping) or scripts/report-latency.ts could not tell
+  // whether the stalls stopped or merely moved here. A stalled ping is aborted at 8 s and retried.
+  void timedFetch("/api/ping", { cache: "no-store" }).catch(() => {});
 }
 
 /** Starts the keep-warm loop; returns the stop function. */

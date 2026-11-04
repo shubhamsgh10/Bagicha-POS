@@ -38,6 +38,8 @@ import { printFieldsForSubmitMode } from "@shared/printRequest";
 import { paymentLabel } from "@shared/paymentSplit";
 import { composeCartInstructions, rehydrateSelections, splitPersistedInstructions } from "@shared/orderItemText";
 import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
+import { saveSignature, canSkipSaveBeforeSettle, type LastSave } from "@/lib/settleSkip";
+import { describeApiError } from "@/lib/apiError";
 import { buildEbillText } from "@shared/ebillText";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
@@ -216,6 +218,10 @@ export default function POS() {
   const [isPaid, setIsPaid] = useState(false);
   const [showSettleDialog, setShowSettleDialog] = useState(false);
   const settlementDataRef = useRef<SettlementData | null>(null);
+  // The last payload THIS tab saved successfully (and the order's updatedAt it got back) — lets
+  // Settle skip re-saving an unchanged cart (lib/settleSkip.ts). Cleared whenever a save this tab
+  // can't account for may have changed the order (the Auto-KOT sync).
+  const lastSaveRef = useRef<LastSave | null>(null);
   // Diagnostics only (lib/slowSettle.ts): when Settle was pressed, so a settle that took >= 4s can
   // report where the time went. Cleared on finish so a later non-settle error can't report it.
   const settleClickRef = useRef<SettleClick | null>(null);
@@ -844,6 +850,9 @@ export default function POS() {
         // treats that as a quiet no-op — the user believed Auto-KOT had it covered.
         // ONE request: the PUT saves the cart AND (print:"kot", auto:true) runs the KOT delta
         // print server-side. This used to be a PUT followed by a separate POST /api/print/kot.
+        // From here on the server copy may differ from this tab's last manual save — even if this
+        // request's response is lost — so Settle must not skip its save (lib/settleSkip.ts).
+        lastSaveRef.current = null;
         const res = await fetch(apiUrl(`/api/orders/${activeOrderId}/items`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -930,9 +939,22 @@ export default function POS() {
       notePrintResponse(res);
       return res.json();
     },
-    onSuccess: (order: any) => {
+    onSuccess: (order: any, vars: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      lastSaveRef.current = {
+        orderId: Number(order?.id),
+        signature: saveSignature({
+          items: vars?.items,
+          discountAmount: vars?.discountAmount,
+          containerCharge: vars?.containerCharge,
+          deliveryCharge: vars?.deliveryCharge,
+          customerName: vars?.customerName || "",
+          customerPhone: vars?.customerPhone || "",
+          cancelledKotItems: [],
+        }),
+        updatedAt: order?.updatedAt ? String(order.updatedAt) : null,
+      };
 
       const mode = submitModeRef.current;
       const printing = mode === "kot-print" || mode === "save-print" || mode === "bill-print";
@@ -1001,6 +1023,11 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders", String(vars.orderId)] });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      lastSaveRef.current = {
+        orderId: Number(vars.orderId),
+        signature: saveSignature(vars),
+        updatedAt: order?.updatedAt ? String(order.updatedAt) : null,
+      };
       const mode = submitModeRef.current;
       const printing = mode === "kot-print" || mode === "save-print" || mode === "bill-print";
       if (!printing) refreshSecondaryQueries();
@@ -1038,7 +1065,14 @@ export default function POS() {
     },
     onError: (error: any, vars: any) => {
       if (submitModeRef.current === "settle") finishSettleTiming(Number(vars?.orderId), "error");
-      toast({ title: "Failed to update order", description: error.message || "Something went wrong", variant: "destructive" });
+      // 409 = the order was settled / cancelled elsewhere, 404 = merged away: say so plainly, and
+      // refresh this tab's copy of the order so the screen stops showing a stale one.
+      const info = describeApiError(error);
+      if (info.status === 409 || info.status === 404) {
+        queryClient.invalidateQueries({ queryKey: ["/api/orders", String(vars?.orderId)] });
+        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      }
+      toast({ title: "Failed to update order", description: info.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
       endPrintTap(Number(vars?.orderId) || undefined);
@@ -1314,7 +1348,12 @@ export default function POS() {
   const currentOrderType = form.watch("orderType");
   const isDeliveryOrPickup = currentOrderType === "delivery" || currentOrderType === "takeaway";
   const totalItemQty = cartItems.reduce((s, i) => s + i.quantity, 0);
-  const isTableSession = !posMode && (!!preselectedTableId || !!activeOrderId || isSectionMode);
+  // How this POS screen was OPENED decides whether it is a table session — never "an order now
+  // exists": a standalone Delivery/Pickup order must not turn into a dine-in table session after
+  // its first KOT/Bill sets activeOrderId (that hid its Delivery box and stamped later items
+  // "dinein"). Today every standalone entry carries ?mode=, so this only removes a trap; the two
+  // render blocks below used to keep their own copies of this rule, now they read this one.
+  const isTableSession = !posMode && (!!preselectedTableId || !!editOrderId || isSectionMode);
   // Container and delivery charges are manually staff-entered flat amounts, untaxed, not
   // computed from item quantities/serviceMode.
   const grandTotal = total + containerCharge + deliveryCharge;
@@ -1364,7 +1403,7 @@ export default function POS() {
     const itemsPayload = buildItemsPayload(cartItems);
 
     if (activeOrderId) {
-      updateOrderMutation.mutate({
+      const updatePayload = {
         orderId: activeOrderId,
         items: itemsPayload,
         discountAmount: discountAmt.toFixed(2),
@@ -1378,7 +1417,27 @@ export default function POS() {
         cancelledKotItems: buildCancelledKotItemsPayload(),
         // One request per tap: ask the server to run the KOT/Bill print right after this save.
         ...printFieldsForSubmitMode(submitModeRef.current),
-      });
+      };
+      // Settle on a cart the server provably already has (this tab saved exactly this payload and
+      // the order hasn't moved since — lib/settleSkip.ts): go straight to the payment instead of
+      // re-saving first. The payment is checked against the server's own total either way.
+      if (
+        submitModeRef.current === "settle" &&
+        canSkipSaveBeforeSettle({
+          lastSave: lastSaveRef.current,
+          orderId: activeOrderId,
+          signature: saveSignature(updatePayload),
+          serverOrder: existingOrder,
+        })
+      ) {
+        const sd = settlementDataRef.current;
+        settleMutation.mutate(sd
+          ? { orderId: activeOrderId, order: existingOrder, ...sd }
+          : { orderId: activeOrderId, order: existingOrder, paymentMethod: paymentMethodRef.current, notes: paymentMethodRef.current === "other" ? otherReasonRef.current : undefined }
+        );
+        return;
+      }
+      updateOrderMutation.mutate(updatePayload);
     } else {
       createOrderMutation.mutate({
         ...data,
@@ -2029,7 +2088,6 @@ export default function POS() {
 
             {/* Order type tabs, or a fixed Dine-In pill for a table session */}
             {(() => {
-              const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               if (isTableSession) {
                 // A table is always dine-in — one fixed pill, like the standalone Delivery /
                 // Pick Up pill. Pickup/delivery orders go through + Delivery / + Pickup on the
@@ -2724,7 +2782,6 @@ export default function POS() {
               window edge instead of the panel boundary. Plain overflow-y-auto has no such quirk. */}
           <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
             {(() => {
-              const isTableSession = !posMode && (!!preselectedTableId || isEditMode || isSectionMode);
               const renderCartRow = (item: CartItem) => (
                 <div key={item.cartKey} className={`rounded-lg overflow-hidden ${isSectionMode ? "p-3" : "p-2.5"}`}
                   style={{ background: "var(--paper-0)", border: "1px solid var(--line)" }}>
