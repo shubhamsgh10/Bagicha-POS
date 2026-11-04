@@ -70,7 +70,12 @@ export class BaileysDriver implements WhatsAppDriver {
     this.setState("connecting");
 
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    if (this.destroyed) return; // destroyed while loading auth — don't open an orphan socket
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined as any }));
+    // A switch / reconnect / logout can destroy this driver during the version fetch (a network
+    // call); creating the socket anyway left a live orphan wired to this driver's events, which
+    // processed inbound messages twice.
+    if (this.destroyed) return;
 
     const socket = makeWASocket({
       auth: authState,

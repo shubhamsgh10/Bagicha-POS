@@ -6,7 +6,8 @@
 import type { Express } from "express";
 import { db } from "./db";
 import { orders, users, staffMembers } from "../shared/schema";
-import { gte, lte, and, sql, count } from "drizzle-orm";
+import { gte, lte, and, sql, count, ne } from "drizzle-orm";
+import { businessDayRange } from "../shared/businessDay";
 import { requireAuth, requireManagerOrAdmin } from "./routes";
 import { storage } from "./storage";
 import { personPageKey } from "../shared/pageAccess";
@@ -38,9 +39,12 @@ export function registerStaffRoutes(app: Express) {
   app.get("/api/staff/performance", requireManagerOrAdmin, async (req, res) => {
     try {
       const { from, to } = req.query as { from?: string; to?: string };
-      const conditions = [];
-      if (from) conditions.push(gte(orders.createdAt, new Date(from)));
-      if (to)   conditions.push(lte(orders.createdAt, new Date(to + "T23:59:59")));
+      const isDay = (v?: string) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+      if ((from && !isDay(from)) || (to && !isDay(to))) return res.status(400).json({ error: "from/to must be YYYY-MM-DD" });
+      // IST business days (5 AM cutoff) like every other report; cancelled orders are not sales.
+      const conditions: any[] = [ne(orders.status, "cancelled")];
+      if (from) conditions.push(gte(orders.createdAt, businessDayRange(from).start));
+      if (to)   conditions.push(lte(orders.createdAt, businessDayRange(to).end));
 
       // Orders grouped by creator. `createdBy` (users.id) and `createdByStaffMemberId`
       // (staffMembers.id) share an integer id space, so both columns are needed to
@@ -50,10 +54,11 @@ export function registerStaffRoutes(app: Express) {
           createdBy: orders.createdBy,
           createdByStaffMemberId: orders.createdByStaffMemberId,
           totalOrders: count(orders.id),
-          totalRevenue: sql<string>`COALESCE(SUM(${orders.totalAmount}::numeric), 0)`,
+          // Net of write-offs, like Reports.
+          totalRevenue: sql<string>`COALESCE(SUM(${orders.totalAmount}::numeric - COALESCE(${orders.shortfallAmount}::numeric, 0)), 0)`,
         })
         .from(orders)
-        .where(conditions.length ? and(...conditions) : undefined)
+        .where(and(...conditions))
         .groupBy(orders.createdBy, orders.createdByStaffMemberId);
 
       const allUsers = await db.select({ id: users.id, username: users.username, role: users.role }).from(users);

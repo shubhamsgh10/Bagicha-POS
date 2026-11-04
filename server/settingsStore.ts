@@ -262,17 +262,20 @@ async function syncCounterFromMax(
   const dbMax = parseInt(maxValueRaw.replace(/\D/g, ""), 10) || 0;
   const cached = cache.get()[field] ?? 0;
   if (dbMax <= cached) return;
-  // Only ever runs after a successful DB load (settingsCache.ts init()), so this blob is the
-  // DB's own settings plus the repaired counter — never the built-in fallback.
-  const repaired = { ...cache.get(), [field]: dbMax };
-  cache.patch(() => repaired);
-  await db.insert(restaurantSettings)
-    .values({ id: 1, settings: repaired as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: repaired as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
+  // Raise ONLY this counter, atomically, never below its current DB value. It used to write the
+  // whole settings blob as this instance loaded it at boot — clobbering numbers another instance
+  // issued and settings saved in between (and the second call rewrote the first counter too).
+  await db.execute(sql`
+    UPDATE restaurant_settings
+    SET settings = jsonb_set(
+          settings::jsonb,
+          ARRAY[${field}]::text[],
+          to_jsonb(GREATEST(COALESCE((settings ->> ${field})::int, 0), ${dbMax}::int))
+        )::json,
+        updated_at = NOW()
+    WHERE id = 1
+  `).catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
+  cache.patch((current) => ({ ...current, [field]: Math.max(current[field] ?? 0, dbMax) }));
   console.log(`[settings] ${field} synced from DB max: ${dbMax}`);
 }
 

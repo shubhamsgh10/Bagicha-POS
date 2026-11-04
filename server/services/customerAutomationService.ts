@@ -243,7 +243,11 @@ export async function buildSnapshotForKey(
   const items = top5Ids.length
     ? await db.select().from(orderItems).where(inArray(orderItems.orderId, top5Ids)) as RawOrderItem[]
     : [];
-  const allMenuItems = await db.select().from(menuItems) as RawMenuItem[];
+  // Names for just these ≤5 orders' items — this used to read the whole menu on every settlement.
+  const ids = Array.from(new Set(items.map((i) => i.menuItemId).filter((n) => n > 0)));
+  const allMenuItems = ids.length
+    ? await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems).where(inArray(menuItems.id, ids)) as RawMenuItem[]
+    : [];
   const menuNameMap: Record<number, string> = {};
   for (const m of allMenuItems) menuNameMap[m.id] = m.name;
 
