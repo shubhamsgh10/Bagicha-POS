@@ -927,7 +927,8 @@ export async function registerRoutes(
   app.get("/api/users", requireAuth, async (_req, res) => {
     try {
       const allUsers = await storage.getUsers();
-      const safeUsers = allUsers.map(({ password, pin, ...u }) => ({ ...u, pin: !!pin }));
+      // totpSecret too: it used to go to every session (staff PIN cards included).
+      const safeUsers = allUsers.map(({ password, pin, totpSecret, ...u }) => ({ ...u, pin: !!pin }));
       res.json(safeUsers);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch users" });

@@ -19,6 +19,7 @@ import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
 import { computeMenuItemCost as computeMenuItemCostPure, computeLineCosts, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
 import { advisoryXactLock, LOCK_NS } from "./advisoryLocks";
+import { publicPerson } from "./selfScope";
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
 import { getSettings } from "./settingsStore";
@@ -78,7 +79,10 @@ export type OpenTabCustomer = {
 
 // An attendance row resolved to whoever it belongs to — a system account (`user`)
 // OR a staff member (`staffMember`). `displayName` is the unified label for either.
-export type AttendanceWho = Attendance & { user?: User; staffMember?: StaffMember; displayName: string };
+/** A users / staff_members row as it may leave the server: no password, PIN or TOTP secret. */
+export type PublicUser = Omit<User, "password" | "pin" | "totpSecret"> & { hasPin: boolean };
+export type PublicStaffMember = Omit<StaffMember, "pin"> & { hasPin: boolean };
+export type AttendanceWho = Attendance & { user?: PublicUser; staffMember?: PublicStaffMember; displayName: string };
 
 // A payroll-eligible person, pulled from EITHER a system account (`user`, role manager/staff —
 // admins/owner excluded) OR a `staffMember`. Names are owned by the Admin page; the HR fields
@@ -273,7 +277,7 @@ export interface IStorage {
   }>>;
 
   // Staff Management
-  getStaffProfiles(): Promise<(StaffProfile & { user: User })[]>;
+  getStaffProfiles(): Promise<(StaffProfile & { user: PublicUser })[]>;
   getStaffProfile(userId: number): Promise<StaffProfile | null>;
   upsertStaffProfile(userId: number, data: Partial<InsertStaffProfile>): Promise<StaffProfile>;
   getAttendance(filters: { userId?: number; staffMemberId?: number; date?: string; month?: string }): Promise<AttendanceWho[]>;
@@ -282,7 +286,7 @@ export interface IStorage {
   upsertAttendanceForStaffMember(staffMemberId: number, date: string, data: Partial<InsertAttendance>): Promise<Attendance>;
   updateAttendance(id: number, data: Partial<InsertAttendance>): Promise<Attendance>;
   getAttendanceReport(month: string): Promise<any[]>;
-  getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: User; staffMember?: StaffMember; displayName: string })[]>;
+  getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: PublicUser; staffMember?: PublicStaffMember; displayName: string })[]>;
   createLeave(data: InsertLeave): Promise<Leave>;
   updateLeave(id: number, data: Partial<InsertLeave>): Promise<Leave>;
   getShifts(): Promise<Shift[]>;
@@ -1735,7 +1739,7 @@ export class DatabaseStorage implements IStorage {
   // STAFF MANAGEMENT
   // ============================================================
 
-  async getStaffProfiles(): Promise<(StaffProfile & { user: User })[]> {
+  async getStaffProfiles(): Promise<(StaffProfile & { user: PublicUser })[]> {
     const allUsers = await db.select().from(users).orderBy(asc(users.id));
     const profiles = await db.select().from(staffProfiles);
     const profileMap = new Map(profiles.map(p => [p.userId, p]));
@@ -1745,8 +1749,8 @@ export class DatabaseStorage implements IStorage {
         monthlySalary: "0", joiningDate: null, emergencyContact: null, address: null,
         bankAccountNo: null, bankName: null, isActive: true, updatedAt: new Date(),
       }),
-      user: u,
-    })) as (StaffProfile & { user: User })[];
+      user: publicPerson(u),
+    })) as (StaffProfile & { user: PublicUser })[];
   }
 
   async getStaffProfile(userId: number): Promise<StaffProfile | null> {
@@ -1779,9 +1783,9 @@ export class DatabaseStorage implements IStorage {
       ? await db.select().from(attendance).where(and(...conditions)).orderBy(desc(attendance.date))
       : await db.select().from(attendance).orderBy(desc(attendance.date));
     const allUsers = await db.select().from(users);
-    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    const userMap = new Map(allUsers.map(u => [u.id, publicPerson(u)]));
     const allStaff = await db.select().from(staffMembers);
-    const staffMap = new Map(allStaff.map(s => [s.id, s]));
+    const staffMap = new Map(allStaff.map(s => [s.id, publicPerson(s)]));
     return rows
       .map(r => {
         const user = r.userId != null ? userMap.get(r.userId) : undefined;
@@ -1840,7 +1844,7 @@ export class DatabaseStorage implements IStorage {
 
   // Resolves against BOTH identity systems (users + staffMembers), like getAttendance — a PIN/
   // biometric-only staff member's leave requests used to vanish here (userId-only lookup).
-  async getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: User; staffMember?: StaffMember; displayName: string })[]> {
+  async getLeaves(filters: { userId?: number; staffMemberId?: number; month?: string; status?: string }): Promise<(Leave & { user?: PublicUser; staffMember?: PublicStaffMember; displayName: string })[]> {
     const conditions: any[] = [];
     if (filters.userId)        conditions.push(eq(leaves.userId, filters.userId));
     if (filters.staffMemberId) conditions.push(eq(leaves.staffMemberId, filters.staffMemberId));
@@ -1850,9 +1854,9 @@ export class DatabaseStorage implements IStorage {
       ? await db.select().from(leaves).where(and(...conditions)).orderBy(desc(leaves.createdAt))
       : await db.select().from(leaves).orderBy(desc(leaves.createdAt));
     const allUsers = await db.select().from(users);
-    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    const userMap = new Map(allUsers.map(u => [u.id, publicPerson(u)]));
     const allStaff = await db.select().from(staffMembers);
-    const staffMap = new Map(allStaff.map(s => [s.id, s]));
+    const staffMap = new Map(allStaff.map(s => [s.id, publicPerson(s)]));
     return rows
       .map(r => {
         const user = r.userId != null ? userMap.get(r.userId) : undefined;

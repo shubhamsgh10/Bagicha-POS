@@ -4,7 +4,7 @@
  * password/pin/totpSecret leak into a response body.
  * Run: npx tsx scripts/verify-self-scope.ts
  */
-import { requireUserAccount, sanitizeUser } from "../server/selfScope";
+import { requireUserAccount, sanitizeUser, publicPerson } from "../server/selfScope";
 
 const checks: Array<[string, boolean]> = [];
 
@@ -59,6 +59,15 @@ function callMiddleware(req: any): { nextCalled: boolean; status: number | null;
   const row = { id: 2, password: "x", pin: "9999" };
   const safe = sanitizeUser(row) as any;
   checks.push(["sanitizeUser does not mutate input", row.password === "x" && row.pin === "9999" && !("password" in safe)]);
+}
+
+// 6. publicPerson — the person attached to attendance / leave / staff-profile rows.
+{
+  const u = publicPerson({ id: 3, username: "rajbhaghel", role: "manager", password: "h", pin: "4321", totpSecret: "S" }) as any;
+  checks.push(["publicPerson strips password/pin/totpSecret from a user", !("password" in u) && !("pin" in u) && !("totpSecret" in u)]);
+  checks.push(["publicPerson reports hasPin", u.hasPin === true && u.username === "rajbhaghel"]);
+  const sm = publicPerson({ id: 4, name: "Cook", pin: null }) as any;
+  checks.push(["publicPerson on a staff member with no PIN", sm.hasPin === false && !("pin" in sm) && sm.name === "Cook"]);
 }
 
 let failed = 0;
