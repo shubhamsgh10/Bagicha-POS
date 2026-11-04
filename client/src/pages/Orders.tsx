@@ -74,7 +74,7 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
   // An open due can ALWAYS be settled, whatever day it was billed — there is no age limit on a debt.
   const canSettleDue = isDueOrder(order);
 
-  const { data: detail } = useQuery<any>({
+  const { data: detail, isLoading: detailLoading, isError: detailError } = useQuery<any>({
     queryKey: ["/api/orders", String(order.id)],
     enabled: expanded || settlingDue,
     staleTime: 0,
@@ -129,8 +129,9 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
         body: JSON.stringify({ orderId: order.id }),
         credentials: 'include',
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({} as any));
       if (!res.ok) {
+        toast({ title: 'Bill print failed', description: data?.message || `Print service answered ${res.status}.`, variant: 'destructive' });
         showBillPreview();
         return;
       }
@@ -153,6 +154,7 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
         showBillPreview();
       }
     } catch {
+      toast({ title: 'Bill print failed', description: 'Could not reach the print service — showing a text preview instead.', variant: 'destructive' });
       showBillPreview();
     }
   };
@@ -325,7 +327,11 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
                 <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2 flex items-center gap-1">
                   <ShoppingBag className="w-3 h-3" /> Items
                 </p>
-                {items.length === 0 ? (
+                {items.length === 0 && !detailLoading ? (
+                  <div className="text-xs text-gray-400 italic py-2">
+                    {detailError ? "Could not load the items — collapse and reopen to retry." : "No items on this order."}
+                  </div>
+                ) : items.length === 0 ? (
                   <div className="flex items-center gap-2 text-xs text-gray-400 italic py-2">
                     <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
                       <RefreshCw className="w-3 h-3" />
@@ -743,7 +749,7 @@ export default function Orders() {
               border: "1px solid var(--line)",
               boxShadow: "var(--shadow-xs)",
             }}>
-            {["all","pending","preparing","ready","served","delivered"].map((t) => (
+            {["all","pending","preparing","ready","served","delivered","cancelled"].map((t) => (
               <TabsTrigger
                 key={t}
                 value={t}

@@ -163,10 +163,12 @@ export default function Billing() {
     if (!payingOrder) return;
     const key = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
     if (!key) return;
+    let cancelled = false;
     fetch(apiUrl(`/api/loyalty/${encodeURIComponent(key)}`), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setLoyalty(d); })
+      .then(d => { if (d && !cancelled) setLoyalty(d); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [payingOrder?.id]);
 
   const processPaymentMutation = useMutation({
@@ -182,9 +184,12 @@ export default function Billing() {
         body: JSON.stringify({ orderId: vars.id }),
         credentials: 'include',
       })
-        .then((res) => res.json().then((data) => ({ res, data })))
+        .then((res) => res.json().catch(() => ({})).then((data: any) => ({ res, data })))
         .then(async ({ res, data }) => {
-          if (!res.ok) return;
+          if (!res.ok) {
+            toast({ title: 'Bill print failed', description: data?.message || `Print service answered ${res.status}. Reprint from the order.`, variant: 'destructive' });
+            return;
+          }
           const { handlePrintResponse } = await import('@/lib/printGateway');
           const outcome = await handlePrintResponse(data, {
             orderId: vars.id,
@@ -198,7 +203,9 @@ export default function Billing() {
             toast(BROWSER_BILL_TOAST);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          toast({ title: 'Bill print failed', description: 'Payment is saved. Could not reach the print service — reprint from the order.', variant: 'destructive' });
+        });
       setPayingOrder(null);
     },
     onError: (error: any) => {

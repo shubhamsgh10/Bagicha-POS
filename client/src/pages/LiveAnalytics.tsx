@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { apiUrl } from '@/lib/api';
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -71,7 +72,13 @@ function LiveOrderRow({ order }: { order: any }) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function LiveAnalytics() {
-  const now = new Date();
+  // Ticks every 30 s so the clock and the elapsed-time labels move even when no
+  // poll/realtime event re-renders the page.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Stats always show today's live numbers — unaffected by anything else on this page.
   const { data: stats } = useQuery<any>({
@@ -181,13 +188,13 @@ export default function LiveAnalytics() {
               Live Analytics
             </span>
             <span className="hidden sm:block text-[11px] text-muted-foreground bg-muted/60 px-2 py-1 rounded-lg whitespace-nowrap">
-              Auto-refresh · 5s
+              Live · refresh 15s
             </span>
           </div>
           <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5 shrink-0">
             <Clock className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-xs font-medium text-foreground">
-              {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
+              {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })}
             </span>
           </div>
         </div>

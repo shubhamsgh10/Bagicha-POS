@@ -30,7 +30,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
       <p className="text-muted-foreground mb-1">{label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} className="font-semibold text-foreground">
-          {p.name === 'total' ? fmt(p.value) : `${p.value} sold`}
+          {(p.dataKey ?? p.name) === 'total' ? `${p.dataKey === 'total' && p.name !== 'total' ? `${p.name}: ` : ''}${fmt(p.value)}` : `${p.value} sold`}
         </p>
       ))}
     </div>

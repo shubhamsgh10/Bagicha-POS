@@ -86,7 +86,7 @@ function loadExtras(): Record<string, CustomerExtra> {
   try { return JSON.parse(localStorage.getItem(EXTRA_KEY) || "{}"); } catch { return {}; }
 }
 function saveExtras(data: Record<string, CustomerExtra>) {
-  localStorage.setItem(EXTRA_KEY, JSON.stringify(data));
+  try { localStorage.setItem(EXTRA_KEY, JSON.stringify(data)); } catch { /* storage full / blocked */ }
 }
 function defaultExtra(): CustomerExtra {
   return {
@@ -537,7 +537,7 @@ function CustomerListingView({
                   key={c.key}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.01 }}
+                  transition={{ delay: Math.min(i, 20) * 0.01 }}
                   className="px-4 py-3.5"
                 >
                   {/* Name + tag */}
@@ -620,7 +620,7 @@ function CustomerCard({ customer, index, onClick }: {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 4 }}
-      transition={{ delay: index * 0.02, duration: 0.18, ease: "easeOut" }}
+      transition={{ delay: Math.min(index, 20) * 0.02, duration: 0.18, ease: "easeOut" }}
       onClick={onClick}
       className={`bg-[var(--paper-0)] border border-[var(--line)] rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-[var(--paper-0)] transition-all duration-150 ${ring}`}
     >

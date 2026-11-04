@@ -1,3 +1,4 @@
+import { istHour, istMonthDay } from "@shared/businessDay";
 import { apiUrl } from '@/lib/api';
 import { type CustomerProfile } from "@/hooks/useCustomerIntelligence";
 
@@ -52,7 +53,13 @@ export function loadAutomationSettings(): AutomationSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // Provider secrets live on the server only. Older builds stored them here
+    // in plaintext — drop them from this browser on first read.
+    if (parsed && (parsed.watiApiKey || parsed.metaAccessToken)) {
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(withoutSecrets(parsed))); } catch { /* ignore */ }
+    }
+    return { ...DEFAULT_SETTINGS, ...withoutSecrets(parsed) };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -61,8 +68,13 @@ export function loadAutomationSettings(): AutomationSettings {
 // Backward-compat alias
 export const getAutomationSettings = loadAutomationSettings;
 
+/** The WATI key and Meta token are sent to the server config and never kept in localStorage. */
+function withoutSecrets<T extends Partial<AutomationSettings>>(s: T): T {
+  return { ...s, watiApiKey: "", metaAccessToken: "" };
+}
+
 export function saveAutomationSettings(settings: AutomationSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(withoutSecrets(settings))); } catch { /* storage unavailable */ }
   // Sync provider credentials to server in background when API/Meta mode is active
   if (settings.whatsappMode === "api" || settings.whatsappMode === "meta") {
     syncSettingsToServer(settings).catch(e =>
@@ -185,9 +197,8 @@ interface CustomerExtra {
 function isBirthdayToday(dob: string): boolean {
   const parts = dob.split("-");
   if (parts.length < 3) return false;
-  const today = new Date();
-  return parseInt(parts[1], 10) === today.getMonth() + 1 &&
-         parseInt(parts[2], 10) === today.getDate();
+  // IST month-day ("MM-DD"), not the browser's local date.
+  return `${parts[1].padStart(2, "0")}-${parts[2].slice(0, 2).padStart(2, "0")}` === istMonthDay(new Date());
 }
 
 /**
@@ -591,7 +602,7 @@ export function refreshAutomationState(): void { /* triggers via component state
 // ── Quiet-hours check ─────────────────────────────────────────────────────────
 
 export function isInQuietHours(quietHours: { start: number; end: number }): boolean {
-  const h = new Date().getHours();
+  const h = istHour(new Date());
   const { start, end } = quietHours;
   if (start > end) return h >= start || h < end;   // wraps midnight e.g. 22–09
   return h >= start && h < end;

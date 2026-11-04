@@ -100,6 +100,7 @@ export function useCustomerIntelligence() {
     const map = new Map<string, any[]>();
     for (const order of rawOrders) {
       if (!order.customerName && !order.customerPhone) continue;
+      if (order.status === "cancelled") continue; // a cancelled order is not a visit or spend
       const key = (order.customerPhone?.trim() || order.customerName?.trim()) as string;
       if (!key) continue;
       if (!map.has(key)) map.set(key, []);
