@@ -54,6 +54,23 @@ export function resolveSizeMultiplier(
   return sizes.find((s) => s.size === size)?.stockMultiplier ?? 1;
 }
 
+/**
+ * Plate cost of each order line, positionally. `null` for a line whose menu item has no recipe
+ * (cost unknown — never a fabricated 0), an open item, or an unknown id. The order routes feed it
+ * the menu rows and ingredient costs they already read for the save, so this costs no DB work.
+ */
+export function computeLineCosts(
+  items: Array<{ menuItemId: number; size?: string | null }>,
+  menuById: Map<number, { inventoryLinks?: InventoryLink[] | null; sizes?: Array<{ size: string; price: number; stockMultiplier?: number }> | null }>,
+  costByInventoryId: Map<number, number | string | null | undefined>,
+): Array<MenuCostResult | null> {
+  return items.map(({ menuItemId, size }) => {
+    const item = menuById.get(menuItemId);
+    if (!item?.inventoryLinks || item.inventoryLinks.length === 0) return null;
+    return computeMenuItemCost(item.inventoryLinks, costByInventoryId, resolveSizeMultiplier(item.sizes, size));
+  });
+}
+
 /** Margin % given a sale price and a plate cost. Returns null when price is 0/invalid. */
 export function computeMarginPercent(price: number, cost: number): number | null {
   if (!Number.isFinite(price) || price <= 0) return null;

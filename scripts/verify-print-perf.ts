@@ -3,7 +3,8 @@
  * [print-perf] log lines. The clock is injected so the numbers are exact.
  * Run: npx tsx scripts/verify-print-perf.ts
  */
-import { createStageTimer, parseServerTiming } from "../shared/printPerf";
+import { createStageTimer } from "../shared/printPerf";
+import { parseServerTimingStages as parseServerTiming } from "../shared/requestTiming";
 
 const checks: Array<[string, boolean]> = [];
 

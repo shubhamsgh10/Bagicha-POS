@@ -1,6 +1,6 @@
 import type { Express } from "express";
 
-function parseAllowedOrigins(): string[] {
+export function parseAllowedOrigins(): string[] {
   const raw = process.env.ALLOWED_ORIGINS ?? "";
   const fromEnv = raw
     .split(",")

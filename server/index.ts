@@ -17,6 +17,7 @@ import { startOutboundWorker } from "./services/whatsapp/outboundQueue";
 import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 import { startDailyScheduler } from "./services/dailyScheduler";
 import { applyCors } from "./cors";
+import { applyCsrfGuard } from "./csrf";
 
 const MemoryStoreSession = MemoryStore(session);
 
@@ -57,6 +58,8 @@ app.use((req, res, next) => {
 app.use("/api", serverTiming);
 
 applyCors(app);
+// Before any body parsing or session work: a forged cross-site write is refused for free (server/csrf.ts).
+applyCsrfGuard(app);
 // Before the session middleware: the keep-warm ping must cost no session/DB work (see the file).
 registerKeepAlivePing(app);
 

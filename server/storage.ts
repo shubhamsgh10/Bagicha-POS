@@ -17,11 +17,23 @@ import { eq, desc, and, or, gte, lte, sql, asc, inArray, ne, isNull, isNotNull, 
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
-import { computeMenuItemCost as computeMenuItemCostPure, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
+import { computeMenuItemCost as computeMenuItemCostPure, computeLineCosts, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
+import { advisoryXactLock, LOCK_NS } from "./advisoryLocks";
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
 import { getSettings } from "./settingsStore";
 import { forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
+
+/** The menu columns an order save reads once and shares (see storage.getMenuRowsForOrder). */
+export type OrderMenuRow = Pick<MenuItem, "id" | "name" | "price" | "sizes" | "categoryId" | "inventoryLinks">;
+
+/** Thrown by replaceOrderItems when the order is gone, cancelled or settled at write time. */
+export class OrderNotEditableError extends Error {
+  constructor() {
+    super("Order is no longer editable");
+    this.name = "OrderNotEditableError";
+  }
+}
 
 /** A person key for roster/attendance writes — a system account or a staff member. */
 export type PersonRef = { kind: "user" | "staff"; id: number };
@@ -108,10 +120,14 @@ export interface IStorage {
   deleteMenuItem(id: number): Promise<void>;
   computeMenuItemCost(menuItemId: number, size?: string | null): Promise<MenuCostResult | null>;
   computeMenuItemCosts(items: Array<{ menuItemId: number; size?: string | null }>): Promise<Array<MenuCostResult | null>>;
+  getMenuRowsForOrder(ids: number[]): Promise<OrderMenuRow[]>;
+  getIngredientCostsForMenuItems(ids: number[]): Promise<Map<number, string | null>>;
+  getKotTicketNumbers(orderId: number): Promise<Array<{ kotNumber: string }>>;
   reconcileOrderInventory(
     orderId: number,
     lineItems: Array<{ menuItemId: number; quantity: number; size?: string | null }>,
     actor?: { userId?: number; staffMemberId?: number },
+    menuRows?: Array<Pick<MenuItem, "id" | "sizes" | "inventoryLinks">>,
   ): Promise<void>;
 
   // Inventory
@@ -158,7 +174,7 @@ export interface IStorage {
     order: InsertOrder,
     items: Array<Omit<InsertOrderItem, "orderId">>,
     kot: Omit<InsertKotTicket, "orderId">,
-  ): Promise<Order>;
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket }>;
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
@@ -183,7 +199,8 @@ export interface IStorage {
     orderId: number,
     items: Array<Omit<InsertOrderItem, "orderId">>,
     orderTotals: Partial<InsertOrder>,
-  ): Promise<Order>;
+    kot?: { kotNumber: Promise<string>; items: NonNullable<InsertKotTicket["items"]> },
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }>;
 
   // Order Items
   getOrderItems(orderId: number): Promise<OrderItem[]>;
@@ -387,36 +404,81 @@ export class DatabaseStorage implements IStorage {
     // predate this feature, and reporting them as a free 100% margin would be worse
     // than just admitting the data isn't there. Only a fully-costed recipe returns a number.
     if (!item.inventoryLinks || item.inventoryLinks.length === 0) return null;
-    const invRows = await db.select().from(inventory);
-    const costByInventoryId = new Map(invRows.map((r) => [r.id, r.costPerUnit]));
+    // Only the linked ingredients' costs — not every inventory row.
+    const costByInventoryId = await this.getIngredientCostsForMenuItems([menuItemId]);
     const sizeMultiplier = resolveSizeMultiplier(item.sizes, size);
     return computeMenuItemCostPure(item.inventoryLinks, costByInventoryId, sizeMultiplier);
   }
 
-  // Batched version of computeMenuItemCost — fetches the distinct menu items and the
-  // whole inventory table ONCE regardless of order size, instead of once per line item.
-  // Order create/edit call this per-item via Promise.all; an N-item order previously
-  // meant up to 2N DB round trips here alone (getMenuItemById + full inventory scan,
-  // each per item) on the two hottest routes in the app. Returns results positionally,
-  // matching `items`.
+  // Batched version of computeMenuItemCost — returns results positionally, matching `items`.
+  // The order routes don't use this any more: they read the menu rows and ingredient costs once
+  // (getMenuRowsForOrder + getIngredientCostsForMenuItems) and call computeLineCosts directly.
   async computeMenuItemCosts(
     items: Array<{ menuItemId: number; size?: string | null }>,
   ): Promise<Array<MenuCostResult | null>> {
-    const distinctIds = Array.from(new Set(items.map((i) => i.menuItemId)));
-    const [menuItemRows, invRows] = await Promise.all([
-      distinctIds.length > 0
-        ? db.select().from(menuItems).where(inArray(menuItems.id, distinctIds))
-        : Promise.resolve([] as MenuItem[]),
-      db.select().from(inventory),
+    const ids = items.map((i) => i.menuItemId);
+    const [menuRows, costByInventoryId] = await Promise.all([
+      this.getMenuRowsForOrder(ids),
+      this.getIngredientCostsForMenuItems(ids),
     ]);
-    const menuItemById = new Map(menuItemRows.map((m) => [m.id, m]));
-    const costByInventoryId = new Map(invRows.map((r) => [r.id, r.costPerUnit]));
-    return items.map(({ menuItemId, size }) => {
-      const item = menuItemById.get(menuItemId);
-      if (!item?.inventoryLinks || item.inventoryLinks.length === 0) return null;
-      const sizeMultiplier = resolveSizeMultiplier(item.sizes, size);
-      return computeMenuItemCostPure(item.inventoryLinks, costByInventoryId, sizeMultiplier);
-    });
+    return computeLineCosts(items, new Map(menuRows.map((m) => [m.id, m])), costByInventoryId);
+  }
+
+  // The menu columns one order save needs — pricing (price/sizes), plate cost and stock
+  // (inventoryLinks/sizes), and the KOT/bill's item name and category routing. Read ONCE per save
+  // and handed to every consumer: priceOrder, the plate-cost snapshot and reconcileOrderInventory
+  // each used to SELECT * the same rows on their own (3 reads per save). Soft-deleted items are
+  // included on purpose — a historical line still needs its name/category. Non-integer and
+  // negative (open-item) ids are dropped here, so a junk id can never reach Postgres as a type
+  // error (it is rejected by the pricing step as "Unknown menu item" instead).
+  async getMenuRowsForOrder(ids: number[]): Promise<OrderMenuRow[]> {
+    const clean = Array.from(new Set(ids.filter((n) => Number.isInteger(n) && n > 0)));
+    if (clean.length === 0) return [];
+    return db
+      .select({
+        id: menuItems.id,
+        name: menuItems.name,
+        price: menuItems.price,
+        sizes: menuItems.sizes,
+        categoryId: menuItems.categoryId,
+        inventoryLinks: menuItems.inventoryLinks,
+      })
+      .from(menuItems)
+      .where(inArray(menuItems.id, clean));
+  }
+
+  // costPerUnit of ONLY the ingredients these menu items link to, in one query that needs no menu
+  // read first (so it runs alongside getMenuRowsForOrder). It used to be `SELECT * FROM inventory`
+  // — every column of every ingredient — on every save, Auto-KOT sync included.
+  async getIngredientCostsForMenuItems(ids: number[]): Promise<Map<number, string | null>> {
+    const clean = Array.from(new Set(ids.filter((n) => Number.isInteger(n) && n > 0)));
+    if (clean.length === 0) return new Map();
+    const idList = sql.join(clean.map((id) => sql`${id}::int`), sql`, `);
+    // The CASE guards keep one malformed recipe row (inventory_links not an array, or a
+    // non-numeric inventoryId) from failing the whole save with a cast error.
+    const res: any = await db.execute(sql`
+      SELECT i.id, i.cost_per_unit
+      FROM inventory i
+      WHERE i.id IN (
+        SELECT CASE WHEN (l->>'inventoryId') ~ '^[0-9]+$' THEN (l->>'inventoryId')::int END
+        FROM menu_items m
+        CROSS JOIN LATERAL json_array_elements(
+          CASE WHEN json_typeof(m.inventory_links) = 'array' THEN m.inventory_links ELSE '[]'::json END
+        ) AS l
+        WHERE m.id IN (${idList})
+      )
+    `);
+    return new Map((res?.rows ?? []).map((r: any) => [Number(r.id), r.cost_per_unit ?? null] as [number, string | null]));
+  }
+
+  // This order's KOT numbers in ticket order (the print uses the first for a reprint, the last
+  // otherwise). Read up front by a save so the print step that follows needs no read of its own.
+  async getKotTicketNumbers(orderId: number): Promise<Array<{ kotNumber: string }>> {
+    return db
+      .select({ kotNumber: kotTickets.kotNumber })
+      .from(kotTickets)
+      .where(eq(kotTickets.orderId, orderId))
+      .orderBy(asc(kotTickets.id));
   }
 
   async createMenuItem(item: InsertMenuItem): Promise<MenuItem> {
@@ -455,14 +517,21 @@ export class DatabaseStorage implements IStorage {
     orderId: number,
     lineItems: Array<{ menuItemId: number; quantity: number; size?: string | null }>,
     actor?: { userId?: number; staffMemberId?: number },
+    /** The save's own menu read (getMenuRowsForOrder) — skips this function's menu round trip. */
+    menuRows?: Array<Pick<MenuItem, "id" | "sizes" | "inventoryLinks">>,
   ): Promise<void> {
     // 1. Target consumption per inventoryId for the given line items.
     //    Batch-fetch all distinct menu items in one query instead of one per line —
     //    an order with 5 items previously meant 5 sequential round trips here.
-    const distinctIds = Array.from(new Set(lineItems.map((li) => li.menuItemId)));
-    const menuItemRows = distinctIds.length > 0
-      ? await db.select().from(menuItems).where(inArray(menuItems.id, distinctIds))
-      : [];
+    const distinctIds = Array.from(new Set(lineItems.map((li) => li.menuItemId)))
+      .filter((n) => Number.isInteger(n) && n > 0); // open items (negative ids) have no recipe
+    const menuItemRows = menuRows
+      ?? (distinctIds.length > 0
+        ? await db
+            .select({ id: menuItems.id, sizes: menuItems.sizes, inventoryLinks: menuItems.inventoryLinks })
+            .from(menuItems)
+            .where(inArray(menuItems.id, distinctIds))
+        : []);
     const menuItemById = new Map(menuItemRows.map((m) => [m.id, m]));
 
     const target = new Map<number, { qty: number; menuItemId: number }>();
@@ -489,12 +558,13 @@ export class DatabaseStorage implements IStorage {
     //    outside any lock and then both apply the full diff, double-deducting stock.
     //    Plain READ COMMITTED does NOT prevent this: it only guards visibility within
     //    one statement/transaction, not a read in one transaction followed by a write
-    //    in a separate later transaction. pg_advisory_xact_lock(orderId), taken first
-    //    thing inside this transaction, serializes concurrent calls for THIS order
-    //    specifically (other orders' reconciliation proceeds unblocked) and releases
-    //    automatically on commit/rollback.
+    //    in a separate later transaction. pg_advisory_xact_lock(orderInventory, orderId),
+    //    taken first thing inside this transaction, serializes concurrent calls for THIS
+    //    order specifically (other orders' reconciliation proceeds unblocked) and releases
+    //    automatically on commit/rollback. Namespaced (server/advisoryLocks.ts) so it never
+    //    queues behind an unrelated inventory item or coupon that happens to share the id.
     await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(${orderId})`);
+      await tx.execute(advisoryXactLock(LOCK_NS.orderInventory, orderId));
 
       const already: any = await tx.execute(sql`
         SELECT inventory_id, SUM(quantity_delta) AS net
@@ -506,8 +576,15 @@ export class DatabaseStorage implements IStorage {
         (already?.rows ?? []).map((r: any) => [Number(r.inventory_id), parseFloat(r.net)])
       );
 
-      const inventoryIds = new Set<number>(Array.from(target.keys()).concat(Array.from(alreadyApplied.keys())));
-      for (const inventoryId of Array.from(inventoryIds)) {
+      // Ascending id order, ALWAYS. Each recordStockMovement UPDATE row-locks that inventory row
+      // until commit; in line-item order, two orders sharing ingredients (A: cheese 3 → flour 7,
+      // B: flour 7 → cheese 3) could each hold one row and wait for the other — Postgres then
+      // aborts one transaction as a deadlock, and (the caller treats this as non-fatal) that
+      // order's stock was silently never deducted. A single global lock order makes that cycle
+      // impossible.
+      const inventoryIds = Array.from(new Set<number>(Array.from(target.keys()).concat(Array.from(alreadyApplied.keys()))))
+        .sort((a, b) => a - b);
+      for (const inventoryId of inventoryIds) {
         const desiredDelta = round2(-(target.get(inventoryId)?.qty ?? 0)); // negative = net consumption
         const currentDelta = round2(alreadyApplied.get(inventoryId) ?? 0);
         const diff = round2(desiredDelta - currentDelta);
@@ -604,9 +681,13 @@ export class DatabaseStorage implements IStorage {
       // ledger rows for what was meant to be one edit. pg_advisory_xact_lock keyed on
       // the inventory id serializes concurrent edits of THIS item without blocking
       // edits to other items — same pattern as reconcileOrderInventory.
+      // FOR UPDATE as well: the advisory lock only serializes manual edits against each other, but
+      // a sale (reconcileOrderInventory) also moves current_stock. Without the row lock, a sale
+      // landing between this read and the write below was overwritten by a delta computed from the
+      // pre-sale value, so the shelf count ended off by that sale.
       await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(${id}::bigint)`);
-        const [current] = await tx.select().from(inventory).where(eq(inventory.id, id));
+        await tx.execute(advisoryXactLock(LOCK_NS.inventoryItem, id));
+        const [current] = await tx.select().from(inventory).where(eq(inventory.id, id)).for("update");
         if (!current) return;
         if (Object.keys(rest).length > 0) {
           await tx.update(inventory).set(rest).where(eq(inventory.id, id));
@@ -940,20 +1021,22 @@ export class DatabaseStorage implements IStorage {
     order: InsertOrder,
     items: Array<Omit<InsertOrderItem, "orderId">>,
     kot: Omit<InsertKotTicket, "orderId">,
-  ): Promise<Order> {
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket }> {
     return await db.transaction(async (tx) => {
       const [newOrder] = await tx.insert(orders).values({
         ...(order as any),
         updatedAt: new Date(),
       }).returning();
-      if (items.length > 0) {
-        await tx.insert(orderItems).values(
-          items.map((it) => ({ ...(it as any), orderId: newOrder.id })),
-        );
-      }
+      // RETURNING the rows costs no extra round trip and hands the print step that follows the
+      // exact committed rows (ids, quantities as Postgres stored them), so it reads nothing back.
+      const insertedItems = items.length > 0
+        ? await tx.insert(orderItems).values(
+            items.map((it) => ({ ...(it as any), orderId: newOrder.id })),
+          ).returning()
+        : [];
       const kotItems = Array.isArray(kot.items) ? kot.items : undefined;
-      await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id });
-      return newOrder;
+      const [kotTicket] = await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id }).returning();
+      return { order: newOrder, items: insertedItems, kotTicket };
     });
   }
 
@@ -970,10 +1053,12 @@ export class DatabaseStorage implements IStorage {
   // if it was already settled — so a concurrent second settlement is a no-op and
   // the caller's one-time side effects (loyalty, messages, feedback) don't double-fire.
   async settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined> {
+    // Never a cancelled order: settling one used to flip it back to status "served" + paid,
+    // resurrecting it into the day's sales.
     const [updated] = await db.update(orders).set({
       ...(order as any),
       updatedAt: new Date(),
-    }).where(and(eq(orders.id, id), eq(orders.paymentStatus, "pending"))).returning();
+    }).where(and(eq(orders.id, id), eq(orders.paymentStatus, "pending"), ne(orders.status, "cancelled"))).returning();
     return updated;
   }
 
@@ -1108,21 +1193,41 @@ export class DatabaseStorage implements IStorage {
   // transaction. Previously these were three separate statements (delete, insert,
   // update) with no transaction — a crash/error between the delete and the reinsert
   // left the order with zero items and no way to recover short of a manual DB fix.
+  //
+  // The order row is updated FIRST and only while it is still editable (exists, unpaid, not
+  // cancelled) — that is the authoritative check; the route's own pre-check reads a snapshot that a
+  // settle landing a moment later can overtake. No row → OrderNotEditableError, nothing written. The
+  // UPDATE also row-locks the order, so a concurrent settle waits for this edit to commit.
+  //
+  // `kot` (optional): the Kitchen-screen ticket for this save, inserted in the same transaction.
+  // Its number is a promise so the caller can issue the KOT counter alongside this transaction
+  // instead of after it.
   async replaceOrderItems(
     orderId: number,
     items: Array<Omit<InsertOrderItem, "orderId">>,
     orderTotals: Partial<InsertOrder>,
-  ): Promise<Order> {
+    kot?: { kotNumber: Promise<string>; items: NonNullable<InsertKotTicket["items"]> },
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }> {
     return await db.transaction(async (tx) => {
-      await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
-      if (items.length > 0) {
-        await tx.insert(orderItems).values(items.map((it) => ({ ...(it as any), orderId })));
-      }
       const [updated] = await tx.update(orders).set({
         ...(orderTotals as any),
         updatedAt: new Date(),
-      }).where(eq(orders.id, orderId)).returning();
-      return updated;
+      }).where(and(
+        eq(orders.id, orderId),
+        eq(orders.paymentStatus, "pending"),
+        ne(orders.status, "cancelled"),
+      )).returning();
+      if (!updated) throw new OrderNotEditableError();
+      await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+      const inserted = items.length > 0
+        ? await tx.insert(orderItems).values(items.map((it) => ({ ...(it as any), orderId }))).returning()
+        : [];
+      let kotTicket: KotTicket | null = null;
+      if (kot) {
+        const kotNumber = await kot.kotNumber;
+        [kotTicket] = await tx.insert(kotTickets).values({ orderId, kotNumber, items: kot.items as any }).returning();
+      }
+      return { order: updated, items: inserted, kotTicket };
     });
   }
 
