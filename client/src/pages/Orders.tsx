@@ -27,6 +27,8 @@ import { PaymentMethodDialog } from "@/components/PaymentMethodDialog";
 import { DueSettleDialog } from "@/components/DueSettleDialog";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
 import { useOrderHistorySync } from "@/lib/orderHistorySync";
+import { describeApiError } from "@/lib/apiError";
+import { planStatusChange } from "@shared/orderStatusChange";
 
 
 const fmt = (n: number) =>
@@ -242,8 +244,11 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
                     // required reason, freeing the table, restoring inventory, and
                     // closing out the kitchen ticket. Use the Cancel Order button
                     // (Settlement dialog or table Actions menu) instead.
-                    disabled={s === "cancelled"}
-                    title={s === "cancelled" ? "Use the Cancel Order button instead — this only changes the label" : undefined}
+                    // Same rule the server enforces (shared/orderMutation.ts planStatusChange): only
+                    // kitchen-progress labels; never cancel/un-cancel, never move a paid bill or an open
+                    // due back onto the floor. Cancel uses the Cancel Order button (PIN + reason).
+                    disabled={s !== order.status && planStatusChange(order, s) !== null}
+                    title={s !== order.status ? planStatusChange(order, s)?.error : undefined}
                     className="text-xs capitalize"
                   >
                     {s}
@@ -567,7 +572,10 @@ export default function Orders() {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       toast({ title: "Order status updated" });
     },
-    onError: () => toast({ title: "Failed to update status", variant: "destructive" }),
+    onError: (err) => {
+      toast({ title: "Couldn't change the status", description: describeApiError(err).message, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    },
   });
 
   const q = search.trim().toLowerCase();

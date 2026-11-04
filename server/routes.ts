@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 import { storage, OrderNotEditableError } from "./storage";
 import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
-import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS } from "@shared/orderMutation";
+import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS, planStatusChange } from "@shared/orderMutation";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
 import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
@@ -1584,7 +1584,7 @@ export async function registerRoutes(
         console.error("[table] shift: destination table status update error (non-fatal):", tableErr);
       }
       try {
-        await storage.updateTableStatus(fromTableId, "free", null);
+        await storage.freeTableIfHeldBy(Number(fromTableId), fromTable.currentOrderId);
       } catch (tableErr) {
         console.error("[table] shift: source table status update error (non-fatal):", tableErr);
       }
@@ -2578,12 +2578,29 @@ export async function registerRoutes(
   app.put("/api/orders/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const orderData = orderUpdateAllowlist.parse(req.body);
-      const order = await storage.updateOrder(id, orderData);
+      const parsed = orderUpdateAllowlist.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid order data" });
+      const orderData = parsed.data;
+      const existing = await storage.getOrderById(id);
+      if (!existing) return res.status(404).json({ error: "Order not found", code: "not_found" });
+      // Status is only a kitchen-progress label here — cancel, recall and settle each have their own
+      // PIN-gated, audited route (shared/orderMutation.ts planStatusChange).
+      if (orderData.status !== undefined) {
+        const block = planStatusChange(existing as any, orderData.status as string);
+        if (block) return res.status(block.status).json({ error: block.error, code: block.code });
+      }
+      const order = await storage.updateOrderIfState(id, orderData, {
+        status: (existing as any).status,
+        paymentStatus: (existing as any).paymentStatus,
+      });
+      if (!order) {
+        return res.status(409).json({ error: "This order changed while you were editing it — refresh and try again.", code: "conflict" });
+      }
       broadcast({ type: 'ORDER_UPDATE', order });
       res.json(order);
     } catch (error) {
-      res.status(400).json({ error: "Invalid order data" });
+      console.error("[order] PUT /api/orders/:id failed:", error);
+      res.status(500).json({ error: "Failed to update order" });
     }
   });
 
@@ -2722,7 +2739,7 @@ export async function registerRoutes(
       const freeTable = async () => {
         if (!(order as any).tableId) return;
         try {
-          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number((order as any).tableId), id);
           broadcast({ type: "TABLE_UPDATE" });
         } catch (tableErr) {
           console.error("[payment] table free error (non-fatal):", tableErr);
@@ -3090,7 +3107,7 @@ export async function registerRoutes(
       await storage.updateOrder(id, { status: "hold", tableId: null, tableNumber: null } as any);
       if (tableId) {
         try {
-          await storage.updateTableStatus(Number(tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number(tableId), id);
         } catch (tableErr) {
           console.error("[order] table free error on hold (non-fatal):", tableErr);
         }
@@ -3132,14 +3149,30 @@ export async function registerRoutes(
       if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
-      await storage.updateOrder(id, { status: "cancelled", cancelReason: reason } as any);
+      if ((order as any).status === "cancelled") {
+        return res.status(409).json({ error: "This order is already cancelled.", code: "cancelled" });
+      }
+      // A paid order's money is already in the day's takings; cancelling it would drop the sale
+      // while the cash stays in the drawer. (A due may be cancelled — that forgives the tab.)
+      if ((order as any).paymentStatus === "paid") {
+        return res.status(409).json({ error: "This order is already paid — it can't be cancelled.", code: "settled" });
+      }
+      // Conditional: a settle landing between the read above and this write wins (409), instead of
+      // the cancel silently wiping a payment that was just recorded.
+      const cancelled = await storage.updateOrderIfState(id, { status: "cancelled", cancelReason: reason } as any, {
+        status: (order as any).status,
+        paymentStatus: (order as any).paymentStatus,
+      });
+      if (!cancelled) {
+        return res.status(409).json({ error: "This order changed while it was being cancelled — refresh and try again.", code: "conflict" });
+      }
       // Non-fatal — the order is already marked cancelled above; a failure here must not
       // report "Failed to cancel order" for an order that genuinely IS cancelled now
       // (same reasoning as the settlement/creation table-status fixes elsewhere in this
       // file). Worst case the table is left showing "running" and needs a manual fix.
       if ((order as any).tableId) {
         try {
-          await storage.updateTableStatus(Number((order as any).tableId), "free", null);
+          await storage.freeTableIfHeldBy(Number((order as any).tableId), id);
         } catch (tableErr) {
           console.error("[order] table free error on cancel (non-fatal):", tableErr);
         }
@@ -3193,7 +3226,7 @@ export async function registerRoutes(
       await storage.updateOrder(id, { tableId: newTableId, tableNumber: newTableName || String(newTableId) } as any);
       if (oldTableId) {
         try {
-          await storage.updateTableStatus(Number(oldTableId), "free", null);
+          await storage.freeTableIfHeldBy(Number(oldTableId), id);
         } catch (tableErr) {
           console.error("[table] move: old table status update error (non-fatal):", tableErr);
         }
@@ -3462,17 +3495,31 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
+      if (!["pending", "in-progress", "completed"].includes(status)) {
+        return res.status(400).json({ error: "Invalid KOT status" });
+      }
       const updateData: any = { status };
       if (status === 'completed') updateData.completedAt = new Date();
       const ticket = await storage.updateKotTicket(id, updateData);
+      if (!ticket) return res.status(404).json({ error: "KOT not found" });
 
-      // When KOT is completed, update the associated order to "ready"
-      if (status === 'completed' && ticket.orderId) {
-        await storage.updateOrder(ticket.orderId, { status: "ready" } as any);
-      }
-      // When KOT starts (in-progress), update order to "preparing"
-      if (status === 'in-progress' && ticket.orderId) {
-        await storage.updateOrder(ticket.orderId, { status: "preparing" } as any);
+      // Starting a ticket moves its order to "preparing", completing it to "ready" — but only while
+      // the order is still on the floor. A stale tap on an old ticket used to flip a cancelled or
+      // settled order back to ready/preparing, putting it back into sales and onto the Tables page.
+      // Same rule as PUT /api/orders/:id (planStatusChange), conditional write, never fatal.
+      const nextOrderStatus = status === 'completed' ? "ready" : status === 'in-progress' ? "preparing" : null;
+      if (nextOrderStatus && ticket?.orderId) {
+        try {
+          const ord = await storage.getOrderById(ticket.orderId);
+          if (ord && !planStatusChange(ord as any, nextOrderStatus) && (ord as any).status !== nextOrderStatus) {
+            await storage.updateOrderIfState(ticket.orderId, { status: nextOrderStatus } as any, {
+              status: (ord as any).status,
+              paymentStatus: (ord as any).paymentStatus,
+            });
+          }
+        } catch (e) {
+          console.error("[kot] order status follow-up failed (non-fatal):", e);
+        }
       }
 
       broadcast({ type: 'KOT_UPDATE', ticket });

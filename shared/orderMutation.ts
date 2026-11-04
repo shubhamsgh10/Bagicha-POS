@@ -35,4 +35,17 @@ export const ORDER_CREATE_FORCED_DEFAULTS = {
   // paid_at picks the business day a payment counts on AND how long it can be corrected, so it is
   // stamped only by the server's own settle paths — a client can never choose it.
   paidAt: null,
+  // Lifecycle and print state are server-owned too: an order could be created already
+  // "cancelled"/"served", with a cancel reason, or with print counters / a KOT snapshot that make
+  // its first KOT look like a reprint (nothing in the POS sends any of these).
+  status: "pending" as const,
+  cancelReason: null,
+  kotPrintCount: 0,
+  billPrintCount: 0,
+  lastKotSnapshot: null,
 };
+
+
+// The status rule for PUT /api/orders/:id lives in shared/orderStatusChange.ts (no DB imports, so the
+// client can share it).
+export { planStatusChange, PLAIN_STATUS_TARGETS, type StatusChangeBlock } from "./orderStatusChange";

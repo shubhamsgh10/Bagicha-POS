@@ -182,6 +182,7 @@ export interface IStorage {
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
+  updateOrderIfState(id: number, patch: Partial<InsertOrder>, expected: { status: string; paymentStatus: string }): Promise<Order | undefined>;
   settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
   getOrdersCollectedBetween(startDate: Date, endDate: Date): Promise<Order[]>;
   deleteOrder(id: number): Promise<void>;
@@ -231,6 +232,7 @@ export interface IStorage {
   createTable(table: InsertTable): Promise<Table>;
   updateTable(id: number, data: Partial<InsertTable>): Promise<Table>;
   deleteTable(id: number): Promise<void>;
+  freeTableIfHeldBy(tableId: number, orderId: number): Promise<boolean>;
   updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table>;
 
   // Sales
@@ -1052,6 +1054,21 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // Writes only while the order still has the status/payment state the caller checked, so a
+  // settle or cancel landing between PUT /api/orders/:id's check and its write can't be undone
+  // by a stale status edit. No row back → the order changed underneath (caller answers 409).
+  async updateOrderIfState(id: number, patch: Partial<InsertOrder>, expected: { status: string; paymentStatus: string }): Promise<Order | undefined> {
+    const [updated] = await db.update(orders).set({
+      ...(patch as any),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(orders.id, id),
+      eq(orders.status, expected.status),
+      eq(orders.paymentStatus, expected.paymentStatus),
+    )).returning();
+    return updated;
+  }
+
   // Conditional settle: only flips an order that is still payment_status='pending'.
   // Returns the updated row when THIS call performed the transition, or undefined
   // if it was already settled — so a concurrent second settlement is a no-op and
@@ -1388,6 +1405,18 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTable(id: number): Promise<void> {
     await db.delete(tables).where(eq(tables.id, id));
+  }
+
+  // Frees a table only while it still belongs to `orderId` (or holds no order). Settling,
+  // cancelling, holding or moving an OLD order used to free whatever table that order once sat
+  // at — even when a new party had since been seated there with their own running order, so a
+  // busy table showed "free" mid-service. Returns whether the table was freed.
+  async freeTableIfHeldBy(tableId: number, orderId: number): Promise<boolean> {
+    const rows = await db.update(tables)
+      .set({ status: "free", currentOrderId: null } as any)
+      .where(and(eq(tables.id, tableId), or(eq(tables.currentOrderId, orderId), isNull(tables.currentOrderId))))
+      .returning({ id: tables.id });
+    return rows.length > 0;
   }
 
   async updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table> {
