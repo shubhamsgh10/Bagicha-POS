@@ -44,13 +44,28 @@ function sendToRawBT(payloadBase64: string): void {
   document.body.removeChild(a);
 }
 
+// Retries a failed ack (like the desktop PrintQueue's ackWithRetry). A non-2xx used to count as
+// success, leaving the job "claimed" — after the 2-minute stale window it was reclaimed and the
+// ticket printed AGAIN. Retrying the ack is safe (it only flips the row to printed); throws when
+// every attempt failed so the job log shows it.
 async function ackJob(job: RemotePrintJob): Promise<void> {
-  await fetch(apiUrl("/api/print/ack"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ orderId: job.orderId, type: job.jobType, jobId: job.jobId }),
-  });
+  let lastErr: unknown = null;
+  for (const delay of [0, 1000, 3000]) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(apiUrl("/api/print/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ orderId: job.orderId, type: job.jobType, jobId: job.jobId }),
+      });
+      if (res.ok) return;
+      lastErr = new Error(`ack ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("ack failed");
 }
 
 export default function PrintStation() {

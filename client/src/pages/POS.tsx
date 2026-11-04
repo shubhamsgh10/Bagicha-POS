@@ -766,7 +766,14 @@ export default function POS() {
     const loadedItems: CartItem[] = (existingOrder.items || []).map((item: any) => {
       const menuItem = menuItems.find((m: any) => m.id === item.menuItemId);
       // Open items (negative menuItemId) and deleted menu items fall back to the name stored on the row
-      const name = menuItem?.name || item.name || "Unknown Item";
+      // A sized line is stored as "Name (Size)"; with no menu row (open item, or the item is Out of
+      // Stock and missing from /api/menu) strip that suffix, or every save appended the size again
+      // ("Pizza (L) (L)") and the doubled name reached the KOT and bill.
+      const storedName: string = item.name || "";
+      const sizeSuffix = item.size ? ` (${item.size})` : "";
+      const name = menuItem?.name
+        || (sizeSuffix && storedName.endsWith(sizeSuffix) ? storedName.slice(0, -sizeSuffix.length) : storedName)
+        || "Unknown Item";
       const price = parseFloat(item.price);
       const sm = (item.serviceMode as ItemServiceMode) || "dinein";
       // The saved string is variants | "Note: <text>" | + addons. Putting all of it into
@@ -2045,7 +2052,10 @@ export default function POS() {
 
             {/* New Order — hidden on mobile */}
             <button
-              disabled={isOff("clearCart")}
+              disabled={isOff("clearCart") || !!activeOrderId}
+              // Disabled while editing a saved order: it cleared the cart but kept activeOrderId, so the
+              // "new" order was saved INTO the previous one (and refused with a cancel-reason 400).
+              title={activeOrderId ? "Finish or leave this order first — this screen is editing a saved order" : undefined}
               onClick={() => go("clearCart", "New Order (Clear Cart)", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
               className="hidden md:flex text-xs font-semibold text-green-600 border border-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed items-center gap-1"
             >
@@ -2766,7 +2776,18 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => { setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {}; })}
+                  onClick={() => go("clearCart", "Clear All Items", () => {
+                    // On a saved order, only lines not yet saved can go here — removing a line the
+                    // kitchen already has needs its own cancel reason (× on the row), and clearing
+                    // everything used to make every later save fail with a 400.
+                    if (activeOrderId) {
+                      const kept = cartItems.filter(wasItemKotd);
+                      setCartItems(kept);
+                      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
+                      return;
+                    }
+                    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+                  })}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >
