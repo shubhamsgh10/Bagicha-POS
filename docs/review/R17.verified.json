@@ -1,0 +1,110 @@
+{
+  "slice": "R17",
+  "coverage": "Read every line of: shared/orderPricing.ts:1-195, shared/orderStatus.ts:1-4, shared/pageAccess.ts:1-54, shared/paymentEdit.ts:1-184, shared/paymentSplit.ts:1-189, shared/print/browserPayload.ts:1-35, shared/print/escpos.ts:1-104, shared/print/escposInterpret.ts:1-325, shared/print/formatDate.ts:1-9, shared/print/generators.ts:1-365, shared/print/kotImage.ts:1-480, shared/print/persistentPs.ts:1-256, shared/print/printerCapabilities.ts:1-34, shared/print/receiptLayout.ts:1-76, shared/print/types.ts:1-126, shared/print/windowsPrinters.ts:1-177, shared/print/windowsRawPrint.ts:1-96, shared/printJobBroadcast.ts:1-15, shared/printPerf.ts:1-75, shared/printRequest.ts:1-80, shared/realtimeInvalidation.ts:1-42, shared/requestTiming.ts:1-99, shared/schema.ts:1-911. Callers checked for reachability: desktop/print/usbSend.ts (sendToUsbPrinter -> sendRawToWindowsQueue / resolveWindowsQueueForPrinter), server/routes.ts POST/PUT /api/menu (source of the pricing floor). Not run: nothing executed (read-only review); PowerShell behaviour reasoned from code only.",
+  "findings": [
+    {
+      "file": "shared/print/persistentPs.ts",
+      "line": 105,
+      "severity": "medium",
+      "category": "race / wrong result",
+      "title": "drainResponses always matches PRINT_OK before PRINT_FAIL regardless of their order in the buffer",
+      "detail": "drainResponses checks `stdoutBuf.includes(\"PRINT_OK\")` first and removes the FIRST PRINT_OK it finds anywhere in the buffer, even if a PRINT_FAIL line precedes it. Responses are supposed to be matched strictly FIFO to `pending`. When two jobs' responses arrive in the same stdout chunk (or the buffer otherwise holds both), the oldest pending job gets the later job's PRINT_OK and the later job gets the earlier job's failure.",
+      "failure_scenario": "Category routing queues two tickets on one Electron host in quick succession: job 1 to an offline/unplugged counter printer (WritePrinter returns false -> 'PRINT_FAIL:...'), job 2 to the working kitchen printer ('PRINT_OK'). Both lines land in one chunk. Job 1 resolves as printed (its print_jobs row is acked, the ticket is lost with no retry/release), job 2 is rejected, falls back to sendRawLegacy and prints a second time on the kitchen printer.",
+      "suggested_fix": "Find the earliest marker: compute indexOf for both PRINT_OK and PRINT_FAIL and consume whichever comes first (or split stdoutBuf into lines and process line by line).",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Matching is order-insensitive (PRINT_OK always consumed first), confirmed at persistentPs.ts:105-118. But desktop PrintQueue executes strictly one job at a time and the server never Windows-raw-prints orders (printDispatch excludes type usb from direct jobs), so two live pending entries only coexist after a 30s timeout left an inert slot, or a concurrent Test Print IPC. In that case a stale FAIL + new OK in one chunk misattributes the FAIL to the new job, which then falls back to legacy and prints again. Real but rare."
+    },
+    {
+      "file": "shared/print/windowsRawPrint.ts",
+      "line": 90,
+      "severity": "medium",
+      "category": "double-fire",
+      "title": "Any fast-path error (incl. the 30s timeout) falls back to sendRawLegacy, which can print the ticket twice",
+      "detail": "sendRawToWindowsQueue catches every error from sendRawFast and retries via sendRawLegacy. sendRawFast rejects not only when the session is not ready (nothing was sent) but also after the command was already written to stdin: on its 30 s timeout (persistentPs.ts:225 \u2014 the command is still queued/executing in PowerShell and its response arrives late, as the code comment itself anticipates) and on 'PowerShell session exited unexpectedly' after the write. In those cases the bytes may already be in the spooler, and the legacy path sends them again. Also on a genuine PRINT_FAIL the legacy path re-runs a guaranteed-failing write, adding ~1-3 s before the error surfaces.",
+      "failure_scenario": "The Windows spooler stalls for 35 s on a KOT (printer busy/paper-out recovered). sendRawFast times out at 30 s and rejects; the caller immediately spawns a legacy PowerShell which queues the same bytes; when the spooler recovers both jobs print \u2014 the kitchen gets a duplicate KOT and cooks the order twice.",
+      "suggested_fix": "Only fall back when nothing was written (e.g. throw a distinct NotReadyError from sendRawFast before the write and fall back only on that). For timeout/exit-after-write and PRINT_FAIL, rethrow so the PrintQueue's retry/release logic decides.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed windowsRawPrint.ts:90-95 catches every sendRawFast error, including the post-write 30s timeout and 'session exited unexpectedly', and re-sends via sendRawLegacy, so bytes already handed to the spooler can be sent again. WritePrinter to a local spooler normally returns quickly, so the 30s stall / mid-write exit are uncommon; impact is a duplicate KOT. PRINT_FAIL re-run only costs latency."
+    },
+    {
+      "file": "shared/print/persistentPs.ts",
+      "line": 221,
+      "severity": "low",
+      "category": "race / resource",
+      "title": "A command that emits neither PRINT_OK nor PRINT_FAIL permanently desyncs FIFO matching",
+      "detail": "With `$ErrorActionPreference = 'Continue'`, a statement-terminating exception inside the fast-path command (e.g. an exception thrown from SendBytesToPrinter/Marshal) writes to stderr and prints no marker. Its timed-out entry stays at the head of `pending` (by design, to absorb a late response), so it absorbs the NEXT job's marker instead. From then on every job resolves the previous slot and itself times out at 30 s, then falls back to legacy (duplicating each print per the finding above) until the session restarts.",
+      "failure_scenario": "One malformed/failed fast-path command throws instead of returning false; every subsequent ticket on that desktop takes 30 s and is printed twice (fast path really printed, legacy prints again) for the rest of the session.",
+      "suggested_fix": "Wrap the per-job command in try { ... } catch { Write-Output \"PRINT_FAIL:$($_.Exception.Message)\" } so every command always emits exactly one marker; optionally tag markers with a per-job id.",
+      "real": false,
+      "verified_severity": "none",
+      "reason": "The per-job command only calls FromBase64String on our own valid base64 and RawPrinterHelper.SendBytesToPrinter, which returns bool on every winspool failure path; AllocCoTaskMem/Marshal.Copy with a matching length do not realistically throw. No plausible path emits no marker, so the permanent desync is theoretical."
+    },
+    {
+      "file": "shared/print/persistentPs.ts",
+      "line": 234,
+      "severity": "low",
+      "category": "crash",
+      "title": "No 'error' listener on the PowerShell stdin stream",
+      "detail": "ps.stdin.write(cmd) is called on a pipe with no 'error' handler. If powershell.exe has died (killed by AV, crashed) but its 'exit' event has not fired yet, the write raises EPIPE as an 'error' event on stdin; with no listener Node throws it as an uncaught exception in the Electron main process.",
+      "failure_scenario": "Antivirus kills powershell.exe at the moment a KOT is sent; the stdin write emits EPIPE, the unhandled stream error becomes an uncaughtException in the desktop host instead of a rejected print that falls back.",
+      "suggested_fix": "Attach ps.stdin.on('error', ...) in startSession that rejects pending entries and resets state (same as the exit handler).",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed: startSession attaches stdout/stderr/exit/error listeners on the process but no 'error' listener on ps.stdin, and desktop/main.ts has no uncaughtException handler. An EPIPE on write in the window between process death and its 'exit' event would be an unhandled stream error in the Electron main process. Narrow window."
+    },
+    {
+      "file": "shared/print/windowsPrinters.ts",
+      "line": 176,
+      "severity": "medium",
+      "category": "wrong result",
+      "title": "resolveWindowsQueueForPrinter falls back to the first installed queue of any kind",
+      "detail": "When no queue matches the configured VID/PID and no USB-port queue exists, it returns `queues[0]?.queueName` \u2014 an arbitrary non-virtual queue (an office LaserJet/MFP, a network printer). desktop/print/usbSend.ts calls this for a USB printer that has vendorId/productId but no saved windowsQueueName, and sends raw ESC/POS bytes to whatever comes back without the supportsRawEscPos check.",
+      "failure_scenario": "A USB thermal printer configured by VID/PID only is unplugged (or its driver queue was removed) on a PC that also has an HP LaserJet on a network port. Each KOT is sent RAW to the LaserJet: garbage/blank pages print, WritePrinter succeeds, the job is acked as printed, and the kitchen never receives the ticket.",
+      "suggested_fix": "Drop the `queues[0]` fallback (return undefined so usbSend throws its 'No Windows print queue found' error), or at least filter candidates through supportsRawEscPos and require a USB port.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed windowsPrinters.ts:176 returns queues[0] (any non-virtual, online queue from list-windows-printers.ps1, e.g. a network office printer) and desktop/print/usbSend.ts uses it when a USB printer has VID/PID but no saved windowsQueueName, with no raw-ESC/POS check. Requires the uncommon VID/PID-only config (Detect Installed Printers normally saves a queue name) plus the thermal printer's queue being gone."
+    },
+    {
+      "file": "server/routes.ts",
+      "line": 1687,
+      "severity": "high",
+      "category": "auth / money",
+      "title": "Menu price \u2014 the floor shared/orderPricing.ts relies on \u2014 can be rewritten by any logged-in session, unvalidated",
+      "detail": "priceResolved's anti-under-ring guarantee (orderPricing.ts:86-95) is only as strong as menu_items.price/sizes. POST /api/menu and PUT /api/menu/:id are `requireAuth` only and write `String(b.price)` / `b.sizes` with no numeric or non-negative check (insertMenuItemSchema is not used, and it too emits a bare z.string() for the decimal price). PUT also unconditionally sets sizes=null and addons=[] when the body omits them. (Route lives outside this slice; reported here because it voids this slice's pricing invariant.)",
+      "failure_scenario": "A staff-tier PIN session (or curl with its cookie) sends PUT /api/menu/12 {price:\"1\", sizes:null}, rings a \u20b9500 dish at \u20b91 (the server floor now accepts it), settles, then restores the price. Or a typo of \"-50\" makes every order containing the item total \u20b950 less per unit.",
+      "suggested_fix": "Gate menu create/update with requireManagerOrAdmin (or requireAdmin), validate price and each sizes[].price as finite and >= 0, and only touch sizes/addons when they are present in the body.",
+      "real": true,
+      "verified_severity": "medium",
+      "reason": "Confirmed server/routes.ts:1660/1687/1723 (POST/PUT /api/menu, bulk-update) are requireAuth only, price written as String(b.price) with no numeric/non-negative check, and PUT unconditionally sets sizes=null / addons=[] when omitted. A staff PIN session can therefore lower the DB floor that priceResolved trusts, bypassing the elevation-gated discount path with no audit row. Insider-only, hence medium rather than high."
+    },
+    {
+      "file": "shared/print/generators.ts",
+      "line": 314,
+      "severity": "low",
+      "category": "wrong result",
+      "title": "Reprinted bill labels CGST/SGST with the CURRENT tax rate, not the order's",
+      "detail": "cgstRate = restaurant.taxRate / 2 comes from today's settings while the amounts come from the order's stored taxAmount. Orders don't store their rate, so after a rate change (e.g. 18% -> 5%) a reprint of an older order prints 'CGST 2.5%  81.00' \u2014 percentage and amount disagree on a tax document.",
+      "failure_scenario": "Settings tax rate is changed from 18% to 5%; a customer asks for a reprint of yesterday's \u20b91,000 bill: it shows CGST 2.5% / SGST 2.5% with \u20b990 each.",
+      "suggested_fix": "Derive the effective rate from the order: tax / (subtotal - discount) when that base is > 0 (rounded to the configured precision), falling back to the setting.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed generators.ts:313 cgstRate = restaurant.taxRate/2 from current settings while amounts come from the order's stored taxAmount; orders store no rate. A reprint after a tax-rate change (or of an order mispriced during the documented 18%/5% drift) prints a percentage that disagrees with the amount."
+    },
+    {
+      "file": "shared/print/generators.ts",
+      "line": 264,
+      "severity": "low",
+      "category": "wrong result",
+      "title": "mergeDuplicateItems drops the add-on/variant text of every merged line but the first",
+      "detail": "Lines are merged by name+size only; the merged entry keeps the first line's specialInstructions, so with showAddons on the bill prints one '[...]' block and silently loses the others, while the averaged unit price still includes their add-on prices.",
+      "failure_scenario": "Two Margherita (Regular) lines, one '+ Extra Cheese' (\u20b940 more), one plain, with mergeDuplicateItems on: the bill shows '2 x Margherita' at an averaged price with only the first line's addon note (or none), so the customer can't see what the extra charge is for.",
+      "suggested_fix": "Include specialInstructions in the merge key, or concatenate distinct instruction strings with their quantities (as mergedInstructions does for the KOT).",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed generators.ts:264-280 merges by name+size only and the spread keeps the first line's specialInstructions; other lines' add-on text is lost while the averaged price includes them. Only when billSettings.mergeDuplicateItems and showAddons are on. Cosmetic on the bill."
+    }
+  ]
+}
