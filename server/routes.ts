@@ -1073,7 +1073,8 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/admin/clear-orders", requireAdmin, async (req, res) => {
+  // Wipes every order, ticket and payment: a fresh admin PIN, not just an admin session.
+  app.delete("/api/admin/clear-orders", requireAdmin, requireFreshPin("admin"), async (req, res) => {
     try {
       // 1. Delete all order-related data
       await db.delete(paymentTransactions);
@@ -1093,7 +1094,7 @@ export async function registerRoutes(
       await saveSettings({ kotCounter: 0 } as any, { allowCounters: true });
 
       // 3. Log audit event
-      logAudit(req, "orders.clear_all", "system", null, {
+      await logAudit(req, "orders.clear_all", "system", null, {
         message: "All orders, KOT records, payment transactions, feedback, and table occupancy states cleared.",
       });
 
@@ -1565,6 +1566,13 @@ export async function registerRoutes(
   app.delete("/api/tables/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      // Server-side, not just the Tables page's cached check: a table holding an order can't go
+      // (the order would lose its table and the Tables page its running card).
+      const table = await storage.getTableById(id);
+      if (!table) return res.status(404).json({ error: "Table not found" });
+      if (table.currentOrderId || (table.status && table.status !== "free")) {
+        return res.status(409).json({ error: "This table has an active order — settle or move it first.", code: "table_busy" });
+      }
       await storage.deleteTable(id);
       res.json({ success: true });
     } catch (error) {
