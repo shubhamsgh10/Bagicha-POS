@@ -1,0 +1,110 @@
+{
+  "slice": "R05",
+  "coverage": "Read every line of: client/src/lib/automationEngine.ts:1-719, chargeBoxes.ts:1-37, connectionKeepAlive.ts:1-75, constants.ts:1-33, dialogLock.ts:1-20, orderDisplay.ts:1-7, orderHistorySync.ts:1-58, orderTypeColors.ts:1-31, printBill.ts:1-128, printGateway.ts:1-195, printPerfClient.ts:1-75, printStationCore.ts:1-266, queryClient.ts:1-100, queueCheckCache.ts:1-83, receiptRaster.ts:1-124, receiptText.ts:1-155, routePermissions.ts:1-47, settleSkip.ts:1-62, slowRequest.ts:1-57, slowSettle.ts:1-83, utils.ts:1-6, client/src/main.tsx:1-61, client/src/pages/Admin.tsx:1-985. Cross-checked: server/routes.ts PUT /api/users/:id and /api/automation/config|run handlers, server/services/printDispatch.ts job insert/broadcast, packages/api-client timing clock, POS.tsx/Orders.tsx billLines callers, usePermission/settingsStore CART_ACTIONS, AutomationPanel.tsx callers.",
+  "findings": [
+    {
+      "file": "client/src/lib/automationEngine.ts",
+      "line": 469,
+      "severity": "high",
+      "category": "wrong-behaviour / outbound-messaging",
+      "title": "Run Now / saving settings in API/Meta mode silently re-enables the server's scheduled WhatsApp automation and overwrites its maxPerRun",
+      "detail": "syncSettingsToServer always posts `enabled: settings.enabled`, `maxPerRun: settings.maxPerRun || settings.dailyLimit` and `restaurantName: \"Bagicha\"` from the browser's localStorage copy to POST /api/automation/config, which saveAutomationConfig merges into automation-config.json and then restartScheduler(). runCustomerAutomation calls it before every API/Meta run and only proceeds when settings.enabled is true (it throws otherwise), so every manual 'Run Now' pushes enabled:true. The localStorage defaults (enabled:true, maxPerRun:20) are not the server's values, and the server's own enabled flag gates the background (scheduled) customer automation \u2014 POST /api/automation/run already force-bypasses it, so no push was needed for a manual run.",
+      "failure_scenario": "Admin has turned the server automation off (or set maxPerRun to 5 for a freshly warmed number) via the server-backed setup UI. Later they press Run Now once in API mode on a browser whose localStorage still has the defaults. The server config flips to enabled:true, maxPerRun:20, and the scheduler starts sending lapsed-customer WhatsApp batches every interval with nobody having asked for it \u2014 the ban-risk send volume CLAUDE.md warns about.",
+      "suggested_fix": "Do not send `enabled`/`maxPerRun`/`restaurantName` from the client sync (send only the credentials that were actually changed), or read the server's config first and only patch explicitly edited fields. Run Now should just call /api/automation/run (already force).",
+      "real": true,
+      "verified_severity": "medium",
+      "reason": "Confirmed syncSettingsToServer always posts enabled/maxPerRun from localStorage; POST /api/automation/config merges + restartScheduler; scheduled runCustomerAutomation gates on config.enabled/maxPerRun (customerAutomationService.ts:314,326). But the only enabled toggle in the UI is this same localStorage one (AutomationPanel.tsx:871) and Run Now requires it ON, so on a single browser the server value already matches; the overwrite needs a second, credential-configured browser with diverged localStorage (default enabled:true, maxPerRun:20). Real, narrower than claimed -> medium."
+    },
+    {
+      "file": "client/src/lib/automationEngine.ts",
+      "line": 645,
+      "severity": "medium",
+      "category": "wrong-behaviour / false success",
+      "title": "Client-side (web mode) run opens one wa.me tab per customer after 800 ms awaits; browsers block all but the first, yet every customer is logged as sent and put on cooldown",
+      "detail": "runAutomationClientSide loops window.open(...) with `await new Promise(r => setTimeout(r, 800))` between iterations. Chromium consumes the click's transient user activation on the first window.open, so every later popup is blocked. With 'noopener' window.open returns null even on success, so nothing is checked; logMessageSent + logRunSuccess run unconditionally and result.sent++ counts it.",
+      "failure_scenario": "Admin presses Run Now with 15 eligible customers in web mode: one WhatsApp tab opens, 14 are blocked by the popup blocker, the result says 'sent 15', and all 15 customers are now inside the 24 h cooldown so they drop out of the queue \u2014 14 customers silently never get the message.",
+      "suggested_fix": "In web mode open only one tab per user click (e.g. a 'Send next' queue UI), or check the popup handle (drop 'noopener' and set opener=null manually) and only log as sent when a window actually opened.",
+      "real": false,
+      "verified_severity": "none",
+      "reason": "Unreachable: runAutomationClientSide is only called from runCustomerAutomation in web mode, and its only caller (AutomationPanel handleRunNow) renders the Run Now button only when !isWebMode (AutomationPanel.tsx:514). No other caller in client/src."
+    },
+    {
+      "file": "client/src/lib/automationEngine.ts",
+      "line": 446,
+      "severity": "medium",
+      "category": "wrong-results / phone normalization",
+      "title": "Client normalizePhone still uses startsWith(\"91\"), so 10-digit numbers beginning with 91 are skipped",
+      "detail": "CLAUDE.md documents this exact bug as fixed in the server's normalizePhone/normalizeWaPhone (key off digit length, not a '91' prefix). This client copy was not fixed: '9187654321' is treated as already country-coded, stays 10 digits, fails `normalized.length < 12`, and sendFollowUpViaWeb returns false / runAutomationClientSide counts it skipped. A number with a leading trunk 0 ('09876543210') becomes '9109876543210'.",
+      "failure_scenario": "A customer with mobile 9187654321 matches WIN_BACK; the web-mode run skips them every time and the Queue tab's send button does nothing.",
+      "suggested_fix": "Mirror the server rule: strip non-digits; 10 digits \u2192 prepend 91; 11 with leading 0 \u2192 strip 0 and prepend; 12 starting 91 \u2192 keep. Better, import the shared helper.",
+      "real": false,
+      "verified_severity": "none",
+      "reason": "The flawed normalizePhone in automationEngine.ts is used only by sendFollowUpViaWeb/sendFollowUpMessage (no callers anywhere in client/src) and by runAutomationClientSide (unreachable, see previous finding). The Queue tab uses client/src/utils/whatsapp.ts's own normalizePhone, not this one. Dead code."
+    },
+    {
+      "file": "client/src/lib/printGateway.ts",
+      "line": 133,
+      "severity": "medium",
+      "category": "double-print",
+      "title": "Electron enqueue failure releases the job back to pending AND prints it through the browser fallback, so another station can print it a second time",
+      "detail": "When every Electron print() call fails, each claimed job is released via releasePrintJob (status back to 'pending') and the code then falls through to the browser fallback, which prints the same ticket. The released row is now claimable by any other owning station (a RawBT /print-station with default 'owns everything', another host, or this host's own catch-up poll on reconnect).",
+      "failure_scenario": "Shop PC's Electron IPC errors for a KOT (driver hiccup). The cashier gets the browser print dialog and prints the KOT; meanwhile the outdoor tablet's print station (owns all printers) picks up the released pending job via its catch-up poll and prints it again \u2014 kitchen cooks the order twice.",
+      "suggested_fix": "When choosing the browser fallback, mark the job printed/acked (or cancel it) instead of releasing it; release only when NOT falling back locally.",
+      "real": false,
+      "verified_severity": "none",
+      "reason": "window.electronAPI.print is the PRINT_EXECUTE IPC (desktop/main.ts:467), which only enqueues into PrintQueue and returns ok:false solely for an invalid job payload; a driver/printer hiccup happens later inside PrintQueue (which does its own release), not here, and a missing queue throws (rejection, no release). The release+browser-fallback branch is effectively reachable only for a malformed payload, which no other station could print correctly either. Not a realistic double-print."
+    },
+    {
+      "file": "client/src/lib/receiptText.ts",
+      "line": 138,
+      "severity": "low",
+      "category": "money display",
+      "title": "In-page bill preview reconstructs Subtotal as total - tax - charges, which is wrong whenever a discount exists",
+      "detail": "billLines computes subtotal = totalAmount - taxAmount - containerCharge - deliveryCharge, i.e. (subtotal - discount), then prints a separate 'Discount: -D' line below it. CLAUDE.md requires every subtotal reader to go through deriveBillTotals. Callers (POS.tsx showBillPreview, Orders.tsx showBillPreview) pass discountAmount but not the persisted subtotal.",
+      "failure_scenario": "Order: items \u20b91000, 10% discount, 5% GST \u2192 total \u20b9945. Preview shows Subtotal \u20b9900, Discount -\u20b9100, Tax \u20b945, TOTAL \u20b9945 \u2014 the lines don't foot (900-100+45=845), and staff reading the preview quote a wrong subtotal.",
+      "suggested_fix": "Accept a `subtotal` param from deriveBillTotals(order) (or add discount back: subtotal = total - tax - charges + discount).",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed receiptText.ts:138 subtotal = total - tax - container - delivery (i.e. subtotal - discount), then a separate Discount line; Orders.tsx and POS.tsx showBillPreview pass discountAmount but no persisted subtotal, so lines don't foot when discounted. Only the last-resort in-page preview (CLAUDE.md), not the printed bill -> low."
+    },
+    {
+      "file": "client/src/lib/receiptText.ts",
+      "line": 39,
+      "severity": "low",
+      "category": "timezone",
+      "title": "Preview KOT/bill dates use the browser's ambient timezone instead of IST",
+      "detail": "kotLines/billLines call toLocaleDateString/toLocaleTimeString('en-IN', \u2026) without timeZone:'Asia/Kolkata'; CLAUDE.md requires formatISTDateTime for printed output. Same pattern in automationEngine.ts isBirthdayToday (line 188) and isInQuietHours (line 594) using getMonth/getDate/getHours.",
+      "failure_scenario": "On a device/OS left on UTC (e.g. a fresh Android tablet), a preview at 21:30 IST shows 16:00, and quiet hours 22\u201309 are evaluated in UTC so web-mode sends can go out at 02:30 IST.",
+      "suggested_fix": "Use formatISTDateTime / istHour / istMonthDay from shared helpers.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed kotLines/billLines use toLocaleDateString/TimeString without timeZone, and isBirthdayToday/isInQuietHours use local getMonth/getDate/getHours. Impact limited: previews are last-resort, isInQuietHours only gates the unreachable web-mode run plus a display hint (server pipeline has its own guard), birthday only affects the client-side queue display; shop devices are normally IST. Real deviation from CLAUDE.md IST rule, low."
+    },
+    {
+      "file": "client/src/lib/automationEngine.ts",
+      "line": 64,
+      "severity": "low",
+      "category": "security / secret storage",
+      "title": "WATI API key and Meta access token persisted in plaintext localStorage",
+      "detail": "saveAutomationSettings writes the full settings object, including watiApiKey and metaAccessToken (a permanent system-user token), to localStorage; it is also re-sent on every sync. The server already stores and masks these, so the client copy is unnecessary exposure to any XSS or anyone using that browser profile.",
+      "failure_scenario": "Admin enters the Meta token on the shared shop PC; any later user of that browser (or an injected script) can read localStorage['bagicha_automation_settings'] and send messages as the restaurant's number.",
+      "suggested_fix": "Send credentials to the server once and strip them from the object saved to localStorage.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed saveAutomationSettings writes the whole object incl. watiApiKey/metaAccessToken to localStorage['bagicha_automation_settings']; server already stores/masks them. Admin-only panel, requires XSS or shared profile access -> low."
+    },
+    {
+      "file": "client/src/lib/printGateway.ts",
+      "line": 181,
+      "severity": "low",
+      "category": "error handling",
+      "title": "printBillDirect parses the body as JSON before checking res.ok",
+      "detail": "A non-JSON error response (Vercel 504/HTML error page, proxy error) makes `await res.json()` throw a SyntaxError, so the caller toasts 'Unexpected token <\u2026' instead of the bill-print failure message; it also bypasses timedFetch so a stalled request is neither timed out nor reported.",
+      "failure_scenario": "Tables-card print during a Vercel timeout shows an unintelligible JSON parse error to staff.",
+      "suggested_fix": "Use apiFetch/timedFetch and parse JSON in a try, falling back to `Bill print failed (HTTP <status>)`.",
+      "real": true,
+      "verified_severity": "low",
+      "reason": "Confirmed printBillDirect does await res.json() before checking res.ok and uses raw fetch (no timedFetch timeout/reporting); a non-JSON 502/504 body yields a SyntaxError message instead of the intended 'Bill print failed'. Cosmetic error-handling issue -> low."
+    }
+  ]
+}
