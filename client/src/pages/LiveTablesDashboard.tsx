@@ -30,8 +30,14 @@ const PKU_LS = "bagicha_pku";
 function readMap<T extends string>(key: string): Record<number, T> {
   try { return JSON.parse(localStorage.getItem(key) ?? "{}"); } catch { return {}; }
 }
+const MAP_KEEP = 200;
 function writeMap<T extends string>(key: string, map: Record<number, T>) {
-  try { localStorage.setItem(key, JSON.stringify(map)); } catch { /* ignore */ }
+  // Keep only the newest order ids — old orders never come back to this board,
+  // so without a cap the stored map grew forever.
+  const ids = Object.keys(map).map(Number).filter(Number.isFinite).sort((a, b) => b - a).slice(0, MAP_KEEP);
+  const pruned: Record<number, T> = {};
+  for (const id of ids) pruned[id] = map[id];
+  try { localStorage.setItem(key, JSON.stringify(pruned)); } catch { /* ignore */ }
 }
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────

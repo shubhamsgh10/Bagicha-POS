@@ -34,8 +34,20 @@ function shouldUpgrade(current: string, next: string): boolean {
   return (STATUS_RANK[next] ?? 0) > (STATUS_RANK[current] ?? 0);
 }
 
-export async function handleStatusUpdate(update: WaStatusUpdate): Promise<void> {
-  if (!update.waMessageId) return;
+/**
+ * A receipt can arrive before the send path has recorded the message (it sends first, then
+ * writes the rows) — it used to be dropped, leaving the message "sent" forever. An unmatched
+ * receipt is retried a few times, a few seconds apart (in-process; the persistent driver host).
+ */
+export async function handleStatusUpdate(update: WaStatusUpdate, attempt = 0): Promise<void> {
+  const matched = await applyStatusUpdate(update);
+  if (!matched && attempt < 3) {
+    setTimeout(() => { void handleStatusUpdate(update, attempt + 1).catch(() => {}); }, 3_000 * (attempt + 1));
+  }
+}
+
+async function applyStatusUpdate(update: WaStatusUpdate): Promise<boolean> {
+  if (!update.waMessageId) return true;
 
   // ── conversation_messages ────────────────────────────────────────────────
   const convRows = await db.select()
@@ -71,4 +83,5 @@ export async function handleStatusUpdate(update: WaStatusUpdate): Promise<void> 
       ...(update.status === "read" ? { readAt: new Date() } : {}),
     }).where(eq(customerMessages.id, histMsg.id));
   }
+  return !!(convMsg || histMsg);
 }

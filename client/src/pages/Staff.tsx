@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -25,11 +25,18 @@ import { useRealtime } from "@/hooks/useRealtime";
 import { BiometricDevicePanel } from "@/components/staff/BiometricDevicePanel";
 import { LiveAttendanceBoard } from "@/components/staff/LiveAttendanceBoard";
 import { weekStringOf, shiftWeek } from "@shared/weekMath";
+import { istCalendarDate } from "@shared/businessDay";
+
+/** For the printed payroll page: names are user-editable, and that page shares the app's origin. */
+const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+// IST calendar dates. These used the UTC date: local midnight on the 1st is 18:30 UTC of the day
+// before, so "month start" was the last day of the previous month (and "today" was yesterday
+// until 05:30 IST).
+const today = () => istCalendarDate();
+const monthStart = () => `${istCalendarDate().slice(0, 7)}-01`;
 
 function fmtHours(h: number) {
   if (!h) return "—";
@@ -141,7 +148,7 @@ function ShiftsPanel() {
   });
 
   const recomputeMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/attendance/recompute-shifts", {}),
+    mutationFn: async () => (await apiRequest("POST", "/api/attendance/recompute-shifts", {})).json(),
     onSuccess: (res: any) => {
       toast({ title: "Shifts recomputed", description: `${res?.rows ?? 0} attendance day(s) updated from punches.` });
       queryClient.invalidateQueries({ queryKey: [`/api/shifts/roster?week=${currentWeek}`] });
@@ -285,7 +292,7 @@ function ShiftsPanel() {
 function LeavesPanel() {
   const { toast } = useToast();
   const [filterStatus, setFilterStatus] = useState("pending");
-  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [filterMonth, setFilterMonth] = useState(istCalendarDate().slice(0, 7));
   const [showApply, setShowApply] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ personKey: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -300,7 +307,13 @@ function LeavesPanel() {
     mutationFn: async (data: any) => {
       const [kind, idStr] = data.personKey.split(":"); // "user:4" | "staff:9" — ids collide across tables
       const start = new Date(data.startDate), end = new Date(data.endDate);
-      const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+      if (!data.startDate || !data.endDate || isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new Error("Pick a start and an end date.");
+      }
+      if (end.getTime() < start.getTime()) {
+        throw new Error("The end date is before the start date.");
+      }
+      const totalDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
       return apiRequest("POST", "/api/leaves", {
         kind, id: Number(idStr), leaveType: data.leaveType, startDate: data.startDate, endDate: data.endDate, reason: data.reason, totalDays,
       });
@@ -471,7 +484,7 @@ function StaffBiometricSetup() {
 
 function PayrollPanel() {
   const { toast } = useToast();
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(istCalendarDate().slice(0, 7));
   const [editingSalary, setEditingSalary] = useState<{ kind: string; id: number; salary: string } | null>(null);
 
   const { data: payrollData = [], isLoading } = useQuery<any[]>({ queryKey: [`/api/payroll/report/${selectedMonth}`] });
@@ -495,7 +508,7 @@ function PayrollPanel() {
 
   const handlePrint = () => {
     const rows = payrollData.map((r: any) =>
-      `<tr><td>${r.username}</td><td>${r.role}</td><td>Rs.${Number(r.monthlySalary).toLocaleString("en-IN")}</td><td>${r.workingDays}</td><td>${r.daysPresent}</td><td>${r.absentDays}</td><td>${r.approvedLeaves}</td><td>Rs.${r.deductions.toFixed(2)}</td><td>Rs.${r.overtimePay.toFixed(2)}</td><td><strong>Rs.${r.netSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></td></tr>`
+      `<tr><td>${esc(r.username)}</td><td>${esc(r.role)}</td><td>Rs.${Number(r.monthlySalary).toLocaleString("en-IN")}</td><td>${r.workingDays}</td><td>${r.daysPresent}</td><td>${r.absentDays}</td><td>${r.approvedLeaves}</td><td>Rs.${r.deductions.toFixed(2)}</td><td>Rs.${r.overtimePay.toFixed(2)}</td><td><strong>Rs.${r.netSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></td></tr>`
     ).join("");
     const html = `<!DOCTYPE html><html><head><title>Payroll ${selectedMonth}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px}h2{margin-bottom:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#f0f0f0;font-weight:600}tfoot td{font-weight:bold;background:#f8f8f8}</style></head><body><h2>Payroll Report - ${selectedMonth}</h2><table><thead><tr><th>Staff</th><th>Role</th><th>Salary</th><th>Working Days</th><th>Present</th><th>Absent</th><th>Leave</th><th>Deductions</th><th>OT Pay</th><th>Net Pay</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="9">Total Net Payable</td><td>Rs.${totalNet.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td></tr></tfoot></table></body></html>`;
     const blob = new Blob([html], { type: "text/html" });
@@ -615,17 +628,15 @@ export default function Staff() {
   // Roster = unified payroll people (owner/admins excluded); used for the EMPLOYEE filter.
   const { data: roster = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
 
-  const { data: attendance = [], isLoading: attLoading } = useQuery<AttendanceRecord[]>({
+  const { data: attendance = [], isLoading: attLoading, isError: attError } = useQuery<AttendanceRecord[]>({
     queryKey: ["/api/attendance/range", fromDate, toDate, empFilter],
     retry: false,
     queryFn: async () => {
       try {
         const params = new URLSearchParams({ from: fromDate, to: toDate });
         if (empFilter !== "all") params.set("key", empFilter);
-        const res = await fetch(apiUrl(`/api/attendance/range?${params}`), { credentials: "include" });
-        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
-        return await res.json();
-      } catch { return []; }
+        return await apiJson<AttendanceRecord[]>(`/api/attendance/range?${params}`);
+      } catch (e) { throw e; }
     },
   });
 
@@ -635,10 +646,8 @@ export default function Staff() {
     queryFn: async () => {
       try {
         const params = new URLSearchParams({ from: fromDate, to: toDate });
-        const res = await fetch(apiUrl(`/api/attendance/summary?${params}`), { credentials: "include" });
-        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
-        return await res.json();
-      } catch { return []; }
+        return await apiJson<AttendanceSummary[]>(`/api/attendance/summary?${params}`);
+      } catch (e) { throw e; }
     },
   });
 
@@ -646,9 +655,7 @@ export default function Staff() {
     queryKey: ["/api/staff/performance", fromDate, toDate],
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
-      const res = await fetch(apiUrl(`/api/staff/performance?${params}`), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      return apiJson<StaffPerformance[]>(`/api/staff/performance?${params}`);
     },
   });
 
@@ -806,6 +813,10 @@ export default function Staff() {
               {attLoading ? (
                 <div style={{ display: "flex", justifyContent: "center", padding: "48px 0" }}>
                   <Loader2 size={24} className="animate-spin" color="#10b981" />
+                </div>
+              ) : attError ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#dc2626", fontSize: 13 }}>
+                  Could not load attendance — check the connection and try again.
                 </div>
               ) : attendance.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "60px 0", color: "#9ca3af" }}>
@@ -987,7 +998,7 @@ export default function Staff() {
                     const isTop3 = i < 3;
                     const rank = RANK_COLORS[i];
                     return (
-                      <motion.div key={p.staffId ?? "unassigned"} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 260, damping: 24 }}
+                      <motion.div key={(p as any).key ?? p.staffId ?? "unassigned"} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 260, damping: 24 }}
                         style={{ ...glass, borderRadius: 16, padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, ...(isTop3 ? { boxShadow: `0 8px 24px ${rank.shadow}, 0 1px 0 rgba(255,255,255,0.80) inset` } : {}) }}
                       >
                         <div style={{ width: 32, height: 32, borderRadius: 10, background: isTop3 ? rank.bg : "rgba(0,0,0,0.07)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: isTop3 ? 15 : 13, fontWeight: 800, color: isTop3 ? "white" : "#9ca3af", flexShrink: 0, boxShadow: isTop3 ? `0 4px 10px ${rank.shadow}` : "none" }}>

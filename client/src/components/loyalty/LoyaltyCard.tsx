@@ -1,26 +1,37 @@
-import { useState } from "react";
-import { Gift, Star } from "lucide-react";
-import { useLoyalty, redeemablePoints, pointsToRupees } from "@/hooks/useLoyalty";
+import { useQuery } from "@tanstack/react-query";
+import { Gift } from "lucide-react";
+import { apiJson } from "@/lib/api";
 
 interface LoyaltyCardProps {
   customerKey: string;
-  totalSpend: number;
+  /** Kept for the caller's signature; the balance now comes from the server ledger. */
+  totalSpend?: number;
 }
 
-export function LoyaltyCard({ customerKey, totalSpend }: LoyaltyCardProps) {
-  const { earned, redeemed, current, canRedeem, redeem } = useLoyalty(customerKey, totalSpend);
-  const [flash, setFlash] = useState<"idle" | "success">("idle");
+interface ServerLoyalty {
+  balance: number;
+  redeemable: number;
+  rupeeValue: number;
+  minRedeemPoints: number;
+}
 
-  const toRedeem      = redeemablePoints(current);
-  const redeemValue   = pointsToRupees(toRedeem);
-  const ptsUntilNext  = current < 100 ? 100 - current : 0;
+/**
+ * Shows the customer's points from the SERVER ledger (GET /api/loyalty/:key) — the same
+ * balance Billing redeems against. It used to compute "earned/redeemed" from a browser-only
+ * localStorage ledger, so the number here never matched what the bill could actually use.
+ */
+export function LoyaltyCard({ customerKey }: LoyaltyCardProps) {
+  const { data, isLoading, isError } = useQuery<ServerLoyalty>({
+    queryKey: ["/api/loyalty", customerKey],
+    queryFn: () => apiJson<ServerLoyalty>(`/api/loyalty/${encodeURIComponent(customerKey)}`),
+    enabled: !!customerKey,
+    staleTime: 60_000,
+  });
 
-  function handleRedeem() {
-    if (!canRedeem || toRedeem === 0) return;
-    redeem(toRedeem);
-    setFlash("success");
-    setTimeout(() => setFlash("idle"), 2500);
-  }
+  const balance = data?.balance ?? 0;
+  const redeemable = data?.redeemable ?? 0;
+  const minPts = data?.minRedeemPoints ?? 100;
+  const ptsUntilNext = balance < minPts ? minPts - balance : 0;
 
   return (
     <section>
@@ -29,64 +40,46 @@ export function LoyaltyCard({ customerKey, totalSpend }: LoyaltyCardProps) {
       </h3>
 
       <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-200/60 rounded-xl p-3.5 space-y-3">
-        {/* Points summary row */}
-        <div className="grid grid-cols-3 divide-x divide-amber-200/60 text-center">
-          <div className="pr-2">
-            <div className="text-base font-bold text-amber-700">{earned}</div>
-            <div className="text-[8px] text-amber-500 font-semibold uppercase tracking-wide">Earned</div>
-          </div>
-          <div className="px-2">
-            <div className="text-base font-bold text-gray-500">{redeemed}</div>
-            <div className="text-[8px] text-gray-400 font-semibold uppercase tracking-wide">Redeemed</div>
-          </div>
-          <div className="pl-2">
-            <div className={`text-base font-bold ${current > 0 ? "text-emerald-600" : "text-gray-400"}`}>
-              {current}
+        {isError ? (
+          <p className="text-[11px] text-red-600">Could not load the points balance.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 divide-x divide-amber-200/60 text-center">
+              <div className="pr-2">
+                <div className={`text-base font-bold ${balance > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+                  {isLoading ? "…" : balance}
+                </div>
+                <div className="text-[8px] text-gray-400 font-semibold uppercase tracking-wide">Available</div>
+              </div>
+              <div className="px-2">
+                <div className="text-base font-bold text-amber-700">{isLoading ? "…" : redeemable}</div>
+                <div className="text-[8px] text-amber-500 font-semibold uppercase tracking-wide">Redeemable</div>
+              </div>
+              <div className="pl-2">
+                <div className="text-base font-bold text-gray-600">₹{isLoading ? "…" : data?.rupeeValue ?? 0}</div>
+                <div className="text-[8px] text-gray-400 font-semibold uppercase tracking-wide">Worth</div>
+              </div>
             </div>
-            <div className="text-[8px] text-gray-400 font-semibold uppercase tracking-wide">Available</div>
-          </div>
-        </div>
 
-        {/* Progress bar */}
-        <div className="space-y-1">
-          <div className="w-full h-1.5 bg-amber-200/60 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-amber-400 to-yellow-400 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, (current / Math.max(earned, 1)) * 100)}%` }}
-            />
-          </div>
-        </div>
+            <div className="space-y-1">
+              <div className="w-full h-1.5 bg-amber-200/60 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-400 to-yellow-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (balance / Math.max(minPts, 1)) * 100)}%` }}
+                />
+              </div>
+            </div>
 
-        {/* Action row */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Gift className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span className="text-[10px] text-amber-700 font-medium truncate">
-              {canRedeem
-                ? `Redeem ${toRedeem} pts → ₹${redeemValue} off`
-                : `${ptsUntilNext} more pts to unlock`}
-            </span>
-          </div>
-
-          {canRedeem && flash === "idle" && (
-            <button
-              onClick={handleRedeem}
-              className="shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 active:scale-95 transition-all"
-            >
-              Redeem
-            </button>
-          )}
-          {flash === "success" && (
-            <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-600">
-              <Star className="w-3 h-3" /> Applied!
-            </span>
-          )}
-        </div>
-
-        {/* Rate hint */}
-        <p className="text-[8px] text-amber-400 leading-relaxed">
-          ₹100 spent = 10 pts &nbsp;·&nbsp; 100 pts = ₹10 discount
-        </p>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Gift className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span className="text-[10px] text-amber-700 font-medium truncate">
+                  {redeemable > 0 ? `Redeem ${redeemable} pts on the bill` : `${ptsUntilNext} more pts to unlock`}
+                </span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

@@ -13,9 +13,10 @@
  *   6. Start / manage the hourly background scheduler
  */
 
+import { automatedSendBlock } from "./whatsapp/outboundQueue";
 import { db } from "../db";
 import { orders, orderItems, menuItems } from "../../shared/schema";
-import { desc, eq, or, sql, inArray } from "drizzle-orm";
+import { desc, eq, or, sql, inArray, ne, and } from "drizzle-orm";
 import {
   getAutomationConfig,
   hasBeenMessagedToday,
@@ -59,6 +60,7 @@ type RawOrderItem = {
   orderId: number;
   menuItemId: number;
   quantity: number;
+  name?: string | null;
 };
 
 type RawMenuItem = {
@@ -80,7 +82,11 @@ function tagFor(
 /** Build full customer profiles from raw DB orders + items */
 async function buildCustomerProfiles(): Promise<CustomerSnapshot[]> {
   // Fetch all orders (latest first)
-  const rawOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)) as RawOrder[];
+  // Cancelled orders are not visits or spend (CLAUDE.md), and only orders with a customer matter —
+  // this used to download every order, every order item and every menu row, every hour.
+  const rawOrders = await db.select().from(orders)
+    .where(and(ne(orders.status, "cancelled"), sql`(${orders.customerPhone} IS NOT NULL OR ${orders.customerName} IS NOT NULL)`))
+    .orderBy(desc(orders.createdAt)) as RawOrder[];
   if (!rawOrders.length) return [];
 
   // Group by phone (preferred) or name
@@ -94,8 +100,11 @@ async function buildCustomerProfiles(): Promise<CustomerSnapshot[]> {
   }
 
   // Fetch order items in bulk for top orders
-  const allOrderItems = await db.select().from(orderItems) as RawOrderItem[];
-  const allMenuItems  = await db.select().from(menuItems) as RawMenuItem[];
+  const allOrderItems = await db
+    .select({ orderId: orderItems.orderId, menuItemId: orderItems.menuItemId, quantity: orderItems.quantity, name: orderItems.name })
+    .from(orderItems)
+    .where(sql`${orderItems.orderId} IN (SELECT id FROM orders WHERE status <> 'cancelled' AND (customer_phone IS NOT NULL OR customer_name IS NOT NULL))`) as RawOrderItem[];
+  const allMenuItems  = await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems) as RawMenuItem[];
 
   // Build fast lookup maps
   const menuNameMap: Record<number, string> = {};
@@ -141,7 +150,9 @@ async function buildCustomerProfiles(): Promise<CustomerSnapshot[]> {
     for (const orderId of top5Ids) {
       const items = itemsByOrder[orderId] ?? [];
       for (const item of items) {
-        const name = menuNameMap[item.menuItemId] ?? "Unknown";
+        // order_items.name first (open items have no menu row), never an "Unknown" bucket.
+        const name = item.name ?? menuNameMap[item.menuItemId];
+        if (!name) continue;
         freqMap[name] = (freqMap[name] ?? 0) + item.quantity;
       }
     }
@@ -205,7 +216,7 @@ export async function buildSnapshotForKey(
   const customerOrders = await db
     .select()
     .from(orders)
-    .where(whereClause)
+    .where(and(whereClause, ne(orders.status, "cancelled")))
     .orderBy(desc(orders.createdAt)) as RawOrder[];
   if (!customerOrders.length) return null;
 
@@ -232,13 +243,18 @@ export async function buildSnapshotForKey(
   const items = top5Ids.length
     ? await db.select().from(orderItems).where(inArray(orderItems.orderId, top5Ids)) as RawOrderItem[]
     : [];
-  const allMenuItems = await db.select().from(menuItems) as RawMenuItem[];
+  // Names for just these ≤5 orders' items — this used to read the whole menu on every settlement.
+  const ids = Array.from(new Set(items.map((i) => i.menuItemId).filter((n) => n > 0)));
+  const allMenuItems = ids.length
+    ? await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems).where(inArray(menuItems.id, ids)) as RawMenuItem[]
+    : [];
   const menuNameMap: Record<number, string> = {};
   for (const m of allMenuItems) menuNameMap[m.id] = m.name;
 
   const freqMap: Record<string, number> = {};
   for (const item of items) {
-    const itemName = menuNameMap[item.menuItemId] ?? "Unknown";
+    const itemName = item.name ?? menuNameMap[item.menuItemId];
+    if (!itemName) continue;
     freqMap[itemName] = (freqMap[itemName] ?? 0) + item.quantity;
   }
   const freqEntries = Object.entries(freqMap);
@@ -334,6 +350,9 @@ export async function runCustomerAutomation(options: { force?: boolean } = {}): 
 
       const trigger = evaluateTrigger(customer);
       if (!trigger)                                { stats.skipped++; continue; }
+      // The DB opt-out (a WhatsApp STOP, a muted profile) and the daily cap — isOptedOut above
+      // only reads the old file-based prefs, so a customer who texted STOP kept getting these.
+      if (await automatedSendBlock(customer.phone)) { stats.skipped++; continue; }
 
       // Generate message
       const trackingLink = buildTrackingLink(customer.key, trigger, config.trackingBaseUrl);

@@ -44,13 +44,28 @@ function sendToRawBT(payloadBase64: string): void {
   document.body.removeChild(a);
 }
 
+// Retries a failed ack (like the desktop PrintQueue's ackWithRetry). A non-2xx used to count as
+// success, leaving the job "claimed" — after the 2-minute stale window it was reclaimed and the
+// ticket printed AGAIN. Retrying the ack is safe (it only flips the row to printed); throws when
+// every attempt failed so the job log shows it.
 async function ackJob(job: RemotePrintJob): Promise<void> {
-  await fetch(apiUrl("/api/print/ack"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ orderId: job.orderId, type: job.jobType, jobId: job.jobId }),
-  });
+  let lastErr: unknown = null;
+  for (const delay of [0, 1000, 3000]) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(apiUrl("/api/print/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ orderId: job.orderId, type: job.jobType, jobId: job.jobId }),
+      });
+      if (res.ok) return;
+      lastErr = new Error(`ack ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("ack failed");
 }
 
 export default function PrintStation() {
@@ -113,7 +128,7 @@ export default function PrintStation() {
   };
 
   // ── Live PRINT_JOB handling + catch-up ──────────────────────────────────────
-  const { lastMessage, connectionStatus } = useRealtime();
+  const { connectionStatus, subscribe } = useRealtime();
   const lastStatusRef = useRef<string>(connectionStatus);
 
   useEffect(() => {
@@ -129,10 +144,14 @@ export default function PrintStation() {
     lastStatusRef.current = connectionStatus;
   }, [connectionStatus, enabled, isElectron, rawbtExecutor]);
 
-  useEffect(() => {
+  // Every PRINT_JOB, through subscribe() — the lastMessage slot dropped the first of two jobs
+  // broadcast back to back (one KOT tap routed to two printers), which then waited for the
+  // catch-up poll. Latest executor/claim gate via a ref so the subscription stays stable.
+  const printJobHandlerRef = useRef<(msg: RealtimeMessage) => void>(() => {});
+  printJobHandlerRef.current = (m: RealtimeMessage) => {
     if (!enabled || isElectron) return;
-    if (!lastMessage || lastMessage.type !== "PRINT_JOB") return;
-    const msg = lastMessage as RealtimeMessage & RemotePrintJob;
+    if (m.type !== "PRINT_JOB") return;
+    const msg = m as RealtimeMessage & RemotePrintJob;
     void claimAndExecute(
       {
         jobId: msg.jobId,
@@ -143,8 +162,8 @@ export default function PrintStation() {
       },
       rawbtExecutor,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to new messages only
-  }, [lastMessage]);
+  };
+  useEffect(() => subscribe((m) => printJobHandlerRef.current(m)), [subscribe]);
 
   // ── Keep the screen awake while the station is on ──────────────────────────
   useEffect(() => {

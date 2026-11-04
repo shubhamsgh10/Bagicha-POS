@@ -101,8 +101,11 @@ export async function ingestDevicePunches(
     groups.get(key)!.times.push(split.time);
   }
 
-  try {
-    for (const { staffMemberId, userId, date, times } of Array.from(groups.values())) {
+  // Each person/day on its own: one failing group (a DB error in one write) used to abort every
+  // group after it in the batch and mark the whole sync failed.
+  const groupErrors: string[] = [];
+  for (const { staffMemberId, userId, date, times } of Array.from(groups.values())) {
+    try {
       // Merge with the existing row so incremental / live single punches stay correct.
       const [existing] = staffMemberId != null
         ? await storage.getAttendance({ staffMemberId, date })
@@ -164,10 +167,13 @@ export async function ingestDevicePunches(
       }
       result.imported++;
       result.affected.push({ staffMemberId, userId, date });
+    } catch (e: any) {
+      groupErrors.push(`${staffMemberId != null ? `staff ${staffMemberId}` : `user ${userId}`} ${date}: ${e?.message ?? e}`);
     }
-  } catch (e: any) {
-    result.status = "failed";
-    result.error = e.message;
+  }
+  if (groupErrors.length > 0) {
+    result.status = result.imported > 0 ? "partial" : "failed";
+    result.error = groupErrors.slice(0, 5).join("; ");
   }
 
   result.unmatched = Array.from(unmatched);

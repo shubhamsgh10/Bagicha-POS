@@ -1,0 +1,86 @@
+{
+  "slice": "R02",
+  "coverage": "Read every line of: client/src/components/GrowthSettingsPanel.tsx 1-425, Header.tsx 1-60, MobileNav.tsx 1-147, NewOrderModal.tsx 1-581, PaymentMethodDialog.tsx 1-241, PaymentTag.tsx 1-84, PinGuard.tsx 1-316, PrintPreviewModal.tsx 1-62, PrintSettingsPanel.tsx 1-1243, PrintStationStatusBadge.tsx 1-41, RoleSwitcher.tsx 1-176, RouteGuard.tsx 1-54, SettlementDialog.tsx 1-555. Cross-checked: server/routes.ts PUT/GET /api/settings, /api/automation/config, /api/auth/switchable-roles + verify-pin; server/settingsStore.ts saveSettings/issueCounter/syncCounterFromMax; server/services/printDispatch.ts printer resolution; shared/paymentSplit.ts collectedByMethod; packages/api-client apiUrl; client/src/pages/Settings.tsx (formData source); import graph (MobileNav and NewOrderModal have no importers).",
+  "findings": [
+    {
+      "file": "client/src/components/PrintSettingsPanel.tsx",
+      "line": 925,
+      "severity": "high",
+      "category": "data-integrity / lost update",
+      "title": "Saving Print Settings writes back a stale billCounter/kotCounter (and every other setting) from the Settings page snapshot",
+      "detail": "saveMutation PUTs `{ ...currentSettings, printSettings, posSections }`, where currentSettings is Settings.tsx's `formData` — a copy of GET /api/settings taken when the Settings page loaded (it includes billCounter and kotCounter; GET returns the whole blob). server saveSettings() merges `{ ...current, ...settings }` with no field stripping, so the client's old counter values overwrite the live ones that issueCounter has advanced since. The row lock in saveSettings only prevents an interleaving race; it cannot stop a stale value that arrives in the request body. Same body also reverts any other setting changed elsewhere since the page loaded (staffPageAccess, posSections from another device, taxRate, etc.).",
+      "failure_scenario": "Admin opens Settings at 19:00 (billCounter=400, kotCounter=900). Service continues, 25 orders are created (billCounter=425). At 19:40 the admin opens Print Settings, flips a toggle and saves: billCounter goes back to 400. The next POS save issues ORD0401, which already exists -> orders.order_number UNIQUE violation -> POST /api/orders returns 500 'failed' for each of the next ~25 orders (each failure burns one number) until the counter passes the real max; kotNumber collides the same way on item edits. Staff see 'order failed' repeatedly mid-service. syncCounterFromMax only repairs at cold start.",
+      "suggested_fix": "Send only the fields this panel owns (`{ printSettings: ps, posSections }`); server-side, have saveSettings/PUT /api/settings drop billCounter and kotCounter from the incoming body (they are server-issued only). Settings.tsx's handleSave has the same shape and needs the same server-side guard."
+    },
+    {
+      "file": "client/src/components/PrintSettingsPanel.tsx",
+      "line": 421,
+      "severity": "medium",
+      "category": "wrong behaviour",
+      "title": "Removing a printer leaves kotPrinterId / billPrinterId / category routes / section bill printers pointing at the deleted id",
+      "detail": "remove() only filters `printers`. There is no edit action for a printer, so changing a printer's IP or queue means delete + re-add, which gives it a new Date.now() id. kot.kotPrinterId, bill.billPrinterId, kot.categoryPrinterOverrides values and posSections[].billPrinterId keep the old id and are saved as-is. The <select>s then show the first option ('— None —' / 'Default') because the stored value matches no option, so the dangling reference looks like 'none selected' rather than an error. printDispatch.ts resolves `printers.find(pr => pr.id === kotSettings.kotPrinterId)` -> undefined -> browser-print fallback, and Auto-KOT returns `no_hardware_printer` silently.",
+      "failure_scenario": "Kitchen printer's IP changes after a router swap; admin deletes the old 'Kitchen' printer, adds a new one with the new IP and saves without revisiting the KOT tab. Every KOT tap now opens a browser print window instead of reaching the kitchen printer, and Auto-KOT prints nothing at all, until someone notices the KOT Printer dropdown reads '— None —'.",
+      "suggested_fix": "In remove(), also clear any kotPrinterId/billPrinterId/category override/section billPrinterId equal to the removed id (or offer an Edit action that keeps the id). Better: on Save, warn when a referenced printer id is not in the printers list."
+    },
+    {
+      "file": "client/src/components/RoleSwitcher.tsx",
+      "line": 86,
+      "severity": "medium",
+      "category": "auth / elevation gap",
+      "title": "Upward role switch skips the PIN whenever no user OF THAT EXACT ROLE has a PIN, even though higher-role PINs would be accepted",
+      "detail": "handleSelect asks for a PIN only if `rolesWithPin.includes(role)`. For a switch to Manager, verify-pin accepts manager OR admin PINs, but the client only checks whether some manager-role user has a PIN. If every manager account lacks a PIN (or the only manager has none) while the admin has one, a staff login switches to Manager mode with no prompt at all, unlocking every manager-tier client gate (manager-mode `go()` tiers, saving without the staff PIN, and actions the server does not enforce, e.g. `openItem`, which CLAUDE.md notes is client-side only). Same for switching to Admin when no admin has a PIN.",
+      "failure_scenario": "Restaurant has admin 'owner' (PIN set) and manager 'rajbhaghel' (no PIN). A staff-card session opens POS, taps the role switcher, picks Manager: it switches instantly, no PIN. The staff member can now add arbitrary-priced Open Items and perform any other manager-tier client-only action that would otherwise have required a manager PIN.",
+      "suggested_fix": "Always require a PIN for an upward switch; if no qualifying PIN exists (target role or higher), refuse the switch with a message instead of elevating silently."
+    },
+    {
+      "file": "client/src/components/GrowthSettingsPanel.tsx",
+      "line": 225,
+      "severity": "medium",
+      "category": "broken request (relative URL)",
+      "title": "'Send digest now', 'Send pending feedback now' and 'Run birthday scan' fetch relative URLs instead of apiUrl()",
+      "detail": "Load, save and previewDigest wrap their paths in apiUrl(), but action() is called with bare '/api/digest/run' and '/api/feedback/process-pending' (line 225, 270) and the birthday button fetches '/api/automation/birthday/run' directly (line 317). On any client whose API base is not same-origin — the Electron thin client (renderer loaded via loadFile, file:// origin, base from VITE_API_BASE_URL) or a UI host with VITE_API_BASE_URL set — these resolve against the page origin and never reach the server.",
+      "failure_scenario": "Owner on the desktop app opens Settings -> Growth and taps 'Send now' for the digest: fetch('file:///api/digest/run') fails (or res.json() throws on a non-JSON 404 page on a separate UI host), toast says 'Send digest now failed', while 'Preview' on the same card works. The birthday scan and pending-feedback buttons never work there either.",
+      "suggested_fix": "Call `fetch(apiUrl(url), …)` inside action() and use apiUrl('/api/automation/birthday/run'); better, route all of these through apiFetch/apiRequest."
+    },
+    {
+      "file": "client/src/components/GrowthSettingsPanel.tsx",
+      "line": 168,
+      "severity": "medium",
+      "category": "data corruption (secret field)",
+      "title": "Masked secret fields hold the literal '***configured***' as their value, so typing a new secret appends to it and saves a corrupted key",
+      "detail": "GET /api/automation/config returns razorpayKeySecret/razorpayWebhookSecret as '***configured***'; the panel puts that string into the password input's value. The placeholder '(saved — type to replace)' is never shown because the value is non-empty. Clicking into the field and pasting/typing places the caret at the end, producing '***configured***<newsecret>'. The server only drops an exact '***configured***', so the concatenated string is saved as the real secret.",
+      "failure_scenario": "Admin rotates the Razorpay key secret: clicks the Key Secret box, pastes the new secret, Save. Stored secret becomes '***configured***abc123…'; every Razorpay order/verification call fails with an auth error until someone clears the field fully and re-enters it.",
+      "suggested_fix": "Keep masked secrets out of the input value (start it empty, show 'saved' via placeholder) and only send the field when the user typed something; or select-all on focus when the value equals the mask."
+    },
+    {
+      "file": "client/src/components/GrowthSettingsPanel.tsx",
+      "line": 207,
+      "severity": "low",
+      "category": "input handling",
+      "title": "Digest hour 0 and birthday hour 0 cannot be entered — `Number(v) || 23` / `|| 9` turns 0 into the default",
+      "detail": "`Math.max(0, Math.min(23, Number(e.target.value) || 23))` treats 0 as falsy, so typing 0 (midnight) snaps to 23; birthdayHour snaps to 9. min=0 on the input advertises 0 as valid.",
+      "failure_scenario": "Owner wants the digest at 00:00 after closing; enters 0, the box jumps to 23 and the digest is sent an hour before closing with incomplete figures.",
+      "suggested_fix": "Use `Number.isFinite(n) ? clamp(n) : default` instead of `|| default`."
+    },
+    {
+      "file": "client/src/components/PrintSettingsPanel.tsx",
+      "line": 285,
+      "severity": "low",
+      "category": "stale UI state",
+      "title": "Printer 'Offline' badge never clears when the printer comes back online",
+      "detail": "The onPrinterHealthWarning handler only adds to offlinePrinters when `!p.online`; an `online: true` event is ignored, so once flagged a printer shows '● Offline' for the life of the panel even after it recovers.",
+      "failure_scenario": "Kitchen printer is briefly unplugged while the admin has Print Settings open; after reconnecting and a successful test print the card still says Offline, prompting needless troubleshooting/re-adding (which then triggers the dangling-id problem above).",
+      "suggested_fix": "On `p.online === true`, delete the id from the set."
+    },
+    {
+      "file": "client/src/components/NewOrderModal.tsx",
+      "line": 199,
+      "severity": "low",
+      "category": "dead code",
+      "title": "NewOrderModal and MobileNav are unreferenced, and NewOrderModal still hardcodes 18% GST",
+      "detail": "Neither component is imported anywhere in client/src. NewOrderModal computes `tax = subtotal * 0.18` and sends client totals plus a paymentMethod on create; MobileNav filters by tier roles only and ignores per-person staffPageAccess (useAllowedPages). Harmless while unmounted (server recomputes money and forces payment defaults), but re-mounting either would reintroduce behaviour CLAUDE.md says was removed.",
+      "failure_scenario": "A future change re-imports NewOrderModal as a quick-order entry: staff see an 18% GST total that disagrees with the 5% bill the server stores and prints.",
+      "suggested_fix": "Delete both files."
+    }
+  ]
+}

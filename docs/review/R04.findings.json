@@ -1,0 +1,96 @@
+{
+  "slice": "R04",
+  "coverage": "Read every line of all 35 ranges in slice R04: RecommendationBox.tsx 1-88, SectionActionBar.tsx 1-96, SectionOpenOrdersButton.tsx 1-74, SectionParcelToggle.tsx 1-54, BiometricDevicePanel.tsx 1-203, LiveAttendanceBoard.tsx 1-111, ActiveRoleContext.tsx 1-30, NavigationContext.tsx 1-73, RealtimeProvider.tsx 1-235, realtimeContext.ts 1-24, use-mobile.tsx 1-19, use-toast.ts 1-191, useActiveRole.ts 1-84, useAllowedPages.ts 1-24, useAuth.ts 1-38, useConnectionKeepAlive.ts 1-17, useConversations.ts 1-161, useCrmProfile.ts 1-261, useCustomerIntelligence.ts 1-237, useLiveOrders.ts 1-256, useLiveTableOperations.ts 1-378, useLiveTables.ts 1-148, useLoyalty.ts 1-84, useManagerAuth.ts 1-49, usePermission.ts 1-136, usePrintJobBridge.ts 1-134, useRealtime.ts 1-11, useRecommendations.ts 1-76, useRole.ts 1-26, useSwipeBack.ts 1-60, useWebSocket.ts 1-75, api.ts 1-15, apiError.ts 1-34, appRouter.tsx 1-26, auditFormat.ts 1-145. Followed callees to confirm reachability: server/routes.ts POST /api/crm/sync-extras, server/services/crm/customerIdService.ts syncLocalStorageExtras + upsertCustomerProfile, server/storage.ts getCustomerOrderHistory, pages/CustomerDashboard.tsx (extras shape + useCrmExtrasSync call), components/loyalty/LoyaltyCard.tsx. Did not read printStationCore.ts, connectionKeepAlive.ts or packages/api-client (other slices).",
+  "findings": [
+    {
+      "file": "client/src/hooks/useCrmProfile.ts",
+      "line": 194,
+      "severity": "high",
+      "category": "data loss",
+      "title": "Background extras sync wipes every customer's DB birthday/anniversary and can undo WhatsApp opt-outs",
+      "detail": "useCrmExtrasSync POSTs the raw localStorage extras map (CustomerDashboard's CustomerExtra shape: dateOfBirth / dateOfAnniversary) to /api/crm/sync-extras. The server's syncLocalStorageExtras calls upsertCustomerProfile(customerId, extra), which reads extra.dob / extra.anniversary (undefined here, so they are written as null) and overwrites every other column too, including doNotSendUpdate (?? false) and notificationEnabled. The single-customer save path in CustomerDashboard (line ~1079) maps dateOfBirth -> dob correctly; the bulk sync does not. CLAUDE.md already warns that upsertCustomerProfile nulls the whole profile row, which is why the STOP handler uses a targeted update.",
+      "failure_scenario": "An admin opens Customers once isLoading is false. 3 s later every customer that has a localStorage extras entry gets dob=NULL and anniversary=NULL in customer_profiles, so birthdayService stops matching them and birthday coupons/messages stop. A customer who replied STOP on WhatsApp (DB doNotSendUpdate=true), but whose localStorage entry on this browser still says false, is opted back in and gets automated messages again.",
+      "suggested_fix": "Either remove the bulk sync, or map the payload the way the single-save path does (dateOfBirth->dob, dateOfAnniversary->anniversary) and make the server merge only non-empty fields. Never let a bulk sync write doNotSendUpdate=false over a DB true."
+    },
+    {
+      "file": "client/src/hooks/RealtimeProvider.tsx",
+      "line": 50,
+      "severity": "high",
+      "category": "race / lost event",
+      "title": "Single-slot lastMessage drops realtime events that arrive before React re-renders, including PRINT_JOB",
+      "detail": "Every non-cache event goes through setLastMessage(msg), and consumers react with useEffect([lastMessage]). Pusher/WS frames arrive as separate macrotasks, but React schedules the re-render in a later Scheduler task. When two frames are already queued (one triggerBatch for a multi-printer KOT, or a PRINT_JOB followed by the save's ORDER_UPDATE/KOT_UPDATE a few ms later), both setLastMessage calls run before the render. Consumers only ever see the last message. usePrintJobBridge depends on this path for live claiming. Its catch-up poll runs only on mount and on reconnect.",
+      "failure_scenario": "A phone on Vercel taps KOT for a mixed order routed to two printers. Both PRINT_JOB events land back-to-back, and the desktop host's effect sees only the second, so the first printer's ticket stays 'pending' until the host's realtime connection next reconnects or the app restarts. The kitchen never gets that KOT. The same loss hits ORDER_UPDATE for useLiveTableOperations / useLiveOrders (stale cards) and WA_MESSAGE for the inbox.",
+      "suggested_fix": "Deliver messages to subscribers synchronously, e.g. a listener registry (subscribe(fn)) called from handleMessage, or a queue/counter state consumed in order. At minimum, dispatch PRINT_JOB straight to the print bridge rather than through React state."
+    },
+    {
+      "file": "client/src/hooks/RealtimeProvider.tsx",
+      "line": 140,
+      "severity": "medium",
+      "category": "error handling",
+      "title": "Private-channel subscription failure is never detected or retried; status still shows Open",
+      "detail": "No handler is bound for pusher:subscription_error. If POST /api/pusher/auth fails once (a 503 from settingsGuard during a settings outage, a cold-start timeout, a transient 5xx), the customHandler reports the error, Pusher marks the subscription failed and never retries. The connection itself stays 'connected', so connectionStatus is 'Open', onRealtimeConnected doesn't fire again and usePrintJobBridge's reconnect catch-up never runs.",
+      "failure_scenario": "The desktop host's /api/pusher/auth call hits a 503 at startup. The app looks live, but no PRINT_JOB, ORDER_UPDATE or TABLE_UPDATE events ever arrive. Remote prints from phones queue up as pending until someone restarts the app.",
+      "suggested_fix": "Bind channel 'pusher:subscription_error' (and 'pusher:subscription_succeeded'): on error, unsubscribe and resubscribe with backoff, and only report 'Open'/run onRealtimeConnected after subscription_succeeded."
+    },
+    {
+      "file": "client/src/hooks/useLiveTableOperations.ts",
+      "line": 183,
+      "severity": "medium",
+      "category": "race / stale data",
+      "title": "TABLE_UPDATE arriving while a loadAll is in flight is silently dropped",
+      "detail": "loadAll returns immediately when loadingRef.current is true. The TABLE_UPDATE handler calls loadAll() and nothing re-queues it, so if the in-flight load read /api/tables before the change, the change shows only after the next 30 s poll. The same pattern appears in useLiveOrders.loadAll (line 105) and useLiveTables.loadAll (line 70). loadAll does an N+1 fetch per running table, so the in-flight window is long.",
+      "failure_scenario": "A table is settled (TABLE_UPDATE) while the 30 s poll or a previous TABLE_UPDATE's reload is fetching order details. Live View keeps showing the table as running/billed with its old items for up to 30 s, and staff seat a party at a 'busy' table or chase a bill already paid.",
+      "suggested_fix": "When a load is in flight, set a 'pendingReload' flag and run loadAll once more in finally if it was set."
+    },
+    {
+      "file": "client/src/hooks/useLiveOrders.ts",
+      "line": 152,
+      "severity": "medium",
+      "category": "polling / N+1",
+      "title": "Every useLiveOrders instance polls open orders plus one detail fetch per order every 30 s, even while hidden",
+      "detail": "Each mount starts its own setInterval(loadAll, 30_000): /api/orders?open=true, then /api/orders/:id for every open pickup/delivery/section order. There is no shared cache and no visibility pause. The hook is mounted concurrently by the Tables-page rail, SectionOpenOrdersButton in section POS and LiveTablesDashboard. useLiveTableOperations / useLiveTables do the same per running table. CLAUDE.md's egress rules say polls must be React Query refetchInterval fallbacks that pause while hidden, never setInterval.",
+      "failure_scenario": "An idle shop PC with POS in section mode plus Tables in a background tab sends 2 x (1 + N) requests every 30 s all day, about 20+ requests a minute with 8 open orders. The order detail rows add Supabase egress and keep connections busy, and they also compete with settle/print requests on the slow CGNAT link.",
+      "suggested_fix": "Move to a shared React Query key with refetchInterval (paused when hidden), and have the list endpoint return items so no per-order detail fetch is needed."
+    },
+    {
+      "file": "client/src/hooks/useLoyalty.ts",
+      "line": 61,
+      "severity": "medium",
+      "category": "wrong results / money",
+      "title": "Customer-page loyalty card is a localStorage-only ledger disconnected from the server loyalty system",
+      "detail": "LoyaltyCard (CustomerDashboard) computes points as floor(totalSpend*0.1) from client-side order history. That history includes cancelled and unpaid orders, because getCustomerOrderHistory has no status filter. 'Redeem' only writes a per-browser localStorage counter: it applies no discount to any bill and doesn't touch the server ledger (loyaltyService / POST /api/loyalty/redeem). Balances therefore differ per device and from the real ledger used at billing.",
+      "failure_scenario": "A staff member clicks Redeem for a customer showing 200 pts / ₹20. The card now says 0 available on that browser, but the customer's real server balance is unchanged and no discount was applied. Another device still shows 200, and points include orders that were cancelled.",
+      "suggested_fix": "Read balance from the server loyalty endpoint and route redemption through POST /api/loyalty/redeem (or remove the card's Redeem action)."
+    },
+    {
+      "file": "client/src/hooks/useCustomerIntelligence.ts",
+      "line": 120,
+      "severity": "medium",
+      "category": "wrong results",
+      "title": "Customer total spend / visits / VIP tags count cancelled orders",
+      "detail": "/api/orders/customer-history (storage.getCustomerOrderHistory) returns every order with a name or phone, including status='cancelled', and status is selected but never filtered here. totalSpend, totalVisits, avgOrderValue, lastVisit and the locally computed tag all include cancelled bills. CLAUDE.md requires every aggregate over orders to exclude cancelled.",
+      "failure_scenario": "A customer whose ₹1,500 order was cancelled (wrong table, test order) shows ₹1,500 more spend and an extra visit. They can cross into 'High' spend / VIP and get VIP suggestions and loyalty points (see the useLoyalty finding) they never paid for.",
+      "suggested_fix": "Skip orders with status === 'cancelled' when grouping, or filter status <> 'cancelled' in getCustomerOrderHistory."
+    },
+    {
+      "file": "client/src/hooks/useLiveTableOperations.ts",
+      "line": 138,
+      "severity": "low",
+      "category": "resource leak",
+      "title": "playBeep creates a new AudioContext per beep and never closes it",
+      "detail": "Each new-item alert constructs a fresh AudioContext and never calls ctx.close(). Browsers cap or warn on concurrent AudioContexts and keep audio hardware threads alive per context.",
+      "failure_scenario": "On a long service Live View accumulates hundreds of live AudioContexts. Chrome then refuses new ones (error caught silently) or holds extra audio threads, so the new-item beep goes silent mid-shift.",
+      "suggested_fix": "Reuse one module-level AudioContext (resume() on use), or call ctx.close() in osc.onended."
+    },
+    {
+      "file": "client/src/components/staff/BiometricDevicePanel.tsx",
+      "line": 77,
+      "severity": "low",
+      "category": "error handling",
+      "title": "Test connection has no catch; an IPC rejection becomes an unhandled rejection with no feedback",
+      "detail": "test() awaits window.electronAPI.attendance.test(form) inside try/finally with no catch. If the IPC call rejects (handler throws, or an older desktop build lacks the channel), the spinner stops but no toast or testResult is shown, and the error surfaces only as a global unhandledrejection.",
+      "failure_scenario": "An admin clicks Test connection on a desktop build whose attendance handler throws. The button just stops spinning with no message, so it's unclear whether the device is reachable.",
+      "suggested_fix": "Add a catch that sets testResult {ok:false, error} and shows a destructive toast."
+    }
+  ]
+}

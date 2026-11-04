@@ -204,7 +204,10 @@ export default function Menu() {
 
   const handleBulkPrice = () => {
     const val = parseFloat(bulkPriceValue);
-    if (isNaN(val) || val < 0) return toast({ title: "Invalid value", variant: "destructive" });
+    // Fixed price must be positive; a percentage may be negative (a price cut), down to -90%.
+    if (!Number.isFinite(val) || (bulkPriceMode === "fixed" ? val <= 0 : val <= -90 || val === 0)) {
+      return toast({ title: "Invalid value", description: bulkPriceMode === "fixed" ? "Enter a price above 0." : "Enter a % between -90 and any increase (not 0).", variant: "destructive" });
+    }
     const ids = Array.from(selectedIds);
     const itemsToUpdate = rawItems.filter((i) => ids.includes(i.id));
     // A size-priced item's real sale price is sizes[].price, never the base `price`
@@ -241,8 +244,10 @@ export default function Menu() {
     } else {
       // percent: compute each item's new price individually, including every size.
       const factor = 1 + val / 100;
-      Promise.all(
-        itemsToUpdate.map((item) => {
+      // One request per item, so this can partly succeed. Items that were updated are
+      // dropped from the selection, so re-running it applies the % only to the ones that
+      // failed (re-applying to all would compound the change on the successful ones).
+      const runOne = (item: typeof itemsToUpdate[number]) => {
           const hasSizes = item.sizes && item.sizes.length > 0;
           const updates: any = { price: (getItemPrice(item) * factor).toFixed(2) };
           if (hasSizes) {
@@ -252,12 +257,19 @@ export default function Menu() {
             }));
           }
           return apiRequest("POST", "/api/menu/bulk-update", { ids: [item.id], updates });
-        })
-      ).then(() => {
-        toast({ title: `Updated prices for ${ids.length} item(s)` });
+      };
+      Promise.allSettled(itemsToUpdate.map(runOne)).then((results) => {
+        const failed = itemsToUpdate.filter((_, i) => results[i].status === "rejected").map((i) => i.id);
         queryClient.invalidateQueries({ queryKey: ["/api/menu?all=true"] });
+        if (failed.length > 0) {
+          setSelectedIds(new Set(failed));
+          toast({ title: `Updated ${itemsToUpdate.length - failed.length} item(s), ${failed.length} failed`, description: "The failed items are still selected — apply again to retry only those.", variant: "destructive" });
+          return Promise.reject(new Error("partial"));
+        }
+      }).then(() => {
+        toast({ title: `Updated prices for ${ids.length} item(s)` });
         setSelectedIds(new Set());
-      }).catch(() => toast({ title: "Price update failed", variant: "destructive" }));
+      }).catch(() => { /* partial failure already reported */ });
     }
     setBulkPriceValue("");
   };

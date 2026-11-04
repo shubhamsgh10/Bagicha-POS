@@ -86,7 +86,7 @@ function loadExtras(): Record<string, CustomerExtra> {
   try { return JSON.parse(localStorage.getItem(EXTRA_KEY) || "{}"); } catch { return {}; }
 }
 function saveExtras(data: Record<string, CustomerExtra>) {
-  localStorage.setItem(EXTRA_KEY, JSON.stringify(data));
+  try { localStorage.setItem(EXTRA_KEY, JSON.stringify(data)); } catch { /* storage full / blocked */ }
 }
 function defaultExtra(): CustomerExtra {
   return {
@@ -537,7 +537,7 @@ function CustomerListingView({
                   key={c.key}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.01 }}
+                  transition={{ delay: Math.min(i, 20) * 0.01 }}
                   className="px-4 py-3.5"
                 >
                   {/* Name + tag */}
@@ -611,15 +611,16 @@ function CustomerCard({ customer, index, onClick }: {
   customer: CustomerProfile; index: number; onClick: () => void;
 }) {
   const ring = TAG_CONFIG[customer.tag].cardRing;
-  const { crmData } = useCrmProfile(customer.key);
-  const rfm = crmData?.segment;
+  // One shared request for every card (React Query dedupes the key), not one per customer.
+  const { data: segments } = useQuery<Record<string, CrmSegment>>({ queryKey: ["/api/crm/segments"], staleTime: 60_000 });
+  const rfm = segments?.[customer.key];
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 4 }}
-      transition={{ delay: index * 0.02, duration: 0.18, ease: "easeOut" }}
+      transition={{ delay: Math.min(index, 20) * 0.02, duration: 0.18, ease: "easeOut" }}
       onClick={onClick}
       className={`bg-[var(--paper-0)] border border-[var(--line)] rounded-2xl p-3.5 shadow-sm cursor-pointer hover:shadow-md hover:bg-[var(--paper-0)] transition-all duration-150 ${ring}`}
     >
@@ -1063,21 +1064,29 @@ export default function CustomerDashboard() {
   useCrmExtrasSync(extras, !isLoading);
 
   const handleSaveExtra = (customer: CustomerProfile, data: CustomerExtra) => {
+    // The form is seeded from THIS device's local copy, which may be blank for fields saved from
+    // another device — so send only what the user actually changed, never the whole form (posting
+    // the blanks wiped those fields in the DB).
+    const before: Record<string, unknown> = (extras[customer.key] ?? defaultExtra()) as any;
+    const changed: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (JSON.stringify(v) !== JSON.stringify(before[k])) changed[k] = v;
+    }
+
     // 1. Update localStorage immediately
     setExtras(prev => ({ ...prev, [customer.key]: data }));
 
-    // 2. Sync to DB — also backfills orders.customerPhone for past orders
+    // 2. Sync to DB. Past phone-less orders are back-filled only when a phone was just ADDED.
     const phone = customer.phone || data.phone || undefined;
     fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`), {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },
       credentials: "include",
       body:        JSON.stringify({
-        ...data,
-        name:        data.displayName || customer.name,
+        ...changed,
+        name:          data.displayName || customer.name,
         phone,
-        dob:         data.dateOfBirth,
-        anniversary: data.dateOfAnniversary,
+        backfillPhone: !customer.phone && !!data.phone,
       }),
     })
       .then(r => r.ok ? r.json() : null)
@@ -1093,10 +1102,18 @@ export default function CustomerDashboard() {
   };
 
   const handleToggleNotif = (key: string) => {
-    setExtras(prev => {
-      const current = prev[key] ?? defaultExtra();
-      return { ...prev, [key]: { ...current, notificationEnabled: !current.notificationEnabled } };
-    });
+    const current = extras[key] ?? defaultExtra();
+    const notificationEnabled = !current.notificationEnabled;
+    setExtras(prev => ({ ...prev, [key]: { ...(prev[key] ?? defaultExtra()), notificationEnabled } }));
+    // Straight to the DB: the background sync only re-runs when the NUMBER of local entries
+    // changes, so muting an existing customer never reached the server and automated messages
+    // (which read customer_profiles.notification_enabled) kept going.
+    fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(key)}/profile`), {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ notificationEnabled }),
+    }).catch(e => console.warn("[CRM] mute sync failed:", e));
   };
 
   return (

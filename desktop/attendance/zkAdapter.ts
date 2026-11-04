@@ -66,15 +66,24 @@ export class ZkAdapter {
     // Racing our own timeout here means a bad IP fails fast with a clear, actionable
     // error instead of leaving the agent (and the UI's status badge) stuck on
     // "Connecting" with no error surfaced at all.
-    await Promise.race([
-      this.zk.createSocket(),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Timed out connecting to ${this.ip}:${this.port} — device unreachable, check its IP/network`)),
-          CONNECT_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.zk.createSocket(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Timed out connecting to ${this.ip}:${this.port} — device unreachable, check its IP/network`)),
+            CONNECT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (e) {
+      // Don't leave the half-open socket behind (the device takes one session at a time).
+      await this.disconnect().catch(() => {});
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   async getInfo(): Promise<DeviceInfo> {

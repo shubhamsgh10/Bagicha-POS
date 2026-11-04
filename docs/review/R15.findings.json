@@ -1,0 +1,136 @@
+{
+  "slice": "R15",
+  "coverage": "Read every line of: server/services/printDispatch.ts:1-898, server/services/razorpayService.ts:1-231, server/services/totpService.ts:1-26, server/services/whatsapp/baileysDriver.ts:1-252, botService.ts:1-117, conversationStore.ts:1-222, deliveryService.ts:1-74, driverManager.ts:1-118, inboundService.ts:1-170, metaDriver.ts:1-70, outboundQueue.ts:1-271, types.ts:1-87, server/services/whatsappService.ts:1-189, server/sessionSecret.ts:1-20, server/settingsCache.ts:1-219, server/settingsStore.ts:1-464, server/staffRoutes.ts:1-116. Also checked callers: routes.ts PUT/GET /api/settings and reset routes, client Settings.tsx / PrintSettingsPanel.tsx save payloads, Staff.tsx performance query, auditService.logAudit signature, generators.ts cancelled/modified gating, automationStore defaults, customerSegments uniqueness. Razorpay reviewed but treated lightly (CLAUDE.md: Razorpay out of scope by standing instruction); no findings there.",
+  "findings": [
+    {
+      "file": "server/settingsStore.ts",
+      "line": 433,
+      "severity": "high",
+      "category": "data-integrity / lost update",
+      "title": "saveSettings blindly merges client-sent billCounter/kotCounter (and every other stale field), rolling the bill/KOT counters backward",
+      "detail": "merged = { ...current, ...settings } takes every key from the request body. PUT /api/settings passes req.body straight through, and both main admin screens send the WHOLE settings object they loaded earlier: Settings.tsx sends formData (seeded from GET /api/settings, which returns billCounter/kotCounter), and PrintSettingsPanel.tsx sends { ...currentSettings, printSettings, posSections }. The FOR UPDATE lock only protects against a counter increment landing inside the transaction; it does nothing about a counter value the client read minutes ago. Likewise staffPageAccess, cartPermissions, posSections, printers etc. saved by another admin/screen since the page loaded are overwritten.",
+      "failure_scenario": "Admin opens Admin > Print Settings at 13:00 when billCounter=50, kotCounter=120. Service continues; by 14:00 billCounter=70, kotCounter=160. Admin toggles a printer option and saves. saveSettings writes billCounter=50, kotCounter=120. The next 20 order creations issue ORD0051..ORD0070, each hitting the orders.order_number UNIQUE constraint and failing with a 500 (and KOT numbers collide on kot_tickets.kot_number UNIQUE) until the counter passes the real max — staff see 'failed to save order' repeatedly mid-service.",
+      "suggested_fix": "In saveSettings, drop billCounter and kotCounter from the incoming partial (keep current's values) unless called from the explicit reset routes (give those a dedicated resetCounter() that uses issueCounter-style jsonb_set). Better still, have PUT /api/settings accept only the keys the screen actually edited (or diff against what the client loaded) so stale whole-object saves can't clobber other fields."
+    },
+    {
+      "file": "server/services/printDispatch.ts",
+      "line": 253,
+      "severity": "medium",
+      "category": "race / double print",
+      "title": "KOT delta check-then-commit has no lock: two concurrent KOT prints of one order both send the same delta to the kitchen",
+      "detail": "runKotPrint reads order.lastKotSnapshot, computes the delta, dispatches/sends tickets, then commits the new snapshot. Nothing serializes two requests for the same order (no advisory lock, no conditional UPDATE on the old snapshot). Both requests see the same lastKotSnapshot and both print the full delta; both increment kotPrintCount.",
+      "failure_scenario": "A waiter's phone and the counter PC both have the same table open; one taps KOT while the other taps Bill (whose catch-up runs runKotPrint), or the Auto-KOT timer fires while staff tap KOT. Both requests compute 'new: 2 Butter Naan' from the same snapshot and the kitchen receives two tickets and cooks 4 naan.",
+      "suggested_fix": "Take pg_advisory_xact_lock(namespace 'kotPrint', orderId) around read-delta-commit, or make the commit conditional (UPDATE ... WHERE id=? AND kot_print_count = <read value> RETURNING) and abort/no_delta when it loses before dispatching."
+    },
+    {
+      "file": "server/services/printDispatch.ts",
+      "line": 477,
+      "severity": "medium",
+      "category": "lost kitchen ticket",
+      "title": "Mixed routing (some thermal, some non-ESC/POS printers) silently drops the non-ESC/POS printer's KOT ticket but still commits the snapshot",
+      "detail": "browserPayloads are attached only when allNonEscPos (every routed printer is non-ESC/POS). When category routing sends some items to an ESC/POS printer and others to a non-ESC/POS one, nonEscPosJobs' tickets are neither sent nor returned as browser payloads, yet commitKotState has already written lastKotSnapshot. With direct jobs + a non-ESC/POS job and no remote jobs, the response is printed:false, dispatched:false, browserPrint:false even though the direct printer printed.",
+      "failure_scenario": "Main kitchen = network thermal printer; 'Beverages' category routed to an office printer. A KOT with a curry and a lassi: the curry ticket prints, the lassi ticket goes nowhere, and only a message string is returned. A retry finds no_delta, so the lassi never reaches the bar.",
+      "suggested_fix": "Always include browserPayloads for every nonEscPosJob (not only when all are non-ESC/POS), and set browserPrint when nonEscPosJobs.length > 0 so the client renders those tickets; report printed:true when direct sends succeeded."
+    },
+    {
+      "file": "server/services/printDispatch.ts",
+      "line": 298,
+      "severity": "medium",
+      "category": "audit loss",
+      "title": "kot.reprint / bill.reprint audit rows are written fire-and-forget before the response",
+      "detail": "logAudit is async but is not awaited at lines 298, 464, 793 and 806 (inside commitBillState). CLAUDE.md requires deviation audit rows on order paths to be awaited because Vercel can freeze the function right after res.json, losing the row; reprints are counted in Reports > KOT & Bill Activity ('Re-printed'), and on reprint the KOT path deliberately does not bump kotPrintCount, so this row is the only trace.",
+      "failure_scenario": "Staff reprint a bill on Vercel to hand a customer a second copy (a classic leak vector). The response returns, the instance freezes before the audit INSERT round trip completes, and the reprint never appears in KOT & Bill Activity.",
+      "suggested_fix": "await logAudit(...) at all four sites (it never throws), e.g. inside commitBillState and before returning in the KOT branches."
+    },
+    {
+      "file": "server/services/whatsapp/inboundService.ts",
+      "line": 72,
+      "severity": "medium",
+      "category": "opt-out compliance",
+      "title": "A customer's STOP is ignored whenever the bot is disabled or a human has taken over the thread",
+      "detail": "The function returns at line 72 (`!conversation.botActive || !config.botEnabled`) before decide() runs, and STOP handling (setOptedOut, doNotSendUpdate, customer pref) only happens inside the bot-decision block. Opt-out is therefore honoured only while the FAQ bot owns the thread. The outbound queue's isSuppressed only checks those flags, so automated sends continue.",
+      "failure_scenario": "Customer writes 'complaint' (HANDOFF, botActive=false), then 10 minutes later writes 'STOP'. Nothing is recorded; the hourly/daily engines and settlement messages keep sending WhatsApp messages to someone who opted out — a ban/complaint risk the opt-out exists to prevent. Same if the admin turns botEnabled off but leaves whatsappAutoSend on.",
+      "suggested_fix": "Run a STOP keyword check (same whole-word regex) before the botActive/botEnabled early return and apply the opt-out unconditionally; only the reply text should depend on bot state."
+    },
+    {
+      "file": "server/services/whatsapp/outboundQueue.ts",
+      "line": 121,
+      "severity": "medium",
+      "category": "error handling / stuck job",
+      "title": "Any exception after the 'sending' claim but before the send leaves the job stuck in 'sending' (never sent, blocks re-enqueue)",
+      "detail": "The job is flipped to 'sending' at line 121, then customersMaster is read (123) and isSuppressed runs three queries (136). A transient DB error in any of these throws to tick(), which only logs. The row stays 'sending' until the next process restart, when startOutboundWorker marks it 'failed'. Meanwhile enqueueWhatsApp's dedup treats 'sending' as in-flight and refuses to enqueue the same customer+trigger.",
+      "failure_scenario": "A Supabase pooler blip during isSuppressed for a due-bill reminder: the message is never sent, the job sits in 'sending' indefinitely on the always-on host, and later due reminders for that customer+trigger are silently deduped away.",
+      "suggested_fix": "Do the master/suppression reads before claiming, or wrap everything after the claim (up to sendText) in try/catch that resets the job to 'pending' with a backoff (safe because nothing was sent yet)."
+    },
+    {
+      "file": "server/services/whatsapp/baileysDriver.ts",
+      "line": 72,
+      "severity": "medium",
+      "category": "race / resource leak",
+      "title": "connect() does not re-check `destroyed` after its awaits, so a reconnect in flight during destroy() creates an orphan socket",
+      "detail": "The internal reconnect timer calls connect() outside driverManager's lock. connect() checks `destroyed` only at entry, then awaits useMultiFileAuthState and fetchLatestBaileysVersion (a network call). If destroy()/logout() runs in that window (switchDriver, the Connect button's reconnectDriver, logout), connect() resumes, creates a socket and assigns this.socket on a destroyed driver; its listeners still emit through this driver's DriverEvents, which wireDriver hooked to handleInbound/handleStatusUpdate.",
+      "failure_scenario": "The socket drops and a reconnect is scheduled; the owner taps Connect. startDriver destroys the old driver and starts a new one on the same auth dir while the old connect() finishes and opens a second socket. Two sockets share one WhatsApp session (WhatsApp kicks one as 'replaced', reconnect loop), and inbound messages may be processed twice (the duplicate bot reply only avoided if waMessageId dedup wins).",
+      "suggested_fix": "After each await in connect(), `if (this.destroyed) return;`, and if the socket was created after destroy, end it immediately."
+    },
+    {
+      "file": "server/staffRoutes.ts",
+      "line": 41,
+      "severity": "medium",
+      "category": "wrong report",
+      "title": "Staff performance counts cancelled orders and ignores write-offs",
+      "detail": "The aggregate has no `status <> 'cancelled'` condition and sums totalAmount without netting shortfallAmount. CLAUDE.md: 'Cancelled orders are not sales ... any new aggregate over orders must too', and this endpoint is not in the documented list of still-unfiltered legacy aggregates.",
+      "failure_scenario": "A waiter creates a ₹1,200 order that is then cancelled (wrong table) and a ₹500 order settled short by ₹100. Staff → Sales shows them with 2 orders / ₹1,700 instead of 1 order / ₹400, inflating their ranking.",
+      "suggested_fix": "Add ne(orders.status,'cancelled') to conditions and sum (total_amount - coalesce(shortfall_amount,0))."
+    },
+    {
+      "file": "server/staffRoutes.ts",
+      "line": 42,
+      "severity": "medium",
+      "category": "timezone",
+      "title": "Staff performance date range is UTC/server-local, not the IST business day",
+      "detail": "The client sends date-only strings. new Date('2026-11-04') parses as UTC midnight (05:30 IST) while new Date(to + 'T23:59:59') parses in the server's local zone (UTC on Vercel = 05:29:59 IST next day; IST on the Electron host = 23:59:59 IST). Neither matches businessDayRange (05:00 IST cutoff) used by every other report, and the two ends are inconsistent on an IST host.",
+      "failure_scenario": "On Vercel, orders placed between 05:00 and 05:30 IST are attributed to the previous selected day; on the Electron host the 'to' bound cuts at 23:59 IST, so the late-night orders (00:00–05:00 IST) of the last selected business day are dropped from that staff member's revenue.",
+      "suggested_fix": "Use businessDayRange(from).start and businessDayRange(to).end from shared/businessDay.ts; validate the strings (an invalid date currently throws into a 500)."
+    },
+    {
+      "file": "server/settingsStore.ts",
+      "line": 267,
+      "severity": "low",
+      "category": "race / lost update",
+      "title": "Boot counter repair writes the whole cached settings blob without a lock, clobbering concurrent counter increments and settings saves",
+      "detail": "syncCounterFromMax upserts { ...cache.get(), [field]: dbMax } — the entire blob as loaded at boot. If another instance issued numbers (issueCounter) or saved settings between this instance's load and this write, those changes are overwritten; the second call (kotCounter) also rewrites billCounter from the cache.",
+      "failure_scenario": "A Vercel cold start while orders are being taken, with kotCounter behind the max: another instance issues bill numbers 71 and 72 meanwhile; this write resets billCounter to 70 and the next two orders collide on the UNIQUE order_number.",
+      "suggested_fix": "Repair with a targeted jsonb_set UPDATE ... SET counter = GREATEST(current, dbMax) WHERE id=1, never a full-blob write."
+    },
+    {
+      "file": "server/services/printDispatch.ts",
+      "line": 527,
+      "severity": "low",
+      "category": "wrong table state",
+      "title": "markTableBilled flips order.tableId to 'billed' even when the order is already settled and the table now belongs to another party",
+      "detail": "No check of paymentStatus/status or of the table's current order. A save-with-print on a paid order is allowed as a no-op 200 (bill reprint), and the POS Bill button sends markBilled:'always'.",
+      "failure_scenario": "Table 4's earlier order was paid and the table reseated with a new running order. Staff reopen the old paid order in POS and tap Bill to reprint it: the new party's running table flips to 'billed' on the Tables page.",
+      "suggested_fix": "Skip the flip when order.paymentStatus === 'paid' or order.status is served/cancelled, or only flip if tables.currentOrderId === order.id."
+    },
+    {
+      "file": "server/services/printDispatch.ts",
+      "line": 374,
+      "severity": "low",
+      "category": "stray ticket",
+      "title": "Cancelled items create a routed printer group even when printCancelledKOT is off, producing an empty ticket",
+      "detail": "cancelledItems is assigned from the delta regardless of kotSettings.printCancelledKOT and routed into groups; the generator then omits the VOID section, so a printer that only had cancelled items receives a header-only ticket.",
+      "failure_scenario": "printCancelledKOT off; one delta adds a Chinese dish (Chinese printer) and removes a dosa (South-Indian printer): the South-Indian counter gets a blank KOT with only the header.",
+      "suggested_fix": "Set cancelledItems = [] (and modifiedItems = [] when printModifiedKOT/printModifiedItemsOnly are off) before routing, mirroring the hasCancelled/hasMod checks."
+    },
+    {
+      "file": "server/services/whatsapp/deliveryService.ts",
+      "line": 41,
+      "severity": "low",
+      "category": "race",
+      "title": "Delivery receipts that arrive before the outbound row is recorded are dropped",
+      "detail": "outboundQueue sends first, then updates the job, getOrCreateConversation, recordMessage and finally inserts customer_messages. A delivered/read receipt arriving in that window finds no row and is discarded; there is no retry, so the message stays 'sent' forever.",
+      "failure_scenario": "Customer's phone is online; WhatsApp delivers and acks in under a second while the queue is still on its 2-4 DB round trips; campaign History shows the message as only 'sent'.",
+      "suggested_fix": "Insert the conversation_messages/customer_messages rows with status 'pending' before sendText and update waMessageId/status after, or buffer unmatched receipts briefly and retry."
+    }
+  ]
+}

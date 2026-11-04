@@ -1,0 +1,196 @@
+{
+  "slice": "R06",
+  "coverage": "Read every line: client/src/pages/Billing.tsx 1-762, CustomerDashboard.tsx 1-1186, Dashboard.tsx 1-319, Inventory.tsx 1-558, KOT.tsx 1-329, LiveAnalytics.tsx 1-257, LiveTablesDashboard.tsx 1-500. Cross-checked: server/routes.ts POST /api/orders/:id/payment and CRM profile/sync-extras routes, server/growthRoutes.ts coupons/loyalty, server/services/crm/customerIdService.ts (upsertCustomerProfile, syncLocalStorageExtras, backfillOrderPhone), client/src/hooks/useCrmProfile.ts, useCustomerIntelligence.ts (useCustomerOrderDetails), useLiveOrders/useLiveTableOperations loadAll, OrderCard forwardRef, shared/paymentSplit.ts collectedByMethod, storage getDashboardTopItems/getLowStockItems, shared/pageAccess.ts. Razorpay flow intentionally not judged (out of scope per CLAUDE.md).",
+  "findings": [
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 1063,
+      "severity": "high",
+      "category": "data-loss",
+      "title": "Background extras sync wipes every synced customer's DOB/anniversary (dateOfBirth vs dob key mismatch)",
+      "detail": "useCrmExtrasSync(extras) posts the raw localStorage CustomerExtra map to /api/crm/sync-extras. Those objects carry dateOfBirth/dateOfAnniversary, but syncLocalStorageExtras -> upsertCustomerProfile reads extra.dob / extra.anniversary and writes `?? null`. handleSaveExtra (line 1079-1080) maps the keys correctly, but the bulk sync that runs on every Customers-page mount (and whenever the key count changes) does not, so it overwrites customer_profiles.dob/anniversary with NULL for every customer that has a local entry.",
+      "failure_scenario": "Staff edits a customer and sets DOB 12 Mar (profile POST stores dob). Next time anyone opens Customers on that device, the 3s-debounced bulk sync upserts the same customer with dob=null. birthdayService/automationRuleEngine read customerProfiles.dob, so the birthday message never fires.",
+      "suggested_fix": "Map dateOfBirth->dob and dateOfAnniversary->anniversary (and displayName->name) before posting in useCrmExtrasSync, or have the server accept both shapes; better, stop bulk-overwriting (see next finding)."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 1063,
+      "severity": "high",
+      "category": "data-integrity/opt-out",
+      "title": "Stale per-device localStorage is bulk-written over the DB profile on every mount, reversing WhatsApp STOP opt-outs",
+      "detail": "extras is loaded only from localStorage (line 1056) and never merged from the DB; useCrmExtrasSync then upserts every local entry with upsertCustomerProfile, which SETs all columns (doNotSendUpdate ?? false, notificationEnabled ?? true, email/address/remark ...). Any change made in the DB by another device, by the inbound bot's STOP handler (targeted doNotSendUpdate=true), or by a later edit is silently overwritten by whatever this device last stored.",
+      "failure_scenario": "Customer texts STOP; inboundService sets customer_profiles.do_not_send_update=true. A staff phone that once toggled/edited that customer (local entry with doNotSendUpdate:false) opens Customers; the bulk sync writes doNotSendUpdate=false and the automation engine resumes sending to an opted-out number (ban/compliance risk). Same path un-mutes a customer muted from another device.",
+      "suggested_fix": "Treat the DB as source of truth: drop the blind bulk sync (or make it insert-only / only send fields whose local updatedAt is newer), and seed the local extras from GET /api/crm/customers/:key before editing."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 1178,
+      "severity": "medium",
+      "category": "data-loss",
+      "title": "Edit Customer modal is seeded from this device's localStorage, so Save blanks fields stored in the DB",
+      "detail": "EditCustomerModal gets extra={extras[key] ?? defaultExtra()} - never the DB profile (useCrmProfile/mergeExtras exist but are not used here). handleSaveExtra posts the whole form, and upsertCustomerProfile overwrites email/dob/address/tags/remark/doNotSendUpdate with the empty/default values.",
+      "failure_scenario": "Manager enters email+address for a customer on the counter PC. A waiter edits the same customer's locality on a phone (no local entry): form starts blank, Save sends email:'' address:'' doNotSendUpdate:false, wiping the counter PC's data and any opt-out.",
+      "suggested_fix": "Load the server profile (useCrmProfile(customer.key, localExtra).crmData.profile) into the form before editing, or send only changed fields and use a merge/patch on the server."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 1095,
+      "severity": "medium",
+      "category": "stale-sync",
+      "title": "Mute/Unmute toggle on an existing customer never reaches the DB in this session",
+      "detail": "handleToggleNotif only updates local extras. The only sync is useCrmExtrasSync whose effect deps are [enabled, Object.keys(extras).length]; toggling a customer that already has an entry doesn't change the key count, so no sync is scheduled. The button flips to 'Muted' but customer_profiles.notification_enabled (checked by automationRuleEngine/birthdayService) stays true until a later page mount; if staff navigate away within 3s of the first-time toggle the debounce is cleared too.",
+      "failure_scenario": "Staff mute a regular who complained; the button shows Muted, but the daily lapsed-customer/birthday engine still messages them until someone reopens the Customers page on that device.",
+      "suggested_fix": "POST the profile (same call as handleSaveExtra) inside handleToggleNotif, or key the sync effect on a content hash/version rather than key count."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 1070,
+      "severity": "medium",
+      "category": "data-integrity",
+      "title": "Saving any customer that has a phone back-fills that phone into every phone-less order with the same NAME (other people)",
+      "detail": "handleSaveExtra always sends phone = customer.phone || data.phone, so the profile route runs backfillOrderPhone(key, name, phone) on every save, even when nothing about the phone changed. backfillOrderPhone updates all orders whose customerName case-insensitively equals the key or the (possibly edited) display name and have no phone - i.e. walk-ins of different people sharing a first name get this customer's phone.",
+      "failure_scenario": "Customer 'Rahul' (phone 98xxxx) is edited to add an email. Every phone-less historical order named 'Rahul' (other walk-ins) now carries 98xxxx: their visits/spend merge into this Rahul, loyalty/VIP segmentation and WhatsApp due reminders go to the wrong person.",
+      "suggested_fix": "Only send phone for back-fill when it was manually added (`!customer.phone && data.phone`), and only match orders by the customer's exact key, not a free-text display name."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 614,
+      "severity": "medium",
+      "category": "performance/N+1",
+      "title": "Intelligence grid fires one /api/crm/customers/:key request per customer card",
+      "detail": "CustomerCard calls useCrmProfile(customer.key) just to show the RFM chip, so rendering the Intelligence tab issues N parallel GETs (one per customer, each several server queries), re-fetched whenever the 30s staleTime has passed and the cards re-render/refocus. The drawer calls it again for the selected customer.",
+      "failure_scenario": "With ~500 customers, opening Intelligence sends ~500 requests (serverless instances + Supabase egress), saturating the browser's connection pool so other API calls on the page (conversations, feedback) queue for seconds.",
+      "suggested_fix": "Return the segment/rfmScore in the customer-list payload (one batched endpoint) and drop the per-card query."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 539,
+      "severity": "low",
+      "category": "ux/performance",
+      "title": "Listing rows have an uncapped per-row fade-in delay (i * 0.01s)",
+      "detail": "Every customer row in CustomerListingView starts at opacity 0 with transition delay i*0.01 and no cap and no windowing.",
+      "failure_scenario": "With 800 customers, row 800 stays invisible for 8s after the tab opens; staff scrolling to a customer see blank space and think the list is empty/broken.",
+      "suggested_fix": "Cap the delay (Math.min(i,20)*0.01 as Inventory does) or drop the animation; window the list."
+    },
+    {
+      "file": "client/src/pages/CustomerDashboard.tsx",
+      "line": 89,
+      "severity": "low",
+      "category": "crash",
+      "title": "saveExtras writes localStorage without try/catch inside an effect",
+      "detail": "loadExtras is guarded but saveExtras (called from the effect at line 1060 on every change) is not; a throwing setItem (quota exceeded, storage blocked) throws inside useEffect and takes the page down via the ErrorBoundary.",
+      "failure_scenario": "On a device whose localStorage is full or blocked, toggling a customer's notification crashes the Customers page.",
+      "suggested_fix": "Wrap setItem in try/catch like loadExtras."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 583,
+      "severity": "high",
+      "category": "money/table-state",
+      "title": "Billing's 'Collect Payment' settles old Pay-Later dues through the POS payment route: frees a re-used table, re-fires loyalty/WhatsApp, skips the settle-due PIN and audit",
+      "detail": "Billing lists served+pending orders (open dues) and the backlog banner steers staff to 'Show all' of them. 'Mark as Paid' calls POST /api/orders/:id/payment, which (per CLAUDE.md) is deliberately NOT the path for clearing an old tab: it unconditionally sets the order's tableId to 'free', completes KOTs, awards loyalty and sends the settlement WhatsApp/feedback. settle-due (fresh manager PIN, order.due_settled audit with approvedBy) is bypassed entirely - any staff session can settle any due with no PIN.",
+      "failure_scenario": "Table 5's party took a due on Monday (table freed). Wednesday table 5 is occupied by a new running order. A cashier clears Monday's due from Billing -> table 5 is flipped to 'free' while the new party is still seated (Tables page shows it free, can be double-seated), and Monday's customer gets a second 'thank you' message and loyalty points.",
+      "suggested_fix": "For isDueOrder(order) open DueSettleDialog (settle-due) instead of the legacy payment call, or hide Collect Payment for dues on Billing."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 694,
+      "severity": "medium",
+      "category": "money/reporting",
+      "title": "Billing offers Card and Online methods that the Cash/UPI-only reports cannot show",
+      "detail": "The legacy {paymentMethod} path stores paymentBreakdown={card|online: total}. collectedByMethod returns {card: X}, but Reports -> Payments, the Tables Sales pill split and the digest only display Cash and UPI (CLAUDE.md: 'Payments is Cash and UPI only'). The money counts in Sales but in no method tile.",
+      "failure_scenario": "Cashier marks a ₹1,200 bill paid as 'Card' (restaurant takes only cash/UPI, so it was really UPI). Tables pill: Sales ₹X but Cash+UPI = ₹X-1,200; Reports Payments tiles are ₹1,200 short and the closing cash book cannot reconcile.",
+      "suggested_fix": "Restrict the select to Cash / UPI / Due, matching SettlementDialog."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 246,
+      "severity": "medium",
+      "category": "auth/ux",
+      "title": "Coupon and loyalty redeem from Billing always 403 for staff sessions - no PIN path exists",
+      "detail": "/api/coupons/apply and /api/loyalty/redeem are requireElevation('manager'). Billing (default page for service/cashier staff) calls them with no PinGuard/verify-pin step, so a staff session can never apply a coupon or points; the error is shown raw ('403: {\"error\":...}') via couponMsg/toast.",
+      "failure_scenario": "Cashier (staff PIN login) types the customer's birthday coupon and taps Apply -> validate succeeds, apply returns 403, message shows a JSON blob; the customer is charged full price or staff go find a manager to log in.",
+      "suggested_fix": "Gate Apply/Redeem with the usePermission go('discount', ...) PIN flow (which calls verify-pin and grants elevation) before calling the routes, and unwrap the error JSON."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 246,
+      "severity": "low",
+      "category": "wasted-request",
+      "title": "applyCoupon first sends a bogus /api/coupons/apply with couponId 0",
+      "detail": "Lines 244-256 POST /api/coupons/apply {couponId:0} and ignore the result before the real validate->apply flow.",
+      "failure_scenario": "Every Apply tap costs an extra serial round trip (seconds on the shop's stalling network) and, for a manager session, a redeemCoupon(0,...) call on the server.",
+      "suggested_fix": "Delete the first try block."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 140,
+      "severity": "low",
+      "category": "race",
+      "title": "Loyalty balance fetch is not cancelled when the paying order changes",
+      "detail": "The effect fetches /api/loyalty/:key with no abort/ignore flag; a slow response for the previously opened order lands after the dialog switched orders and setLoyalty shows the previous customer's balance; redeemLoyalty then sends that customer's redeemable points for the current customer.",
+      "failure_scenario": "Cashier opens order A (customer with 800 pts), closes, opens order B within a second; A's response arrives last, B's dialog shows 'Redeem 800 pts' and the request tries to redeem 800 of B's points.",
+      "suggested_fix": "Use an `ignore` flag in the effect cleanup (or React Query keyed on the customer key)."
+    },
+    {
+      "file": "client/src/pages/Billing.tsx",
+      "line": 160,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "After 'Payment processed! Printing bill...', a failed bill print is silent",
+      "detail": "The post-payment print fetch returns early on !res.ok and swallows any exception (.catch(()=>{})), with no toast; the 'dispatched'/'noop' outcomes are also unannounced. fetchAndPrint (same file) already shows an error toast for the same cases.",
+      "failure_scenario": "Settings re-read 503s or the network drops after payment; staff were told the bill is printing, nothing comes out and nothing says so - customer leaves without a bill.",
+      "suggested_fix": "Reuse fetchAndPrint(vars) here instead of the inline copy."
+    },
+    {
+      "file": "client/src/pages/KOT.tsx",
+      "line": 133,
+      "severity": "low",
+      "category": "react/perf",
+      "title": "KOTCard is declared inside the page component, so every page render remounts every ticket card",
+      "detail": "A new component type is created on each KOT() render; React unmounts/remounts all cards whenever the page re-renders (data change, mutation pending flip, any toast since the page calls useToast), replaying the staggered entrance animation and discarding focus.",
+      "failure_scenario": "Kitchen taps 'Start Cooking': isPending flips twice and the toast fires, so the whole board blinks and re-animates 3 times; with 20 tickets the last card fades in ~0.8s later each time.",
+      "suggested_fix": "Hoist KOTCard to module scope (pass reprint/mutate as props) and memoise it."
+    },
+    {
+      "file": "client/src/pages/KOT.tsx",
+      "line": 288,
+      "severity": "low",
+      "category": "wrong-display",
+      "title": "Header 'N ready' counts cancelled and auto-completed tickets",
+      "detail": "completed includes tickets auto-completed by cancel (orderStatus cancelled) and by settlement, so the header claims those as 'ready' food.",
+      "failure_scenario": "An order is cancelled; its ticket shows 'Cancelled' on the card but the header still says '1 ready'.",
+      "suggested_fix": "Exclude orderStatus==='cancelled' from the ready count."
+    },
+    {
+      "file": "client/src/pages/LiveAnalytics.tsx",
+      "line": 74,
+      "severity": "low",
+      "category": "stale-ui",
+      "title": "Clock and elapsed-time labels freeze; header says 'Auto-refresh · 5s' but polls are 15s",
+      "detail": "`now` and elapsedLabel are computed at render time, and the comment assumes the 15s poll re-renders the page. With React Query's tracked props and structural sharing (and ETag 304s), an unchanged poll does not re-render, so the clock and 'Xm' ages stay frozen until some order data changes.",
+      "failure_scenario": "Quiet afternoon with 2 open orders: the header clock shows 3:05 PM at 3:40 PM and an order open 40 min still says '5m'.",
+      "suggested_fix": "Add a 30-60s setInterval tick state for the clock/elapsed labels; fix the label text."
+    },
+    {
+      "file": "client/src/pages/Dashboard.tsx",
+      "line": 33,
+      "severity": "low",
+      "category": "wrong-display",
+      "title": "Category pie tooltip shows rupee totals as 'N sold'",
+      "detail": "CustomTooltip formats as currency only when p.name==='total'; for the Pie, payload name is the category (nameKey), so revenue is rendered as '4500 sold'.",
+      "failure_scenario": "Hovering 'Pizza' slice shows '4500 sold' instead of ₹4,500.",
+      "suggested_fix": "Check p.dataKey==='total' (or pass a formatter per chart)."
+    },
+    {
+      "file": "client/src/pages/LiveTablesDashboard.tsx",
+      "line": 123,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "Delivery/pickup status maps in localStorage are never pruned",
+      "detail": "handleStatusChange appends orderId->status to bagicha_dlv / bagicha_pku forever; entries for settled orders are never removed, and the whole map is parsed on every order-list change (readMap in both effects).",
+      "failure_scenario": "After months of use the maps hold thousands of ids; every NEW_ORDER/ORDER_UPDATE re-parses them on each device.",
+      "suggested_fix": "Prune keys not in the current delivery/pickup/section order sets when writing."
+    }
+  ]
+}

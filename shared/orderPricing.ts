@@ -193,3 +193,22 @@ export function deriveBillTotals(order: {
     order.deliveryCharge != null ? Number(order.deliveryCharge) || 0 : 0;
   return { subtotal, discount, containerCharge, deliveryCharge, tax, total };
 }
+
+
+/**
+ * The tax rate (percent) an order was ACTUALLY billed at: tax / (subtotal − discount), snapped to
+ * the nearest 0.5% when within 0.05 (stored amounts are 2-dp). Orders don't store their rate, and
+ * the bill used today's setting — after an 18% → 5% change a reprint of an old bill printed
+ * "CGST 2.5%" next to an 18% amount. Falls back to `fallbackPercent` when there's no base.
+ */
+export function effectiveTaxRatePercent(
+  order: Parameters<typeof deriveBillTotals>[0],
+  fallbackPercent: number,
+): number {
+  const { subtotal, discount, tax } = deriveBillTotals(order);
+  const base = subtotal - discount;
+  if (!(base > 0) || !(tax >= 0)) return fallbackPercent;
+  const pct = (tax / base) * 100;
+  const snapped = Math.round(pct * 2) / 2;
+  return Math.abs(pct - snapped) <= 0.05 ? snapped : Math.round(pct * 100) / 100;
+}

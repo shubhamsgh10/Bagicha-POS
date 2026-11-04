@@ -3,12 +3,16 @@
  * Threads sorted by latest activity with unread pills and bot/human badges.
  */
 
+import { istCalendarDate } from "@shared/businessDay";
 import { Bot, User, BellOff } from "lucide-react";
 import type { ConversationSummary } from "@/hooks/useConversations";
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "";
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  // Calendar days (IST), not elapsed 24-hour blocks: last night's 11 PM message viewed at 9 AM is
+  // "Yesterday", not a bare time as if it were today.
+  const dayNum = (d: Date) => { const [y, m, dd] = istCalendarDate(d).split("-").map(Number); return Date.UTC(y, m - 1, dd) / 86_400_000; };
+  const days = dayNum(new Date()) - dayNum(new Date(iso));
   if (days === 0) {
     return new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
   }

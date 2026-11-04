@@ -1,0 +1,116 @@
+{
+  "slice": "R08",
+  "coverage": "Read every line of client/src/pages/POS.tsx:1-3219, client/src/pages/PrintStation.tsx:1-323, client/src/pages/PublicFeedback.tsx:1-183. Cross-checked callees only where needed for reachability: client/src/lib/settleSkip.ts (saveSignature/canSkipSaveBeforeSettle), shared/kotItemCancel.ts, shared/printRequest.ts (printFieldsForSubmitMode), client/src/lib/printStationCore.ts (claimAndExecute/pollPendingJobs), client/src/hooks/RealtimeProvider.tsx (handleMessage/lastMessage), server storage.getMenuItems + GET /api/menu, server/printRoutes.ts GET /api/print/jobs/pending, server/services/printDispatch.ts runKotPrint snapshot read/commit (no lock), server/services/feedbackService.ts coupon values. Nothing in range was skipped.",
+  "findings": [
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 997,
+      "severity": "high",
+      "category": "data-integrity / double-fire",
+      "title": "Settling a never-saved cart creates the order but never records activeOrderId; a failed payment then makes the retry create a second order",
+      "detail": "When Settle is pressed with activeOrderId === null, onSubmit takes the create branch (POST /api/orders) and createOrderMutation.onSuccess's \"settle\" branch calls settleMutation.mutate({ orderId: order.id, ... }) — but unlike the kot-print / bill-print / section save-print branches it never calls setActiveOrderId(order.id). settleMutation.onError only toasts and resets settlePhase. The cart stays on screen with activeOrderId still null.",
+      "failure_scenario": "New table order (from Tables, ?tableId=5), staff tap Settle → Cash. POST /api/orders commits (order #A, kot_tickets row on the Kitchen screen, stock deducted, table running) but POST /api/orders/A/payment fails (network stall/abort, a 503 'settings unavailable', a 403 because the write-off PIN grant expired). Staff tap Settle again: activeOrderId is still null, so a SECOND POST /api/orders creates order #B with the same items — a duplicate kitchen ticket, double inventory deduction — and #B is settled while #A stays open/unpaid on the same table (it appears as a pending/backlog order).",
+      "suggested_fix": "In the create onSuccess \"settle\" branch call setActiveOrderId(order.id) (and set lastSaveRef as already done) before settleMutation.mutate, so a retry goes through the update/skip-save path for the same order."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 1387,
+      "severity": "high",
+      "category": "wrong behaviour / cancel guard",
+      "title": "Standalone pickup/delivery: lines added after the first save keep serviceMode 'dinein' in the cart while the server stores 'pickup'/'delivery', so removing them skips the cancel-reason dialog and every later save is rejected with 400",
+      "detail": "New cart lines take serviceMode = activeItemMode, which never leaves 'dinein' outside Section POS (directAddItem 1213, confirmModal 1199, addOpenItem 1299). buildItemsPayload overrides it to 'pickup'/'delivery' for non-table sessions, so the persisted order_items carry the order-type mode. The cart is only reloaded from the DB after a CREATE (setCartLoaded(false)); after an UPDATE the in-memory lines keep 'dinein'. wasItemKotd (1232) and the cancellation stash key (kotItemKey, 1939) both compare/emit item.serviceMode, while the server's findMissingKotCancelReasons keys on itemId:size:serviceMode from the persisted rows.",
+      "failure_scenario": "Open a pickup order (/pos?orderId=X&mode=pickup, loaded lines are 'pickup'), add Roti (cart says 'dinein'), tap KOT → saved as Roti/pickup and visible to the kitchen. Customer drops the Roti: tapping × finds wasItemKotd(Roti)=false (dinein ≠ pickup), so it is removed under the plain removeItem gate with no reason. The next KOT/Bill/Save/Settle PUT drops Roti:pickup with no matching reason → 400 'reason required'; every later save (and the Auto-KOT sync) keeps failing until staff leave and reopen the order. Even via the reason dialog the stashed key would be Roti::dinein and still not match.",
+      "suggested_fix": "Give new lines the same serviceMode buildItemsPayload will persist (derive it once: isTableSession ? activeItemMode : order-type mode) when adding to the cart, or have wasItemKotd/kotItemKey use that same derived mode instead of c.serviceMode."
+    },
+    {
+      "file": "client/src/pages/PrintStation.tsx",
+      "line": 132,
+      "severity": "high",
+      "category": "lost event / missed print",
+      "title": "Live PRINT_JOB handling reads a single last-wins lastMessage state, so a PRINT_JOB followed closely by any other realtime event (or a second PRINT_JOB) is never claimed until a reconnect/visibility change",
+      "detail": "RealtimeProvider.handleMessage does setLastMessage(msg) for every event; this page's effect only sees whatever lastMessage is when React renders. A save-with-print publishes ORDER_UPDATE/KOT_UPDATE and the PRINT_JOB(s) (one per routed printer via triggerBatch) back-to-back; if a later event lands before the render, the earlier PRINT_JOB is overwritten and the effect returns on type !== 'PRINT_JOB'. The only other recovery is pollPendingJobs, which runs on mount, on reconnect and on visibilitychange→visible — none of which happen on a dedicated always-on, wake-locked Android station.",
+      "failure_scenario": "A mixed order routes KOTs to two printers both owned by the RawBT tablet (or a KOT then immediately a Bill). Pusher delivers PRINT_JOB(printer A), PRINT_JOB(printer B), ORDER_UPDATE within a few ms; React renders once with ORDER_UPDATE (or only job B). Job A stays 'pending' in print_jobs and its ticket never prints at the counter while the tablet sits on /print-station with the screen on.",
+      "suggested_fix": "Deliver PRINT_JOB through a subscriber/queue rather than lastMessage state (e.g. a per-event callback registry in RealtimeProvider, or append PRINT_JOBs to a ref'd queue drained in the effect), and/or add a periodic pollPendingJobs (e.g. every 30-60s while enabled and visible) as a safety net."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 918,
+      "severity": "medium",
+      "category": "race / duplicate KOT",
+      "title": "A manual KOT/Bill tap while an Auto-KOT PUT is already in flight sends a second print request concurrently; the server's KOT delta has no lock, so both can print the same delta",
+      "detail": "cancelPendingAutoKot only clears a not-yet-fired timer; busyRef only stops the timer from starting while a manual action is pending. Nothing stops a manual KOT/Bill (print:'kot' or the bill's KOT catch-up) from being sent while the timer's PUT(print:'kot', auto:true) is still outstanding, and the KOT button is not disabled during it. runKotPrint reads order.lastKotSnapshot and commits it afterwards with no advisory lock, so two concurrent requests both compute the same delta.",
+      "failure_scenario": "Staff add Butter Naan; 1.5s later Auto-KOT fires its PUT; under the documented multi-second connection stall it is still in flight when staff tap KOT at 3s. Both requests reach the server together, both read the pre-print snapshot, and the kitchen printer gets two identical '+1 Butter Naan' tickets.",
+      "suggested_fix": "Track the in-flight Auto-KOT request in a ref (promise or AbortController) and have manual print paths await or abort it before sending; ideally also serialize runKotPrint per order server-side (advisory lock on the order id around snapshot read+commit)."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 397,
+      "severity": "medium",
+      "category": "data loss",
+      "title": "Hold / Move Table / Merge don't save the cart first, silently discarding items added since the last save",
+      "detail": "handleHoldOrder, handleMoveTable and handleMergeTable act on the persisted order and then navigate('/tables') or window.location.reload(), with no sync of the in-memory cart (unlike every print path, which routes through triggerSubmit). The Hold dialog even says 'The order will be saved on hold'. Unless Auto-KOT happened to sync, unsaved lines are lost.",
+      "failure_scenario": "Running table: staff add 2 Lassi (Auto-KOT off), customer asks to move tables; staff use Actions → Move Table (or Hold). The move/hold succeeds, the POS navigates away, and the 2 Lassi never reach order_items, the kitchen or the bill.",
+      "suggested_fix": "Before hold/move/merge, if the cart differs from existingOrder.items, run the normal save (updateOrderMutation) and only then call the action, or block the action with a 'save first' prompt."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 2037,
+      "severity": "medium",
+      "category": "wrong behaviour",
+      "title": "'+ New Order' (and 'Clear all') clears the cart but keeps activeOrderId, so the 'new' order is saved into the previous order and fails with 400",
+      "detail": "The clearCart handlers reset cart/discount/charges but not activeOrderId, existingOrder or cartLoaded. The code comment at 2017 acknowledges exactly this trap for Section POS and hides the button there, but it remains on table and pickup/delivery POS.",
+      "failure_scenario": "Pickup POS: staff KOT customer A's order (activeOrderId set), tap '+ New Order' for customer B, add items and tap KOT. onSubmit takes the update branch and PUTs B's items to A's order; all of A's persisted lines are now 'dropped' with no reasons, so the server answers 400 'reason required' and B's order cannot be placed (if a reason were given, A's order would be overwritten with B's items).",
+      "suggested_fix": "For '+ New Order' also reset activeOrderId to null (and cartLoaded/lastSaveRef/pending cancellations), or navigate to a fresh /pos URL for the same mode; for 'Clear all' on an existing order, route through the cancel-item flow or disable it."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 769,
+      "severity": "medium",
+      "category": "wrong result / printed output",
+      "title": "Reopening an order whose sized item is now Out of Stock compounds the size into the stored name on every save",
+      "detail": "POS loads /api/menu, which (storage.getMenuItems) excludes isAvailable=false items. On reload, a line whose menu item is out of stock falls back to item.name, which was persisted by buildItemsPayload as `${name} (${size})`. buildItemsPayload then appends ` (${size})` again (1379), and the cart row also appends the size (2815). Prints read coalesce(order_items.name, ...), so the doubled name reaches the KOT and bill. The Edit button also silently does nothing for such a line (openEditPicker returns when the menu item is missing).",
+      "failure_scenario": "Table orders Cold Coffee (Large); later the item is toggled Out of Stock. Reopening the table and saving stores 'Cold Coffee (Large) (Large)'; the next save stores 'Cold Coffee (Large) (Large) (Large)', and the printed bill shows that name.",
+      "suggested_fix": "When the menu row is missing, strip a trailing ` (${item.size})` from item.name on load (or keep the raw stored name and skip re-appending the size in buildItemsPayload when it already ends with it); consider loading the menu with all=true for name/addon resolution of existing lines."
+    },
+    {
+      "file": "client/src/pages/PrintStation.tsx",
+      "line": 47,
+      "severity": "medium",
+      "category": "error handling / duplicate print",
+      "title": "RawBT ack ignores non-2xx responses, leaving the job 'claimed' so it is reclaimed and printed again after the 2-minute stale window",
+      "detail": "ackJob awaits fetch but never checks res.ok, and rawbtExecutor's try/catch only catches network errors. A 401/403/500 from /api/print/ack is treated as success with no retry. GET /api/print/jobs/pending returns claimed jobs older than STALE_CLAIM_MS, so the same station (on its next visibility/reconnect poll) or another station re-claims and prints the already-printed ticket.",
+      "failure_scenario": "A KOT is handed to RawBT and printed; the ack hits a transient 500 (or a cold-start 503). Ten minutes later the tablet's screen wakes (visibilitychange) and pollPendingJobs re-claims the stale job — the kitchen gets the same KOT a second time.",
+      "suggested_fix": "Check res.ok in ackJob and retry a few times with backoff (as desktop printQueue.ackWithRetry does); surface a persistent failure in the job log."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 1815,
+      "severity": "low",
+      "category": "error handling",
+      "title": "Recall Held order has no error handling — a failed recall closes the dialog and does nothing, with an unhandled rejection",
+      "detail": "The recall button closes the dialog, then awaits apiRequest PUT /recall with no try/catch; on failure navigate() is never reached and no toast is shown.",
+      "failure_scenario": "Recall request fails (network stall, 409 because another device already recalled it): the dialog disappears and staff see no feedback; the order stays on hold.",
+      "suggested_fix": "Wrap in try/catch, toast the server message on failure, and only close the dialog on success."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 1590,
+      "severity": "low",
+      "category": "wrong behaviour",
+      "title": "Short-code entry bypasses required variant groups (and the notes picker)",
+      "detail": "handleShortCode only opens the picker when the item has sizes or addons; an item whose only customisation is a required variant group goes straight to directAddItem with no variant chosen, unlike the menu tile, which also checks hasVariants/notesAllowed (2602).",
+      "failure_scenario": "Item 'Maggi' with a required 'Spice level' variant typed by short code is added with no spice level, so the KOT carries no variant and the kitchen has to ask.",
+      "suggested_fix": "Use the same needsPicker rule as renderTile (sizes || addons || variants || notesAllowed) in handleShortCode."
+    },
+    {
+      "file": "client/src/pages/POS.tsx",
+      "line": 1037,
+      "severity": "low",
+      "category": "misleading UI",
+      "title": "KOT tap toasts 'KOT sent!' on save success before the print result is known",
+      "detail": "Both create and update onSuccess 'kot-print' branches toast 'KOT sent!' immediately, then handleSavedPrint may report 'KOT print failed' or 'Nothing new to print' for the same tap.",
+      "failure_scenario": "Kitchen printer offline: staff see 'KOT sent!' and then 'KOT print failed'; a glance at the first toast suggests the kitchen has the ticket.",
+      "suggested_fix": "Drop the save-time 'KOT sent!' toast for print modes and let handleKotResult's outcome toast be the only message."
+    }
+  ]
+}

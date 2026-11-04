@@ -21,6 +21,13 @@ import { loyaltyPoints, CRM_EVENT_TYPES } from "../../shared/schema";
 import { resolveCustomerId } from "./crm/customerIdService";
 import { logEventByKey } from "./crm/eventService";
 
+/** The customer key is the phone when one was captured (phone || name) — pass it so the lookup
+ *  matches the canonical customer by phone instead of creating a duplicate row by key. */
+function phoneFromKey(key: string): string | null {
+  const digits = (key ?? "").replace(/\D/g, "");
+  return digits.length >= 10 ? key : null;
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 export const POINTS_PER_RUPEE   = 0.1;     // ₹1 = 0.1 pts → ₹100 = 10 pts
@@ -74,7 +81,7 @@ export async function earnPointsForOrder(
 
   let customerId: string;
   try {
-    customerId = await resolveCustomerId(customerKey, customerName, null);
+    customerId = await resolveCustomerId(customerKey, customerName, phoneFromKey(customerKey));
   } catch {
     return 0;
   }
@@ -111,7 +118,7 @@ export async function redeemPoints(
 
   let customerId: string;
   try {
-    customerId = await resolveCustomerId(customerKey, customerName, null);
+    customerId = await resolveCustomerId(customerKey, customerName, phoneFromKey(customerKey));
   } catch {
     return { ok: false, reason: "Customer lookup failed", discount: 0 };
   }

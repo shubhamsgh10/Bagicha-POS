@@ -9,7 +9,7 @@ import {
   canExecutePrintOnServer,
 } from "./printService";
 import { toPrintJob } from "@shared/print/generators";
-import { deriveBillTotals } from "@shared/orderPricing";
+import { deriveBillTotals, effectiveTaxRatePercent } from "@shared/orderPricing";
 import { stripKitchenNotes } from "@shared/orderItemText";
 import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
@@ -194,7 +194,7 @@ function billTextLines(params: {
   if (billSettings.mergeDuplicateItems) {
     const map = new Map<string, typeof items[0] & { totalQty: number; totalAmt: number }>();
     for (const item of items) {
-      const key = `${item.name}:${item.size ?? ""}`;
+      const key = `${item.name}:${item.size ?? ""}:${stripKitchenNotes(item.specialInstructions) ?? ""}`; // same key as generators.ts
       const ex = map.get(key);
       if (ex) { ex.totalQty += item.quantity; ex.totalAmt += item.quantity * parseFloat(item.price); }
       else map.set(key, { ...item, totalQty: item.quantity, totalAmt: item.quantity * parseFloat(item.price) });
@@ -223,7 +223,7 @@ function billTextLines(params: {
   const rawTotal = parseFloat(order.totalAmount);
   const rounded = Math.round(rawTotal);
   const roundOff = rounded - rawTotal;
-  const cgstRate = restaurant.taxRate / 2;
+  const cgstRate = effectiveTaxRatePercent(order as any, restaurant.taxRate) / 2; // same as generators.ts
   lines.push(two(`Total Qty: ${totalQty}`, `Sub Total ${subtotal.toFixed(2)}`));
   lines.push(two("", `CGST ${cgstRate}%  ${(tax / 2).toFixed(2)}`));
   lines.push(two("", `SGST ${cgstRate}%  ${(tax / 2).toFixed(2)}`));
@@ -598,10 +598,11 @@ export function registerPrintRoutes(app: Express): void {
         E.line("TEST PRINT"),
         E.BOLD_OFF,
         E.divider("-", W),
-        E.centered(printer.name, W),
-        E.centered(new Date().toLocaleString("en-IN"), W),
+        // Plain lines under the printer's own ALIGN_CENTER (E.centered double-centres), and IST time.
+        E.line(printer.name),
+        E.line((({ dateStr, timeStr }) => `${dateStr} ${timeStr}`)(formatISTDateTime(new Date()))),
         E.divider("=", W),
-        E.centered("Printer is working correctly!", W),
+        E.line("Printer is working correctly!"),
         E.feed(3),
         E.CUT,
       );

@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { db } from "../db";
 import { orders, orderItems, menuItems, kotTickets, printJobs } from "@shared/schema";
-import { eq, asc, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, inArray, sql } from "drizzle-orm";
 import type { PrinterConfig } from "@shared/print/types";
 import { getLiveSettings } from "../settingsStore";
 import { computeDelta, instructionsByKey, snapKey, type SnapshotItem, type KotSnapshot } from "@shared/kotDelta";
@@ -250,6 +250,32 @@ export async function runKotPrint(p: {
 
   const lastSnapshot = order.lastKotSnapshot as KotSnapshot | null;
 
+  // Claim this delta BEFORE any ticket goes out: a conditional write on the kotPrintCount this
+  // request read. Two KOT taps on one order at the same moment (a manual KOT racing the Auto-KOT
+  // timer, two phones) both computed the same delta from the same snapshot and BOTH sent it to the
+  // kitchen. The loser now finds 0 rows and answers no_delta. Undone (claimRollback) if nothing
+  // could be printed at all, so a retry still sends the items.
+  const readKotCount = order.kotPrintCount ?? 0;
+  const claimKot = async (): Promise<boolean> => {
+    if (reprint) return true;
+    const rows = await db
+      .update(orders)
+      .set({
+        kotPrintCount: sql`${orders.kotPrintCount} + 1`,
+        lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
+      })
+      .where(and(eq(orders.id, orderId), eq(orders.kotPrintCount, readKotCount)))
+      .returning({ id: orders.id });
+    return rows.length > 0;
+  };
+  const claimRollback = async () => {
+    if (reprint) return;
+    await db
+      .update(orders)
+      .set({ kotPrintCount: readKotCount, lastKotSnapshot: (order.lastKotSnapshot ?? null) as any })
+      .where(and(eq(orders.id, orderId), eq(orders.kotPrintCount, readKotCount + 1)));
+  };
+
   if (!reprint && lastSnapshot?.items?.length) {
     const delta = computeDelta(currentSnapshot, lastSnapshot.items);
     const hasNew = delta.newItems.length > 0;
@@ -265,7 +291,10 @@ export async function runKotPrint(p: {
 
     newItems = delta.newItems.map((ni) => ({ ...ni, instructions: instrByKey.get(snapKey(ni)) ?? null }));
     modifiedItems = delta.modifiedItems.map((mi) => ({ ...mi, instructions: instrByKey.get(snapKey(mi)) ?? null }));
-    cancelledItems = delta.cancelledItems;
+    // Only what the KOT settings print — routed into groups, items the generator then omits made a
+    // header-only ticket on a printer that had nothing else (e.g. cancelled-only, VOIDs off).
+    if (!kotSettings.printModifiedItemsOnly) modifiedItems = []; // same switch the generator checks
+    cancelledItems = kotSettings.printCancelledKOT ? delta.cancelledItems : [];
     isDelta = true;
   }
 
@@ -281,21 +310,15 @@ export async function runKotPrint(p: {
       ? (reprint ? browserKotTickets[0].kotNumber : browserKotTickets[browserKotTickets.length - 1].kotNumber)
       : undefined;
     if (!reprint) {
-      await timer.time("commit", () =>
-        db
-          .update(orders)
-          .set({
-            kotPrintCount: sql`${orders.kotPrintCount} + 1`,
-            lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
-          })
-          .where(eq(orders.id, orderId)),
-      );
+      if (!(await timer.time("commit", claimKot))) {
+        return { ok: true, body: { printed: false, reason: "no_delta" } };
+      }
     } else {
       // A genuine KOT reprint — deliberately NOT counted by kotPrintCount (that
       // increment is skipped above `if (!reprint)`), so this audit row is the ONLY
       // durable trace a reprint happened here, with actor+timestamp for Reports.tsx's
       // KOT & Bill Activity tab.
-      logAudit(req, "kot.reprint", "order", orderId, { kotNumber: browserKotNum });
+      await logAudit(req, "kot.reprint", "order", orderId, { kotNumber: browserKotNum });
     }
     // The fallback ticket is the real KOT: the same ESC/POS bytes a kitchen printer would have
     // received (this restaurant's KOT settings, real KOT number, delta/VOID/modified rows), which
@@ -374,17 +397,8 @@ export async function runKotPrint(p: {
   for (const it of cancelledItems) groupFor(resolveKotPrinter(it.itemId)).cancelledItems.push(it);
   if (groups.size === 0) groupFor(printer);
 
-  const commitKotState = async () => {
-    if (!reprint) {
-      await db
-        .update(orders)
-        .set({
-          kotPrintCount: sql`${orders.kotPrintCount} + 1`,
-          lastKotSnapshot: { items: currentSnapshot, printedAt: new Date().toISOString() },
-        })
-        .where(eq(orders.id, orderId));
-    }
-  };
+  // Started now so it overlaps building the tickets (the bitmap KOT takes 15–55 ms).
+  const claimed = timer.time("commit", claimKot);
 
   const browserItems = newItems.map((i) => ({
     name: i.name,
@@ -394,7 +408,8 @@ export async function runKotPrint(p: {
   }));
 
   // One ticket per routed printer — same KOT number on every ticket.
-  const kotJobs = await timer.time("build", async () =>
+  let kotJobs: Awaited<ReturnType<typeof buildKotJobs>>;
+  const buildKotJobs = () => timer.time("build", async () =>
     Array.from(groups.values()).map((g) => ({
       printer: g.printer,
       escPosOk: supportsRawEscPos(g.printer),
@@ -412,6 +427,17 @@ export async function runKotPrint(p: {
       }),
     })),
   );
+  try {
+    kotJobs = await buildKotJobs();
+  } catch (e) {
+    // Nothing was sent — give the claimed delta back so a retry prints it.
+    await claimed.then((ok) => (ok ? claimRollback() : undefined)).catch(() => {});
+    throw e;
+  }
+
+  if (!(await claimed)) {
+    return { ok: true, body: { printed: false, reason: "no_delta" } };
+  }
 
   const directJobs = kotJobs.filter((j) => canExecutePrintOnServer() && j.escPosOk && j.printer.type !== "usb");
   const remoteJobs = kotJobs.filter((j) => j.escPosOk && !(canExecutePrintOnServer() && j.printer.type !== "usb"));
@@ -447,6 +473,7 @@ export async function runKotPrint(p: {
   // — throw so the client gets its "KOT print failed" toast + preview fallback.
   if (directFailures.length > 0 && directFailures.length === directJobs.length
     && dispatchedJobs.length === 0 && nonEscPosJobs.length === 0) {
+    await claimRollback().catch((e) => console.error("[Print/KOT] claim rollback failed:", e));
     throw new Error(`Printer error: ${directFailures.map((f) => f.error).join("; ")}`);
   }
 
@@ -455,13 +482,14 @@ export async function runKotPrint(p: {
   // Commit even on a partial direct failure: the printers that DID succeed already
   // printed this delta, so a retry must not re-send it to them. Runs alongside the
   // broadcast (neither depends on the other); a bill's catch-up waits on both.
-  await commitAlongside(broadcast, timer.time("commit", commitKotState));
+  // The KOT state was committed up front (claimKot); only the broadcast is left to await.
+  await commitAlongside(broadcast, Promise.resolve());
   if (reprint) {
     // Same reasoning as the browser-fallback branch above — kotPrintCount's
     // increment inside commitKotState() is skipped on reprint, so this is the only
     // durable trace. One row per tap (not per routed printer) — the ticket is the
     // same reprinted KOT regardless of how many physical printers it fans out to.
-    logAudit(req, "kot.reprint", "order", orderId, { kotNumber: kotNumStr });
+    await logAudit(req, "kot.reprint", "order", orderId, { kotNumber: kotNumStr });
   }
 
   const failureMessage = directFailures.length > 0
@@ -475,16 +503,21 @@ export async function runKotPrint(p: {
   }
 
   const allNonEscPos = nonEscPosJobs.length === kotJobs.length;
+  // Mixed routing (one thermal + one office printer): the office printer's ticket used to be
+  // dropped — browser payloads were attached only when EVERY routed printer was non-ESC/POS,
+  // while the snapshot was already committed. Any non-ESC/POS ticket now goes to the browser
+  // fallback; dispatched jobs still reach their station through the PRINT_JOB bridge.
+  const directPrinted = directJobs.length - directFailures.length;
   return {
     ok: true,
     body: {
-      printed: false,
+      printed: directPrinted > 0,
       dispatched: dispatchedJobs.length > 0,
       printJob: dispatchedJobs[0],
       printJobs: dispatchedJobs.length > 0 ? dispatchedJobs : undefined,
-      browserPrint: allNonEscPos,
+      browserPrint: nonEscPosJobs.length > 0,
       // Every ticket the non-thermal printer(s) could not take, as real ESC/POS bytes (see above).
-      browserPayloads: allNonEscPos
+      browserPayloads: nonEscPosJobs.length > 0
         ? nonEscPosJobs.map((j) => toBrowserPayload(j.buffer, j.printer.width ?? 48))
         : undefined,
       reason: allNonEscPos ? "non_escpos_printer" : undefined,
@@ -526,7 +559,12 @@ async function runKotCatchUp(
 /** Server-side replacement for POST /api/orders/:id/bill-requested. Non-fatal by design. */
 async function markTableBilled(order: OrderRow): Promise<void> {
   if (!order.tableId) return;
+  // A reprint of a settled / cancelled bill must not mark the table "billed" — it may already
+  // belong to the next party. Only a running order still holding its table flips it.
+  if (order.paymentStatus === "paid" || order.status === "cancelled" || order.status === "served") return;
   try {
+    const table = await storage.getTableById(Number(order.tableId));
+    if (table?.currentOrderId != null && table.currentOrderId !== order.id) return;
     await storage.updateTableStatus(Number(order.tableId), "billed");
     await publishRealtime({ type: "TABLE_UPDATE" });
   } catch (err) {
@@ -790,7 +828,7 @@ async function runBillAfterCatchUp(
         .set({ billPrintCount: sql`${orders.billPrintCount} + 1` })
         .where(eq(orders.id, orderId)),
     );
-    if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
+    if (isReprint) await logAudit(req, "bill.reprint", "order", orderId, {});
     return done({ browserPrint: true, browserPayload: browserPayload() });
   }
 
@@ -803,7 +841,7 @@ async function runBillAfterCatchUp(
     // non-ESC-POS browser fallback, remote-to-desktop) in one place — the 4th branch
     // (no printer configured at all, above) logs it inline since it commits before
     // this closure is even defined.
-    if (isReprint) logAudit(req, "bill.reprint", "order", orderId, {});
+    if (isReprint) await logAudit(req, "bill.reprint", "order", orderId, {});
   };
 
   const escPosOk = supportsRawEscPos(printer);

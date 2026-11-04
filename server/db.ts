@@ -1,6 +1,7 @@
 import pkg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "@shared/schema";
+import { dbSslConfig, stripSslParams } from "./dbSsl";
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL must be set. Check your .env file.");
@@ -8,9 +9,22 @@ if (!process.env.DATABASE_URL) {
 
 const { Pool } = pkg;
 
+// TLS: verified against DATABASE_CA_CERT when it is set, otherwise encrypted but unverified
+// (the old behaviour). See server/dbSsl.ts. A set-but-unreadable value refuses to boot
+// rather than silently connecting unverified.
+const sslCfg = dbSslConfig(process.env);
+if (sslCfg.mode === "invalid") throw new Error(`[DB] ${sslCfg.error}`);
+if (sslCfg.mode === "unverified") {
+  console.warn("[DB] TLS certificate NOT verified — set DATABASE_CA_CERT to Supabase's CA to verify it.");
+} else {
+  console.log("[DB] TLS certificate verification ON (DATABASE_CA_CERT).");
+}
+
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  // sslmode/sslrootcert in the URL would REPLACE the ssl object below (pg merges the parsed
+  // URL over the config), so they are removed and the switch above always decides.
+  connectionString: stripSslParams(process.env.DATABASE_URL),
+  ssl: sslCfg.ssl,
 
   // ── Network resilience settings ───────────────────────────────────────────
   // Raise connection timeout so restricted/slow networks have time to connect

@@ -262,17 +262,20 @@ async function syncCounterFromMax(
   const dbMax = parseInt(maxValueRaw.replace(/\D/g, ""), 10) || 0;
   const cached = cache.get()[field] ?? 0;
   if (dbMax <= cached) return;
-  // Only ever runs after a successful DB load (settingsCache.ts init()), so this blob is the
-  // DB's own settings plus the repaired counter — never the built-in fallback.
-  const repaired = { ...cache.get(), [field]: dbMax };
-  cache.patch(() => repaired);
-  await db.insert(restaurantSettings)
-    .values({ id: 1, settings: repaired as any, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: restaurantSettings.id,
-      set: { settings: repaired as any, updatedAt: new Date() },
-    })
-    .catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
+  // Raise ONLY this counter, atomically, never below its current DB value. It used to write the
+  // whole settings blob as this instance loaded it at boot — clobbering numbers another instance
+  // issued and settings saved in between (and the second call rewrote the first counter too).
+  await db.execute(sql`
+    UPDATE restaurant_settings
+    SET settings = jsonb_set(
+          settings::jsonb,
+          ARRAY[${field}]::text[],
+          to_jsonb(GREATEST(COALESCE((settings ->> ${field})::int, 0), ${dbMax}::int))
+        )::json,
+        updated_at = NOW()
+    WHERE id = 1
+  `).catch((err: unknown) => console.error(`[settings] ${field} sync save failed:`, err));
+  cache.patch((current) => ({ ...current, [field]: Math.max(current[field] ?? 0, dbMax) }));
   console.log(`[settings] ${field} synced from DB max: ${dbMax}`);
 }
 
@@ -425,7 +428,19 @@ export function incrementKotCounter(): Promise<number> {
 // plain UPDATE on the same row (a bare UPDATE on a row waits for a FOR UPDATE lock
 // on that row to release), so a counter increment can no longer land inside this
 // function's read-to-write window.
-export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
+//
+// The bill/KOT counters are NEVER taken from `settings` unless `opts.allowCounters` (only the
+// admin reset paths pass it). Settings pages PUT the whole blob they loaded minutes earlier; its
+// counters were the values at page load, so every save rolled the order/KOT numbers back and the
+// next orders collided with existing ORD numbers. issueCounter is the only writer during service.
+export async function saveSettings(
+  settings: Partial<RestaurantSettings>,
+  opts: { allowCounters?: boolean } = {},
+): Promise<RestaurantSettings> {
+  if (!opts.allowCounters) {
+    const { billCounter: _b, kotCounter: _k, ...rest } = settings as any;
+    settings = rest;
+  }
   const updated = await db.transaction(async (tx) => {
     const rows = await tx.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1)).for("update");
     const current: RestaurantSettings = rows.length > 0 ? buildSettings(rows[0].settings as Record<string, any>) : loadFromFile();

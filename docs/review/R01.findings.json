@@ -1,0 +1,76 @@
+{
+  "slice": "R01",
+  "coverage": "Read every line of: _tmp-raw-print-test.mjs:1-39, api/index.ts:1-4, client/src/App.tsx:1-281, client/src/components/AddInventoryModal.tsx:1-288, AddMenuItemModal.tsx:1-693, AnimatedContainer.tsx:1-32, AppLayout.tsx:1-18, AuditLogPanel.tsx:1-129, AutomationPanel.tsx:1-1100, BackupPanel.tsx:1-150, BagichaLogo.tsx:1-39, BottomNav.tsx:1-72, CategoriesTab.tsx:1-345, DayPicker.tsx:1-147, DueSettleDialog.tsx:1-110, ErrorBoundary.tsx:1-81, FeedbackWidget.tsx:1-86. Cross-checked server/routes.ts POST/PUT /api/menu, GET/POST /api/automation/config, packages/api-client apiUrl/timedFetch credentials, server/services/feedbackService.ts getFeedbackStats. Nothing skipped.",
+  "findings": [
+    {
+      "file": "client/src/components/AddMenuItemModal.tsx",
+      "line": 233,
+      "severity": "high",
+      "category": "data loss",
+      "title": "Editing any sized item outside the 'Woodfire Pizza' category wipes its sizes",
+      "detail": "The size editor is only rendered when the selected category is named exactly 'Woodfire Pizza'. For every other category onSubmit sends `sizes: null`, and PUT /api/menu/:id unconditionally writes `updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null`. The useEffect also drops any size whose name is not Small/Medium/Large (line 268), so even a pizza with e.g. a 'Regular' size loses it.",
+      "failure_scenario": "Admin opens 'Cold Coffee' (sizes Regular ₹120 / Large ₹160, category Beverages) in the Menu page to fix a typo in its description and clicks Update. sizes becomes NULL; POS now sells it only at the base price with no size picker, and historical size-price floors are gone. Same for a pizza that had a non-Small/Medium/Large size.",
+      "suggested_fix": "Render the size editor whenever the item has sizes (or offer it for any category), keep arbitrary size names, and only send `sizes` when the user actually edited them (omit the key otherwise, and make the PUT route leave sizes untouched when `b.sizes === undefined`)."
+    },
+    {
+      "file": "client/src/components/AddMenuItemModal.tsx",
+      "line": 340,
+      "severity": "medium",
+      "category": "wrong result",
+      "title": "Short Code, Vegetarian, Spicy and Allergens fields are never saved",
+      "detail": "The form collects shortCode, isVegetarian, isSpicy and allergens and sends them, but neither POST /api/menu nor PUT /api/menu/:id (server/routes.ts 1660-1709) copies those keys into the insert/update payload, so they are silently discarded. The success toast still says the item was saved.",
+      "failure_scenario": "Admin sets Short Code 'HPP' on Paneer Pizza and saves; the toast says updated, but reopening shows an empty Short Code and typing HPP + Enter in the POS short-code box adds nothing.",
+      "suggested_fix": "Persist shortCode (and the other flags if columns exist) in both menu routes, or remove the fields from the modal."
+    },
+    {
+      "file": "client/src/components/AutomationPanel.tsx",
+      "line": 342,
+      "severity": "medium",
+      "category": "data loss",
+      "title": "If the initial config GET fails, the next toggle POSTs DEFAULT_GC and wipes the saved server config",
+      "detail": "gc starts as DEFAULT_GC; the GET on mount swallows any failure (`.catch(() => {})`) and still clears gcLoading, so the Rules/Setup tabs render with defaults. saveGc posts the WHOLE `{...gc, ...patch}` object, so one click sends empty-string watiApiKey/metaAccessToken (not the mask, so the server does not skip them), resets birthday/feedback/digest flags, owner phone and both message templates.",
+      "failure_scenario": "Admin opens Customers → Automation while the network blips (GET returns 5xx or times out). The Rules tab shows everything off; admin flips 'Ask for Feedback' on. The server config now has no Meta/WATI credentials, no owner phone and default templates; automated messages and the daily digest stop.",
+      "suggested_fix": "Only allow saves after a successful load (show an error + retry otherwise), and POST only the changed `patch` keys instead of the whole object."
+    },
+    {
+      "file": "client/src/components/AutomationPanel.tsx",
+      "line": 347,
+      "severity": "medium",
+      "category": "error handling / race",
+      "title": "Config saves ignore HTTP errors, fire on every keystroke and can land out of order",
+      "detail": "saveGc never checks res.ok and catches every error silently, so a 403/500 looks saved (saveCreds' catch can never run, so 'Saved' is always shown). Text inputs (owner phone, templates, Meta token, WATI key/endpoint) call saveGc on every onChange, each a separate un-sequenced POST that also restarts the scheduler; on Vercel two concurrent POSTs can be applied in either order, so an earlier, shorter value can be the one that persists. Typing into the masked '***configured***' password field also immediately saves the partial string as the real secret.",
+      "failure_scenario": "Owner types phone 919876543210 quickly; the POST for '91987654321' is processed after the final one and the digest goes to an invalid number, with the UI still showing the full number. Or the session lacks admin (403) and 'Save Credentials' shows 'Saved' while nothing was stored.",
+      "suggested_fix": "Debounce text fields (or save on blur / explicit Save), serialize saves (await the previous one or send a version), check res.ok and surface failures, and treat the masked secret field as write-only."
+    },
+    {
+      "file": "client/src/components/AuditLogPanel.tsx",
+      "line": 90,
+      "severity": "medium",
+      "category": "broken feature",
+      "title": "Audit log fetch omits credentials, so it 401s from the Electron thin client",
+      "detail": "Every other API call uses credentials: 'include' (timedFetch defaults to it). This raw fetch uses the browser default 'same-origin', so when the UI runs from file:// against the remote API (Electron thin client, the shop PC) the session cookie is not sent; requireAdmin rejects it and the panel shows its error/empty state forever.",
+      "failure_scenario": "Owner opens Settings → Audit Log on the shop desktop app: the query throws 'Failed to fetch audit logs' every 30 s and no entries ever appear, though it works in a browser on the Vercel origin.",
+      "suggested_fix": "Use apiJson(`/api/admin/audit-logs?${params}`) (or add credentials: 'include')."
+    },
+    {
+      "file": "client/src/components/AutomationPanel.tsx",
+      "line": 167,
+      "severity": "low",
+      "category": "wrong result",
+      "title": "Manual WhatsApp Send silently does nothing for 10-digit numbers starting with 91",
+      "detail": "QueueCard uses `digits.startsWith(\"91\") ? digits : 91+digits` — the exact bug CLAUDE.md documents as fixed in the server normalizers. A genuine mobile like 9187654321 stays 10 digits, fails the `< 12` check and handleSend returns with no feedback.",
+      "failure_scenario": "Customer with phone 9187654321 appears in the Send queue; staff tap Send and nothing happens (no wa.me tab, no toast), so that customer can never be followed up from this screen.",
+      "suggested_fix": "Normalize by length (10 → prepend 91, 11 with leading 0 → strip and prepend, 12 starting 91 → keep), ideally via a shared helper."
+    },
+    {
+      "file": "client/src/components/AddMenuItemModal.tsx",
+      "line": 151,
+      "severity": "low",
+      "category": "stale UI",
+      "title": "Deleting from the modal doesn't refresh the Admin Menu list",
+      "detail": "The Menu page lists items under the query key ['/api/menu?all=true']; the delete mutation only invalidates ['/api/menu'], which does not prefix-match that key (create/update invalidate both). The MENU_UPDATE realtime handler also only invalidates ['/api/menu'].",
+      "failure_scenario": "Admin deletes an item via Edit → Delete; the toast says deleted but the item stays in the Menu list until a reload/refetch, inviting a second delete or an edit of a deleted row.",
+      "suggested_fix": "Also invalidate ['/api/menu?all=true'] in deleteMenuItemMutation.onSuccess."
+    }
+  ]
+}

@@ -36,6 +36,12 @@ export interface EnqueueInput {
   ruleId?: number | null;
 }
 
+/** Triggers that nudge a lapsed/at-risk customer — at most one of these per customer per day. */
+const REENGAGEMENT_TRIGGERS = ["WIN_BACK", "AT_RISK", "INACTIVITY", "INACTIVITY_7", "INACTIVITY_14", "INACTIVITY_30", "HIGH_SPEND", "VISIT_MILESTONE"] as const;
+function isReengagementTrigger(t: string): boolean {
+  return (REENGAGEMENT_TRIGGERS as readonly string[]).includes(t) || t.startsWith("INACTIVITY");
+}
+
 export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
   // Dedup so no path double-sends the same template to a customer in a day:
   //  - any pending/sending job for this customer + trigger (offline driver can't
@@ -53,7 +59,12 @@ export async function enqueueWhatsApp(input: EnqueueInput): Promise<void> {
     .from(automationJobs)
     .where(and(
       eq(automationJobs.customerId, input.customerId),
-      eq(automationJobs.triggerType, input.trigger),
+      // Re-engagement messages are ONE per customer per day whichever engine sends them: the daily
+      // rule engine stores its rule's trigger (INACTIVITY / HIGH_SPEND…) and the hourly engine
+      // WIN_BACK / AT_RISK, so a same-trigger check let both reach the same customer on one day.
+      isReengagementTrigger(input.trigger)
+        ? inArray(automationJobs.triggerType, REENGAGEMENT_TRIGGERS as unknown as string[])
+        : eq(automationJobs.triggerType, input.trigger),
       or(
         inArray(automationJobs.status, ["pending", "sending"]),
         and(eq(automationJobs.status, "sent"), gte(automationJobs.executedAt, todayStart)),
@@ -99,6 +110,35 @@ async function isSuppressed(job: { customerId: string; phone: string | null }): 
   return false;
 }
 
+/**
+ * Send-time guard for automated WhatsApp sends that do NOT go through this queue (the CRM rule
+ * engine and the settlement fallback call messagingService.sendMessage, which sends through the
+ * driver directly). Those used to skip the opt-out check and the maxPerDay ban guard entirely.
+ * Opt-out is looked up by PHONE (last 10 digits), not by one customers_master key, so a STOP
+ * recorded against a duplicate/canonical row still applies. Returns why not to send, or null.
+ */
+export async function automatedSendBlock(phone: string): Promise<"opted_out" | "daily_cap" | null> {
+  const normalized = normalizeWaPhone(phone);
+  const last10 = normalized.replace(/\D/g, "").slice(-10);
+  if (last10.length === 10) {
+    const conv = await db.select({ optedOut: conversations.optedOut })
+      .from(conversations).where(eq(conversations.phone, normalized)).limit(1);
+    if (conv[0]?.optedOut) return "opted_out";
+    const masters = await db.select({ id: customersMaster.id, key: customersMaster.key })
+      .from(customersMaster)
+      .where(sql`right(regexp_replace(coalesce(${customersMaster.phone}, ${customersMaster.key}), '\\D', '', 'g'), 10) = ${last10}`);
+    if (masters.some((m) => isOptedOut(m.key))) return "opted_out";
+    if (masters.length > 0) {
+      const muted = await db.select({ id: customerProfiles.id }).from(customerProfiles)
+        .where(and(inArray(customerProfiles.customerId, masters.map((m) => m.id)), eq(customerProfiles.doNotSendUpdate, true)))
+        .limit(1);
+      if (muted.length > 0) return "opted_out";
+    }
+  }
+  if (await sentToday() >= getAutomationConfig().maxPerDay) return "daily_cap";
+  return null;
+}
+
 async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
   const driver = getDriver();
   if (!driver || driver.getState() !== "connected") return "waiting";
@@ -120,8 +160,22 @@ async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
   // Claim (single-process deployment — a status flip is sufficient)
   await db.update(automationJobs).set({ status: "sending" }).where(eq(automationJobs.id, job.id));
 
-  const masterRows = await db.select().from(customersMaster)
-    .where(eq(customersMaster.id, job.customerId)).limit(1);
+  // Everything up to sendText can fail on a transient DB error — and nothing has been sent yet, so
+  // the job goes back to 'pending' (with a minute's backoff) instead of sitting in 'sending' until
+  // a restart, which also blocked re-enqueueing that customer+trigger.
+  let masterRows: Array<typeof customersMaster.$inferSelect>;
+  let suppressed: boolean;
+  try {
+    masterRows = await db.select().from(customersMaster)
+      .where(eq(customersMaster.id, job.customerId)).limit(1);
+    suppressed = !!job.phone && await isSuppressed(job);
+  } catch (err) {
+    await db.update(automationJobs)
+      .set({ status: "pending", nextAttemptAt: new Date(Date.now() + 60_000) })
+      .where(eq(automationJobs.id, job.id))
+      .catch(() => {});
+    throw err;
+  }
   const master = masterRows[0];
   const customerName = master?.name ?? "Guest";
   const customerKey = master?.key ?? job.phone ?? "";
@@ -133,7 +187,7 @@ async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
     return "sent"; // continue draining
   }
 
-  if (await isSuppressed(job)) {
+  if (suppressed) {
     await db.update(automationJobs)
       .set({ status: "skipped", executedAt: new Date(), error: "Customer opted out" })
       .where(eq(automationJobs.id, job.id));

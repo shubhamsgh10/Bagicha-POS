@@ -4,7 +4,7 @@ import { unlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
-import { sendRawFast } from "./persistentPs.js";
+import { sendRawFast, SessionNotReadyError } from "./persistentPs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -89,7 +89,11 @@ export async function sendRawToWindowsQueue(queueName: string, data: Buffer): Pr
   }
   try {
     return await sendRawFast(queueName, data);
-  } catch {
+  } catch (e) {
+    // Fall back ONLY when the fast path never wrote the job. After a write (a 30 s timeout, the
+    // session dying mid-job, a PRINT_FAIL) the ticket may already be printing — re-sending it via
+    // the legacy path printed it twice. Those errors go to the print queue's retry/release logic.
+    if (!(e instanceof SessionNotReadyError)) throw e;
     console.warn("[print] Persistent PS session unavailable, using per-job fallback");
     return sendRawLegacy(queueName, data);
   }
