@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as E from "../shared/print/escpos.js";
+import { formatISTDateTime } from "../shared/print/formatDate.js";
 import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig, type PrintStationConfig } from "../shared/electron/ipc.js";
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
@@ -285,10 +286,11 @@ function buildTestBuffer(printer: PrinterConfig): Buffer {
     E.line("TEST PRINT"),
     E.BOLD_OFF,
     E.divider("-", W),
-    E.centered(printer.name, W),
-    E.centered(new Date().toLocaleString("en-IN"), W),
+    // Plain lines under the printer's own ALIGN_CENTER (E.centered double-centres), and IST time.
+    E.line(printer.name),
+    E.line((({ dateStr, timeStr }) => `${dateStr} ${timeStr}`)(formatISTDateTime(new Date()))),
     E.divider("=", W),
-    E.centered("Printer is working correctly!", W),
+    E.line("Printer is working correctly!"),
     E.feed(3),
     E.CUT,
   );

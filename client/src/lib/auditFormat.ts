@@ -52,6 +52,7 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   "coupon.issue":         { label: "Coupon Issued",  color: "bg-purple-100 text-purple-800" },
   "settings.update":      { label: "Settings Changed", color: "bg-gray-100 text-gray-800" },
   "settings.bill_number_reset": { label: "Bill No. Reset", color: "bg-orange-100 text-orange-800" },
+  "whatsapp.reply":       { label: "WhatsApp Reply", color: "bg-green-100 text-green-800" },
 };
 
 export function actionLabel(action: string): ActionLabel {

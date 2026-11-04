@@ -173,5 +173,7 @@ export async function resolveWindowsQueueForPrinter(
   const byUsb = pickUsbQueueFallback(queues);
   if (byUsb) return byUsb.queueName;
 
-  return queues[0]?.queueName;
+  // No match: say so (the caller reports "No Windows print queue found"). It used to return the
+  // first installed queue of ANY kind — an office laser, a network MFP — and send it raw ESC/POS.
+  return undefined;
 }

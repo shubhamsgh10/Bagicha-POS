@@ -89,7 +89,9 @@ const pay = (cash: number, upi: number, allowShortfall = false) => {
   const r = planDueSettlement(due({ totalAmount: "261.45" }), pay(0, 261));
   checks.push(["₹261 UPI on a ₹261.45 due is accepted without allowShortfall", ok(r)]);
   if (r.ok) {
-    checks.push(["…and the 45 paise is recorded as the shortfall, like POS settles", near(Number(r.shortfallAmount), 0.45) && !r.isShort]);
+    // Rounding inside the ₹1 tolerance is fully settled, not a write-off: nothing recorded as
+    // shortfall (it used to store 0.45, which Reports then showed as "written off").
+    checks.push(["…and the 45 paise is NOT recorded as a shortfall (rounding, not a write-off)", near(Number(r.shortfallAmount), 0) && !r.isShort]);
   }
 }
 

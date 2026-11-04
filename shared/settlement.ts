@@ -83,14 +83,18 @@ export function resolveSettlement({ mode, cash, upi, orderTotal }: SettlementInp
   }
 
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-  const shortfallAmount = Math.max(0, total - totalPaid);
+  const gap = Math.max(0, total - totalPaid);
+  const isShort = gap > SETTLE_TOLERANCE;
 
   return {
     payments,
     totalPaid,
     changeAmount: Math.max(0, totalPaid - total),
-    shortfallAmount,
+    // A gap inside SETTLE_TOLERANCE is rounding — fully settled, NOT a write-off. It used to be
+    // returned (and persisted) anyway, so whole-rupee payments on paisa totals piled up in
+    // orders.shortfall_amount, which Reports shows as "written off", with no write-off row behind it.
+    shortfallAmount: isShort ? gap : 0,
     isDue: false,
-    isShort: shortfallAmount > SETTLE_TOLERANCE,
+    isShort,
   };
 }
