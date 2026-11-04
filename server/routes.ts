@@ -79,6 +79,7 @@ import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsapp
 import { registerStaffRoutes } from "./staffRoutes";
 import { priceOrderWithMenu, computeTotalsFromLines, type PricedOrder } from "./services/orderPricing";
 import { computeLineCosts } from "@shared/menuCost";
+import { menuPriceError, menuSizesError } from "@shared/menuValidation";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { orderEditBlock, isNoopItemsSave, kitchenTicketLines, discountNeedsApproval } from "@shared/orderItemsSave";
 import { buildSpecialInstructions } from "@shared/orderItemText";
@@ -1406,7 +1407,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/categories", requireAuth, async (req, res) => {
+  app.post("/api/categories", requireManagerOrAdmin, async (req, res) => {
     try {
       const categoryData = insertCategorySchema.parse(req.body);
       const category = await storage.createCategory(categoryData);
@@ -1420,7 +1421,7 @@ export async function registerRoutes(
   // Registered before /:id — Express matches routes in registration order, so a literal path
   // (like /reorder) registered AFTER a param path (/:id) is unreachable; it was previously being
   // swallowed by /:id (parseInt("reorder") -> NaN), silently breaking drag-to-reorder.
-  app.put("/api/categories/reorder", requireAuth, async (req, res) => {
+  app.put("/api/categories/reorder", requireManagerOrAdmin, async (req, res) => {
     try {
       const { orderedIds } = req.body;
       if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
@@ -1435,7 +1436,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/categories/:id", requireAuth, async (req, res) => {
+  app.put("/api/categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, description } = req.body;
@@ -1448,7 +1449,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/categories/:id", requireAuth, async (req, res) => {
+  app.delete("/api/categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteCategory(id);
@@ -1522,7 +1523,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/tables", requireAuth, async (req, res) => {
+  app.post("/api/tables", requireManagerOrAdmin, async (req, res) => {
     try {
       const { name, capacity, section } = req.body;
       if (!name) return res.status(400).json({ error: "Table name is required" });
@@ -1537,7 +1538,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/tables/:id", requireAuth, async (req, res) => {
+  app.put("/api/tables/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, capacity, section } = req.body;
@@ -1552,7 +1553,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/tables/:id", requireAuth, async (req, res) => {
+  app.delete("/api/tables/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteTable(id);
@@ -1668,12 +1669,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/menu", requireAuth, async (req, res) => {
+  app.post("/api/menu", requireManagerOrAdmin, async (req, res) => {
     try {
       const b = req.body;
       if (!b.name || !b.categoryId) {
         return res.status(400).json({ error: "Name and category are required" });
       }
+      const priceErr = menuPriceError(b.price ?? "0") ?? menuSizesError(Array.isArray(b.sizes) ? b.sizes : null);
+      if (priceErr) return res.status(400).json({ error: priceErr });
       const addonsEnabled = b.addonsEnabled === true;
       const menuItem = await storage.createMenuItem({
         name: String(b.name).trim(),
@@ -1695,10 +1698,12 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/menu/:id", requireAuth, async (req, res) => {
+  app.put("/api/menu/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const b = req.body;
+      const priceErr = (b.price !== undefined ? menuPriceError(b.price) : null) ?? (b.sizes !== undefined ? menuSizesError(b.sizes) : null);
+      if (priceErr) return res.status(400).json({ error: priceErr });
       const updatePayload: any = {};
       if (b.name !== undefined)            updatePayload.name = String(b.name).trim();
       if (b.description !== undefined)     updatePayload.description = b.description ? String(b.description).trim() : null;
@@ -1706,9 +1711,13 @@ export async function registerRoutes(
       if (b.categoryId !== undefined)      updatePayload.categoryId = Number(b.categoryId);
       if (b.isAvailable !== undefined)     updatePayload.isAvailable = b.isAvailable !== false;
       if (b.preparationTime !== undefined) updatePayload.preparationTime = Number(b.preparationTime) || 15;
-      updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
-      updatePayload.addonsEnabled = b.addonsEnabled === true;
-      updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
+      // Only what was sent: an edit that doesn't mention sizes/add-ons (a description fix) used to
+      // null the sizes and clear the add-ons of the item.
+      if (b.sizes !== undefined)           updatePayload.sizes = Array.isArray(b.sizes) ? b.sizes : null;
+      if (b.addonsEnabled !== undefined)   updatePayload.addonsEnabled = b.addonsEnabled === true;
+      if (b.addonsEnabled !== undefined || b.addons !== undefined) {
+        updatePayload.addons = b.addonsEnabled === true && Array.isArray(b.addons) ? b.addons : [];
+      }
       if (b.inventoryLinks !== undefined) updatePayload.inventoryLinks = sanitizeInventoryLinks(b.inventoryLinks);
       const menuItem = await storage.updateMenuItem(id, updatePayload);
       broadcast({ type: "MENU_UPDATE" });
@@ -1719,7 +1728,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/menu/:id", requireAuth, async (req, res) => {
+  app.delete("/api/menu/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteMenuItem(id);
@@ -1731,14 +1740,22 @@ export async function registerRoutes(
   });
 
   // Bulk update menu items
-  app.post("/api/menu/bulk-update", requireAuth, async (req, res) => {
+  app.post("/api/menu/bulk-update", requireManagerOrAdmin, async (req, res) => {
     try {
       const { ids, updates } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
       const allowed: any = {};
       if (updates.isAvailable !== undefined) allowed.isAvailable = Boolean(updates.isAvailable);
       if (updates.categoryId !== undefined) allowed.categoryId = Number(updates.categoryId);
-      if (updates.price !== undefined) allowed.price = String(updates.price);
+      if (updates.price !== undefined) {
+        const e = menuPriceError(updates.price);
+        if (e) return res.status(400).json({ error: e });
+        allowed.price = String(updates.price);
+      }
+      if (Array.isArray(updates.sizes)) {
+        const e = menuSizesError(updates.sizes);
+        if (e) return res.status(400).json({ error: e });
+      }
       // A size-priced item's actual sale price comes from sizes[].price, never the base
       // `price` column (see shared/orderPricing.ts's floor logic) — bulk price updates
       // used to only ever send `price`, so they silently no-op for every sized item
@@ -1764,7 +1781,7 @@ export async function registerRoutes(
   });
 
   // Bulk delete menu items
-  app.post("/api/menu/bulk-delete", requireAuth, async (req, res) => {
+  app.post("/api/menu/bulk-delete", requireManagerOrAdmin, async (req, res) => {
     try {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids required" });
@@ -1809,7 +1826,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/inventory", requireAuth, async (req, res) => {
+  app.post("/api/inventory", requireManagerOrAdmin, async (req, res) => {
     try {
       const inventoryData = insertInventorySchema.parse(req.body);
       const inventory = await storage.createInventoryItem(inventoryData);
@@ -1819,7 +1836,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/inventory/:id", requireAuth, async (req, res) => {
+  app.put("/api/inventory/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const inventoryData = insertInventorySchema.partial().parse(req.body);
@@ -1830,7 +1847,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/inventory/:id", requireAuth, async (req, res) => {
+  app.delete("/api/inventory/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteInventoryItem(id);
@@ -1852,7 +1869,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/inventory-categories", requireAuth, async (req, res) => {
+  app.post("/api/inventory-categories", requireManagerOrAdmin, async (req, res) => {
     try {
       const categoryData = insertInventoryCategorySchema.parse(req.body);
       const category = await storage.createInventoryCategory(categoryData);
@@ -1864,7 +1881,7 @@ export async function registerRoutes(
 
   // Registered before /:id — a literal path after a param path is unreachable in Express (see the
   // /api/categories/reorder bug fixed below in this same file).
-  app.put("/api/inventory-categories/reorder", requireAuth, async (req, res) => {
+  app.put("/api/inventory-categories/reorder", requireManagerOrAdmin, async (req, res) => {
     try {
       const { orderedIds } = req.body;
       if (!Array.isArray(orderedIds)) return res.status(400).json({ error: "orderedIds must be an array" });
@@ -1875,7 +1892,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+  app.put("/api/inventory-categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { name, description } = req.body;
@@ -1887,7 +1904,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/inventory-categories/:id", requireAuth, async (req, res) => {
+  app.delete("/api/inventory-categories/:id", requireManagerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteInventoryCategory(id);
