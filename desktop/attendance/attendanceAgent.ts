@@ -49,6 +49,12 @@ export class AttendanceAgent {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private bootstrapTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  /** Set while start() is between its first await and running=true — two callers
+   *  (bootstrap timer vs ATTENDANCE_REFRESH) used to both pass the running check. */
+  private starting = false;
+  /** One flush at a time: overlapping flushes sliced the buffer by their own batch
+   *  length and could drop punches the other flush had not sent. */
+  private flushing = false;
   private connected = false;
   private lastSyncAt: number | null = null;
   private lastError: string | undefined;
@@ -68,7 +74,16 @@ export class AttendanceAgent {
 
   // ── lifecycle ────────────────────────────────────────────────────────────────
   async start(): Promise<void> {
-    if (this.running) return;
+    if (this.running || this.starting) return;
+    this.starting = true;
+    try {
+      await this.startInner();
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startInner(): Promise<void> {
     const cfg = await this.getConfig().catch(() => null);
     if (!cfg || !cfg.enabled || !cfg.ip) {
       // Not configured / not logged in yet — retry shortly so it self-starts after login.
@@ -177,7 +192,16 @@ export class AttendanceAgent {
   }
 
   private async flush(): Promise<void> {
-    if (this.buffer.length === 0) return;
+    if (this.buffer.length === 0 || this.flushing) return;
+    this.flushing = true;
+    try {
+      await this.flushOnce();
+    } finally {
+      this.flushing = false;
+    }
+  }
+
+  private async flushOnce(): Promise<void> {
     const batch = this.buffer.slice(0, FLUSH_BATCH);
     const cookie = await this.getCookieHeader().catch(() => "");
     try {
@@ -195,7 +219,9 @@ export class AttendanceAgent {
       });
       if (res.status === 401) return; // no POS user logged in yet — keep buffered, retry later
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this.buffer = this.buffer.slice(batch.length);
+      // Remove exactly the punches this request sent (enqueue may have appended meanwhile).
+      const sent = new Set(batch);
+      this.buffer = this.buffer.filter((b) => !sent.has(b));
       this.persistBuffer();
       this.lastSyncAt = Date.now();
       this.lastError = undefined;

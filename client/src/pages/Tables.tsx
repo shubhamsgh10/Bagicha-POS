@@ -672,7 +672,7 @@ export default function Tables() {
 
                         {/* Hover action bar */}
                         <div
-                          className="px-2 pb-2 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="px-2 pb-2 flex items-center justify-end gap-1 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-within:opacity-100 transition-opacity"
                           onClick={e => e.stopPropagation()}
                         >
                           {table.status === "running" && (

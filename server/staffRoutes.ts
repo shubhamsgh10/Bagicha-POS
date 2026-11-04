@@ -67,7 +67,7 @@ export function registerStaffRoutes(app: Express) {
       const staffMap = new Map(allStaffMembers.map(s => [s.id, s.name]));
 
       // Merge everything unresolvable (or admin/owner, excluded by design) into one bucket.
-      const merged = new Map<string, { staffId: number | null; staffName: string; totalOrders: number; totalRevenue: number }>();
+      const merged = new Map<string, { key: string; staffId: number | null; staffName: string; totalOrders: number; totalRevenue: number }>();
       for (const r of rows) {
         let staffId: number | null = null;
         let staffName: string | null = null;
@@ -98,6 +98,7 @@ export function registerStaffRoutes(app: Express) {
           existing.totalRevenue += parseFloat(r.totalRevenue);
         } else {
           merged.set(key, {
+            key, // "sm:<id>" / "u:<id>" / "unassigned" — unique across both id spaces
             staffId: staffName ? staffId : null,
             staffName: staffName ?? "Unassigned",
             totalOrders: Number(r.totalOrders),

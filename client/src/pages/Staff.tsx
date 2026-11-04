@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, apiJson } from '@/lib/api';
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -148,7 +148,7 @@ function ShiftsPanel() {
   });
 
   const recomputeMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/attendance/recompute-shifts", {}),
+    mutationFn: async () => (await apiRequest("POST", "/api/attendance/recompute-shifts", {})).json(),
     onSuccess: (res: any) => {
       toast({ title: "Shifts recomputed", description: `${res?.rows ?? 0} attendance day(s) updated from punches.` });
       queryClient.invalidateQueries({ queryKey: [`/api/shifts/roster?week=${currentWeek}`] });
@@ -307,7 +307,13 @@ function LeavesPanel() {
     mutationFn: async (data: any) => {
       const [kind, idStr] = data.personKey.split(":"); // "user:4" | "staff:9" — ids collide across tables
       const start = new Date(data.startDate), end = new Date(data.endDate);
-      const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+      if (!data.startDate || !data.endDate || isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new Error("Pick a start and an end date.");
+      }
+      if (end.getTime() < start.getTime()) {
+        throw new Error("The end date is before the start date.");
+      }
+      const totalDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
       return apiRequest("POST", "/api/leaves", {
         kind, id: Number(idStr), leaveType: data.leaveType, startDate: data.startDate, endDate: data.endDate, reason: data.reason, totalDays,
       });
@@ -622,17 +628,15 @@ export default function Staff() {
   // Roster = unified payroll people (owner/admins excluded); used for the EMPLOYEE filter.
   const { data: roster = [] } = useQuery<any[]>({ queryKey: ["/api/payroll/people"] });
 
-  const { data: attendance = [], isLoading: attLoading } = useQuery<AttendanceRecord[]>({
+  const { data: attendance = [], isLoading: attLoading, isError: attError } = useQuery<AttendanceRecord[]>({
     queryKey: ["/api/attendance/range", fromDate, toDate, empFilter],
     retry: false,
     queryFn: async () => {
       try {
         const params = new URLSearchParams({ from: fromDate, to: toDate });
         if (empFilter !== "all") params.set("key", empFilter);
-        const res = await fetch(apiUrl(`/api/attendance/range?${params}`), { credentials: "include" });
-        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
-        return await res.json();
-      } catch { return []; }
+        return await apiJson<AttendanceRecord[]>(`/api/attendance/range?${params}`);
+      } catch (e) { throw e; }
     },
   });
 
@@ -642,10 +646,8 @@ export default function Staff() {
     queryFn: async () => {
       try {
         const params = new URLSearchParams({ from: fromDate, to: toDate });
-        const res = await fetch(apiUrl(`/api/attendance/summary?${params}`), { credentials: "include" });
-        if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return [];
-        return await res.json();
-      } catch { return []; }
+        return await apiJson<AttendanceSummary[]>(`/api/attendance/summary?${params}`);
+      } catch (e) { throw e; }
     },
   });
 
@@ -653,9 +655,7 @@ export default function Staff() {
     queryKey: ["/api/staff/performance", fromDate, toDate],
     queryFn: async () => {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
-      const res = await fetch(apiUrl(`/api/staff/performance?${params}`), { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      return apiJson<StaffPerformance[]>(`/api/staff/performance?${params}`);
     },
   });
 
@@ -813,6 +813,10 @@ export default function Staff() {
               {attLoading ? (
                 <div style={{ display: "flex", justifyContent: "center", padding: "48px 0" }}>
                   <Loader2 size={24} className="animate-spin" color="#10b981" />
+                </div>
+              ) : attError ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#dc2626", fontSize: 13 }}>
+                  Could not load attendance — check the connection and try again.
                 </div>
               ) : attendance.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "60px 0", color: "#9ca3af" }}>
@@ -994,7 +998,7 @@ export default function Staff() {
                     const isTop3 = i < 3;
                     const rank = RANK_COLORS[i];
                     return (
-                      <motion.div key={p.staffId ?? "unassigned"} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 260, damping: 24 }}
+                      <motion.div key={(p as any).key ?? p.staffId ?? "unassigned"} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 260, damping: 24 }}
                         style={{ ...glass, borderRadius: 16, padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, ...(isTop3 ? { boxShadow: `0 8px 24px ${rank.shadow}, 0 1px 0 rgba(255,255,255,0.80) inset` } : {}) }}
                       >
                         <div style={{ width: 32, height: 32, borderRadius: 10, background: isTop3 ? rank.bg : "rgba(0,0,0,0.07)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: isTop3 ? 15 : 13, fontWeight: 800, color: isTop3 ? "white" : "#9ca3af", flexShrink: 0, boxShadow: isTop3 ? `0 4px 10px ${rank.shadow}` : "none" }}>
