@@ -1,4 +1,5 @@
 import { apiUrl } from '@/lib/api';
+import { describeApiError } from "@/lib/apiError";
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -923,7 +924,16 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await apiRequest("PUT", "/api/settings", formData);
+      // Send only what this form changed: PUTting the whole blob loaded at page open overwrote
+      // settings changed elsewhere since (print settings, sections, page access…) and used to roll
+      // the bill/KOT counters back (the server now ignores those either way).
+      const changed: Record<string, any> = {};
+      for (const k of Object.keys(formData)) {
+        if (k === "billCounter" || k === "kotCounter") continue;
+        const v = (formData as any)[k];
+        if (JSON.stringify(v) !== JSON.stringify((settings as any)?.[k])) changed[k] = v;
+      }
+      await apiRequest("PUT", "/api/settings", changed);
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Settings saved", description: "Restaurant settings updated successfully" });
       closeModal();
@@ -952,9 +962,10 @@ export default function Settings() {
       closeModal();
     } catch (err: any) {
       // If endpoint doesn't exist yet, show a friendly message
-      const msg = err.message?.includes("404") || err.message?.includes("not found")
+      const info = describeApiError(err);
+      const msg = info.status === 404
         ? "This feature is not yet configured on this server."
-        : err.message || "Action failed";
+        : info.message || "Action failed";
       toast({ title: "Could not complete action", description: msg, variant: "destructive" });
     } finally {
       setActionLoading(false);

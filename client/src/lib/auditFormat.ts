@@ -51,6 +51,7 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   "user.pin_reset_all":   { label: "All PINs Reset", color: "bg-orange-100 text-orange-800" },
   "coupon.issue":         { label: "Coupon Issued",  color: "bg-purple-100 text-purple-800" },
   "settings.update":      { label: "Settings Changed", color: "bg-gray-100 text-gray-800" },
+  "settings.bill_number_reset": { label: "Bill No. Reset", color: "bg-orange-100 text-orange-800" },
 };
 
 export function actionLabel(action: string): ActionLabel {

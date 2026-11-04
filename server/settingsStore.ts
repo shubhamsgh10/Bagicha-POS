@@ -425,7 +425,19 @@ export function incrementKotCounter(): Promise<number> {
 // plain UPDATE on the same row (a bare UPDATE on a row waits for a FOR UPDATE lock
 // on that row to release), so a counter increment can no longer land inside this
 // function's read-to-write window.
-export async function saveSettings(settings: Partial<RestaurantSettings>): Promise<RestaurantSettings> {
+//
+// The bill/KOT counters are NEVER taken from `settings` unless `opts.allowCounters` (only the
+// admin reset paths pass it). Settings pages PUT the whole blob they loaded minutes earlier; its
+// counters were the values at page load, so every save rolled the order/KOT numbers back and the
+// next orders collided with existing ORD numbers. issueCounter is the only writer during service.
+export async function saveSettings(
+  settings: Partial<RestaurantSettings>,
+  opts: { allowCounters?: boolean } = {},
+): Promise<RestaurantSettings> {
+  if (!opts.allowCounters) {
+    const { billCounter: _b, kotCounter: _k, ...rest } = settings as any;
+    settings = rest;
+  }
   const updated = await db.transaction(async (tx) => {
     const rows = await tx.select().from(restaurantSettings).where(eq(restaurantSettings.id, 1)).for("update");
     const current: RestaurantSettings = rows.length > 0 ? buildSettings(rows[0].settings as Record<string, any>) : loadFromFile();

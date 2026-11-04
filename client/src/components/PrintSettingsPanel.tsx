@@ -922,8 +922,9 @@ export function PrintSettingsPanel({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      // Only the two things this panel edits — spreading the whole settings snapshot loaded at
+      // page open overwrote everything else changed since, counters included.
       const res = await apiRequest('PUT', '/api/settings', {
-        ...currentSettings,
         printSettings: ps,
         posSections: sections.filter(s => s.name.trim()),
       });
