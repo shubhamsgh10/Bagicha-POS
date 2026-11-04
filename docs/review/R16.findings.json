@@ -1,0 +1,126 @@
+{
+  "slice": "R16",
+  "coverage": "Read every line of: server/storage.ts:1-2163, server/vite.ts:1-102, server/whatsappRoutes.ts:1-285, shared/businessDay.ts:1-77, shared/connectionKeepAlive.ts:1-53, shared/dueSettlement.ts:1-134, shared/ebillText.ts:1-43, shared/electron/ipc.ts:1-121, shared/kotDelta.ts:1-134, shared/kotItemCancel.ts:1-61, shared/menuCost.ts:1-78, shared/orderAudit.ts:1-153, shared/orderHistorySync.ts:1-40, shared/orderItemText.ts:1-177, shared/orderItemsSave.ts:1-220, shared/orderMutation.ts:1-38. Grepped callers in server/routes.ts (attendance/leaves/payroll routes, PUT /api/orders/:id, merge/split, items-edit audit, kotNumber promise), server/staffRoutes.ts (/api/staff), server/selfScope.ts, server/logBuffer.ts, server/services/automationStore.ts, server/services/whatsapp/driverManager.ts, server/services/deviceAttendanceService.ts, client Orders.tsx status select and LiveAttendanceBoard.tsx. Nothing in the slice was left unread.",
+  "findings": [
+    {
+      "file": "shared/orderMutation.ts",
+      "line": 198,
+      "severity": "critical",
+      "category": "auth/elevation bypass, money",
+      "title": "PUT /api/orders/:id lets any session set status to \"cancelled\" (or un-cancel), bypassing the PIN-gated, audited cancel flow",
+      "detail": "orderUpdateAllowlist picks `status` with no value restriction, and PUT /api/orders/:id (routes.ts:2577) is requireAuth only and writes it straight through storage.updateOrder. The real cancel path (PUT /api/orders/:id/cancel) requires manager elevation, a reason, writes orders.cancelReason, an awaited order.cancel audit row, reverses inventory, completes KOT tickets and frees the table. None of that happens here. Orders.tsx only disables the \"cancelled\" option in its <Select> (client UX); the server accepts it. The reverse is also open: {status:\"served\"|\"pending\"} on a cancelled order resurrects it into sales with its stock already reversed.",
+      "failure_scenario": "A staff PIN session settles a ₹1,200 cash order, pockets the cash, then sends PUT /api/orders/<id> {\"status\":\"cancelled\"} (one fetch from devtools or curl with the session cookie and Content-Type: application/json, which passes the CSRF guard). Every sales aggregate (Live View, Reports Total Sales, sales-by-type, top items, staff tables) excludes cancelled orders, so the ₹1,200 disappears from the day's takings with no cancel reason, no PIN, no audit row and nothing in KOT & Bill Activity.",
+      "suggested_fix": "Restrict `status` in the allowlist to the kitchen-progress values (pending/preparing/ready/served/delivered) and reject \"cancelled\"/\"hold\"; in the route, refuse any status change on an order that is cancelled or paymentStatus='paid' (409), and log an audit row for status changes. Cancellation must only go through /api/orders/:id/cancel."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1781,
+      "severity": "critical",
+      "category": "security / credential leak",
+      "title": "getAttendance and getLeaves embed full users/staffMembers rows (plaintext PIN, password hash, totpSecret) and are returned by requireAuth endpoints",
+      "detail": "getAttendance (1781-1791) and getLeaves (1852-1862) do `db.select().from(users)` / `from(staffMembers)` and attach the whole row as `user` / `staffMember` on every result. GET /api/attendance, GET /api/attendance/today, GET /api/attendance/me and GET /api/leaves (routes.ts ~4164-4180, 4300, 4402) are requireAuth and res.json() these objects unchanged. users.pin and staffMembers.pin are plaintext (CLAUDE.md), and users also carries password (scrypt hash) and totpSecret. sanitizeUser() exists in selfScope.ts but is not applied here. This is the exact escalation chain CLAUDE.md documents as fixed for PUT /api/auth/profile.",
+      "failure_scenario": "A bare staff-tier PIN session calls GET /api/attendance (no filters) or GET /api/attendance/today. The response lists every person with an attendance row; each `user` object for a manager account includes `pin: \"4321\"` and `totpSecret`. The staff member replays that PIN to POST /api/auth/verify-pin and gets a manager elevation grant: discounts, write-offs, cancels, payment-method edits and due settles all open up. The same leak happens through GET /api/leaves.",
+      "suggested_fix": "Select only the columns needed (id, username/name, role) in getAttendance/getLeaves, or run each attached object through sanitizeUser (and an equivalent that strips staffMembers.pin) before returning. Also consider gating the unfiltered /api/attendance and /api/leaves lists to requireManagerOrAdmin."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1738,
+      "severity": "high",
+      "category": "security / credential leak",
+      "title": "getStaffProfiles returns full user rows (including admins' plaintext PIN and totpSecret) to manager sessions via GET /api/staff",
+      "detail": "getStaffProfiles selects every users row, admins included, and nests it unmodified as `user`. staffRoutes.ts GET /api/staff (requireManagerOrAdmin) spreads it into the response. A manager session therefore receives every admin/owner account's pin, password hash and totpSecret.",
+      "failure_scenario": "The everyday manager login (rajbhaghel) opens the Staff page, or calls GET /api/staff directly. The JSON includes the owner's `pin` and `totpSecret`. With those, the manager can satisfy admin-PIN prompts (the client asks for the admin PIN on manager-mode write-offs and other gated actions) and can generate the owner's 2FA codes. The owner's account security now rests on the password hash alone.",
+      "suggested_fix": "In getStaffProfiles, select only safe user columns (id, username, role, showOnMobile) or sanitizeUser each row. Also exclude admin accounts if the Staff page does not need them."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 2040,
+      "severity": "medium",
+      "category": "money (payroll)",
+      "title": "Payroll credits a leave's entire totalDays to the month it STARTS in, so leave spanning a month boundary docks the next month's pay",
+      "detail": "getPayrollReport loads approved leaves with `startDate LIKE '<month>-%'` and sums each one's full totalDays. A leave from Oct 30 to Nov 3 (totalDays 5) adds 5 paid days to October and 0 to November. November then counts Nov 1-3 as absent and deducts them at dailyRate. October gets 3 extra paid days, which are only hidden by the absentDays clamp when attendance is otherwise full.",
+      "failure_scenario": "A cook on ₹15,000/month takes approved leave from 30 Oct to 3 Nov. The November payroll row (and /api/payroll/me) shows 3 absent days and deducts about ₹1,500, even though the leave was approved and paid.",
+      "suggested_fix": "Select leaves that overlap the month (startDate <= monthEnd AND endDate >= monthStart). Credit only the days inside the month: min(endDate, monthEnd) - max(startDate, monthStart) + 1, capped at totalDays and pro-rated for half-day leave."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1794,
+      "severity": "medium",
+      "category": "timezone",
+      "title": "getTodayAttendance uses the UTC date, so the live attendance board shows the wrong day for the first 5.5 hours of each IST day",
+      "detail": "`new Date().toISOString().split('T')[0]` is the UTC calendar date. Attendance rows are keyed by the device-local (IST) date (deviceAttendanceService splitPunch). On Vercel (UTC) between 00:00 and 05:30 IST, this returns yesterday's date. CLAUDE.md requires the IST helpers (istCalendarDate) for this.",
+      "failure_scenario": "A staff member punches in at 00:30 IST after midnight. The Staff page's LiveAttendanceBoard (GET /api/attendance/today) still shows yesterday's rows ('done' for everyone who worked yesterday) and never shows the new punch until 05:30 IST.",
+      "suggested_fix": "Use istCalendarDate() from @shared/businessDay (or businessDateOf if a shift-day is intended)."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1140,
+      "severity": "medium",
+      "category": "data integrity (inventory)",
+      "title": "mergeOrders/splitOrder move items without moving their stock_movements, so stock is double-deducted after a merge (or wrongly restored after a split); merging an order into itself deletes it",
+      "detail": "reconcileOrderInventory treats the stock_movements rows for an order_id as 'already applied'. mergeOrders copies the source's items to the target and deletes the source order, but the source's 'sale' ledger rows still point at the deleted source id. The next edit of the target calls reconcileOrderInventory(target, allItems). The target's ledger does not include the merged items, so their ingredients are deducted again. Cancelling the target reverses only the target's ledger, so the merged items' original deduction is never reversed. splitOrder has the mirror problem: on the next edit of the source, the split-out items are reversed (stock restored) while the new order has no ledger. Separately, mergeOrders has no guard that target != source and no editability check. With targetOrderId == sourceOrderId it inserts the items, then deletes every item and the order row itself.",
+      "failure_scenario": "Table 4 (2 Paneer Tikka) is merged into Table 5, and staff then add a drink to Table 5. The save's reconcile deducts the paneer for 2 Paneer Tikka a second time. The inventory page shows paneer short by that amount and low-stock or negative-stock alerts fire. A manager API call to POST /api/orders/merge with the same id for both permanently deletes the order.",
+      "suggested_fix": "Inside the mergeOrders transaction, `UPDATE stock_movements SET order_id = target WHERE order_id = source` (taking the orderInventory advisory lock for both ids in ascending order). In splitOrder, either re-point the moved items' share or run reconcileOrderInventory for both orders after the split. Reject source == target and refuse orders that are not paymentStatus='pending' and status <> 'cancelled' (WHERE guards on the UPDATE/DELETE)."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1465,
+      "severity": "medium",
+      "category": "latency / serial round trips",
+      "title": "getDashboardStats runs 6 independent queries serially, including an all-time revenue scan, on a 15 s poll",
+      "detail": "today totals, active count, all-time revenue (a SUM over the whole orders table with no date bound), low-stock count, top item and SELECT * FROM tables are awaited one after another. None depends on another. Live View / Dashboard poll /api/dashboard/stats every 15 s, so each poll pays about 6 serial Supabase round trips (about 6 x 35-100 ms), and the revenue scan grows with history.",
+      "failure_scenario": "On the shop's high-RTT link, every Live View refresh takes 0.5 s or more of server time where about 0.1 s would do, and holds a pool connection for the whole time. Under concurrent taps this competes with save/print requests for the 10-connection pool.",
+      "suggested_fix": "Run the six queries with Promise.all, or fold them into one SELECT with count/sum FILTER clauses. Select only section/status from tables."
+    },
+    {
+      "file": "server/whatsappRoutes.ts",
+      "line": 127,
+      "severity": "medium",
+      "category": "auth",
+      "title": "Agent-inbox reply/takeover/return-to-bot are requireAuth: a bare staff session can send arbitrary outbound WhatsApp messages",
+      "detail": "POST /api/whatsapp/conversations/:id/reply sends free text to the customer's phone through the live driver, gated only by requireAuth, and writes no audit row. CLAUDE.md gates the equivalent outbound send POST /api/crm/customers/:key/message as requireManagerOrAdmin, and treats outbound volume as a number-ban risk. Conversation ids are sequential, so a script can message every customer.",
+      "failure_scenario": "A staff PIN session loops over POST /api/whatsapp/conversations/1..N/reply {message:'...'}. Every customer thread receives the text from the restaurant's number, and only the realtime feed records who sent it. A burst like this is the ban scenario CLAUDE.md warns about.",
+      "suggested_fix": "Gate reply/takeover/return-to-bot with the same manager-or-admin check as the CRM send (or a dedicated page-access check), add a per-session rate limit, and logAudit the reply (awaited)."
+    },
+    {
+      "file": "server/vite.ts",
+      "line": 17,
+      "severity": "low",
+      "category": "error handling",
+      "title": "Global console.error override can throw (circular/BigInt args) and loses Error messages in the log buffer",
+      "detail": "The override JSON.stringify's every object argument after printing it. JSON.stringify throws on a circular structure (socket/request-bearing errors, Express req/res) or a BigInt. The exception then escapes from console.error itself, usually inside a catch block, so the handler rejects instead of sending its 500. For ordinary Error objects JSON.stringify yields \"{}\", so the /api log buffer (routes.ts getLogBuffer) records no message or stack. The module is imported by server/index.ts, so this applies in the persistent server and Electron host.",
+      "failure_scenario": "A catch block runs console.error('[x] failed:', err) where err carries a circular reference (e.g. an http ClientRequest error from a webhook/driver call). A TypeError 'Converting circular structure to JSON' is thrown from the logging line, the route never responds and the request hangs until the client times out. Admin log views show '{}' for every real error.",
+      "suggested_fix": "Wrap the formatting in try/catch and format Errors as `${e.name}: ${e.message}\\n${e.stack}`; use util.inspect (depth-limited) instead of JSON.stringify for other objects."
+    },
+    {
+      "file": "shared/orderAudit.ts",
+      "line": 67,
+      "severity": "low",
+      "category": "audit fidelity",
+      "title": "diffOrderLines keys last-wins per menuItemId:size, so adding or removing a duplicate line of the same dish/mode is invisible in the audit",
+      "detail": "Lines with the same menuItemId+size and the SAME serviceMode (e.g. Butter Naan plain + Butter Naan '+ Extra Butter', or a second Naan line added after reopening) collapse to the last one in each map. kotDelta was fixed for exactly this case by summing per key, but this diff was not. The documented limitation covers only two lines in different modes. Adding a second such line, or removing one of two such lines, yields added/removed/changed all empty. The row is then written only if money changed, with kotModified=false.",
+      "failure_scenario": "A waiter removes the '+ Extra Butter' Naan line, keeping the plain one at the same quantity. The order.items_edit row shows only a total change and no removed item, and KOT & Bill Activity does not count it as KOT Modified.",
+      "suggested_fix": "Aggregate quantities per key (as kotDelta.aggregate does), or key on menuItemId+size+serviceMode+specialInstructions, before diffing."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 1981,
+      "severity": "low",
+      "category": "race / atomicity",
+      "title": "replaceAutoShiftSessions (and upsertAttendance*) are unguarded delete-then-insert / check-then-insert",
+      "detail": "replaceAutoShiftSessions deletes a person/date's auto rows and inserts the new set as two statements, with no transaction or lock. upsertAttendance/upsertAttendanceForStaffMember SELECT then INSERT. The admin 'Recompute' (POST /api/attendance/recompute-shifts) running while the desktop agent posts a punch batch for the same person/date can interleave the two deletes and then both inserts. That leaves duplicate auto sessions, which inflate roster hours, or two attendance rows for one day, which double-count present days in payroll. A failure between delete and insert loses the sessions until the next recompute.",
+      "failure_scenario": "The admin clicks Recompute for the month while the K30 agent flushes punches. Today's Morning shift appears twice in the roster, and getPayrollReport counts two 'present' attendance rows for that day.",
+      "suggested_fix": "Wrap each in db.transaction with an advisory lock keyed on the person + date (or add a unique index on attendance(user_id|staff_member_id, date) and use ON CONFLICT)."
+    },
+    {
+      "file": "server/storage.ts",
+      "line": 970,
+      "severity": "low",
+      "category": "timezone",
+      "title": "getStaffTableReport groups by Postgres DATE(created_at) (UTC), not the business day",
+      "detail": "The range passed in is IST business-day bounds, but rows are bucketed by DATE(created_at) in the DB session timezone (UTC on Supabase). Orders placed 05:00-05:30 IST (23:30-24:00 UTC the previous day) are labelled with the previous date. All other report bucketing in this file uses businessDateOf.",
+      "failure_scenario": "An order opened at 05:15 IST on 5 Nov appears under 4 Nov in Reports → Staff & Tables, so that day's per-staff revenue differs from the Sales tab.",
+      "suggested_fix": "Group by `DATE((created_at AT TIME ZONE 'Asia/Kolkata') - interval '5 hours')` or bucket in JS with businessDateOf."
+    }
+  ]
+}
