@@ -17,6 +17,7 @@ import { eq, desc, and, or, gte, lte, sql, asc, inArray, ne, isNull, isNotNull, 
 import { personPageKey } from "@shared/pageAccess";
 import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
+import { leaveDaysInMonth } from "@shared/leaveDays";
 import { computeMenuItemCost as computeMenuItemCostPure, computeLineCosts, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
 import { advisoryXactLock, LOCK_NS } from "./advisoryLocks";
 import { publicPerson } from "./selfScope";
@@ -2088,8 +2089,12 @@ export class DatabaseStorage implements IStorage {
     // approved leave gets docked pay for it via absentDays below — leaves.userId/
     // staffMemberId are already union-based (see CLAUDE.md's Leaves section), so this
     // just needed wiring up. "unpaid" leaveType is exactly that and stays excluded.
+    // Every approved leave that OVERLAPS the month, credited only its days inside it
+    // (shared/leaveDays.ts) — not just leaves starting this month, credited in full.
+    const firstDay = `${month}-01`;
+    const lastDay = `${month}-${String(workingDays).padStart(2, '0')}`;
     const monthLeaves = await db.select().from(leaves)
-      .where(and(eq(leaves.status, 'approved'), sql`${leaves.startDate} LIKE ${month + '-%'}`));
+      .where(and(eq(leaves.status, 'approved'), lte(leaves.startDate, lastDay), gte(leaves.endDate, firstDay)));
     return people.map(person => {
       const salary = parseFloat(person.monthlySalary ?? '0');
       const records = person.kind === 'user'
@@ -2102,7 +2107,7 @@ export class DatabaseStorage implements IStorage {
         : monthLeaves.filter(l => l.staffMemberId === person.id);
       const approvedLeaves = personLeaves
         .filter(l => l.leaveType !== 'unpaid')
-        .reduce((s, l) => s + l.totalDays, 0);
+        .reduce((s, l) => s + leaveDaysInMonth(l, month), 0);
       const paidDays = daysPresent + (halfDays * 0.5) + approvedLeaves;
       const absentDays = Math.max(0, workingDays - paidDays);
       const dailyRate = workingDays > 0 ? salary / workingDays : 0;

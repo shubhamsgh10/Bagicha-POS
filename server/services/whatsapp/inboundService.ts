@@ -69,8 +69,6 @@ export async function handleInbound(msg: WaInboundMessage): Promise<void> {
     return; // never auto-reply further to opted-out threads
   }
 
-  if (!conversation.botActive || !config.botEnabled) return; // human owns the thread
-
   // ── Bot decision ──────────────────────────────────────────────────────────
   const customerName = conversation.customerId
     ? await customerNameFor(conversation.customerId)
@@ -99,6 +97,14 @@ export async function handleInbound(msg: WaInboundMessage): Promise<void> {
     }
     // Also suppress by phone for unknown numbers
     setCustomerPref(conversation.phone, { doNotSend: true });
+  }
+
+  // Only the REPLY depends on who owns the thread. The opt-out above is applied first, always:
+  // a STOP sent while the bot was disabled or a human had taken over used to be ignored, and
+  // automated sends kept going to that customer.
+  if (!conversation.botActive || !config.botEnabled) {
+    if (decision.intent === "STOP") void publishRealtime({ type: "WA_CONVERSATION_UPDATE", conversationId: conversation.id });
+    return; // human owns the thread
   }
 
   if (decision.intent === "HANDOFF") {

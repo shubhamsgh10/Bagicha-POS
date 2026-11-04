@@ -3415,6 +3415,9 @@ export async function registerRoutes(
       if (!itemIds || itemIds.length === 0) return res.status(400).json({ error: "itemIds required" });
       const sourceOrder = await storage.getOrderById(id);
       if (!sourceOrder) return res.status(404).json({ error: "Order not found" });
+      if ((sourceOrder as any).paymentStatus === "paid" || ["cancelled", "hold", "served", "delivered"].includes((sourceOrder as any).status)) {
+        return res.status(409).json({ error: "Only an open, unpaid order can be split.", code: "not_open" });
+      }
       const allItems = await storage.getOrderItems(id);
       const splitItems = allItems.filter((i) => itemIds.includes(i.id));
       if (splitItems.length === 0) return res.status(400).json({ error: "No matching items" });
@@ -3504,6 +3507,18 @@ export async function registerRoutes(
           deliveryCharge: srcTotals.deliveryCharge.toFixed(2),
         } as any,
       });
+
+      // Move the split-out items' stock with them: the new order deducts them, the source's next
+      // reconcile would otherwise have RESTORED them (its ledger still held their 'sale' rows while
+      // its items no longer did). Net zero, and each order's ledger now matches its own items.
+      // Non-fatal, like every other post-commit reconcile.
+      try {
+        await storage.reconcileOrderInventory(newOrder.id, splitItems.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity, size: i.size })), actorRefFromReq(req));
+        const remaining = await storage.getOrderItems(id);
+        await storage.reconcileOrderInventory(id, remaining.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity, size: i.size })), actorRefFromReq(req));
+      } catch (invErr) {
+        console.error("[order] split inventory reconcile error (non-fatal):", invErr);
+      }
 
       await logAudit(req, "order.split", "order", id, {
         sourceOrderNumber: (sourceOrder as any).orderNumber,
