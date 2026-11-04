@@ -1063,21 +1063,29 @@ export default function CustomerDashboard() {
   useCrmExtrasSync(extras, !isLoading);
 
   const handleSaveExtra = (customer: CustomerProfile, data: CustomerExtra) => {
+    // The form is seeded from THIS device's local copy, which may be blank for fields saved from
+    // another device — so send only what the user actually changed, never the whole form (posting
+    // the blanks wiped those fields in the DB).
+    const before: Record<string, unknown> = (extras[customer.key] ?? defaultExtra()) as any;
+    const changed: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (JSON.stringify(v) !== JSON.stringify(before[k])) changed[k] = v;
+    }
+
     // 1. Update localStorage immediately
     setExtras(prev => ({ ...prev, [customer.key]: data }));
 
-    // 2. Sync to DB — also backfills orders.customerPhone for past orders
+    // 2. Sync to DB. Past phone-less orders are back-filled only when a phone was just ADDED.
     const phone = customer.phone || data.phone || undefined;
     fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(customer.key)}/profile`), {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },
       credentials: "include",
       body:        JSON.stringify({
-        ...data,
-        name:        data.displayName || customer.name,
+        ...changed,
+        name:          data.displayName || customer.name,
         phone,
-        dob:         data.dateOfBirth,
-        anniversary: data.dateOfAnniversary,
+        backfillPhone: !customer.phone && !!data.phone,
       }),
     })
       .then(r => r.ok ? r.json() : null)
@@ -1093,10 +1101,18 @@ export default function CustomerDashboard() {
   };
 
   const handleToggleNotif = (key: string) => {
-    setExtras(prev => {
-      const current = prev[key] ?? defaultExtra();
-      return { ...prev, [key]: { ...current, notificationEnabled: !current.notificationEnabled } };
-    });
+    const current = extras[key] ?? defaultExtra();
+    const notificationEnabled = !current.notificationEnabled;
+    setExtras(prev => ({ ...prev, [key]: { ...(prev[key] ?? defaultExtra()), notificationEnabled } }));
+    // Straight to the DB: the background sync only re-runs when the NUMBER of local entries
+    // changes, so muting an existing customer never reached the server and automated messages
+    // (which read customer_profiles.notification_enabled) kept going.
+    fetch(apiUrl(`/api/crm/customers/${encodeURIComponent(key)}/profile`), {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ notificationEnabled }),
+    }).catch(e => console.warn("[CRM] mute sync failed:", e));
   };
 
   return (

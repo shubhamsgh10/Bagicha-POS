@@ -4017,10 +4017,13 @@ export async function registerRoutes(
       const customerId = await resolveCustomerId(key, name, phone);
       const profile    = await upsertCustomerProfile(customerId, extra as any);
 
-      // Backfill phone into any past orders that had no phone for this customer
+      // Backfill phone into past phone-less orders ONLY when a phone was just added to a customer
+      // that had none (backfillPhone), and only for orders under this customer's exact key. It ran on
+      // every save and matched the free-text display name too, so walk-ins of other people sharing
+      // a first name were given this customer's phone (merging them into one customer).
       let backfilled = 0;
-      if (phone && (key || name)) {
-        backfilled = await backfillOrderPhone(key, name, phone);
+      if (phone && key && (extra as any).backfillPhone === true) {
+        backfilled = await backfillOrderPhone(key, key, phone);
       }
 
       res.json({ ok: true, id: customerId, profile: dbProfileToExtra(profile), backfilled });
