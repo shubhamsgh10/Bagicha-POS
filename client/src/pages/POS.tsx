@@ -1009,7 +1009,7 @@ export default function POS() {
     },
     onError: (error: any) => {
       if (submitModeRef.current === "settle") finishSettleTiming(0, "error");
-      toast({ title: "Failed to place order", description: error.message || "Something went wrong", variant: "destructive" });
+      toast({ title: "Failed to place order", description: describeApiError(error).message, variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
       endPrintTap();

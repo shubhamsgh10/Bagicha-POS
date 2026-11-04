@@ -352,7 +352,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       } as any);
 
       broadcast({ type: "ORDER_UPDATE", order: updated });
-      logAudit(req, "order.coupon_applied", "order", orderId, { couponId, discount: result.discount, customerKey });
+      await logAudit(req, "order.coupon_applied", "order", orderId, { couponId, discount: result.discount, customerKey });
       res.json({ ok: true, discount: result.discount, order: updated });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
@@ -450,7 +450,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
         broadcast({ type: "ORDER_UPDATE", order: updated });
       }
 
-      logAudit(req, "order.loyalty_redeemed", "order", orderId ?? null, { customerKey, points, discount: result.discount });
+      await logAudit(req, "order.loyalty_redeemed", "order", orderId ?? null, { customerKey, points, discount: result.discount });
       res.json({ ok: true, discount: result.discount });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
@@ -506,7 +506,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
 
   // ── Birthday automation (manual trigger) ────────────────────────────────────
 
-  app.post("/api/automation/birthday/run", requireAuth, async (_req, res) => {
+  app.post("/api/automation/birthday/run", requireAdmin, async (_req, res) => {
     try {
       const result = await runBirthdayAutomation({ force: true });
       res.json({ ok: true, ...result });
