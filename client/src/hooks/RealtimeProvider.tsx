@@ -149,6 +149,24 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
             : {}),
         });
         channel = pusher.subscribe(pusherChannel);
+        // A failed private-channel auth (a 503 while settings load, a cold-start timeout) left the
+        // channel unsubscribed for good while the CONNECTION still read "Open", so no events and no
+        // reconnect catch-up. Retry with backoff; a recovered subscription refreshes what's on screen.
+        let subRetryMs = 2_000;
+        let subFailed = false;
+        channel.bind("pusher:subscription_error", () => {
+          if (disposed) return;
+          subFailed = true;
+          setConnectionStatus("Connecting");
+          setTimeout(() => { if (!disposed) channel.subscribe(); }, subRetryMs);
+          subRetryMs = Math.min(subRetryMs * 2, MAX_DELAY);
+        });
+        channel.bind("pusher:subscription_succeeded", () => {
+          if (disposed) return;
+          subRetryMs = 2_000;
+          setConnectionStatus("Open");
+          if (subFailed) { subFailed = false; queryClient.invalidateQueries(); }
+        });
 
         const handlers = events.map((eventName) => {
           const fn = (data: unknown) => {

@@ -68,13 +68,11 @@ export function LoyaltyCard({ customerKey, totalSpend }: LoyaltyCardProps) {
             </span>
           </div>
 
-          {canRedeem && flash === "idle" && (
-            <button
-              onClick={handleRedeem}
-              className="shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 active:scale-95 transition-all"
-            >
-              Redeem
-            </button>
+          {/* No Redeem button here: it only changed a number in this browser's storage and said
+              "Applied!" — no discount reached any order and the server ledger never moved. Points
+              are redeemed on a bill (Billing → Loyalty), through the audited server route. */}
+          {canRedeem && (
+            <span className="shrink-0 text-[10px] font-semibold text-amber-700">Redeem on the bill</span>
           )}
           {flash === "success" && (
             <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-600">

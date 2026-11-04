@@ -33,6 +33,10 @@ import { DayPicker } from "@/components/DayPicker";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { paymentLabel, isDueOrder } from "@shared/paymentSplit";
+import { useRole, ROLE_LEVEL } from "@/hooks/useRole";
+import { PinGuard } from "@/components/PinGuard";
+import { lockedDialogProps } from "@/lib/dialogLock";
+import { describeApiError } from "@/lib/apiError";
 import { DueSettleDialog } from "@/components/DueSettleDialog";
 import type { PrintApiResponse } from "@shared/print/types";
 import { printBillFallback, BROWSER_BILL_TOAST } from "@/lib/printBill";
@@ -68,6 +72,15 @@ export default function Billing() {
   // route, which also frees the order's table (a new party may be seated there now) and re-fires
   // loyalty points and the settlement WhatsApp for a bill that was closed long ago.
   const [settlingDue, setSettlingDue] = useState<any | null>(null);
+  // Coupon / loyalty redeem apply a discount, so the server requires manager elevation. A staff
+  // session had no way to give it (no PIN step) and always got a raw 403. Managers/admins go
+  // straight through; everyone else types a manager/admin PIN first (verify-pin grants it).
+  const loginRole = useRole();
+  const [pinFor, setPinFor] = useState<null | { label: string; run: () => void }>(null);
+  const withManagerPin = (label: string, run: () => void) => {
+    if ((ROLE_LEVEL[loginRole] ?? 0) >= ROLE_LEVEL.manager) run();
+    else setPinFor({ label, run });
+  };
   const [paymentMethod, setPaymentMethod] = useState("cash");
 
   // ── Coupon state ─────────────────────────────────────────────────────────
@@ -249,19 +262,6 @@ export default function Billing() {
     setCouponMsg(null);
     try {
       const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
-      const res = await apiRequest("POST", "/api/coupons/apply", {
-        // First validate to get id
-        couponId: 0,
-        orderId:  payingOrder.id,
-        customerKey,
-      });
-      // We instead use validate then apply
-      void res;
-    } catch {
-      // ignore — fall through to two-step flow below
-    }
-    try {
-      const customerKey = payingOrder.customerPhone?.trim() || payingOrder.customerName?.trim();
       const orderAmount = deriveBillTotals(payingOrder).subtotal;
 
       const validateRes = await apiRequest("POST", "/api/coupons/validate", {
@@ -289,7 +289,7 @@ export default function Billing() {
         setCouponMsg({ ok: false, text: applyData.error || "Could not apply" });
       }
     } catch (e: any) {
-      setCouponMsg({ ok: false, text: e?.message || "Coupon error" });
+      setCouponMsg({ ok: false, text: describeApiError(e).message || "Coupon error" });
     } finally {
       setCouponBusy(false);
     }
@@ -627,7 +627,15 @@ export default function Billing() {
 
       {/* Payment Dialog */}
       <Dialog open={!!payingOrder} onOpenChange={() => setPayingOrder(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" {...lockedDialogProps(!!pinFor)}>
+          {pinFor && (
+            <PinGuard
+              actionLabel={pinFor.label}
+              requiredRole="manager"
+              onSuccess={() => { const run = pinFor.run; setPinFor(null); run(); }}
+              onCancel={() => setPinFor(null)}
+            />
+          )}
           {settlingDue && (
             <DueSettleDialog order={settlingDue} onClose={() => { setSettlingDue(null); queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); }} />
           )}
@@ -654,7 +662,7 @@ export default function Billing() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={applyCoupon}
+                  onClick={() => withManagerPin("Apply coupon", () => void applyCoupon())}
                   disabled={couponBusy || !couponCode.trim()}
                 >
                   {couponBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
@@ -679,7 +687,7 @@ export default function Billing() {
                     <Button
                       size="sm"
                       className="h-7 text-xs bg-amber-500 hover:bg-amber-600"
-                      onClick={redeemLoyalty}
+                      onClick={() => withManagerPin("Redeem points", () => void redeemLoyalty())}
                       disabled={loyaltyBusy}
                     >
                       {loyaltyBusy

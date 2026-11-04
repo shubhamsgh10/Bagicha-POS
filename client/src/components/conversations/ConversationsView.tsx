@@ -80,7 +80,7 @@ export function ConversationsView({ customers }: ConversationsViewProps) {
                 >
                   {contextOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
                 </button>
-                <ChatView conversation={selected} onBack={() => setSelectedId(null)} />
+                <ChatView key={selected.id} conversation={selected} onBack={() => setSelectedId(null)} />
               </div>
 
               {/* Customer context */}

@@ -467,11 +467,11 @@ export const sendFollowUpMessage = sendFollowUpViaWeb;
 
 /** Push relevant settings to server automation-config.json. */
 export async function syncSettingsToServer(settings: AutomationSettings): Promise<void> {
-  const body: Record<string, unknown> = {
-    enabled:        settings.enabled,
-    maxPerRun:      settings.maxPerRun || settings.dailyLimit,
-    restaurantName: "Bagicha",
-  };
+  // Credentials only. enabled / maxPerRun / restaurantName came from THIS browser's local copy and
+  // overwrote the server's on every Run Now — silently re-enabling the scheduled WhatsApp
+  // automation an admin had turned off, and resetting its batch size. Those are edited on the
+  // server config (Admin → Automation), not synced from here.
+  const body: Record<string, unknown> = {};
   // Only send credentials when non-empty (never overwrite with empty string)
   if (settings.watiApiKey)        body.watiApiKey        = settings.watiApiKey;
   if (settings.watiEndpoint)      body.watiEndpoint      = settings.watiEndpoint;
