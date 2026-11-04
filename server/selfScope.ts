@@ -30,3 +30,17 @@ export function sanitizeUser<T extends Record<string, any>>(
   for (const field of SENSITIVE_USER_FIELDS) delete clone[field];
   return clone;
 }
+
+/**
+ * A users / staff_members row with its secrets removed, plus `hasPin`. Attendance, leave and
+ * staff-profile reads attach the person to every row and are served to any logged-in session —
+ * they used to carry the plaintext PIN, the password hash and the TOTP secret, so a staff PIN
+ * session could read every manager's PIN and replay it into /api/auth/verify-pin for manager
+ * elevation. Every person embedded in a response goes through this (storage.ts).
+ */
+export function publicPerson<T extends Record<string, any>>(
+  row: T
+): Omit<T, "password" | "pin" | "totpSecret"> & { hasPin: boolean } {
+  const { password: _p, pin, totpSecret: _t, ...rest } = row as any;
+  return { ...rest, hasPin: !!pin };
+}
