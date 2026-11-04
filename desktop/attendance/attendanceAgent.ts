@@ -113,6 +113,12 @@ export class AttendanceAgent {
 
   // ── device ─────────────────────────────────────────────────────────────────────
   private async connect(cfg: AttendanceDeviceConfig): Promise<void> {
+    // The device accepts ONE TCP session: close the previous adapter (and its live-punch listener)
+    // before opening a new one — every reconnect used to leak the old session.
+    if (this.adapter) {
+      await this.adapter.disconnect().catch(() => {});
+      this.adapter = null as any;
+    }
     try {
       this.adapter = new ZkAdapter(cfg.ip, cfg.port || 4370);
       await this.adapter.connect();
