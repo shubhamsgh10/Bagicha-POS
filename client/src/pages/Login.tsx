@@ -446,7 +446,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
               const [from, to] = getAvatarColors(s.name);
               return (
                 <motion.button
-                  key={s.id}
+                  key={`${(s as any).kind ?? "staff"}-${s.id}`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}
@@ -643,7 +643,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     const [from, to] = getAvatarColors(s.name);
                     return (
                       <motion.button
-                        key={s.id}
+                        key={`${(s as any).kind ?? "staff"}-${s.id}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.05, type: "spring", stiffness: 320, damping: 28 }}

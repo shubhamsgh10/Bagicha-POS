@@ -1,6 +1,6 @@
 import { apiUrl, apiJson } from '@/lib/api';
 import { businessDayRange, todayBusinessDate } from "@shared/businessDay";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Header } from "@/components/Header";
@@ -285,7 +285,7 @@ export default function KOT() {
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
       <Header
         title="Kitchen — KOT"
-        description={`${pending.length} pending · ${inProgress.length} cooking · ${completed.length} ready`}
+        description={`${pending.length} pending · ${inProgress.length} cooking · ${completed.filter((t: any) => t.orderStatus !== "cancelled").length} done`}
       />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
@@ -315,7 +315,10 @@ export default function KOT() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {currentTickets.map((ticket: any, idx: number) => (
-              <KOTCard key={ticket.id} ticket={ticket} idx={idx} />
+              // Called as a render function, not <KOTCard/>: it is declared inside this
+              // component, so as a component type it would be new on every render and
+              // remount every ticket card (losing animation/scroll state).
+              <Fragment key={ticket.id}>{KOTCard({ ticket, idx })}</Fragment>
             ))}
           </div>
         )}

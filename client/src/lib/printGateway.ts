@@ -178,13 +178,11 @@ export async function printBillDirect(
     body: JSON.stringify({ orderId, ...(markBilled ? { markBilled } : {}) }),
     credentials: "include",
   });
-  const data = (await res.json()) as PrintApiResponse & {
-    orderId?: number;
-    pendingAck?: boolean;
-    message?: string;
-  };
+  const raw = await res.text();
+  let data: PrintApiResponse & { orderId?: number; pendingAck?: boolean; message?: string };
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = {} as typeof data; }
   if (!res.ok) {
-    throw new Error(data.message ?? "Bill print failed");
+    throw new Error(data.message ?? `Bill print failed (${res.status})`);
   }
   return handlePrintResponse(data, {
     ...handleOptions,

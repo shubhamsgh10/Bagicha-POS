@@ -101,10 +101,10 @@ export function billLines(params: {
   lines.push(_div('=', W), _center('RETAIL INVOICE', W), _div('=', W));
 
   const created = new Date(params.createdAt ?? Date.now());
-  lines.push(_two(`Order: ${params.orderNumber}`, created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }), W));
+  lines.push(_two(`Order: ${params.orderNumber}`, created.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }), W));
   lines.push(_two(
     params.tableNumber ? `Table: ${params.tableNumber}` : (params.orderType ?? 'Order'),
-    created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }),
     W,
   ));
   if (params.customerName) lines.push(`Customer: ${params.customerName}`);
