@@ -1,0 +1,36 @@
+{
+  "slice": "R18",
+  "coverage": "Read every line of shared/settleTiming.ts:1-106, shared/settlement.ts:1-96, shared/shiftTime.ts:1-86, shared/weekMath.ts:1-79, tailwind.config.ts:1-141, vite.config.ts:1-90. Cross-checked callers: client/src/lib/slowSettle.ts (summarizeSettleTimeline), server/routes.ts POST /api/orders/:id/payment (~2630-2700, shortfall storage), server/services/deviceAttendanceService.ts (detectSessions pool construction, ~110-160). Nothing unread.",
+  "findings": [
+    {
+      "file": "shared/shiftTime.ts",
+      "line": 73,
+      "severity": "high",
+      "category": "wrong result (payroll/attendance)",
+      "title": "detectSessions pairs punches strictly in sequence, so one duplicate/stray biometric punch flips every later in/out pair",
+      "detail": "Punches are deduped only on exact HH:MM, then paired [0,1],[2,3],... with no debounce of near-duplicate scans and no use of the punch's in/out state. Fingerprint terminals routinely record a re-scan a minute apart when staff are unsure the first scan registered. deviceAttendanceService feeds the merged pool straight into detectSessions and sets attendance.workingHours = sum of session spans and status 'half-day' when < 4h.",
+      "failure_scenario": "Staff scans at 09:00 and again at 09:01 (first beep missed), leaves at 17:00. Pool [09:00,09:01,17:00] -> sessions (09:00-09:01 = 0.02h) and an open session at 17:00 (0h). Attendance row gets workingHours 0.02 and status 'half-day' for a full 8h day; the bad sessions are persisted as auto rows and re-pooled on every later sync, so it never self-corrects (only a manual Recompute after fixing the logic).",
+      "suggested_fix": "Collapse punches within a short window (e.g. <= 5-10 min) into one before pairing, and/or use the device's punch state (check-in/check-out) when available; at minimum keep the first of a cluster for an in and the last for an out."
+    },
+    {
+      "file": "shared/settlement.ts",
+      "line": 86,
+      "severity": "low",
+      "category": "money reporting",
+      "title": "shortfallAmount is non-zero for rounding differences inside SETTLE_TOLERANCE, contradicting 'treated as fully settled, NOT as a write-off'",
+      "detail": "resolveSettlement returns shortfallAmount = max(0,total-paid) even when isShort is false (e.g. 0.40). The payment route mirrors this and persists shortfallAmount: String(shortfall) for every settle, so routine whole-rupee payments on paisa totals accumulate in orders.shortfall_amount, which Reports sums as 'written off on short-settled bills' without any order.write_off audit row behind it.",
+      "failure_scenario": "Bill ₹773.40 paid ₹773 cash: no write-off confirm/PIN/audit (isShort false), yet the order stores shortfall_amount 0.40; over a day of such bills Reports shows a non-zero 'written off' figure that matches no write-off event in KOT & Bill Activity.",
+      "suggested_fix": "Return shortfallAmount = isShort ? shortfall : 0 (and have the route use the same value), or document that sub-tolerance rounding is recorded and exclude it from the 'written off' tile."
+    },
+    {
+      "file": "shared/settleTiming.ts",
+      "line": 63,
+      "severity": "low",
+      "category": "diagnostics accuracy",
+      "title": "Any resource entry whose pathname is /api/orders (e.g. a GET poll with ?open=true) is classified as the settle's 'orders' leg, and entries after finishedAt are not excluded",
+      "detail": "classify() ignores method and query, and summarizeSettleTimeline only filters entries that started before the click. A background GET /api/orders?... refetch (realtime invalidation, Live orders poll) during or after the settle becomes an 'orders' leg.",
+      "failure_scenario": "Saved-order settle takes 11 s; a realtime-triggered GET /api/orders?open=true fires during the wait. It becomes legs[0]/beforePayment, so startLagMs, betweenLegsMs and possibly slowestLeg in the perf.slow_settle audit row describe the poll instead of the PUT /items save, misdirecting the latency investigation.",
+      "suggested_fix": "Skip entries with startTime > finishedAt, and only accept '/api/orders' as a leg when the save leg wasn't present and the entry is the first one (or record initiatorType/use the captured request method to drop GETs)."
+    }
+  ]
+}
