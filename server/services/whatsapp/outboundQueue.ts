@@ -160,8 +160,22 @@ async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
   // Claim (single-process deployment — a status flip is sufficient)
   await db.update(automationJobs).set({ status: "sending" }).where(eq(automationJobs.id, job.id));
 
-  const masterRows = await db.select().from(customersMaster)
-    .where(eq(customersMaster.id, job.customerId)).limit(1);
+  // Everything up to sendText can fail on a transient DB error — and nothing has been sent yet, so
+  // the job goes back to 'pending' (with a minute's backoff) instead of sitting in 'sending' until
+  // a restart, which also blocked re-enqueueing that customer+trigger.
+  let masterRows: Array<typeof customersMaster.$inferSelect>;
+  let suppressed: boolean;
+  try {
+    masterRows = await db.select().from(customersMaster)
+      .where(eq(customersMaster.id, job.customerId)).limit(1);
+    suppressed = !!job.phone && await isSuppressed(job);
+  } catch (err) {
+    await db.update(automationJobs)
+      .set({ status: "pending", nextAttemptAt: new Date(Date.now() + 60_000) })
+      .where(eq(automationJobs.id, job.id))
+      .catch(() => {});
+    throw err;
+  }
   const master = masterRows[0];
   const customerName = master?.name ?? "Guest";
   const customerKey = master?.key ?? job.phone ?? "";
@@ -173,7 +187,7 @@ async function processOneJob(): Promise<"sent" | "empty" | "waiting"> {
     return "sent"; // continue draining
   }
 
-  if (await isSuppressed(job)) {
+  if (suppressed) {
     await db.update(automationJobs)
       .set({ status: "skipped", executedAt: new Date(), error: "Customer opted out" })
       .where(eq(automationJobs.id, job.id));

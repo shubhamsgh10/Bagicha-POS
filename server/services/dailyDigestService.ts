@@ -115,14 +115,16 @@ export async function buildDailyMetrics(date = new Date()): Promise<DailyMetrics
   const worstItems = await db
     .select({
       name:     menuItems.name,
-      qty:      sql<number>`cast(coalesce(sum(${orderItems.quantity}), 0) as int)`,
+      // Only TODAY's (non-cancelled) quantities: the order filter sat on the orders join but the sum
+      // read every order_items row, so "slow movers" were lifetime totals. Deleted items excluded.
+      qty:      sql<number>`cast(coalesce(sum(case when ${orders.id} is not null then ${orderItems.quantity} else 0 end), 0) as int)`,
     })
     .from(menuItems)
     .leftJoin(orderItems, eq(menuItems.id, orderItems.menuItemId))
-    .leftJoin(orders,     and(eq(orderItems.orderId, orders.id), gte(orders.createdAt, start), lte(orders.createdAt, end)))
-    .where(eq(menuItems.isAvailable, true))
+    .leftJoin(orders,     and(eq(orderItems.orderId, orders.id), gte(orders.createdAt, start), lte(orders.createdAt, end), ne(orders.status, "cancelled")))
+    .where(and(eq(menuItems.isAvailable, true), eq(menuItems.isDeleted, false)))
     .groupBy(menuItems.id, menuItems.name)
-    .orderBy(sql`coalesce(sum(${orderItems.quantity}), 0) asc`)
+    .orderBy(sql`coalesce(sum(case when ${orders.id} is not null then ${orderItems.quantity} else 0 end), 0) asc`)
     .limit(3);
 
   // New customers today (master.createdAt within today)

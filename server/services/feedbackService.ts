@@ -15,7 +15,7 @@
 
 import crypto from "crypto";
 import { db } from "../db";
-import { eq, and, isNull, lte, desc, asc } from "drizzle-orm";
+import { eq, and, isNull, lte, desc, asc, sql } from "drizzle-orm";
 import {
   feedback,
   orders,
@@ -148,6 +148,12 @@ export async function processPendingFeedback(): Promise<{ sent: number; skipped:
 async function processPendingFeedbackOnce(): Promise<{ sent: number; skipped: number }> {
   const config = getAutomationConfig();
   if (!config.feedbackEnabled) return { sent: 0, skipped: 0 };
+  // Without a public base URL the link is a bare "/feedback/<token>" a customer's phone can't open.
+  // Don't send (or use up) requests until one is configured.
+  if (!(config.feedbackBaseUrl || config.trackingBaseUrl)) {
+    console.warn("[Feedback] not sending: set a Feedback base URL in Automation settings");
+    return { sent: 0, skipped: 0 };
+  }
 
   const cutoff = new Date(Date.now() - (config.feedbackDelayMinutes ?? 120) * 60_000);
 
@@ -168,7 +174,8 @@ async function processPendingFeedbackOnce(): Promise<{ sent: number; skipped: nu
     .where(
       and(
         isNull(feedback.sentAt),
-        lte(orders.createdAt, cutoff),
+        // The delay runs from PAYMENT (a 2-hour lunch shouldn't get its request before the bill).
+        sql`coalesce(${orders.paidAt}, ${orders.createdAt}) <= ${cutoff}`,
         eq(orders.paymentStatus, "paid"),
       ),
     )

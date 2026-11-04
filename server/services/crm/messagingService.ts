@@ -13,7 +13,7 @@
 import { normalizeWaPhone } from "../whatsapp/types";
 import { automatedSendBlock } from "../whatsapp/outboundQueue";
 import { db } from "../../db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { customerMessages } from "../../../shared/schema";
 import { resolveCustomerId } from "./customerIdService";
 import { logMessageSentEvent } from "./eventService";
@@ -291,6 +291,8 @@ export async function getCustomerMessages(
     .select()
     .from(customerMessages)
     .where(eq(customerMessages.customerId, customerId))
-    .orderBy(customerMessages.createdAt)
-    .limit(limit);
+    // The LATEST messages (it returned the oldest 50, so recent ones never showed).
+    .orderBy(desc(customerMessages.createdAt))
+    .limit(limit)
+    .then((rows) => rows.reverse()); // back to oldest → newest for display
 }
