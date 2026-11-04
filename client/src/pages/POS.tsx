@@ -995,6 +995,11 @@ export default function POS() {
         setCartLoaded(false);
         void handleSavedPrint("bill", order.id, order, order.print, "always");
       } else if (mode === "settle") {
+        // Record the order this cart now IS before paying. Otherwise a payment that fails (network
+        // stall, 503, an expired write-off PIN) left activeOrderId null, and the retry created a
+        // SECOND order — a duplicate kitchen ticket and stock deduction — while this one stayed
+        // open on the table.
+        setActiveOrderId(order.id);
         const sd = settlementDataRef.current;
         settleMutation.mutate(sd
           ? { orderId: order.id, order, ...sd }
@@ -1183,7 +1188,7 @@ export default function POS() {
     const addonPart = [...addons].map(a => a.name).sort().join(",");
     const variantPart = Object.values(variants).join("-");
     // Include activeItemMode in mergeKey so same item in different modes stays separate
-    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}-${activeItemMode}`;
+    const mergeKey = `${item.id}-${sizePart}-${addonPart}-${variantPart}-${newLineMode}`;
     const uniqueKey = notes ? `${mergeKey}-${Date.now()}` : mergeKey;
 
     if (isEdit) {
@@ -1196,7 +1201,7 @@ export default function POS() {
       setCartItems(prev => {
         const existing = !notes ? prev.find(c => c.cartKey === mergeKey) : null;
         if (existing) return prev.map(c => c.cartKey === mergeKey ? { ...c, quantity: c.quantity + qty } : c);
-        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined, serviceMode: activeItemMode }];
+        return [...prev, { cartKey: uniqueKey, id: item.id, name: item.name, basePrice, addons, variants, notes, totalPrice, quantity: qty, size: sizePart || undefined, serviceMode: newLineMode }];
       });
     }
     setModal(null);
@@ -1206,11 +1211,11 @@ export default function POS() {
 
   const directAddItem = (item: any) => {
     const basePrice = parseFloat(item.price || "0");
-    const cartKey = `${item.id}-${activeItemMode}`;
+    const cartKey = `${item.id}-${newLineMode}`;
     setCartItems(prev => {
       const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1, serviceMode: activeItemMode }];
+      return [...prev, { cartKey, id: item.id, name: item.name, basePrice, addons: [], variants: {}, notes: "", totalPrice: basePrice, quantity: 1, serviceMode: newLineMode }];
     });
   };
 
@@ -1294,9 +1299,9 @@ export default function POS() {
       openItemSeqRef.current -= 1;
       const id = openItemSeqRef.current;
       setCartItems(prev => [...prev, {
-        cartKey: `open-${id}-${activeItemMode}`,
+        cartKey: `open-${id}-${newLineMode}`,
         id, name: openItemName.trim(), basePrice: price, addons: [], variants: {},
-        notes: "", totalPrice: price, quantity: openItemQty, serviceMode: activeItemMode,
+        notes: "", totalPrice: price, quantity: openItemQty, serviceMode: newLineMode,
       }]);
     }
     closeOpenItemDialog();
@@ -1354,6 +1359,13 @@ export default function POS() {
   // "dinein"). Today every standalone entry carries ?mode=, so this only removes a trap; the two
   // render blocks below used to keep their own copies of this rule, now they read this one.
   const isTableSession = !posMode && (!!preselectedTableId || !!editOrderId || isSectionMode);
+  // The service mode a NEW cart line gets — the same value buildItemsPayload persists for it.
+  // Outside table/section sessions the line used to keep "dinein" in the cart while the server
+  // stored "pickup"/"delivery", so after the first save wasItemKotd() missed it: removing it
+  // skipped the cancel-reason dialog and every later save was refused with a 400.
+  const newLineMode: ItemServiceMode = isTableSession
+    ? activeItemMode
+    : (isDeliveryOrPickup ? (currentOrderType === "delivery" ? "delivery" : "pickup") : "dinein");
   // Container and delivery charges are manually staff-entered flat amounts, untaxed, not
   // computed from item quantities/serviceMode.
   const grandTotal = total + containerCharge + deliveryCharge;
@@ -2608,7 +2620,7 @@ export default function POS() {
                   // notes) there can be MULTIPLE simultaneous lines for the same item.id — only show
                   // a working pill when there's exactly one, so +/- never has to guess which line to
                   // touch; otherwise fall back to the existing plain "+" (opens the picker, as today).
-                  const plainCartKey = `${item.id}-${activeItemMode}`;
+                  const plainCartKey = `${item.id}-${newLineMode}`;
                   const matchingLines = needsPicker ? cartItems.filter(c => c.id === item.id) : [];
                   const singleLine = matchingLines.length === 1 ? matchingLines[0] : null;
                   const pillCartKey = needsPicker ? (singleLine ? singleLine.cartKey : null) : plainCartKey;
