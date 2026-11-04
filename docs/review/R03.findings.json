@@ -44,7 +44,7 @@
     },
     {
       "file": "client/src/components/TwoFactorPanel.tsx",
-      "line": 10,
+      "line": 15,
       "severity": "low",
       "category": "error handling",
       "title": "2FA status query parses error bodies as status, showing 'Disabled' when 2FA is actually enabled",
