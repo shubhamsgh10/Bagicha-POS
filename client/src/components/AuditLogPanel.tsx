@@ -37,7 +37,7 @@ export function AuditLogPanel() {
         offset: String(page * PAGE_SIZE),
       });
       if (filterAction !== "all") params.set("action", filterAction);
-      const res = await fetch(apiUrl(`/api/admin/audit-logs?${params}`));
+      const res = await fetch(apiUrl(`/api/admin/audit-logs?${params}`), { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch audit logs");
       return res.json();
     },

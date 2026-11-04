@@ -924,9 +924,22 @@ export function PrintSettingsPanel({
     mutationFn: async () => {
       // Only the two things this panel edits — spreading the whole settings snapshot loaded at
       // page open overwrote everything else changed since, counters included.
+      // Drop references to printers that no longer exist. Changing a printer means delete + re-add
+      // (new id), and the KOT/bill printer, category routes and section bill printers kept the old
+      // id: the dropdowns showed "None" while prints silently went nowhere / to the fallback.
+      const ids = new Set(ps.printers.map(p => p.id));
+      const live = (id: string | null | undefined) => (id && ids.has(id) ? id : null);
+      const overrides = Object.fromEntries(
+        Object.entries(ps.kot.categoryPrinterOverrides ?? {}).filter(([, v]) => !v || ids.has(v)),
+      );
+      const cleanPs = {
+        ...ps,
+        kot: { ...ps.kot, kotPrinterId: live(ps.kot.kotPrinterId), categoryPrinterOverrides: overrides },
+        bill: { ...ps.bill, billPrinterId: live(ps.bill.billPrinterId) },
+      };
       const res = await apiRequest('PUT', '/api/settings', {
-        printSettings: ps,
-        posSections: sections.filter(s => s.name.trim()),
+        printSettings: cleanPs,
+        posSections: sections.filter(s => s.name.trim()).map(s => ({ ...s, billPrinterId: live(s.billPrinterId) })),
       });
       return res.json();
     },

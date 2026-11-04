@@ -1,6 +1,7 @@
 import { apiUrl } from '@/lib/api';
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { toast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, CheckCircle, Zap, MessageSquare, ChevronDown, ChevronUp,
@@ -331,27 +332,38 @@ export function AutomationPanel({ customers, extras, isLoading }: Props) {
   const [gcLoading, setGcLoading] = useState(true);
   const [gcSaving, setGcSaving]   = useState(false);
 
+  // Saves are allowed only after the real config loaded: if the GET failed the panel showed the
+  // built-in defaults, and the next toggle POSTed the WHOLE default object — blank API keys,
+  // flags reset, owner phone and templates wiped on the server.
+  const gcLoadedRef = useRef(false);
   useEffect(() => {
     fetch(apiUrl("/api/automation/config"), { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setGc(prev => ({ ...prev, ...d })); })
+      .then(d => { if (d) { setGc(prev => ({ ...prev, ...d })); gcLoadedRef.current = true; } })
       .catch(() => {})
       .finally(() => setGcLoading(false));
   }, []);
 
   const saveGc = useCallback(async (patch: Partial<GrowthConfig>) => {
-    const updated = { ...gc, ...patch };
-    setGc(updated);
+    if (!gcLoadedRef.current) {
+      toast({ title: "Settings not loaded", description: "Reload the page before changing these.", variant: "destructive" });
+      return;
+    }
+    setGc(prev => ({ ...prev, ...patch }));
     setGcSaving(true);
     try {
-      await fetch(apiUrl("/api/automation/config"), {
+      // Only what changed — never the whole snapshot.
+      const r = await fetch(apiUrl("/api/automation/config"), {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated),
+        body: JSON.stringify(patch),
       });
-    } catch { /* silent */ }
+      if (!r.ok) throw new Error(String(r.status));
+    } catch {
+      toast({ title: "Couldn't save", description: "The change didn't reach the server.", variant: "destructive" });
+    }
     setGcSaving(false);
-  }, [gc]);
+  }, []);
 
   // Run state
   const [running, setRunning]     = useState(false);

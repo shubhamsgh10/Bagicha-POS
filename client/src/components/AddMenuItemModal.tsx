@@ -461,15 +461,8 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
             />
           </div>
 
-          <div>
-            <Label htmlFor="allergens">Allergens</Label>
-            <Input
-              id="allergens"
-              placeholder="e.g., Nuts, Dairy, Gluten"
-              {...form.register("allergens")}
-            />
-          </div>
-
+          {/* Allergens / Vegetarian / Spicy inputs removed: menu_items has no columns for them, so
+              both menu routes silently dropped whatever was typed while the toast said "saved". */}
           {/* Addons Section */}
           <div className="space-y-3">
             <div className="flex items-center space-x-2">
@@ -648,23 +641,6 @@ export function AddMenuItemModal({ isOpen, onClose, editItem }: AddMenuItemModal
               <Label htmlFor="isAvailable">Available</Label>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="isVegetarian"
-                checked={form.watch("isVegetarian")}
-                onCheckedChange={(checked) => form.setValue("isVegetarian", checked)}
-              />
-              <Label htmlFor="isVegetarian">Vegetarian</Label>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="isSpicy"
-                checked={form.watch("isSpicy")}
-                onCheckedChange={(checked) => form.setValue("isSpicy", checked)}
-              />
-              <Label htmlFor="isSpicy">Spicy</Label>
-            </div>
           </div>
 
           <div className="flex justify-between">
