@@ -28,6 +28,8 @@ import { forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principa
 /** The menu columns an order save reads once and shares (see storage.getMenuRowsForOrder). */
 export type OrderMenuRow = Pick<MenuItem, "id" | "name" | "price" | "sizes" | "categoryId" | "inventoryLinks">;
 
+class MergeConflictError extends Error {}
+
 /** Thrown by replaceOrderItems when the order is gone, cancelled or settled at write time. */
 export class OrderNotEditableError extends Error {
   constructor() {
@@ -1165,23 +1167,39 @@ export class DatabaseStorage implements IStorage {
     newItems: Array<Omit<InsertOrderItem, "orderId">>;
     targetTotals: Partial<InsertOrder>;
   }): Promise<Order> {
+    // Returns undefined (nothing written) when either order stopped being an open, unpaid order
+    // after the route checked it — a settle/cancel landing mid-merge must win.
     return await db.transaction(async (tx) => {
+      // Same stock lock reconcileOrderInventory takes, both orders, ascending — so a concurrent
+      // item edit of either can't reconcile against half-moved stock rows.
+      for (const oid of [params.targetOrderId, params.sourceOrderId].sort((a, b) => a - b)) {
+        await tx.execute(advisoryXactLock(LOCK_NS.orderInventory, oid));
+      }
+      const open = and(eq(orders.paymentStatus, "pending"), sql`${orders.status} IN ('pending','preparing','ready')`);
+      const [updatedTarget] = await tx.update(orders).set({
+        ...(params.targetTotals as any),
+        updatedAt: new Date(),
+      }).where(and(eq(orders.id, params.targetOrderId), open)).returning();
+      if (!updatedTarget) return undefined as any;
+      const gone = await tx.delete(orders).where(and(eq(orders.id, params.sourceOrderId), open)).returning({ id: orders.id });
+      if (gone.length === 0) throw new MergeConflictError();
       if (params.newItems.length > 0) {
         await tx.insert(orderItems).values(
           params.newItems.map((it) => ({ ...(it as any), orderId: params.targetOrderId })),
         );
       }
-      const [updatedTarget] = await tx.update(orders).set({
-        ...(params.targetTotals as any),
-        updatedAt: new Date(),
-      }).where(eq(orders.id, params.targetOrderId)).returning();
-      if (params.sourceTableId != null) {
-        await tx.update(tables).set({ status: "free", currentOrderId: null }).where(eq(tables.id, params.sourceTableId));
-      }
       await tx.delete(orderItems).where(eq(orderItems.orderId, params.sourceOrderId));
-      await tx.delete(orders).where(eq(orders.id, params.sourceOrderId));
+      // The source's stock movements and kitchen tickets move to the target. Left on the deleted
+      // order id, the target's next edit reconciled stock without them and deducted the merged
+      // items a SECOND time; the tickets were orphaned (the documented known gap).
+      await tx.execute(sql`UPDATE stock_movements SET order_id = ${params.targetOrderId} WHERE order_id = ${params.sourceOrderId}`);
+      await tx.update(kotTickets).set({ orderId: params.targetOrderId }).where(eq(kotTickets.orderId, params.sourceOrderId));
+      if (params.sourceTableId != null) {
+        await tx.update(tables).set({ status: "free", currentOrderId: null })
+          .where(and(eq(tables.id, params.sourceTableId), or(eq(tables.currentOrderId, params.sourceOrderId), isNull(tables.currentOrderId))));
+      }
       return updatedTarget;
-    });
+    }).catch((e) => { if (e instanceof MergeConflictError) return undefined as any; throw e; });
   }
 
   // Atomic split: creates the new order + moves the split items onto it, removes them
