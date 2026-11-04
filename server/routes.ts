@@ -382,13 +382,22 @@ export async function registerRoutes(
     res.json(auth);
   });
 
-  // Ensure admin user exists on startup
+  // Bootstrap an admin ONLY on an empty install (no accounts at all). This used to run on every
+  // boot/cold start whenever no account was literally named "admin" — so renaming or deleting the
+  // real admin silently recreated admin/admin123 on production. In production the password must
+  // come from BOOTSTRAP_ADMIN_PASSWORD; the well-known default is only used outside production.
   try {
-    const adminUser = await storage.getUserByUsername("admin");
-    if (!adminUser) {
-      const hashed = await hashPassword("admin123");
-      await storage.createUser({ username: "admin", password: hashed, role: "admin" });
-      console.log("Created default admin user (username: admin, password: admin123)");
+    const existingUsers = await storage.getUsers();
+    if (existingUsers.length === 0) {
+      const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD
+        || (process.env.NODE_ENV === "production" ? null : "admin123");
+      if (bootstrapPassword) {
+        const hashed = await hashPassword(bootstrapPassword);
+        await storage.createUser({ username: "admin", password: hashed, role: "admin" });
+        console.log("Created bootstrap admin user (username: admin) — change its password now.");
+      } else {
+        console.error("[auth] No user accounts exist. Set BOOTSTRAP_ADMIN_PASSWORD to create the first admin.");
+      }
     }
   } catch (err: any) {
     if (err.code === 'ENOTFOUND') {
@@ -487,7 +496,9 @@ export async function registerRoutes(
   });
 
   // ── 2FA setup: generate secret + QR (admin, already logged in) ───────────────
-  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+  // requireUserAccount on setup/verify-setup/disable: same users/staff_members id-collision IDOR
+  // as PUT /api/auth/profile (server/selfScope.ts).
+  app.post("/api/auth/2fa/setup", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const secret = generateSecret();
@@ -502,7 +513,7 @@ export async function registerRoutes(
   });
 
   // ── 2FA setup: verify first code, then persist secret ────────────────────────
-  app.post("/api/auth/2fa/verify-setup", requireAuth, async (req, res) => {
+  app.post("/api/auth/2fa/verify-setup", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const { token } = req.body;
@@ -524,7 +535,7 @@ export async function registerRoutes(
   });
 
   // ── 2FA disable ───────────────────────────────────────────────────────────────
-  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+  app.post("/api/auth/2fa/disable", requireAuth, requireUserAccount, async (req, res) => {
     try {
       const actor = req.user as any;
       const { token } = req.body;
@@ -548,6 +559,10 @@ export async function registerRoutes(
   app.get("/api/auth/2fa/status", requireAuth, async (req, res) => {
     try {
       const actor = req.user as any;
+      // A staff-member (PIN card) session has no users row of its own — its id belongs to
+      // staff_members, and reading users by it returned (and setup/disable WROTE) whichever
+      // account shares the number. 2FA is for user accounts only.
+      if (actor?._isStaffMember) return res.json({ totpEnabled: false, available: false });
       const [user] = await db.select().from(users).where(eq(users.id, actor.id));
       res.json({ totpEnabled: !!user?.totpEnabled });
     } catch {
