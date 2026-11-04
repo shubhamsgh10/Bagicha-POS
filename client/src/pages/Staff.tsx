@@ -25,11 +25,18 @@ import { useRealtime } from "@/hooks/useRealtime";
 import { BiometricDevicePanel } from "@/components/staff/BiometricDevicePanel";
 import { LiveAttendanceBoard } from "@/components/staff/LiveAttendanceBoard";
 import { weekStringOf, shiftWeek } from "@shared/weekMath";
+import { istCalendarDate } from "@shared/businessDay";
+
+/** For the printed payroll page: names are user-editable, and that page shares the app's origin. */
+const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+// IST calendar dates. These used the UTC date: local midnight on the 1st is 18:30 UTC of the day
+// before, so "month start" was the last day of the previous month (and "today" was yesterday
+// until 05:30 IST).
+const today = () => istCalendarDate();
+const monthStart = () => `${istCalendarDate().slice(0, 7)}-01`;
 
 function fmtHours(h: number) {
   if (!h) return "—";
@@ -285,7 +292,7 @@ function ShiftsPanel() {
 function LeavesPanel() {
   const { toast } = useToast();
   const [filterStatus, setFilterStatus] = useState("pending");
-  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [filterMonth, setFilterMonth] = useState(istCalendarDate().slice(0, 7));
   const [showApply, setShowApply] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ personKey: "", leaveType: "casual", startDate: "", endDate: "", reason: "" });
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -471,7 +478,7 @@ function StaffBiometricSetup() {
 
 function PayrollPanel() {
   const { toast } = useToast();
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(istCalendarDate().slice(0, 7));
   const [editingSalary, setEditingSalary] = useState<{ kind: string; id: number; salary: string } | null>(null);
 
   const { data: payrollData = [], isLoading } = useQuery<any[]>({ queryKey: [`/api/payroll/report/${selectedMonth}`] });
@@ -495,7 +502,7 @@ function PayrollPanel() {
 
   const handlePrint = () => {
     const rows = payrollData.map((r: any) =>
-      `<tr><td>${r.username}</td><td>${r.role}</td><td>Rs.${Number(r.monthlySalary).toLocaleString("en-IN")}</td><td>${r.workingDays}</td><td>${r.daysPresent}</td><td>${r.absentDays}</td><td>${r.approvedLeaves}</td><td>Rs.${r.deductions.toFixed(2)}</td><td>Rs.${r.overtimePay.toFixed(2)}</td><td><strong>Rs.${r.netSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></td></tr>`
+      `<tr><td>${esc(r.username)}</td><td>${esc(r.role)}</td><td>Rs.${Number(r.monthlySalary).toLocaleString("en-IN")}</td><td>${r.workingDays}</td><td>${r.daysPresent}</td><td>${r.absentDays}</td><td>${r.approvedLeaves}</td><td>Rs.${r.deductions.toFixed(2)}</td><td>Rs.${r.overtimePay.toFixed(2)}</td><td><strong>Rs.${r.netSalary.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></td></tr>`
     ).join("");
     const html = `<!DOCTYPE html><html><head><title>Payroll ${selectedMonth}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px}h2{margin-bottom:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#f0f0f0;font-weight:600}tfoot td{font-weight:bold;background:#f8f8f8}</style></head><body><h2>Payroll Report - ${selectedMonth}</h2><table><thead><tr><th>Staff</th><th>Role</th><th>Salary</th><th>Working Days</th><th>Present</th><th>Absent</th><th>Leave</th><th>Deductions</th><th>OT Pay</th><th>Net Pay</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="9">Total Net Payable</td><td>Rs.${totalNet.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td></tr></tfoot></table></body></html>`;
     const blob = new Blob([html], { type: "text/html" });

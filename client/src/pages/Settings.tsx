@@ -1,4 +1,5 @@
 import { apiUrl } from '@/lib/api';
+import { PinGuard } from "@/components/PinGuard";
 import { describeApiError } from "@/lib/apiError";
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -658,13 +659,32 @@ const TEMPLATES: Record<ImportType, { headers: string[]; sample: string[][] }> =
   },
 };
 
+// RFC 4180: quoted fields may hold commas, newlines and doubled quotes (""). The old version split
+// every line on every comma, so a spreadsheet export with "Paneer, Butter" shifted the later
+// columns — prices landed in the wrong field with no error.
 function parseCSV(text: string): string[][] {
-  return text
-    .split(/\r?\n/)
-    .filter(l => l.trim())
-    .map(line =>
-      line.split(",").map(cell => cell.trim().replace(/^["']|["']$/g, ""))
-    );
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"' && cell.trim() === "") { quoted = true; cell = ""; }
+    else if (c === ",") { row.push(cell.trim()); cell = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell.trim()); cell = "";
+      if (row.some((x) => x !== "")) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  row.push(cell.trim());
+  if (row.some((x) => x !== "")) rows.push(row);
+  return rows;
 }
 
 function toCSVBlob(headers: string[], rows: string[][]): Blob {
@@ -945,6 +965,8 @@ export default function Settings() {
   };
 
   // Generic destructive action handler
+  const [clearOrdersPin, setClearOrdersPin] = useState(false);
+
   const handleDestructiveAction = async (
     endpoint: string,
     method: "POST" | "DELETE",
@@ -1107,6 +1129,15 @@ export default function Settings() {
         </Modal>
       )}
 
+      {clearOrdersPin && (
+        <PinGuard
+          actionLabel="Delete all orders"
+          requiredRole="admin"
+          onCancel={() => setClearOrdersPin(false)}
+          onSuccess={() => { setClearOrdersPin(false); void handleDestructiveAction("/api/admin/clear-orders", "DELETE", "All orders and KOT records removed"); }}
+        />
+      )}
+
       {/* Sync Schema (developer tool) */}
       {activeModal === "sync-schema" && (
         <Modal title="Sync Database Schema" onClose={closeModal}>
@@ -1153,7 +1184,8 @@ export default function Settings() {
               confirmLabel="Delete All Orders"
               loading={actionLoading}
               onCancel={() => setConfirmStep(false)}
-              onConfirm={() => handleDestructiveAction("/api/admin/clear-orders", "DELETE", "All orders and KOT records removed")}
+              // The admin PIN the copy asks for is now actually collected (server: requireFreshPin("admin")).
+              onConfirm={() => setClearOrdersPin(true)}
             />
           )}
         </Modal>
