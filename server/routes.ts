@@ -7,8 +7,9 @@ import { z } from "zod";
 import { insertOrderItemSchema, insertKotTicketSchema, insertCategorySchema, insertInventorySchema, insertInventoryCategorySchema } from "@shared/schema";
 import { orderUpdateAllowlist, ORDER_CREATE_FORCED_DEFAULTS, planStatusChange } from "@shared/orderMutation";
 import { mergeBlock } from "@shared/orderStatusChange";
+import { weekStringOf } from "@shared/weekMath";
 import { personPageKey, resolveStaffAllowedPages } from "@shared/pageAccess";
-import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
+import { businessDayRange, todayBusinessDate, businessDateOf, shiftBusinessDate, istCalendarDate } from "@shared/businessDay";
 import { resolveSettlement, SETTLE_TOLERANCE, type SettlementMode } from "@shared/settlement";
 import { summarizeCollected, collectedBusinessDate } from "@shared/paymentSplit";
 import { planPaymentEdit } from "@shared/paymentEdit";
@@ -612,7 +613,8 @@ export async function registerRoutes(
       if (!staffId || !pin) return res.status(400).json({ message: "staffId and pin required" });
 
       const sm = await storage.getStaffMember(Number(staffId));
-      if (!sm || !sm.isActive) return res.status(401).json({ message: "Staff member not found" });
+      // Same rule as card-login: turning a person's Mobile Card off must also stop this login.
+      if (!sm || !sm.isActive || !sm.showOnMobile) return res.status(401).json({ message: "Staff member not found" });
       if (!sm.pin) return res.status(401).json({ message: "No PIN set. Ask manager to set one in Settings → Staff Selector." });
       if (sm.pin !== String(pin)) return res.status(401).json({ message: "Wrong PIN" });
 
@@ -2012,15 +2014,11 @@ export async function registerRoutes(
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
       const rawItems = await storage.getOrderItems(id);
-      // Build name map from all referenced menu items in one batch
-      const menuItemIds = Array.from(new Set(rawItems.map((i: any) => i.menuItemId)));
+      // Names for lines without a stored one: ONE query for just id+name (it was one full-row
+      // SELECT per menu item, on every POS reopen and after every KOT print).
+      const menuRows = await storage.getMenuRowsForOrder(rawItems.map((i: any) => i.menuItemId));
       const menuNameMap: Record<number, string> = {};
-      await Promise.all(
-        menuItemIds.map(async (mid: any) => {
-          const m = await storage.getMenuItemById(mid);
-          if (m) menuNameMap[m.id] = m.name;
-        })
-      );
+      for (const m of menuRows) menuNameMap[m.id] = m.name;
       const items = rawItems.map((item: any) => ({
         ...item,
         name: item.name || menuNameMap[item.menuItemId] || "Deleted Item",
@@ -2218,7 +2216,9 @@ export async function registerRoutes(
           console.error("[order] table status update error (non-fatal):", tableErr);
         }
       }
-      broadcast({ type: 'NEW_ORDER', order, items });
+      // The order row only — the raw client items array could push the event past Pusher's ~10 KB
+      // limit (rejected = no live update anywhere), and no screen reads it.
+      broadcast({ type: 'NEW_ORDER', order });
 
       // ── CRM: log ORDER_PLACED event + update segmentation (fire-and-forget) ──
       const crmKey = (order.customerPhone?.trim() || order.customerName?.trim());
@@ -2524,13 +2524,16 @@ export async function registerRoutes(
         const diff = diffOrderLines(beforeLines, afterLines);
 
         const discountBefore = parseFloat(String((existingOrderRow as any)?.discountAmount ?? 0));
-        const discountAfter = priced.discount;
+        // Compared at the 2 decimals the order row STORES: the unrounded priced total (690.795) vs the
+        // stored 690.80 logged a spurious "Bill Modified" row on saves that changed no money.
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const discountAfter = r2(priced.discount);
         const containerBefore = parseFloat(String((existingOrderRow as any)?.containerCharge ?? 0));
-        const containerAfter = priced.containerCharge;
+        const containerAfter = r2(priced.containerCharge);
         const deliveryBefore = parseFloat(String((existingOrderRow as any)?.deliveryCharge ?? 0));
-        const deliveryAfter = priced.deliveryCharge;
+        const deliveryAfter = r2(priced.deliveryCharge);
         const totalBefore = parseFloat(String((existingOrderRow as any)?.totalAmount ?? 0));
-        const totalAfter = priced.total;
+        const totalAfter = Number(priced.total.toFixed(2));
         const moneyChanged = discountBefore !== discountAfter || containerBefore !== containerAfter
           || deliveryBefore !== deliveryAfter || totalBefore !== totalAfter;
 
@@ -2710,7 +2713,11 @@ export async function registerRoutes(
       let primaryMethod = "cash";
 
       if (isSplitPath) {
-        // Rich split-payment path — amounts come from the entered breakdown.
+        // Rich split-payment path — amounts come from the entered breakdown. Cash and UPI only:
+        // any other label was counted in Sales but in neither the Cash nor the UPI figure.
+        if (payments.some((p: any) => Number(p?.amount) > 0 && p?.method !== "cash" && p?.method !== "upi")) {
+          return res.status(400).json({ error: "Only Cash and UPI payments are accepted.", code: "bad_method" });
+        }
         for (const p of payments) {
           if (Number(p.amount) > 0) {
             breakdown[p.method] = (breakdown[p.method] || 0) + Number(p.amount);
@@ -2723,6 +2730,9 @@ export async function registerRoutes(
         // concept exists here — Billing.tsx's own dialog never sends payments[], so it
         // can't reach the write-off branch below regardless.
         primaryMethod = paymentMethod || "cash";
+        if (!["cash", "upi", "due", "other"].includes(primaryMethod)) {
+          return res.status(400).json({ error: "Only Cash and UPI payments are accepted.", code: "bad_method" });
+        }
         if (!isDue) breakdown = { [primaryMethod]: orderTotal };
       }
 
@@ -3278,11 +3288,19 @@ export async function registerRoutes(
   app.put("/api/orders/:id/move-table", requireAuth, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { newTableId, newTableName } = req.body;
-      if (!newTableId) return res.status(400).json({ error: "newTableId required" });
+      const { newTableName } = req.body;
+      const newTableId = Number(req.body?.newTableId);
+      if (!Number.isInteger(newTableId) || newTableId <= 0) return res.status(400).json({ error: "newTableId required" });
       const order = await storage.getOrderById(id);
       if (!order) return res.status(404).json({ error: "Order not found" });
+      if ((order as any).paymentStatus === "paid" || ["cancelled", "hold"].includes((order as any).status)) {
+        return res.status(409).json({ error: "Only an open order can be moved.", code: "not_open" });
+      }
       const oldTableId = (order as any).tableId;
+      // Claim the target first, conditionally: it must still be free.
+      if (!(await storage.claimFreeTable(newTableId, id))) {
+        return res.status(409).json({ error: "That table is no longer free — pick another.", code: "table_busy" });
+      }
       // Update order with new table FIRST — this is the authoritative write (same
       // reasoning as /api/tables/:id/shift above: order.tableId is what other reads key
       // off). The two table-status flips are best-effort display bookkeeping on top of
@@ -3297,11 +3315,6 @@ export async function registerRoutes(
         } catch (tableErr) {
           console.error("[table] move: old table status update error (non-fatal):", tableErr);
         }
-      }
-      try {
-        await storage.updateTableStatus(newTableId, "running", id);
-      } catch (tableErr) {
-        console.error("[table] move: new table status update error (non-fatal):", tableErr);
       }
       await logAudit(req, "order.move_table", "order", id, {
         orderNumber: (order as any).orderNumber,
@@ -3873,7 +3886,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/logs — get automation logs, newest first */
-  app.get("/api/automation/logs", requireAuth, (req, res) => {
+  app.get("/api/automation/logs", requireManagerOrAdmin, (req, res) => {
     const limit  = parseInt(String(req.query.limit  ?? "200"), 10);
     const offset = parseInt(String(req.query.offset ?? "0"),   10);
     const logs   = loadLogs().slice().reverse(); // newest first
@@ -3890,7 +3903,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/stats — campaign performance summary */
-  app.get("/api/automation/stats", requireAuth, (_req, res) => {
+  app.get("/api/automation/stats", requireManagerOrAdmin, (_req, res) => {
     res.json(getAutomationStats());
   });
 
@@ -3905,7 +3918,7 @@ export async function registerRoutes(
   });
 
   /** POST /api/automation/prefs/:customerId — update customer opt-out pref */
-  app.post("/api/automation/prefs/:customerId", requireAuth, (req, res) => {
+  app.post("/api/automation/prefs/:customerId", requireManagerOrAdmin, (req, res) => {
     const { customerId } = req.params;
     const { doNotSend, mutedUntil } = req.body as { doNotSend?: boolean; mutedUntil?: string };
     setCustomerPref(decodeURIComponent(customerId), { doNotSend, mutedUntil });
@@ -3913,7 +3926,7 @@ export async function registerRoutes(
   });
 
   /** GET /api/automation/prefs — all customer preferences */
-  app.get("/api/automation/prefs", requireAuth, (_req, res) => {
+  app.get("/api/automation/prefs", requireManagerOrAdmin, (_req, res) => {
     res.json(loadCustomerPrefs());
   });
 
@@ -4177,6 +4190,21 @@ export async function registerRoutes(
     }
   });
 
+  // Registered BEFORE /api/crm/segment/:key — Express matches in order, so "batch" was being
+  // captured as a customer key and this admin route was unreachable.
+  /**
+   * POST /api/crm/segment/batch
+   * Runs full batch segmentation for all customers.
+   */
+  app.post("/api/crm/segment/batch", requireAdmin, async (_req, res) => {
+    try {
+      const result = await runSegmentationForAll();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   /**
    * POST /api/crm/segment/:key
    * Recomputes the RFM segment for a single customer.
@@ -4196,18 +4224,6 @@ export async function registerRoutes(
     }
   });
 
-  /**
-   * POST /api/crm/segment/batch
-   * Runs full batch segmentation for all customers.
-   */
-  app.post("/api/crm/segment/batch", requireAdmin, async (_req, res) => {
-    try {
-      const result = await runSegmentationForAll();
-      res.json({ ok: true, ...result });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message });
-    }
-  });
 
   // ── Server-side automation ─────────────────────────────────────────────────
 
@@ -4353,7 +4369,7 @@ export async function registerRoutes(
   // GET /api/attendance/report?month=YYYY-MM
   app.get("/api/attendance/report", requireAuth, async (req, res) => {
     try {
-      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      const month = (req.query.month as string) || istCalendarDate().slice(0, 7);
       res.json(await storage.getAttendanceReport(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -4623,12 +4639,8 @@ export async function registerRoutes(
   // GET /api/shifts/roster?week=YYYY-WW
   app.get("/api/shifts/roster", requireAuth, async (req, res) => {
     try {
-      const week = req.query.week as string || (() => {
-        const now = new Date();
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-        return `${now.getFullYear()}-${String(weekNum).padStart(2, '0')}`;
-      })();
+      // shared/weekMath.ts, the same week rule as the Staff page (the inline formula disagreed with it).
+      const week = (req.query.week as string) || weekStringOf(new Date(`${istCalendarDate()}T12:00:00`));
       res.json(await storage.getRoster(week));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -4659,7 +4671,7 @@ export async function registerRoutes(
   // month from stored punch endpoints. Body { month?: "YYYY-MM" } (defaults to current month).
   app.post("/api/attendance/recompute-shifts", requireAdmin, async (req, res) => {
     try {
-      const month = (req.body?.month as string) || new Date().toISOString().slice(0, 7);
+      const month = (req.body?.month as string) || istCalendarDate().slice(0, 7);
       res.json(await recomputeShiftSessions(month));
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });

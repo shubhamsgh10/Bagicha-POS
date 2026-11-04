@@ -18,6 +18,8 @@ export const LOCK_NS = {
   couponRedemption: 3,
   /** loyaltyService.redeemPoints — key: hashtext(customerId) */
   loyaltyCustomer: 4,
+  /** storage.replaceAutoShiftSessions — key: hashtext("<kind>:<id>:<date>") */
+  shiftSessions: 5,
 } as const;
 
 /** `SELECT pg_advisory_xact_lock(<ns>, <id>)` for an integer record id. */

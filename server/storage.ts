@@ -19,7 +19,7 @@ import { shiftWindow, type DetectedSession } from "@shared/shiftTime";
 import { weekDates } from "@shared/weekMath";
 import { leaveDaysInMonth } from "@shared/leaveDays";
 import { computeMenuItemCost as computeMenuItemCostPure, computeLineCosts, resolveSizeMultiplier, type MenuCostResult } from "@shared/menuCost";
-import { advisoryXactLock, LOCK_NS } from "./advisoryLocks";
+import { advisoryXactLock, advisoryXactLockText, LOCK_NS } from "./advisoryLocks";
 import { publicPerson } from "./selfScope";
 import { businessDayRange, todayBusinessDate, istCalendarDate, businessDateOf, shiftBusinessDate } from "@shared/businessDay";
 import { ACTIVE_ORDER_STATUSES } from "@shared/orderStatus";
@@ -236,6 +236,7 @@ export interface IStorage {
   updateTable(id: number, data: Partial<InsertTable>): Promise<Table>;
   deleteTable(id: number): Promise<void>;
   freeTableIfHeldBy(tableId: number, orderId: number): Promise<boolean>;
+  claimFreeTable(tableId: number, orderId: number): Promise<boolean>;
   updateTableStatus(id: number, status: string, currentOrderId?: number | null): Promise<Table>;
 
   // Sales
@@ -976,7 +977,9 @@ export class DatabaseStorage implements IStorage {
   }>> {
     const rows = await db
       .select({
-        date: sql<string>`DATE(${orders.createdAt})`,
+        // The IST business day (5 AM cutoff), like every other report — DATE() of the stored UTC
+        // timestamp put evening service after 18:30 IST on the next day.
+        date: sql<string>`DATE((${orders.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') - interval '5 hours')`,
         staff: orders.createdByName,
         tableNumber: orders.tableNumber,
         orderCount: sql<number>`COUNT(*)`,
@@ -990,8 +993,8 @@ export class DatabaseStorage implements IStorage {
         sql`${orders.tableNumber} IS NOT NULL`,
         sql`${orders.createdByName} IS NOT NULL`,
       ))
-      .groupBy(sql`DATE(${orders.createdAt})`, orders.createdByName, orders.tableNumber)
-      .orderBy(sql`DATE(${orders.createdAt}) DESC`, orders.createdByName);
+      .groupBy(sql`DATE((${orders.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') - interval '5 hours')`, orders.createdByName, orders.tableNumber)
+      .orderBy(sql`DATE((${orders.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') - interval '5 hours') DESC`, orders.createdByName);
 
     // Merge rows with the same date+staff, collecting distinct tables
     const map = new Map<string, { date: string; staff: string; tables: Set<string>; orderCount: number; revenue: number }>();
@@ -1430,6 +1433,16 @@ export class DatabaseStorage implements IStorage {
   // cancelling, holding or moving an OLD order used to free whatever table that order once sat
   // at — even when a new party had since been seated there with their own running order, so a
   // busy table showed "free" mid-service. Returns whether the table was freed.
+  // Takes a FREE table for an order (status running + currentOrderId) — only if it is still free,
+  // so two moves onto the same table (or a stale picker) can't land two orders on it.
+  async claimFreeTable(tableId: number, orderId: number): Promise<boolean> {
+    const rows = await db.update(tables)
+      .set({ status: "running", currentOrderId: orderId } as any)
+      .where(and(eq(tables.id, tableId), eq(tables.status, "free"), isNull(tables.currentOrderId)))
+      .returning({ id: tables.id });
+    return rows.length > 0;
+  }
+
   async freeTableIfHeldBy(tableId: number, orderId: number): Promise<boolean> {
     const rows = await db.update(tables)
       .set({ status: "free", currentOrderId: null } as any)
@@ -1514,7 +1527,7 @@ export class DatabaseStorage implements IStorage {
     // A cancelled order is not a sale: it is excluded from every figure below that counts
     // orders, revenue or items (same rule as /api/reports/sales). Cancelled orders are
     // reported on their own in Reports → Cancelled Orders.
-    const [todayResult] = await db.select({
+    const todayQ = db.select({
       count: sql<number>`count(*)`,
       total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
     }).from(orders).where(
@@ -1530,7 +1543,7 @@ export class DatabaseStorage implements IStorage {
     // be on the floor while automatically dropping genuinely stale orders — no
     // manual cleanup ever required.
     const activeWindowStart = businessDayRange(shiftBusinessDate(todayBusinessDate(), -1)).start;
-    const [activeResult] = await db.select({
+    const activeQ = db.select({
       count: sql<number>`count(*)`
     }).from(orders).where(
       and(
@@ -1540,17 +1553,17 @@ export class DatabaseStorage implements IStorage {
       )
     );
 
-    const [revenueResult] = await db.select({
+    const revenueQ = db.select({
       total: sql<number>`coalesce(sum(cast(${orders.totalAmount} as numeric)), 0) - coalesce(sum(cast(${orders.shortfallAmount} as numeric)), 0)`
     }).from(orders).where(ne(orders.status, "cancelled"));
 
-    const [lowStockResult] = await db.select({
+    const lowStockQ = db.select({
       count: sql<number>`count(*)`
     }).from(inventory).where(
       sql`${inventory.currentStock} <= ${inventory.minStock}`
     );
 
-    const topItemRows = await db
+    const topItemQ = db
       .select({
         name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
         qty: sql<number>`cast(sum(${orderItems.quantity}) as int)`,
@@ -1563,11 +1576,16 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`sum(cast(${orderItems.quantity} as numeric) * cast(${orderItems.price} as numeric)) desc`)
       .limit(1);
 
+    // Independent reads, run together — they used to go one after another (6 serial round trips,
+    // an all-time revenue scan among them) on a 15 s poll.
+    const [[todayResult], [activeResult], [revenueResult], [lowStockResult], topItemRows, allTables] = await Promise.all([
+      todayQ, activeQ, revenueQ, lowStockQ, topItemQ, db.select().from(tables),
+    ]);
+
     const todayOrders = Number(todayResult?.count || 0);
     const todaySales = Number(todayResult?.total || 0);
 
     // Section-level table stats
-    const allTables = await db.select().from(tables);
     const innerRunning = allTables.filter(t => t.section === 'inner' && t.status === 'running').length;
     const outerRunning = allTables.filter(t => t.section === 'outer' && t.status === 'running').length;
 
@@ -1844,7 +1862,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTodayAttendance(): Promise<AttendanceWho[]> {
-    const today = new Date().toISOString().split('T')[0];
+    const today = istCalendarDate(); // IST calendar day — the UTC date was yesterday until 05:30 IST
     return this.getAttendance({ date: today });
   }
 
@@ -2034,10 +2052,14 @@ export class DatabaseStorage implements IStorage {
     const personCond = person.kind === "user"
       ? eq(shiftAssignments.userId, person.id)
       : eq(shiftAssignments.staffMemberId, person.id);
-    await db.delete(shiftAssignments)
+    // One transaction: two punch batches for the same person/day (sync + live punch) used to
+    // interleave delete/insert and leave duplicate or missing sessions.
+    await db.transaction(async (tx) => {
+    await tx.execute(advisoryXactLockText(LOCK_NS.shiftSessions, `${person.kind}:${person.id}:${date}`));
+    await tx.delete(shiftAssignments)
       .where(and(personCond, eq(shiftAssignments.date, date), eq(shiftAssignments.source, "auto")));
     if (sessions.length === 0) return;
-    await db.insert(shiftAssignments).values(sessions.map(s => ({
+    await tx.insert(shiftAssignments).values(sessions.map(s => ({
       userId: person.kind === "user" ? person.id : null,
       staffMemberId: person.kind === "staff" ? person.id : null,
       shiftId: s.shiftId,
@@ -2048,6 +2070,7 @@ export class DatabaseStorage implements IStorage {
       workingHours: s.workingHours.toFixed(2),
       createdBy: null,
     })));
+    });
   }
 
   // The payroll-eligible roster, pulled from BOTH systems and created in Admin:

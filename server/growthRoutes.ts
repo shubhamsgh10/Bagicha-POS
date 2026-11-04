@@ -322,6 +322,11 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       };
       const order = await storage.getOrderById(Number(orderId));
       if (!order) return res.status(404).json({ error: "Order not found" });
+      // Only an open, unpaid bill takes a discount — a paid or cancelled one used to have its total
+      // rewritten (and the coupon consumed) with the money already counted.
+      if (order.paymentStatus !== "pending" || order.status === "cancelled") {
+        return res.status(409).json({ error: "This bill is already settled or cancelled.", code: "not_editable" });
+      }
 
       const { subtotal, containerCharge, deliveryCharge } = deriveBillTotals(order);
 
@@ -425,6 +430,12 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
       if (!customerKey) return res.status(400).json({ error: "customerKey required" });
 
       const order = orderId ? await storage.getOrderById(Number(orderId)) : null;
+      // An order id that doesn't exist (or a settled/cancelled bill) used to still burn the points,
+      // with no discount applied anywhere.
+      if (orderId && !order) return res.status(404).json({ error: "Order not found" });
+      if (order && (order.paymentStatus !== "pending" || order.status === "cancelled")) {
+        return res.status(409).json({ error: "This bill is already settled or cancelled.", code: "not_editable" });
+      }
       const customerName = order?.customerName ?? customerKey;
 
       const result = await redeemPoints(customerKey, customerName, Number(points), orderId ?? null);
@@ -492,7 +503,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
   /** List recent feedback (admin). */
   app.get("/api/feedback", requireAuth, async (req, res) => {
     try {
-      const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10), 200);
+      const limit = Math.min(Math.max(1, parseInt(String(req.query.limit ?? "50"), 10) || 50), 200);
       const rows = await db
         .select()
         .from(feedback)
@@ -542,7 +553,7 @@ export function registerGrowthRoutes(app: Express, broadcast: (data: any) => voi
   /** List recent sent digests. */
   app.get("/api/digest/history", requireAuth, async (req, res) => {
     try {
-      const limit = Math.min(parseInt(String(req.query.limit ?? "30"), 10), 100);
+      const limit = Math.min(Math.max(1, parseInt(String(req.query.limit ?? "30"), 10) || 30), 100);
       const rows = await listRecentDigests(limit);
       res.json(rows);
     } catch (err: any) {
