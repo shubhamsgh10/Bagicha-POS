@@ -710,10 +710,10 @@ export default function Billing() {
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  {/* Cash and UPI only: Card / Online money was counted in Sales but in neither the
+                      Cash nor the UPI tile (Reports, Tables), so the day never balanced. */}
                   <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="card">Card</SelectItem>
                   <SelectItem value="upi">UPI (manual)</SelectItem>
-                  <SelectItem value="online">Online</SelectItem>
                   <SelectItem value="due">Due / Pay later</SelectItem>
                 </SelectContent>
               </Select>
