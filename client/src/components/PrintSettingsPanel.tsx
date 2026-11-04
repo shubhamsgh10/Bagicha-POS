@@ -282,9 +282,10 @@ function PrinterSetupTab({ printers, onChange, onTest, onClose }: {
   useEffect(() => {
     if (!window.electronAPI?.onPrinterHealthWarning) return;
     return window.electronAPI.onPrinterHealthWarning((p: { printerId: string; online: boolean }) => {
-      if (!p.online) setOfflinePrinters(prev => {
+      // Both directions — a printer that comes back online drops its "Offline" badge.
+      setOfflinePrinters(prev => {
         const next = new Set(prev);
-        next.add(p.printerId);
+        if (p.online) next.delete(p.printerId); else next.add(p.printerId);
         return next;
       });
     });

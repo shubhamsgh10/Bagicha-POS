@@ -38,8 +38,8 @@ export function kotLines(params: {
 
   const now = new Date();
   lines.push(_two(
-    now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-    now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }),
+    now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }),
     W,
   ));
   lines.push(_div('-', W));
@@ -135,7 +135,9 @@ export function billLines(params: {
 
   lines.push(_div('-', W));
 
-  const subtotal = params.totalAmount - (params.taxAmount ?? 0) - (params.containerCharge ?? 0) - (params.deliveryCharge ?? 0);
+  // total − tax − charges is (subtotal − discount); add the discount back, or the Subtotal line
+  // already had the discount taken off and the Discount line below subtracted it a second time.
+  const subtotal = params.totalAmount - (params.taxAmount ?? 0) - (params.containerCharge ?? 0) - (params.deliveryCharge ?? 0) + (params.discountAmount ?? 0);
   lines.push(_two('Subtotal:', `${sym}${subtotal.toFixed(0)}`, W));
   if ((params.discountAmount ?? 0) > 0) lines.push(_two('Discount:', `-${sym}${(params.discountAmount ?? 0).toFixed(0)}`, W));
   if (params.showTax !== false && (params.taxAmount ?? 0) > 0) {

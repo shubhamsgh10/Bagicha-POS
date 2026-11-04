@@ -6,8 +6,9 @@
  * automation-config fields directly via /api/automation/config.
  */
 
+import { createPatchSaver } from "@/lib/configSaver";
 import { apiUrl } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   MessageCircle, Loader2, LogOut, RefreshCw, Bot, Zap, ShieldAlert, QrCode,
@@ -81,15 +82,12 @@ export function WhatsAppConnectionCard() {
       .catch(() => {});
   }, []);
 
+  // Merged + serialized + checked (lib/configSaver.ts): saves used to fire per keystroke, in any
+  // order, and swallow every failure while the UI showed the new value.
+  const saver = useMemo(() => createPatchSaver("/api/automation/config", (m) => setError(m)), []);
   const saveConfig = (patch: Partial<WaConfig>) => {
-    const updated = { ...config, ...patch };
-    setConfig(updated);
-    fetch(apiUrl("/api/automation/config"), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }).catch(() => {});
+    setConfig(prev => ({ ...prev, ...patch }));
+    saver(patch as Record<string, unknown>);
   };
 
   const post = async (path: string, body?: unknown, busyKey?: typeof busy) => {
@@ -221,7 +219,9 @@ export function WhatsAppConnectionCard() {
             <label className="block text-[10px] font-semibold text-gray-600 mb-1">Return to bot after (min)</label>
             <input
               type="number" min={5} max={720} value={config.botReturnMinutes}
-              onChange={e => saveConfig({ botReturnMinutes: Math.max(5, Number(e.target.value) || 30) })}
+              // Typed freely; clamped once on blur (clamping per keystroke made "120" untypeable).
+              onChange={e => setConfig(prev => ({ ...prev, botReturnMinutes: e.target.value as any }))}
+              onBlur={e => { const n = Number(e.target.value); saveConfig({ botReturnMinutes: Number.isFinite(n) ? Math.min(720, Math.max(5, n)) : 30 }); }}
               className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-green-400"
             />
           </div>
@@ -229,7 +229,8 @@ export function WhatsAppConnectionCard() {
             <label className="block text-[10px] font-semibold text-gray-600 mb-1">Max messages / day</label>
             <input
               type="number" min={1} max={1000} value={config.maxPerDay}
-              onChange={e => saveConfig({ maxPerDay: Math.max(1, Number(e.target.value) || 100) })}
+              onChange={e => setConfig(prev => ({ ...prev, maxPerDay: e.target.value as any }))}
+              onBlur={e => { const n = Number(e.target.value); saveConfig({ maxPerDay: Number.isFinite(n) && n > 0 ? Math.min(1000, Math.floor(n)) : 100 }); }}
               className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-green-400"
             />
           </div>
