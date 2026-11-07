@@ -2426,9 +2426,13 @@ async function run(win) {
   check("unkeyed save fails with the clear message", !r.ok && /connection dropped/i.test(String(r.error)), r.error);
   check("…and is never resent", seen.unkeyed === 0, `server saw ${seen.unkeyed}`);
 
+  // The previous case's reset closed every connection: open a fresh one first, or the GET below would
+  // simply open a new (never blackholed) connection and not test a stall at all.
+  await exec(`runCase("warm")`);
   blackholeExisting();
   r = await exec(`runCase("get")`);
   check("GET on a dead connection recovers within 3.5 s", r.ok && r.status === 200 && r.ms < 3500, `${r.ms} ms`);
+  check("…after exactly one connection reset", r.resets === 1, `resets ${r.resets}`);
 
   r = await exec(`runCase("slow")`);
   check("slow but alive request: no reset", r.ok && r.status === 200 && r.resets === 0, `${r.ms} ms, resets ${r.resets}`);
@@ -2464,7 +2468,7 @@ app.whenReady().then(() => {
 env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/verify-stall-breaker-electron.cjs 2>&1 | grep -E "^(PASS|FAIL|RESULT)"
 ```
 
-Expected: 10 `PASS` lines, then `RESULT: PASS ✅`. The keyed save should recover in about 3000 ms: a 1500 ms check-after plus a 1500 ms check timeout, plus a few ms locally.
+Expected: 11 `PASS` lines, then `RESULT: PASS ✅`. The keyed save should recover in about 3000 ms: a 1500 ms check-after plus a 1500 ms check timeout, plus a few ms locally.
 
   If `keyed … within 3.5 s` fails at about 3000–3500 ms because the machine is busy, re-run once. If it still fails, report it; do not loosen the threshold silently.
 
