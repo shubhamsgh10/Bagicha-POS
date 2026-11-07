@@ -16,6 +16,13 @@ bagicha-design-system/
 tables-page.jpeg
 baileys-auth/
 .session-secret
+# Runtime files the server writes next to itself (server/dataDir.ts). They hold API
+# keys and customer phone numbers, so they were purged from git history on 7 Nov 2026
+# and must never be committed again. A missing automation-config.json = defaults.
+automation-config.json
+automation-logs.json
+customer-prefs.json
+*.json.tmp
 Front Page/
 .claude.local.md
 # Local DB backups (scripts/backup-full-db-local.mjs) — contain customer phone numbers,

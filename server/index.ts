@@ -18,6 +18,7 @@ import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 import { startDailyScheduler } from "./services/dailyScheduler";
 import { applyCors } from "./cors";
 import { applyCsrfGuard } from "./csrf";
+import { backgroundJobsDecision } from "./backgroundJobs";
 
 const MemoryStoreSession = MemoryStore(session);
 
@@ -189,6 +190,16 @@ app.use((req, res, next) => {
     host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
+    // Background jobs run only when asked for (BACKGROUND_JOBS=on) — see server/backgroundJobs.ts.
+    const jobs = backgroundJobsDecision(process.env);
+    if (!jobs.on) {
+      console.log(
+        `[jobs] Background jobs off (${jobs.reason}): no customer automation, CRM segmentation, ` +
+        `daily scheduler or WhatsApp. Set BACKGROUND_JOBS=on to run them.`,
+      );
+      return;
+    }
+    console.log(`[jobs] Background jobs on (${jobs.reason})`);
     // Start the customer automation background scheduler
     startAutomationScheduler();
     // Start CRM segmentation scheduler (every 1h)

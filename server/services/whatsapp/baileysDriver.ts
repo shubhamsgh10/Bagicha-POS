@@ -8,16 +8,16 @@
  * Session auth is persisted to ./baileys-auth (gitignored, many small files).
  * On loggedOut the auth dir is wiped and the driver returns to qr_pending
  * instead of crash-looping.
+ *
+ * The library itself is loaded LAZILY (`loadBaileys`, on the driver's first
+ * connect). Only type imports may sit at the top of this file: a value import
+ * made every server start — including every Vercel cold start, which never uses
+ * WhatsApp — load ~40 MB / ~0.6 s of Baileys, because the routes import this file
+ * through driverManager. `scripts/verify-baileys-lazy.ts` locks that in.
  */
 
 import fs from "fs";
-import makeWASocket, {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason,
-  type WASocket,
-} from "@whiskeysockets/baileys";
-import pino from "pino";
+import type { WASocket } from "@whiskeysockets/baileys";
 import {
   DriverEvents,
   normalizeWaPhone,
@@ -31,6 +31,21 @@ import { dataPath } from "../../dataDir";
 
 const AUTH_DIR = dataPath("baileys-auth");
 const MAX_RECONNECT_DELAY_MS = 60_000;
+
+type BaileysLib = typeof import("@whiskeysockets/baileys");
+type PinoFactory = typeof import("pino"); // pino's types use `export =`
+
+let libLoad: Promise<{ baileys: BaileysLib; pino: PinoFactory }> | null = null;
+
+/** Load Baileys (and its logger) on first use; a failed load is retried on the next call. */
+export function loadBaileys(): Promise<{ baileys: BaileysLib; pino: PinoFactory }> {
+  if (!libLoad) {
+    libLoad = Promise.all([import("@whiskeysockets/baileys"), import("pino")])
+      .then(([baileys, pinoModule]) => ({ baileys, pino: pinoModule.default }));
+    libLoad.catch(() => { libLoad = null; });
+  }
+  return libLoad;
+}
 
 /** Baileys ack codes (proto.WebMessageInfo.Status) → our statuses. */
 function ackToStatus(ack: number): WaDeliveryStatus | null {
@@ -68,6 +83,10 @@ export class BaileysDriver implements WhatsAppDriver {
   private async connect(): Promise<void> {
     if (this.destroyed) return;
     this.setState("connecting");
+
+    const { baileys, pino } = await loadBaileys();
+    if (this.destroyed) return;
+    const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = baileys;
 
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     if (this.destroyed) return; // destroyed while loading auth — don't open an orphan socket

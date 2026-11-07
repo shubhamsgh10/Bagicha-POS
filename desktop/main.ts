@@ -157,6 +157,9 @@ function spawnServer(cfg: { DATABASE_URL?: string; SESSION_SECRET?: string }): v
       NODE_ENV: "production",
       PORT: EMBEDDED_PORT,
       BAGICHA_DATA_DIR: app.getPath("userData"),
+      // The host build exists to be the always-on WhatsApp host, so it runs the
+      // background jobs (off by default elsewhere — server/backgroundJobs.ts).
+      BACKGROUND_JOBS: process.env.BACKGROUND_JOBS || "on",
       ...(cfg.DATABASE_URL ? { DATABASE_URL: cfg.DATABASE_URL } : {}),
       ...(cfg.SESSION_SECRET ? { SESSION_SECRET: cfg.SESSION_SECRET } : {}),
     },
