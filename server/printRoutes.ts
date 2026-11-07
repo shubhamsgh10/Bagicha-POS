@@ -17,6 +17,8 @@ import { runKotPrint, runBillPrint, instrumentJson } from "./services/printDispa
 import { createStageTimer } from "@shared/printPerf";
 import { parseBillRequestFlags } from "@shared/printRequest";
 import * as E from "./escpos";
+import { tableSectionFor } from "./tableSections";
+import { tableSectionLabel, formatTableLabel } from "@shared/tableSection";
 
 /** Claims older than this are considered abandoned (station crashed mid-print) and become reclaimable. */
 const STALE_CLAIM_MS = 2 * 60 * 1000;
@@ -35,6 +37,7 @@ function requireAdmin(req: any, res: any, next: any) {
 function kotTextLines(params: {
   orderNumber: string;
   tableNumber: string | null;
+  tableSection?: string | null;
   isReprint: boolean;
   isDelta: boolean;
   newItems: Array<{ name: string; quantity: number; size?: string | null; instructions?: string | null; serviceMode?: string | null; previousQty?: number }>;
@@ -59,6 +62,8 @@ function kotTextLines(params: {
   }
 
   const tableHeader = params.tableNumber ? `TABLE - ${params.tableNumber}` : "TAKEAWAY";
+  const sectionHeader = params.tableNumber ? tableSectionLabel(params.tableSection)?.toUpperCase() : undefined;
+  if (sectionHeader) lines.push(center(`[ ${sectionHeader} ]`));
   lines.push(center(`[ ${tableHeader} ]`));
   lines.push(center(params.isDelta ? "MODIFIED KOT" : "KITCHEN ORDER"));
   lines.push(div("="));
@@ -125,6 +130,7 @@ function billTextLines(params: {
   order: {
     orderNumber: string;
     tableNumber: string | null;
+    tableSection?: string | null;
     customerName: string | null;
     orderType: string;
     totalAmount: string;
@@ -183,6 +189,8 @@ function billTextLines(params: {
   const orderTypeLabel = order.orderType || (order.tableNumber ? "Dine In" : "Pick Up");
   lines.push(two(`Date: ${dateStr}`, orderTypeLabel));
   lines.push(body(timeStr));
+  const tableLabel = formatTableLabel(order.tableNumber, order.tableSection);
+  if (tableLabel) lines.push(body(`Table: ${tableLabel}`));
   lines.push(two(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   lines.push(div("-"));
 
@@ -522,6 +530,7 @@ export function registerPrintRoutes(app: Express): void {
         const lines = kotTextLines({
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
+          tableSection: await tableSectionFor(order.tableId),
           kotNumber: kotNumStr,
           isReprint: reprint,
           isDelta,
@@ -551,6 +560,7 @@ export function registerPrintRoutes(app: Express): void {
         order: {
           orderNumber: order.orderNumber,
           tableNumber: order.tableNumber,
+          tableSection: await tableSectionFor(order.tableId),
           customerName: order.customerName,
           orderType: order.orderType,
           totalAmount: order.totalAmount,
