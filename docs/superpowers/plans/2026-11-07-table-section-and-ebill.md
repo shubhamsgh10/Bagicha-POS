@@ -1287,14 +1287,9 @@ import { buildEbillText } from "@shared/ebillText";
 Run: `npm run check`
 Expected: no new errors. If it complains that `order.customerPhone` / `order.tableId` / `order.status` don't exist, `storage.getOrderById` returns a differently-typed row — read its return type in `server/storage.ts` and cast `(order as any)` the same way the neighbouring routes do (`(order as any).tableId`).
 
-- [ ] **Step 4: Prove the route works without a browser (no DB write)**
+- [ ] **Step 4: No live probe (deliberate)**
 
-The route needs the DB, so only prove it is registered and gated. Run the server once and hit it unauthenticated:
-```bash
-npm run dev
-```
-In another shell: `curl -s -X POST -H "Content-Type: application/json" http://localhost:5000/api/orders/1/ebill -w "\n%{http_code}\n"`
-Expected: a `401` (the port may differ — use the one `npm run dev` prints). Stop the dev server afterwards. Do **not** call it with a session against real orders — that is Task 11's gated manual check.
+Do **not** start `npm run dev` just to curl the route: a second full server on the shared DB double-starts the WhatsApp driver and the print/outbound workers (CLAUDE.md, "Database egress" and "Observability"). The route is a plain `app.post(..., requireAuth, ...)` covered by `npm run check`; its behaviour is exercised by Task 11's owner-gated manual check.
 
 - [ ] **Step 5: Commit**
 

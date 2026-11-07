@@ -20,7 +20,7 @@ import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
-import { getSettings, getSettingsFresh, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
+import { getSettings, getLiveSettings, getSettingsFresh, saveSettings, incrementBillCounter, incrementKotCounter } from "./settingsStore";
 import { timingSafeEqual } from "crypto";
 import { getLogBuffer } from "./logBuffer";
 import {
@@ -62,7 +62,9 @@ import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessag
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
 import { tableSectionFor, forgetTableSections } from "./tableSections";
-import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
+import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot, markTableBilled } from "./services/printDispatch";
+import { normalizeWaPhone, isValidWaPhone } from "./services/whatsapp/types";
+import { buildEbillText } from "@shared/ebillText";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
 import { automationRules, automationJobs, customerMessages, categories, menuItems, inventory, stockMovements, customersMaster, customerProfiles, customerSegments, users, orders, orderItems, kotTickets, tables, paymentTransactions, feedback, couponRedemptions } from "@shared/schema";
@@ -3171,6 +3173,53 @@ export async function registerRoutes(
       res.json({ ok: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to update table status" });
+    }
+  });
+
+  // ── WhatsApp e-bill (the POS cart's E-Bill button) ───────────────────────────
+  // Builds the customer's bill text from the SAVED order — persisted numbers only, never anything the client
+  // computed — and returns a wa.me link for staff to open and press Send. It sends nothing itself: no driver, no
+  // outbound queue, no automation_jobs row, so staff can re-send after adding an item and the same-day
+  // duplicate guard never gets involved. Deliberately not a print: billPrintCount (the paper "DUPLICATE"
+  // watermark) is untouched; no loyalty, no audit row (it is not a deviation).
+  app.post("/api/orders/:id/ebill", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid order id" });
+      const order = await storage.getOrderById(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      if (order.status === "cancelled") return res.status(409).json({ error: "This order was cancelled", code: "cancelled" });
+      const rawPhone = String(order.customerPhone ?? "");
+      if (!isValidWaPhone(rawPhone)) {
+        return res.status(400).json({ error: "Enter a valid customer WhatsApp number", code: "bad_phone" });
+      }
+      // A bill is a money document: real settings or a 503, never the built-in defaults (see settingsCache).
+      const settings = getLiveSettings();
+      const [items, tableSection] = await Promise.all([
+        db
+          .select({
+            name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
+            quantity: orderItems.quantity,
+            price: orderItems.price,
+          })
+          .from(orderItems)
+          .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
+          .where(eq(orderItems.orderId, id))
+          .orderBy(orderItems.id),
+        tableSectionFor(order.tableId),
+      ]);
+      const text = buildEbillText(
+        { ...order, tableSection },
+        items,
+        { restaurantName: settings.restaurantName, address: settings.address, footerNote: settings.footerNote },
+      );
+      const phone = normalizeWaPhone(rawPhone);
+      // The same non-fatal "billed" flip the Bill button does: a table whose bill went out on WhatsApp reads
+      // as billed on the Tables page (only a running order still holding its table flips).
+      await markTableBilled(order);
+      res.json({ text, phone, waUrl: `https://wa.me/${phone}?text=${encodeURIComponent(text)}` });
+    } catch (error: any) {
+      res.status(error?.status ?? 500).json({ error: error?.message || "Failed to build e-bill" });
     }
   });
 
