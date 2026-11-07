@@ -16,6 +16,7 @@
  *  - Handlers: perf.slow_handler (server-side handler >= 1.5s).
  *  - Printing: print_jobs created → printed (the part after the server accepted the print).
  */
+import fs from "fs";
 import pkg from "pg";
 const { Pool } = pkg;
 
@@ -26,13 +27,24 @@ const deployed = arg("--deployed");
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL not set (run with -r dotenv/config)"); process.exit(1); }
 if (deployed && Number.isNaN(Date.parse(deployed))) { console.error("--deployed must be an ISO date/time"); process.exit(1); }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2 });
-const q = async (text: string, params: unknown[] = []) => (await pool.query(text, params)).rows;
+// Verify the server certificate with the committed Supabase CA (pg lets a URL sslmode replace the ssl
+// object, so strip it — same as server/dbSsl.ts).
+const dbUrl = new URL(process.env.DATABASE_URL);
+for (const k of ["sslmode", "sslcert", "sslkey", "sslrootcert", "ssl"]) dbUrl.searchParams.delete(k);
+const ca = fs.readFileSync(new URL("../certs/supabase-prod-ca-2021.crt", import.meta.url), "utf8");
+const pool = new Pool({ connectionString: dbUrl.toString(), ssl: { ca, rejectUnauthorized: true }, max: 1 });
+let client: any = null;
+const q = async (text: string, params: unknown[] = []) => (await client.query(text, params)).rows;
 const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : "–");
 const s = (ms: unknown) => (ms == null ? "–" : `${(Number(ms) / 1000).toFixed(1)}s`);
 
 async function main() {
-  await pool.query("SET default_transaction_read_only = on");
+  client = await pool.connect();
+  // The whole report is ONE read-only transaction. NEVER `SET default_transaction_read_only = on` here
+  // (this script did until 7 Nov 2026): DATABASE_URL is Supabase's transaction pooler (port 6543), where
+  // a session-level SET stays on the shared server connection after this script exits — the live app's
+  // next writes on that connection then fail "cannot execute … in a read-only transaction".
+  await client.query("BEGIN TRANSACTION READ ONLY");
   const since = `now() - interval '${Math.max(1, Math.floor(days))} days'`;
   // created_at is naive UTC: IST = + 5:30 (`at time zone 'Asia/Kolkata'` on a naive column shifts the WRONG way).
   const day = `to_char(created_at + interval '5 hours 30 minutes', 'YYYY-MM-DD')`;
@@ -99,6 +111,15 @@ async function main() {
   } else {
     console.log("\nNo perf.slow_request rows yet (they start with the latency-diagnostics release).");
   }
+  await client.query("COMMIT");
+  client.release();
+  client = null;
   await pool.end();
 }
-main().catch(async (e) => { console.error(e); await pool.end(); process.exit(1); });
+main().catch(async (e) => {
+  console.error(e);
+  try { await client?.query("ROLLBACK"); } catch { /* connection already gone */ }
+  client?.release();
+  await pool.end();
+  process.exit(1);
+});

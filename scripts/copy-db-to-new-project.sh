@@ -44,12 +44,16 @@ public_tables() { q "$1" "select count(*) from pg_tables where schemaname='publi
 
 # Exact per-table row counts + sequence positions, one line each, sorted — diffable across databases.
 fingerprint() {
+  # One READ ONLY transaction, never a session-level `set default_transaction_read_only`: through
+  # Supabase's transaction pooler (port 6543) a session SET stays on the shared server connection and
+  # makes the live app's writes on it fail.
   psql "$1" -X -q -At -v ON_ERROR_STOP=1 <<'SQL'
-set default_transaction_read_only = on;
+begin transaction read only;
 select format('select %L || '' rows='' || count(*) from public.%I', tablename, tablename)
   from pg_tables where schemaname = 'public' order by tablename \gexec
 select 'seq ' || sequencename || ' last=' || coalesce(last_value::text, 'unset')
   from pg_sequences where schemaname = 'public' order by sequencename;
+commit;
 SQL
 }
 

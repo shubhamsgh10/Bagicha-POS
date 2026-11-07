@@ -487,6 +487,14 @@ Both pages default to showing only the **current business day**'s orders — pre
 ## Database
 
 - PostgreSQL on **Supabase** via node-postgres (connection string in `.env` as `DATABASE_URL`). Supabase bills **egress** — every byte a query returns — so read "Database egress" below before adding a query or a poll.
+- **⚠️ `DATABASE_URL` is Supabase's TRANSACTION pooler (port 6543): never run a session-level `SET` from a script or tool.**
+  - **What happens:** the setting stays on the shared server connection after your client disconnects, and the next client handed that connection, including the live app, inherits it.
+  - **Proven 2026-11-07:** a harmless `SET zztest.leak` from one client was seen by a different client on the same backend.
+  - **The `SET default_transaction_read_only = on` case** makes the app's writes on that connection fail with "cannot execute … in a read-only transaction" until the connection is recycled.
+  - **History:** `scripts/report-latency.ts` and `scripts/copy-db-to-new-project.sh` both did this until 7 Nov 2026. This is the most likely cause of the 22 Oct "read-only blips" (`source=session`). It also failed the `request_keys` migration once on 7 Nov right after a report run.
+  - **For read-only work:** use one `BEGIN TRANSACTION READ ONLY; … COMMIT;` on a single connection.
+  - **For per-statement settings:** use `SET LOCAL` inside a transaction (as the `scripts/migrate-*.mjs` files do).
+  - **Checking for a poisoned connection:** hold ~20 concurrent short transactions and read `current_setting('default_transaction_read_only')` per `pg_backend_pid()`. The pool had 16 server connections on 7 Nov.
 - Schema changes: edit `shared/schema.ts`, then run `npm run db:push`
 - Drizzle config: `drizzle.config.ts`; migrations output to `./migrations/`
 - **⚠️ Before `npm run db:push`, review the proposed diff.** The shared DB carries columns applied
