@@ -159,6 +159,8 @@ export function generateBillBuffer(params: {
   order: {
     orderNumber: string;
     tableNumber: string | null;
+    /** tables.section for tableNumber's table — printed as "Table: Inner - 3". */
+    tableSection?: string | null;
     customerName: string | null;
     orderType: string;
     totalAmount: string;
@@ -254,6 +256,10 @@ export function generateBillBuffer(params: {
     E.BOLD_ON, E.line(orderTypeLabel), E.BOLD_OFF,
   );
   parts.push(bodyLine(timeStr));
+  // Compulsory — no bill setting hides it. The bill used to print no table at all, so staff couldn't tell
+  // which table (or which section: Inner / Outer) a paper bill belonged to.
+  const tableLabel = formatTableLabel(order.tableNumber, order.tableSection);
+  if (tableLabel) parts.push(bodyLine(`Table: ${tableLabel}`));
   parts.push(tw(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   parts.push(E.divider("-", W));
 

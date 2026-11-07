@@ -9,7 +9,7 @@ import { tableSectionLabel, formatTableLabel } from "../shared/tableSection";
 import { createTableSectionCache } from "../server/tableSectionCache";
 
 import * as E from "../shared/print/escpos";
-import { generateKOTBuffer } from "../shared/print/generators";
+import { generateKOTBuffer, generateBillBuffer } from "../shared/print/generators";
 import { renderKotBitmap, KOT_IMAGE_STYLE } from "../shared/print/kotImage";
 
 const checks: Array<[string, boolean]> = [];
@@ -167,6 +167,41 @@ const latin = (b: Buffer) => b.toString("latin1");
   check("KOT image: null section is bit-identical to no section", Buffer.from(renderKotBitmap({ ...imgBase, tableSection: null })!.bits).equals(Buffer.from(plain.bits)));
   check("KOT image: takeaway ignores a section", renderKotBitmap({ ...imgBase, tableNumber: null, tableSection: "inner" })!.heightDots === renderKotBitmap({ ...imgBase, tableNumber: null })!.heightDots);
   check("KOT image: through generateKOTBuffer it is still the raster ticket", generateKOTBuffer({ ...imgBase, tableSection: "outer" }).indexOf(Buffer.from([0x1d, 0x76, 0x30, 0x00])) >= 0);
+}
+
+// ── 5. Thermal bill ───────────────────────────────────────────────────────────
+// Fixtures: this restaurant's real configuration (same as scripts/verify-escpos-interpret.ts).
+const billSettings: any = {
+  showLogo: true, showFssai: false, showAddons: true, taxDisplay: "none", showRoundOff: true,
+  billPrinterId: "p1", itemPriceMode: "exclusive", showDuplicate: true, showNameField: true,
+  showKotAsToken: false, showBackwardTax: true, showOrderBarcode: false, mergeDuplicateItems: true,
+  showCustomerPayment: false, showQuantityBreakdown: false,
+};
+const billRestaurant = {
+  restaurantName: "Bagicha Restaurant", businessName: "Salasar Trading",
+  address: "Dhimrapur Road, Raigarh (CG), 496001", phone: "9770022221", gstNumber: "22BOQPR9570B1ZN",
+  fssaiNumber: "", taxRate: 5, currencySymbol: "₹", footerNote: "Thank you for dining with us!",
+};
+const billOrder = {
+  orderNumber: "ORD0388", tableNumber: "3" as string | null, customerName: null, orderType: "Dine In",
+  totalAmount: "387.45", taxAmount: "18.45", discountAmount: "0.00", subtotalAmount: "369.00",
+  containerCharge: "0.00", paymentMethod: null, billPrintCount: 0, createdAt: new Date("2026-10-04T14:54:00Z"),
+};
+const billItems = [{ name: "Mix Sauce Pasta", quantity: 1, price: "299" }];
+const billText = (order: Record<string, unknown> = {}, settings: any = billSettings) =>
+  latin(generateBillBuffer({
+    order: { ...billOrder, ...order } as any, items: billItems, restaurant: billRestaurant,
+    billSettings: settings, cashierName: "rajbhaghel", width: 48,
+  }));
+{
+  const t = billText({ tableSection: "inner" });
+  check("bill: the Table line carries the section", t.includes("Table: Inner - 3\n"));
+  check("bill: the Table line sits after the Date line and before the Cashier line", t.indexOf("Date:") < t.indexOf("Table: Inner - 3") && t.indexOf("Table: Inner - 3") < t.indexOf("Cashier:"));
+  check("bill: no section → 'Table: 3'", billText().includes("Table: 3\n") && !billText().includes(" - 3"));
+  check("bill: no table → no Table line (pickup / delivery)", !billText({ tableNumber: null, tableSection: "inner" }).includes("Table:"));
+  // Compulsory: not behind any bill setting.
+  const allOff = Object.fromEntries(Object.keys(billSettings).map((k) => [k, typeof billSettings[k] === "boolean" ? false : billSettings[k]]));
+  check("bill: the Table line prints with every optional bill flag switched off (compulsory)", billText({ tableSection: "outer", tableNumber: "G1" }, allOff).includes("Table: Outer - G1\n"));
 }
 
 (async () => {
