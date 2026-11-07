@@ -1,6 +1,11 @@
-# Table section (Inner / Outer / …) on the KOT and the bill
+# Table section (Inner / Outer / …) on the KOT and bill, plus a POS-cart WhatsApp e-bill
 
-Date: 2026-11-07 · Status: design approved by the owner, pending spec review
+Date: 2026-11-07 · Status: Part A approved by the owner; Part B (e-bill) added the same day, pending spec review
+
+Two parts, one plan: **Part A** shows the table's section on the KOT, the thermal bill and the e-bill text;
+**Part B** puts a WhatsApp e-bill button back in the POS cart.
+
+# Part A — Table section on KOT and bill
 
 ## Problem
 
@@ -13,8 +18,8 @@ Staff can't tell an Inner order from an Outer one on paper. Today:
 
 ## Goal
 
-Every dine-in KOT and bill shows the table's section next to its number. Takeaway / pickup / delivery tickets
-are unchanged.
+Every dine-in KOT, bill and e-bill shows the table's section next to its number. Takeaway / pickup / delivery
+tickets are unchanged.
 
 ## Decisions (owner-approved)
 
@@ -28,7 +33,8 @@ are unchanged.
    - Orders already open at deploy time get the section immediately.
    - Adds no DB read to a KOT/bill tap in steady state (print latency was tuned hard; an uncached read would add
      a round trip to every tap).
-3. No admin toggle for the bill line (YAGNI; the owner asked for it unconditionally).
+3. **The bill's table line is compulsory** (owner's instruction): it prints on every bill for an order that has a
+   table, with no admin setting to hide it. The same line is used on the e-bill.
 
 ## Design
 
@@ -36,7 +42,10 @@ are unchanged.
 
 - `tableSectionLabel(section)` → `inner`→`Inner`, `outer`→`Outer`, `vip`→`VIP`, `terrace`→`Terrace`,
   `hall`→`Hall`; any other value is capitalised (`rooftop`→`Rooftop`); empty/null → `null`.
-- The KOT prints it uppercased (`INNER`); the bill prints it as-is (`Inner`).
+- `formatTableLabel(name, section)` → `"Inner - 3"`; `"3"` when the section is unknown; `null` when there is no
+  table name. The thermal bill, its plain-text twin and the e-bill all print `Table: ${formatTableLabel(...)}`,
+  so the three can't drift.
+- The KOT prints the section uppercased (`INNER`); the bill and e-bill print it as-is (`Inner`).
 - `Tables.tsx` and `OrderCard.tsx` each keep their own copy of this mapping; not touched here (unrelated
   refactor).
 
@@ -93,13 +102,15 @@ behaviour for pickup/delivery). Same line in `billTextLines`.
   for both previews.
 - The browser-print fallback renders the server's own ESC/POS bytes, so it needs no client change.
 
-### Out of scope
+- `shared/ebillText.ts`'s `buildEbillText` takes `order.tableSection` and prints the same
+  `Table: Inner - 3` line (Part B supplies it).
 
-- The WhatsApp e-bill (`shared/ebillText.ts`) already prints `Table: X`; left alone.
+### Out of scope (Part A)
+
 - The POS / Kitchen in-page text previews (`receiptText.ts`, last-resort only).
 - Any admin setting, any schema change.
 
-## Testing
+### Testing (Part A)
 
 New `scripts/verify-table-section.ts`, added to the `test:pure` chain in `package.json`:
 
@@ -115,7 +126,90 @@ Existing `verify-kot-style.ts`, `verify-kot-image.ts` and `verify-escpos-interpr
 Run `npm run check` and `npm run test:pure`. The new layouts are **not** verified on the real thermal printer
 from this repo (same caveat as the image KOT) — check them through the browser-fallback render.
 
-## Docs
+### Docs (Part A)
 
 Add a short paragraph to CLAUDE.md's "Printing (KOT/Bill)" section: where the section comes from, the 60 s
-cache, and that the bill now prints the table.
+cache, and that the bill now prints the table (compulsory, no setting).
+
+---
+
+# Part B — E-Bill button in the POS cart
+
+## Current state
+
+- The cart's action area has a KOT | Bill row and a Save | Hold | Settle row. **There is no e-bill button.**
+- Dead code is left in `POS.tsx`: `handleSaveEBill` and `sendWhatsAppBill` are never called. The old handler
+  built the message from the *cart* with its own inline layout (the drift `shared/ebillText.ts` was written to
+  end) and the `save-ebill` branches of both save mutations then clear the cart and navigate to `/tables`.
+- `shared/ebillText.ts`'s `buildEbillText` is the single, pure e-bill text builder (persisted numbers via
+  `deriveBillTotals`).
+- Server: `normalizeWaPhone` / `isValidWaPhone` (`server/services/whatsapp/types.ts`) and the private
+  `markTableBilled` (`printDispatch.ts`, the table → `billed` flip the Bill button uses) already exist.
+
+## Decision (owner-approved)
+
+Delivery is a **`wa.me` link: the bill text opens pre-filled in WhatsApp and staff taps Send.** Not the
+Baileys/Meta driver — it works from any device (phones on Vercel included), carries no ban risk, isn't subject
+to the outbound queue's pacing or same-day duplicate guard (staff can re-send after adding an item), and the
+system sends nothing by itself.
+
+## Behaviour
+
+1. **Button.** `E-Bill` (message icon) joins the KOT | Bill row, making it three columns. It is gated by the
+   **existing `printBill` CartAction** — no new permission (route new quick-actions through existing gates) —
+   and disabled exactly like Bill (`!hasItems || isPending || isOff("printBill")`, lock icon when gated).
+2. **Tap.** The cart's customer phone is required: empty or under 10 digits → toast "Enter the customer's
+   WhatsApp number first" and nothing is saved. Otherwise it saves the cart the way Bill does
+   (`cancelPendingAutoKot()`, `submitModeRef = "save-ebill"`, `triggerSubmit()` → create or `PUT /items`, no
+   print), so an item added a second ago is always on the e-bill.
+3. **After the save succeeds** (the `save-ebill` branch of both mutations) it **stays on screen, like Bill**
+   (`setActiveOrderId`, reload the cart on create) instead of the dead code's "clear cart + go to /tables" —
+   Settle usually follows. It then calls `POST /api/orders/:id/ebill` and `window.open(waUrl, "_blank")`.
+   If the browser blocks the popup (the click → save → response gap can outlast the click's activation) a toast
+   with an **Open WhatsApp** action opens it from a fresh click. Success toast: "E-bill ready — tap Send in
+   WhatsApp".
+4. **Section POS is excluded:** it hides the customer phone box entirely, so there is no number to send to.
+
+## Server — `POST /api/orders/:id/ebill` (`requireAuth`)
+
+- Reads the order and its items from the DB — **persisted numbers only**, item names `order_items.name` first
+  then the menu (left join, ordered by `order_items.id`), never anything the client computed.
+- `404` missing order; `409` cancelled. The phone is the order's persisted `customerPhone`; not valid per
+  `isValidWaPhone` → `400 { code: "bad_phone" }`.
+- Table label via `tableSectionFor(order.tableId)` (Part A); restaurant name / address / footer note from
+  `getLiveSettings()` (a bill is a money document: same "never defaults" rule as printing → 503 when settings
+  aren't live).
+- Text is `buildEbillText({ ...order, tableSection }, items, settings)` — the shared builder, now printing
+  `Table: Inner - 3`.
+- Flips the table to `billed` with the same non-fatal helper the Bill button uses (`markTableBilled`, exported
+  from `printDispatch.ts`; only for a running order still holding its table), so a table whose bill went out on
+  WhatsApp reads as billed on the Tables page.
+- **Deliberately does not** bump `billPrintCount` (not a print; that drives the paper "DUPLICATE" watermark),
+  touch loyalty, enqueue an `automation_jobs` row or write an audit row (it is not a deviation).
+- Returns `{ text, waUrl, phone }`, `waUrl = https://wa.me/<normalizeWaPhone(phone)>?text=<encoded text>`.
+
+## Client clean-up
+
+- Delete the dead `handleSaveEBill` and `sendWhatsAppBill`, and POS.tsx's now-unused `buildEbillText` import.
+- The two mutations' `save-ebill` branches change as described in Behaviour 3.
+- Mobile uses the same panel, so the same button; no separate layout.
+
+## Failure handling
+
+Save fails → the existing "Failed to place order / update" toast, nothing opens. Endpoint fails → destructive
+toast through `describeApiError`; the order stays saved. Popup blocked → the Open WhatsApp action toast.
+
+## Testing (Part B)
+
+- Extend `scripts/verify-ebill-text.ts`: `Table: Inner - 3`, `Table: 3` without a section, no line without a
+  table, and the existing container/delivery/discount cases unchanged.
+- The route's DB glue can't run in `test:pure`. Verify in a real browser per CLAUDE.md: a throwaway order with
+  an explicit `ZZTEST-` marker and a dummy phone, the server restarted first (no hot reload), cleaned up through
+  Cancel Order and the `orders.id` sequence restore. Check: button gating and lock, no-phone toast, e-bill text
+  matches the saved order (incl. container / discount / section), cart stays open, table shows billed.
+
+### Docs (Part B)
+
+CLAUDE.md: a short paragraph under "Printing (KOT/Bill)" — the E-Bill button flow, `POST /api/orders/:id/ebill`,
+that it reuses the `printBill` gate and `markTableBilled`, and that it is a manual `wa.me` send outside the
+outbound queue.
