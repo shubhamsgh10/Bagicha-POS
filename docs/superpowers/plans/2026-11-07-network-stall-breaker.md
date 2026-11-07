@@ -691,8 +691,9 @@ checks.push(["new keys differ", k1 !== k2]);
   const b = createRollingBudget(3, 60_000);
   const took = [b.tryTake(0), b.tryTake(1), b.tryTake(2), b.tryTake(3)];
   checks.push(["budget: first N allowed, then refused", took.join() === "true,true,true,false"]);
-  checks.push(["budget: refills as old reports age out of the window", b.tryTake(60_001) === true]);
-  checks.push(["budget: still bounded after refill", b.tryTake(60_002) === true && b.tryTake(60_003) === false]);
+  // At 60_000 the report from t=0 has left the window (60_000 - 0 is not < 60_000); 1 and 2 have not.
+  checks.push(["budget: refills as old reports age out of the window", b.tryTake(60_000) === true]);
+  checks.push(["budget: still at most N in any window after refill", b.tryTake(60_000) === false]);
 }
 
 let failed = 0;
