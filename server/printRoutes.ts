@@ -16,6 +16,7 @@ import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printe
 import { runKotPrint, runBillPrint, instrumentJson } from "./services/printDispatch";
 import { createStageTimer } from "@shared/printPerf";
 import { parseBillRequestFlags } from "@shared/printRequest";
+import { requestKeys } from "./requestKeys";
 import * as E from "./escpos";
 
 /** Claims older than this are considered abandoned (station crashed mid-print) and become reclaimable. */
@@ -239,7 +240,7 @@ function billTextLines(params: {
 }
 
 export function registerPrintRoutes(app: Express): void {
-  app.post("/api/print/kot", requireAuth, async (req, res) => {
+  app.post("/api/print/kot", requireAuth, requestKeys, async (req, res) => {
     try {
       const { orderId, reprint = false, auto = false } = req.body as {
         orderId: number;
@@ -259,7 +260,7 @@ export function registerPrintRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/print/bill", requireAuth, async (req, res) => {
+  app.post("/api/print/bill", requireAuth, requestKeys, async (req, res) => {
     try {
       const { orderId } = req.body as { orderId: number };
       if (!orderId) return res.status(400).json({ message: "orderId is required" });
@@ -282,7 +283,7 @@ export function registerPrintRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/print/jobs/:id/claim", requireAuth, async (req, res) => {
+  app.post("/api/print/jobs/:id/claim", requireAuth, requestKeys, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
       if (!jobId) return res.status(400).json({ message: "Invalid job id" });

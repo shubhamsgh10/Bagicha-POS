@@ -34,14 +34,15 @@ export function applyCors(app: Express): void {
     );
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Requested-With",
+      "Content-Type, Authorization, X-Requested-With, Idempotency-Key",
     );
     // Cache the preflight for 2h (Chromium's cap; the default is 5s). Without it every JSON write
     // after a pause of >5s paid an extra OPTIONS round trip before the real request.
     res.setHeader("Access-Control-Max-Age", "7200");
     // Let a cross-origin client read the server's timing off the response (packages/api-client
     // timedFetch) — Resource Timing hides it on the shop device.
-    res.setHeader("Access-Control-Expose-Headers", "Server-Timing");
+    // Idempotent-Replayed: the answer came from server/requestKeys.ts's store (diagnostics only).
+    res.setHeader("Access-Control-Expose-Headers", "Server-Timing, Idempotent-Replayed");
 
     if (req.method === "OPTIONS") {
       return res.status(204).end();

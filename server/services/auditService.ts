@@ -21,6 +21,11 @@ function getActorFromReq(req: Request) {
   return { actorId, actorName: name, actorRole: role };
 }
 
+/** "u:<id>" / "sm:<id>" for the signed-in principal (users and staffMembers share an id space). */
+export function actorIdOf(req: Request): string {
+  return getActorFromReq(req).actorId;
+}
+
 function getIp(req: Request): string {
   return (
     (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||

@@ -61,6 +61,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
+import { requestKeys } from "./requestKeys";
 import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
@@ -2029,7 +2030,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/orders", requireAuth, async (req, res) => {
+  app.post("/api/orders", requireAuth, requestKeys, async (req, res) => {
     // Inventory reconciliation runs ALONGSIDE the print (see below); every exit after it has
     // started waits for it, so nothing is left running once the response is sent.
     let inventoryDone: Promise<void> = Promise.resolve();
@@ -2264,7 +2265,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/orders/:id/items", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/items", requireAuth, requestKeys, async (req, res) => {
     // Same as POST /api/orders: inventory runs alongside the print and every exit waits for it.
     let inventoryDone: Promise<void> = Promise.resolve();
     try {
@@ -2670,7 +2671,7 @@ export async function registerRoutes(
   });
 
   // Process payment for an order
-  app.post("/api/orders/:id/payment", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/payment", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const {
