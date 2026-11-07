@@ -53,13 +53,17 @@ tickets are unchanged.
 
 - Pure core `createTableSectionCache({ load, ttlMs, now })` (testable without a DB), plus a module-level
   instance wired to `db.select({ id, section }).from(tables)`.
-- Loads the **whole** `tables` list once (~15 rows) and serves `get(tableId)` from memory for 60 s. A miss on an
-  id (new table) or an expired entry triggers one reload. A failed reload keeps serving the last good map; with
-  no map at all it returns `null` — **a lookup failure must never fail or delay a print**, the ticket just
-  prints without the section.
+- Loads the **whole** `tables` list once (~15 rows). The first lookup on an instance waits for that load; after
+  that `get(tableId)` is answered from memory and, once the map is older than 60 s, answers with the old value
+  immediately while one background reload runs (stale-while-revalidate — a print never waits on a refresh).
+  An unknown id returns `null` without reloading (a table created on another instance shows up within 60 s).
+  A failed load keeps the last good map and is not retried for 10 s; with no map at all `get` returns `null` —
+  **a lookup failure must never fail or delay a print**, the ticket just prints without the section. A load
+  still unfinished after 15 s is treated as lost (a frozen serverless instance) and replaced.
 - `forgetTableSections()` is called from `POST /api/tables`, `PUT /api/tables/:id` and
-  `DELETE /api/tables/:id` (`routes.ts`), so the instance that handled the edit is correct immediately; other
-  Vercel instances are stale for ≤ 60 s (a section is edited about never).
+  `DELETE /api/tables/:id` (`routes.ts`). It drops the map (a load already running is discarded), so the next
+  lookup on the instance that handled the edit reloads and is correct immediately; other Vercel instances are
+  stale for ≤ 60 s (a section is edited about never).
 - Exported helper `tableSectionFor(tableId: number | null)`.
 
 ### 3. Print inputs
@@ -94,9 +98,9 @@ behaviour for pickup/delivery). Same line in `billTextLines`.
 ### 6. Wiring (server)
 
 - `runKotPrint` (`server/services/printDispatch.ts`): `await tableSectionFor(order.tableId)` once, before the
-  first `generateKOTBuffer`; pass it to all three call sites (browser-fallback ticket, per-routed-printer direct
-  tickets, remote-dispatched tickets). A cache hit costs no I/O, so it doesn't change the snapshot path's
-  "reads nothing" property in steady state.
+  first `generateKOTBuffer`; pass it to both call sites (the browser-fallback ticket, and the per-routed-printer
+  tickets, which cover direct and remote-dispatched printers alike). A cache hit costs no I/O, so it doesn't
+  change the snapshot path's "reads nothing" property in steady state.
 - `runBillAfterCatchUp`: same, into `generateBillBuffer`'s `order`.
 - Move-table KOT already goes through `runKotPrint` (covered). `/api/print/preview` (`printRoutes.ts`) gets it
   for both previews.
@@ -119,8 +123,9 @@ New `scripts/verify-table-section.ts`, added to the `test:pure` chain in `packag
   a failing `load` keeps the last good map and never throws;
 - KOT text: section line precedes the table line; no section / takeaway identical to current output;
 - KOT image: taller by one line with a section, identical without, takeaway unchanged;
-- bill: `Table: Inner - 3`; `Table: 3` without a section; no line without a table; the plain-text twins agree
-  with the buffers.
+- bill: `Table: Inner - 3`; `Table: 3` without a section; no line without a table; the line prints with every
+  optional bill flag switched off (compulsory). The plain-text twins in `printRoutes.ts` import the DB pool, so
+  they are covered by `npm run check` and the manual preview check instead of the pure script.
 
 Existing `verify-kot-style.ts`, `verify-kot-image.ts` and `verify-escpos-interpret.ts` must still pass unchanged.
 Run `npm run check` and `npm run test:pure`. The new layouts are **not** verified on the real thermal printer
@@ -164,10 +169,11 @@ system sends nothing by itself.
    print), so an item added a second ago is always on the e-bill.
 3. **After the save succeeds** (the `save-ebill` branch of both mutations) it **stays on screen, like Bill**
    (`setActiveOrderId`, reload the cart on create) instead of the dead code's "clear cart + go to /tables" —
-   Settle usually follows. It then calls `POST /api/orders/:id/ebill` and `window.open(waUrl, "_blank")`.
-   If the browser blocks the popup (the click → save → response gap can outlast the click's activation) a toast
-   with an **Open WhatsApp** action opens it from a fresh click. Success toast: "E-bill ready — tap Send in
-   WhatsApp".
+   Settle usually follows. It then calls `POST /api/orders/:id/ebill` and points a window at the returned
+   `waUrl`. That window is opened **during the tap** (blank), the pattern Reports' dues e-bill already uses, so
+   popup blockers allow it (Electron allows `about:blank`); on failure it is closed again. If no window could be
+   opened (a PIN-gated tap loses the click's activation), a toast with an **Open WhatsApp** action opens it from
+   a fresh click. Success toast: "E-bill ready — tap Send in WhatsApp".
 4. **Section POS is excluded:** it hides the customer phone box entirely, so there is no number to send to.
 
 ## Server — `POST /api/orders/:id/ebill` (`requireAuth`)
