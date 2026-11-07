@@ -1,6 +1,6 @@
 import { createStageTimer, SLOW_PRINT_TAP_MS, type StageTimer } from "@shared/printPerf";
 import { parseServerTimingStages } from "@shared/requestTiming";
-import { timedFetch } from "@/lib/api";
+import { timedFetch, stallResetCount, REPLAYED_HEADER } from "@/lib/api";
 import { msSinceLastApiResponse } from "@/lib/connectionKeepAlive";
 
 /**
@@ -8,7 +8,8 @@ import { msSinceLastApiResponse } from "@/lib/connectionKeepAlive";
  * `[print-perf]` console line per tap so real-use numbers (Vercel, Electron host) can be read
  * from DevTools without any test data, and reports a tap that took >= SLOW_PRINT_TAP_MS to the
  * audit trail (`perf.slow_print`) with enough to tell WHERE the time went: the request's own time
- * vs the server's (Server-Timing), and how long the connection had been quiet before the tap.
+ * vs the server's (Server-Timing), how long the connection had been quiet before the tap, how many
+ * times the stall breaker reset the connection during it, and whether the answer was a replay.
  * Never throws, never affects the print flow.
  */
 let current: {
@@ -17,6 +18,8 @@ let current: {
   idleMs: number | null;
   online: boolean;
   serverTiming: string | null;
+  resetsAtStart: number;
+  replayed: boolean;
 } | null = null;
 
 export function startPrintTap(kind: string): void {
@@ -26,6 +29,8 @@ export function startPrintTap(kind: string): void {
     idleMs: msSinceLastApiResponse(),
     online: typeof navigator !== "undefined" ? navigator.onLine : true,
     serverTiming: null,
+    resetsAtStart: stallResetCount(),
+    replayed: false,
   };
 }
 
@@ -33,10 +38,13 @@ export function timePrintStage<T>(name: string, fn: () => Promise<T>): Promise<T
   return current ? current.timer.time(name, fn) : fn();
 }
 
-/** Keeps the save response's Server-Timing (the server's own stage breakdown) for the report. */
+/** Keeps the save response's Server-Timing (the server's own stage breakdown) and replay flag for the report. */
 export function notePrintResponse(res: Response): void {
   try {
-    if (current) current.serverTiming = res.headers.get("Server-Timing");
+    if (current) {
+      current.serverTiming = res.headers.get("Server-Timing");
+      current.replayed = res.headers.get(REPLAYED_HEADER) === "true";
+    }
   } catch {
     /* diagnostics only */
   }
@@ -67,6 +75,10 @@ export function endPrintTap(orderId?: number): void {
         idleMs: tap.idleMs,
         onlineAtClick: tap.online,
         connection: c ? `${c.effectiveType ?? "?"} rtt=${c.rtt ?? "?"} down=${c.downlink ?? "?"}` : null,
+        hidden: typeof document !== "undefined" ? document.visibilityState === "hidden" : null,
+        electron: typeof window !== "undefined" ? !!window.electronAPI?.isElectron : null,
+        resets: stallResetCount() - tap.resetsAtStart,
+        replayed: tap.replayed,
       }),
     }).catch(() => {});
   } catch {
