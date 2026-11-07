@@ -22,6 +22,8 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   // handler >= 1.5s. Summarised by scripts/report-latency.ts.
   "perf.slow_request":    { label: "Slow Request",   color: "bg-amber-100 text-amber-800" },
   "perf.slow_handler":    { label: "Slow Handler",   color: "bg-amber-100 text-amber-800" },
+  // The desktop stall breaker reset a dead connection and retried (POST /api/perf/stall-reset).
+  "perf.stall_reset":     { label: "Connection Reset", color: "bg-amber-100 text-amber-800" },
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —
@@ -108,7 +110,19 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const split = req !== null && srv !== null ? ` · request ${secs(req)}, server ${secs(srv)} → ${secs(req - srv)} outside the server` : "";
     const idle = typeof meta.idleMs === "number" ? ` · connection quiet ${secs(meta.idleMs)} before the tap` : "";
     const net = meta.onlineAtClick === false ? " · browser was OFFLINE at click" : "";
-    return `${String(meta.kind ?? "print").toUpperCase()} tap took ${secs(meta.totalMs)}${split}${idle}${net}`;
+    const resets = Number(meta.resets) > 0 ? ` · ${meta.resets} connection reset${Number(meta.resets) > 1 ? "s" : ""}` : "";
+    const replayed = meta.replayed === true ? " · answer replayed" : "";
+    return `${String(meta.kind ?? "print").toUpperCase()} tap took ${secs(meta.totalMs)}${split}${idle}${net}${resets}${replayed}`;
+  }
+  if (action === "perf.stall_reset") {
+    const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
+    const outcome =
+      meta.retryOutcome === "ok" ? `retry ok in ${secs(meta.retryMs)}`
+      : meta.retryOutcome === "not_retried" ? "not retried (write without a key)"
+      : `retry failed after ${secs(meta.retryMs)}`;
+    const idle = typeof meta.idleMs === "number" ? ` · connection quiet ~${secs(meta.idleMs)} before` : "";
+    const hidden = Number(meta.hiddenResets) > 0 ? ` · +${meta.hiddenResets} while minimised` : "";
+    return `${meta.method} ${meta.path}: dead connection reset after ${secs(meta.detectMs)}, ${outcome}${idle}${hidden}`;
   }
   if (action === "perf.slow_request") {
     const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");

@@ -340,6 +340,12 @@ export async function registerRoutes(
       idleMs: n(b.idleMs),
       onlineAtClick: typeof b.onlineAtClick === "boolean" ? b.onlineAtClick : null,
       connection: s(b.connection, 60),
+      // Stall-breaker era (Nov 2026): window state, desktop vs browser, connection resets during the
+      // tap, and whether the save's answer was replayed from server/requestKeys.ts's store.
+      hidden: typeof b.hidden === "boolean" ? b.hidden : null,
+      electron: typeof b.electron === "boolean" ? b.electron : null,
+      resets: n(b.resets),
+      replayed: typeof b.replayed === "boolean" ? b.replayed : null,
     });
     res.status(204).end();
   });
@@ -367,6 +373,29 @@ export async function registerRoutes(
       cause: s(b.cause, 12),
       online: bool(b.online),
       hidden: bool(b.hidden),
+      connection: s(b.connection, 60),
+    });
+    res.status(204).end();
+  });
+
+  // Diagnostic only: the desktop stall breaker (packages/api-client/stallBreaker.ts) found a dead
+  // connection, reset all connections and retried (client/src/lib/stallReset.ts). Read with
+  // scripts/report-latency.ts. idleMs ≈ how long the connection had been quiet before the request.
+  app.post("/api/perf/stall-reset", requireAuth, async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+    const s = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : null);
+    const bool = (v: unknown) => (typeof v === "boolean" ? v : null);
+    await logAudit(req, "perf.stall_reset", "request", null, {
+      method: s(b.method, 8),
+      path: s(b.path, 120),
+      keyed: bool(b.keyed),
+      detectMs: n(b.detectMs),
+      retryOutcome: s(b.retryOutcome, 12),
+      retryStatus: n(b.retryStatus),
+      retryMs: n(b.retryMs),
+      idleMs: n(b.idleMs),
+      hiddenResets: n(b.hiddenResets),
       connection: s(b.connection, 60),
     });
     res.status(204).end();
