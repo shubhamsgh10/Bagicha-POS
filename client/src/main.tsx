@@ -5,9 +5,12 @@ import { queryClient } from "./lib/queryClient";
 import { RealtimeProvider } from "./hooks/RealtimeProvider";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installSlowRequestReporter } from "./lib/slowRequest";
+import { installStallBreaker } from "./lib/stallReset";
 
 // Every API request >= 4s (or timed out) is reported with the server's own timing — see lib/slowRequest.ts.
 installSlowRequestReporter();
+// Desktop app only: retry a request stuck on a silently dead connection after ~3 s instead of 10–20 s.
+installStallBreaker();
 // ── Bagicha design-system fonts (self-hosted, offline-safe for Electron) ──
 import "@fontsource/plus-jakarta-sans/400.css";
 import "@fontsource/plus-jakarta-sans/500.css";
