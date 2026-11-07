@@ -34,11 +34,12 @@ const s = (ms: unknown) => (ms == null ? "–" : `${(Number(ms) / 1000).toFixed(
 async function main() {
   await pool.query("SET default_transaction_read_only = on");
   const since = `now() - interval '${Math.max(1, Math.floor(days))} days'`;
-  const day = `to_char(created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
+  // created_at is naive UTC: IST = + 5:30 (`at time zone 'Asia/Kolkata'` on a naive column shifts the WRONG way).
+  const day = `to_char(created_at + interval '5 hours 30 minutes', 'YYYY-MM-DD')`;
 
   const rows = await q(`
     with a as (select ${day} d, action, metadata::jsonb m from audit_logs
-               where created_at > ${since} and action in ('order.payment','perf.slow_settle','perf.slow_request','perf.slow_handler'))
+               where created_at > ${since} and action in ('order.payment','perf.slow_settle','perf.slow_request','perf.slow_handler','perf.slow_print','perf.stall_reset'))
     select d,
       count(*) filter (where action='order.payment') settles,
       count(*) filter (where action='perf.slow_settle') slow_settles,
@@ -49,7 +50,11 @@ async function main() {
       count(*) filter (where action='perf.slow_request' and m->>'cause'='server') srv,
       count(*) filter (where action='perf.slow_request' and m->>'cause'='timeout') tmo,
       count(*) filter (where action='perf.slow_request' and (m->>'attempt')::int > 1) retried,
-      count(*) filter (where action='perf.slow_handler') slow_handler
+      count(*) filter (where action='perf.slow_handler') slow_handler,
+      count(*) filter (where action='perf.slow_print') slow_prints,
+      count(*) filter (where action='perf.stall_reset') resets,
+      percentile_cont(0.5) within group (order by (m->>'detectMs')::int + coalesce((m->>'retryMs')::int, 0))
+        filter (where action='perf.stall_reset') reset_p50
     from a group by d order by d`);
   const prints = await q(`
     select ${day} d, count(*) n,
@@ -59,13 +64,13 @@ async function main() {
   const pByDay = new Map(prints.map((r: any) => [r.d, r]));
 
   console.log(`\nLatency by day (IST), last ${days} days`);
-  console.log("date        settles  slow(>=4s)  rate  slow p50 | slow requests: total net cold srv tmo retried | slow handlers | print n  p50   p90");
+  console.log("date        settles  slow(>=4s)  rate  slow p50 | slow requests: total net cold srv tmo retried | slow handlers | slow prints | resets  recover p50 | print n  p50   p90");
   for (const r of rows as any[]) {
     const p: any = pByDay.get(r.d);
     console.log(
       `${r.d}  ${String(r.settles).padStart(7)}  ${String(r.slow_settles).padStart(10)}  ${pct(+r.slow_settles, +r.settles).padStart(4)}  ${s(r.slow_settle_p50).padStart(8)} |` +
       `${String(r.slow_req).padStart(20)} ${String(r.net).padStart(3)} ${String(r.cold).padStart(4)} ${String(r.srv).padStart(3)} ${String(r.tmo).padStart(3)} ${String(r.retried).padStart(7)} |` +
-      `${String(r.slow_handler).padStart(14)} | ${String(p?.n ?? 0).padStart(7)} ${s(p?.p50).padStart(5)} ${s(p?.p90).padStart(5)}`,
+      `${String(r.slow_handler).padStart(14)} | ${String(r.slow_prints).padStart(11)} | ${String(r.resets).padStart(6)}  ${s(r.reset_p50).padStart(11)} | ${String(p?.n ?? 0).padStart(7)} ${s(p?.p50).padStart(5)} ${s(p?.p90).padStart(5)}`,
     );
   }
 
@@ -83,7 +88,7 @@ async function main() {
   }
 
   const recent = await q(`
-    select to_char(created_at at time zone 'Asia/Kolkata','MM-DD HH24:MI') t, metadata::jsonb m from audit_logs
+    select to_char(created_at + interval '5 hours 30 minutes','MM-DD HH24:MI') t, metadata::jsonb m from audit_logs
     where action='perf.slow_request' and created_at > ${since} order by created_at desc limit 15`);
   if (recent.length) {
     console.log("\nLatest slow requests (client time = server handler + cold start + everything else):");
