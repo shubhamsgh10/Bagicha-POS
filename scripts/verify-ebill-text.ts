@@ -66,6 +66,16 @@ const items = [{ name: "Wildfire (Medium)", quantity: 1, price: "499.00" }];
   checks.push(["default restaurant name and thank-you footer", bare.includes("*Bagicha Restaurant*") && bare.endsWith("Thank you for dining with us!")]);
 }
 
+// Table + section — the same "Table: Inner - 3" the thermal bill prints.
+{
+  const t = buildEbillText({ orderNumber: "S", tableNumber: "3", tableSection: "inner", totalAmount: "10", taxAmount: "0" }, []);
+  checks.push(["table and section: 'Table: Inner - 3'", t.includes("Table: Inner - 3")]);
+  const noSection = buildEbillText({ orderNumber: "S2", tableNumber: "3", totalAmount: "10", taxAmount: "0" }, []);
+  checks.push(["no section: 'Table: 3'", noSection.includes("Table: 3") && !noSection.includes(" - 3")]);
+  const noTable = buildEbillText({ orderNumber: "S3", tableSection: "inner", totalAmount: "10", taxAmount: "0" }, []);
+  checks.push(["no table: no Table line even if a section is passed", !noTable.includes("Table:")]);
+}
+
 let failed = 0;
 for (const [name, ok] of checks) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
