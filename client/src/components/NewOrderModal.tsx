@@ -89,7 +89,7 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
 
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
-      return await apiRequest("POST", "/api/orders", orderData);
+      return await apiRequest("POST", "/api/orders", orderData, { idempotent: true });
     },
     onSuccess: () => {
       toast({ title: "Order Created", description: "New order has been created successfully" });

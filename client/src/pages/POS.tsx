@@ -1,4 +1,4 @@
-import { apiUrl } from '@/lib/api';
+import { apiUrl, timedFetch, withIdempotencyKey } from '@/lib/api';
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -370,7 +370,7 @@ export default function POS() {
         containerCharge: containerCharge.toFixed(2),
         deliveryCharge: deliveryCharge.toFixed(2),
         cancelledKotItems: buildCancelledKotItemsPayload(),
-      });
+      }, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/orders", String(activeOrderId)] });
       return true;
     } catch (err: any) {
@@ -886,7 +886,8 @@ export default function POS() {
         // From here on the server copy may differ from this tab's last manual save — even if this
         // request's response is lost — so Settle must not skip its save (lib/settleSkip.ts).
         lastSaveRef.current = null;
-        const res = await fetch(apiUrl(`/api/orders/${activeOrderId}/items`), {
+        // timedFetch + one-time key: covered by the desktop stall breaker, and a resend can't double-save.
+        const res = await timedFetch(`/api/orders/${activeOrderId}/items`, withIdempotencyKey({
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -906,7 +907,7 @@ export default function POS() {
             auto: true,
           }),
           credentials: 'include',
-        });
+        }));
         if (!res.ok) return;
         const saved = await res.json();
         let print = saved?.print;
@@ -968,7 +969,7 @@ export default function POS() {
 
   const createOrderMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await timePrintStage("save_http", () => apiRequest("POST", "/api/orders", data));
+      const res = await timePrintStage("save_http", () => apiRequest("POST", "/api/orders", data, { idempotent: true }));
       notePrintResponse(res);
       return res.json();
     },
@@ -1043,7 +1044,14 @@ export default function POS() {
     },
     onError: (error: any) => {
       if (submitModeRef.current === "settle") finishSettleTiming(0, "error");
-      toast({ title: "Failed to place order", description: describeApiError(error).message, variant: "destructive" });
+      const info = describeApiError(error);
+      // request_in_progress / replay_unavailable (server/requestKeys.ts): the order may exist already —
+      // refresh so staff see it before tapping again.
+      if (info.code === "request_in_progress" || info.code === "replay_unavailable") {
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      }
+      toast({ title: "Failed to place order", description: info.message, variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
       endPrintTap();
@@ -1054,7 +1062,7 @@ export default function POS() {
 
   const updateOrderMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await timePrintStage("save_http", () => apiRequest("PUT", `/api/orders/${data.orderId}/items`, data));
+      const res = await timePrintStage("save_http", () => apiRequest("PUT", `/api/orders/${data.orderId}/items`, data, { idempotent: true }));
       notePrintResponse(res);
       return res.json();
     },
@@ -1137,7 +1145,7 @@ export default function POS() {
       const body = payments
         ? { payments, totalPaid, changeAmount, isDue, customerName, customerPhone, allowShortfall }
         : { paymentMethod: paymentMethod || "cash", notes };
-      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, body);
+      const res = await apiRequest("POST", `/api/orders/${orderId}/payment`, body, { idempotent: true });
       return res.json();
     },
     onSuccess: (settled: any, vars: any) => {
@@ -1153,20 +1161,15 @@ export default function POS() {
     onError: (error: any, vars: any) => {
       finishSettleTiming(Number(vars?.orderId), "error");
       setSettlePhase("idle");
-      // apiRequest() throws `${status}: ${rawBodyText}` — for our JSON error
-      // responses that body is `{"error": "..."}`; pull the message back out so
-      // an already-settled order shows its actual cause, not a raw status dump.
-      let description = error.message || "Something went wrong";
-      const jsonStart = description.indexOf("{");
-      if (jsonStart !== -1) {
-        try {
-          const parsed = JSON.parse(description.slice(jsonStart));
-          if (parsed?.error) description = parsed.error;
-        } catch {
-          /* leave the raw message as-is */
-        }
+      // describeApiError reads both {"error"} and {"message"} bodies (the hand-rolled parse here read
+      // only "error", so a {"message"} answer showed as a raw "409: {…}" dump).
+      const info = describeApiError(error);
+      if (info.code === "request_in_progress" || info.code === "replay_unavailable" || info.status === 409) {
+        queryClient.invalidateQueries({ queryKey: ["/api/orders", String(vars?.orderId)] });
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       }
-      toast({ title: "Settlement failed", description, variant: "destructive" });
+      toast({ title: "Settlement failed", description: info.message || "Something went wrong", variant: "destructive" });
     },
   });
 

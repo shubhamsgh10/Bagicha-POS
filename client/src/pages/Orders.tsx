@@ -1,4 +1,4 @@
-import { apiUrl, apiJson } from '@/lib/api';
+import { apiUrl, apiJson, timedFetch, withIdempotencyKey } from '@/lib/api';
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -123,12 +123,12 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
 
   const reprintBill = async () => {
     try {
-      const res = await fetch(apiUrl('/api/print/bill'), {
+      const res = await timedFetch('/api/print/bill', withIdempotencyKey({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id }),
         credentials: 'include',
-      });
+      }));
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) {
         toast({ title: 'Bill print failed', description: data?.message || `Print service answered ${res.status}.`, variant: 'destructive' });

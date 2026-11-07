@@ -1,6 +1,6 @@
 import { QueryClient, QueryCache, MutationCache, QueryFunction } from "@tanstack/react-query";
 import * as Sentry from "@sentry/react";
-import { timedFetch } from "./api";
+import { timedFetch, IDEMPOTENCY_HEADER, newIdempotencyKey } from "./api";
 import { toast } from "@/hooks/use-toast";
 
 type UnauthorizedBehavior = "returnNull" | "throw";
@@ -16,11 +16,16 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  opts?: { idempotent?: boolean },
 ): Promise<Response> {
-  // timedFetch: timed + reported when slow (lib/slowRequest.ts); writes are never auto-retried.
+  // timedFetch: timed + reported when slow (lib/slowRequest.ts). A write is resent (once, by the
+  // desktop stall breaker) only when it carries a one-time key — opts.idempotent, used on the six
+  // routes server/requestKeys.ts protects. One call = one key; a new tap makes a new call.
+  const headers: Record<string, string> = data ? { "Content-Type": "application/json" } : {};
+  if (opts?.idempotent) headers[IDEMPOTENCY_HEADER] = newIdempotencyKey();
   const res = await timedFetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });

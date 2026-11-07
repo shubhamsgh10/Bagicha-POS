@@ -1,4 +1,4 @@
-import { apiUrl, apiJson } from '@/lib/api';
+import { apiUrl, apiJson, timedFetch, withIdempotencyKey } from '@/lib/api';
 import { businessDayRange, todayBusinessDate } from "@shared/businessDay";
 import { Fragment, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -47,12 +47,12 @@ export default function KOT() {
 
   const reprintKOT = async (ticket: any) => {
     try {
-      const res = await fetch(apiUrl('/api/print/kot'), {
+      const res = await timedFetch('/api/print/kot', withIdempotencyKey({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: ticket.orderId, reprint: true }),
         credentials: 'include',
-      });
+      }));
       const data = await res.json();
       if (!res.ok) {
         showKOTPreview(ticket);

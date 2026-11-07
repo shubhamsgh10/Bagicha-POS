@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiUrl, timedFetch, withIdempotencyKey } from "@/lib/api";
 import type { PrinterConfig } from "@shared/print/types";
 import { createQueueCheckCache } from "@/lib/queueCheckCache";
 
@@ -192,10 +192,12 @@ export function ownsPrinter(printerId: string): boolean {
 /** Atomically claims a print_jobs row so only one station ever executes a given job. */
 async function claimJob(jobId: number): Promise<{ claimed: boolean; payload?: string }> {
   try {
-    const res = await fetch(apiUrl(`/api/print/jobs/${jobId}/claim`), {
+    // One-time key: a claim whose answer got lost would otherwise answer {claimed:false} on a resend
+    // and strand the job for the 2-minute stale-claim window.
+    const res = await timedFetch(`/api/print/jobs/${jobId}/claim`, withIdempotencyKey({
       method: "POST",
       credentials: "include",
-    });
+    }));
     if (!res.ok) return { claimed: false };
     const data = (await res.json()) as { claimed: boolean; job?: { payload?: string } };
     return { claimed: data.claimed, payload: data.job?.payload };

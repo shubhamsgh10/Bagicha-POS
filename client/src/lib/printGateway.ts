@@ -1,5 +1,5 @@
 import type { PrintApiResponse, PrintConfigSettings, PrintJob } from "@shared/print/types";
-import { apiUrl } from "@/lib/api";
+import { apiUrl, timedFetch, withIdempotencyKey } from "@/lib/api";
 import { queryClient } from "@/lib/queryClient";
 import { printKotFallback } from "@/lib/printBill";
 import { withBrowserPayloads } from "@shared/print/browserPayload";
@@ -172,12 +172,12 @@ export async function printBillDirect(
   options: Omit<PrintHandleOptions, "orderId" | "ackType"> & { markBilled?: "always" | "on_send" } = {},
 ): Promise<PrintHandleResult> {
   const { markBilled, ...handleOptions } = options;
-  const res = await fetch(apiUrl("/api/print/bill"), {
+  const res = await timedFetch("/api/print/bill", withIdempotencyKey({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ orderId, ...(markBilled ? { markBilled } : {}) }),
     credentials: "include",
-  });
+  }));
   const raw = await res.text();
   let data: PrintApiResponse & { orderId?: number; pendingAck?: boolean; message?: string };
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = {} as typeof data; }

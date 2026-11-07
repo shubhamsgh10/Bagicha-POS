@@ -1,5 +1,5 @@
 import { useOrderHistorySync } from "@/lib/orderHistorySync";
-import { apiUrl, apiJson } from '@/lib/api';
+import { apiUrl, apiJson, timedFetch, withIdempotencyKey } from '@/lib/api';
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
@@ -173,17 +173,17 @@ export default function Billing() {
 
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method }: { id: number; method: string }) =>
-      apiRequest("POST", `/api/orders/${id}/payment`, { paymentMethod: method }),
+      apiRequest("POST", `/api/orders/${id}/payment`, { paymentMethod: method }, { idempotent: true }),
     onSuccess: (_, vars) => {
       toast({ title: "Payment processed!", description: "Printing bill..." });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      fetch(apiUrl('/api/print/bill'), {
+      timedFetch('/api/print/bill', withIdempotencyKey({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: vars.id }),
         credentials: 'include',
-      })
+      }))
         .then((res) => res.json().catch(() => ({})).then((data: any) => ({ res, data })))
         .then(async ({ res, data }) => {
           if (!res.ok) {
@@ -230,12 +230,12 @@ export default function Billing() {
 
   const fetchAndPrint = async (order: any) => {
     try {
-      const res = await fetch(apiUrl('/api/print/bill'), {
+      const res = await timedFetch('/api/print/bill', withIdempotencyKey({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id }),
         credentials: 'include',
-      });
+      }));
       const data = await res.json();
       if (!res.ok) {
         // No bill bytes came back, so there is nothing truthful to print from here — say so
@@ -387,12 +387,12 @@ export default function Billing() {
               queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
               queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
               setPayingOrder(null);
-              fetch(apiUrl('/api/print/bill'), {
+              timedFetch('/api/print/bill', withIdempotencyKey({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ orderId: payingOrder.id }),
                 credentials: 'include',
-              })
+              }))
                 .then((res) => res.json().then((data) => ({ res, data })))
                 .then(async ({ res, data }) => {
                   if (!res.ok) return;
