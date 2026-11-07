@@ -113,6 +113,9 @@ Constants, tunable from real data: `CHECK_AFTER_MS = 1500`, `CHECK_TIMEOUT_MS = 
      **same** key
    - a write without a key is not resent. It throws `"The connection dropped while saving — check
      whether it was saved, then try again."`
+   - **a keyed write is also retried once after any network failure** (fetch rejected with no
+     response), not only after this request's own reset. A reset started by another stalled request
+     fails every in-flight HTTP/2 request at once, and the key makes the resend safe.
 6. The retry is not watched again. If the fresh connection also stalls (a real outage), it waits like
    today. The existing 8 s read timeout + one retry still bounds reads.
 
@@ -157,6 +160,15 @@ the stored answer of the first run.
 
 Created by `scripts/migrate-request-keys.mjs` (`CREATE TABLE IF NOT EXISTS`, idempotent) and declared
 in `shared/schema.ts` so `db:push` never proposes dropping it.
+
+**The migration must also run `ALTER TABLE request_keys ENABLE ROW LEVEL SECURITY`.** Checked
+2026-11-07:
+- every table in `public` has row-level security on
+- the default privileges grant `anon` / `authenticated` full rights on any new table
+
+Without it, the stored order responses would be readable and writable through Supabase's REST API with
+the public anon key. No policies are added. The app connects as the table owner (`postgres`), which
+row-level security does not restrict (it is not forced).
 
 | column | type | notes |
 |---|---|---|
@@ -293,8 +305,14 @@ so egress barely changes.
   established connections, plus the real Pusher socket, driving the real `timedFetch` breaker. Pass:
   - a stuck keyed save recovers in < 3.5 s
   - the server sees it once
+  - an unkeyed write fails with the clear message and is not resent
+  - a stuck GET recovers
+  - a slow but alive request gets no reset
   - Pusher stays OPEN (ping/pong)
-  - an HTTP/1.1 stall recovers too
+
+  Production is HTTP/2: Vercel negotiated `h2` for Node's `http2.connect` in the idle test. HTTP/1.1
+  is not a pass criterion. There, the check may ride a different socket than the stuck request and
+  answer, so the breaker can't always detect the stall. That is no worse than today.
   Run it with `env -u ELECTRON_RUN_AS_NODE` from VS Code's terminal.
 - **End-to-end on a throwaway in-process server** (memory playbook: real routes and session, shared DB,
   private Pusher channel):
