@@ -8,6 +8,9 @@ import { tableSectionLabel, formatTableLabel } from "../shared/tableSection";
 
 import { createTableSectionCache } from "../server/tableSectionCache";
 
+import * as E from "../shared/print/escpos";
+import { generateKOTBuffer } from "../shared/print/generators";
+
 const checks: Array<[string, boolean]> = [];
 const check = (name: string, ok: boolean) => checks.push([name, ok]);
 const asyncBlocks: Array<() => Promise<void>> = [];
@@ -130,6 +133,27 @@ asyncBlocks.push(async () => {
     check("cache: a load stuck for 15 s is replaced by a fresh one", (await c.get(1)) === "inner" && n === 2);
   }
 });
+
+// ── 3. KOT, text style ────────────────────────────────────────────────────────
+const kotSettings = { printAddons: true, printModifiedItemsOnly: true, printCancelledKOT: true, showDuplicateWatermark: true, kotNumbering: true } as any; // no kotStyle → the text ticket
+const kotBase = {
+  orderNumber: "1", tableNumber: "3", kotNumber: 12, isReprint: false, isDelta: false,
+  newItems: [{ name: "Hakka Noodles", quantity: 1, serviceMode: "dinein" }],
+  modifiedItems: [], cancelledItems: [], kotSettings, width: 48,
+};
+const latin = (b: Buffer) => b.toString("latin1");
+{
+  const withSection = generateKOTBuffer({ ...kotBase, tableSection: "inner" });
+  const t = latin(withSection);
+  check("KOT text: the section is printed uppercased", t.includes("INNER\n"));
+  check("KOT text: the section line sits directly above the table line", /INNER\nTABLE - 3\n/.test(t));
+  check("KOT text: both lines are double-size (one DOUBLE_SIZE_ON … OFF run)", withSection.indexOf(Buffer.concat([E.DOUBLE_SIZE_ON, Buffer.from("INNER\nTABLE - 3\n"), E.DOUBLE_SIZE_OFF])) >= 0);
+  check("KOT text: VIP prints as VIP", latin(generateKOTBuffer({ ...kotBase, tableSection: "vip" })).includes("VIP\nTABLE - 3\n"));
+  const plain = generateKOTBuffer({ ...kotBase });
+  check("KOT text: no section → the header is exactly the old double-size TABLE line", plain.indexOf(Buffer.concat([E.DOUBLE_SIZE_ON, Buffer.from("TABLE - 3\n"), E.DOUBLE_SIZE_OFF])) >= 0 && !latin(plain).includes("INNER"));
+  check("KOT text: null section is identical to no section", plain.equals(generateKOTBuffer({ ...kotBase, tableSection: null })));
+  check("KOT text: takeaway ignores a section", generateKOTBuffer({ ...kotBase, tableNumber: null, tableSection: "inner" }).equals(generateKOTBuffer({ ...kotBase, tableNumber: null })));
+}
 
 (async () => {
   for (const block of asyncBlocks) await block();
