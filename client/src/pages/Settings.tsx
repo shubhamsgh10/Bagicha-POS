@@ -38,6 +38,7 @@ interface RestaurantSettings {
   currencySymbol: string;
   footerNote: string;
   posRoleTimeout: number;
+  desktopFastReconnect: boolean;
 }
 
 type ModalId =
@@ -477,6 +478,30 @@ function RestaurantConfigPanel({
         </div>
       </div>
 
+      <Separator />
+
+      {/* Desktop app */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-3">
+          <Monitor className="w-4 h-4 text-emerald-600" />
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Desktop App</p>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Label className="text-sm text-gray-700">Fast reconnect</Label>
+            <p className="text-xs text-gray-500">
+              When the shop PC's internet connection silently drops, retry a KOT, Bill or Settle on a fresh
+              connection after about 3 seconds instead of waiting 10–20. Leave on; turn off only if the
+              desktop app misbehaves.
+            </p>
+          </div>
+          <Switch
+            checked={formData.desktopFastReconnect !== false}
+            onCheckedChange={(v) => set("desktopFastReconnect", v)}
+          />
+        </div>
+      </div>
+
       {/* Save */}
       <div className="pt-2">
         <button
@@ -901,6 +926,7 @@ export default function Settings() {
     currencySymbol: "₹",
     footerNote: "Thank you for dining with us!",
     posRoleTimeout: 2,
+    desktopFastReconnect: true,
   });
 
   const { data: settings, isLoading } = useQuery<RestaurantSettings>({

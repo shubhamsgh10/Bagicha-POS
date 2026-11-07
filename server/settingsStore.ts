@@ -122,6 +122,8 @@ export interface RestaurantSettings {
   attendanceDevice: AttendanceDeviceSettings;
   /** Quick-POS sections (e.g. South Indian counter) — filtered menu + optional dedicated bill printer. */
   posSections: PosSection[];
+  /** Desktop app "Fast reconnect" — the stall breaker (packages/api-client/stallBreaker.ts). On by default; Admin kill switch. */
+  desktopFastReconnect: boolean;
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
@@ -186,6 +188,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   kotCounter: 0,
   attendanceDevice: DEFAULT_ATTENDANCE_DEVICE,
   posSections: [],
+  desktopFastReconnect: true,
 };
 
 // ── In-memory cache (survives within a single serverless instance) ────────────
