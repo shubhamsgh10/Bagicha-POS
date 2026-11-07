@@ -412,6 +412,30 @@ export type PrintJobRecord = typeof printJobs.$inferSelect;
 export type InsertPrintJob = z.infer<typeof insertPrintJobSchema>;
 
 /**
+ * request_keys — one row per one-time request key (Idempotency-Key header) on the hot write routes
+ * (server/requestKeys.ts). Holds the route's answer so a repeat of the same key (the desktop stall
+ * breaker's retry, a browser resend) replays it instead of running the route twice. Kept 24 h.
+ * Created by scripts/migrate-request-keys.mjs, which also ENABLES ROW LEVEL SECURITY — every public
+ * table has RLS on and the DB's default privileges would otherwise expose new tables to the anon key.
+ */
+export const requestKeys = pgTable("request_keys", {
+  key:            text("key").primaryKey(),
+  actorId:        text("actor_id").notNull(),   // "u:<id>" | "sm:<id>" (audit actorId convention)
+  method:         text("method").notNull(),
+  path:           text("path").notNull(),       // originalUrl without the query string
+  bodyHash:       text("body_hash").notNull(),  // sha256 of JSON.stringify(req.body ?? null)
+  state:          text("state").notNull(),      // 'processing' | 'done'
+  responseStatus: integer("response_status"),
+  responseBody:   json("response_body"),        // null when over 1 MB (replay_unavailable)
+  createdAt:      timestamp("created_at").notNull().defaultNow(),
+  completedAt:    timestamp("completed_at"),
+}, (t) => [
+  index("idx_request_keys_created").on(t.createdAt),
+]);
+
+export type RequestKeyRecord = typeof requestKeys.$inferSelect;
+
+/**
  * customer_messages — omnichannel message log (WhatsApp / email / SMS).
  */
 export const customerMessages = pgTable("customer_messages", {
