@@ -512,6 +512,31 @@ A Nov 2026 review of "print / settle / refresh are sometimes fast, sometimes 10�
 - **CORS preflights are cached 2 h** (`Access-Control-Max-Age: 7200`); the default 5 s meant an extra OPTIONS round trip before most writes from a cross-origin client.
 - Locked by `scripts/verify-request-timing.ts` and `scripts/verify-settings-cache.ts` (in `test:pure`).
 
+### Stall breaker + one-time request keys (Nov 2026)
+
+The remaining slow KOT/Bill/Settle taps on the shop PC were silently dead connections (Wi-Fi to JioFiber, then Vercel). Chromium waits 10 s before retrying, and longer when the connection was used moments earlier. Spec: `docs/superpowers/specs/2026-11-07-network-stall-breaker-design.md`.
+
+- **Stall breaker (desktop app only)** — `packages/api-client/stallBreaker.ts` (pure rules) + `timedFetch`. Installed by `client/src/lib/stallReset.ts` only when `window.electronAPI.resetConnections` exists.
+  - **Detection:** no response headers after 1.5 s → `GET /api/ping` on the same connection. Ping silent for 1.5 s → IPC `net:reset-connections` → `session.closeAllConnections()`, abort, retry once. At most one reset per 10 s.
+  - **Retries:** reads always; writes only with an `Idempotency-Key` (also after a plain network failure while the breaker is active). An unkeyed write caught in a reset throws `CONNECTION_DROPPED_MESSAGE` and is never resent.
+  - **Measured on Electron 33:** open WebSockets (Pusher → `PRINT_JOB`) survive `closeAllConnections`. An in-flight HTTP/2 request fails at once; HTTP/1.1 does not, hence the extra abort.
+  - **Kill switch:** Admin → Settings → "Fast reconnect" (`desktopFastReconnect`, default on).
+  - **Tests:** `scripts/verify-stall-breaker.ts`, `scripts/verify-timed-fetch-breaker.ts` (test:pure). Manual: `scripts/verify-stall-breaker-electron.cjs` (run with `env -u ELECTRON_RUN_AS_NODE` from VS Code's terminal; a dead keyed save recovers in ~3.0 s and reaches the server once).
+- **One-time request keys** — `server/requestKeys.ts` + `shared/requestKeys.ts`. Mounted after `requireAuth` on `POST /api/orders`, `PUT /api/orders/:id/items`, `POST /api/orders/:id/payment`, `POST /api/print/kot`, `POST /api/print/bill` and `POST /api/print/jobs/:id/claim`.
+  - **Claim:** a keyed request claims the key in `request_keys` (`INSERT … ON CONFLICT DO NOTHING`).
+  - **Store:** the route's JSON answer is stored before it is sent.
+  - **Repeats:** a repeat replays the stored answer (`Idempotent-Replayed: true`); one still running waits up to 8 s, then gets `409 request_in_progress`.
+  - **Errors:** mismatch → `422`; no table → pass-through + loud log; any other DB error → `503`.
+  - Requests without a key are unchanged.
+  - **Every client caller of those routes must send a key:** `apiRequest(…, { idempotent: true })` or `timedFetch(path, withIdempotencyKey(init))`.
+  - **Tests:** `scripts/verify-request-keys.ts` (test:pure). Manual, DB: `scripts/verify-request-keys-db.ts` (needs `scripts/migrate-request-keys.mjs` run first).
+- **⚠️ Every new table needs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` in its migration.** All `public` tables have RLS on, and this DB's default privileges grant `anon` / `authenticated` full rights on new tables, so a table without RLS is readable and writable through Supabase's REST API with the public anon key. See `scripts/migrate-request-keys.mjs`.
+- **Diagnostics:**
+  - `perf.stall_reset` (POST `/api/perf/stall-reset`; hidden-window resets ride along as `hiddenResets`)
+  - `perf.slow_print` gains `hidden` / `electron` / `resets` / `replayed`
+  - `perf.slow_request` is capped at 60/hour instead of 200/session (the old cap silenced the log from ~20:00 on 6 Nov 2026) and skips hidden-window pings
+  - `scripts/report-latency.ts` shows resets and slow prints per IST day
+
 ## Database egress (Supabase) — rules for queries and polling
 
 In Oct 2026 the Supabase project blew through its egress quota (~10 GB in a cycle for one restaurant). `pg_stat_statements` traced ~95% of it to **one query: an unfiltered `SELECT * FROM orders`** (~500 KB per call and growing with history), issued by three polls — `/api/live-status` (Tables pill, every 5s, read every order to compute today's figures), `useLiveOrders` (every 30s, to keep the ~4 open orders) and the POS customer autocomplete (to build ~12 names, refetched after every save). Measure before guessing: `pg_stat_statements` (`calls`, `rows` per query, since `pg_stat_statements_info.stats_reset`) × the row width is a good egress estimate.
