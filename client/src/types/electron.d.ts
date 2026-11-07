@@ -22,6 +22,8 @@ export interface ElectronAPI {
   printTest: (payload: PrintTestPayload) => Promise<PrintExecuteResult>;
   scanUsbDevices: () => Promise<UsbScanResult>;
   getVersion: () => Promise<string>;
+  /** Close every connection of this window's session (stall breaker). Missing in desktop builds before it existed. */
+  resetConnections?: () => Promise<void>;
 
   // ── Print Station config (durable file, not localStorage) ────────────────
   getPrintStationConfig: () => Promise<PrintStationConfig | null>;

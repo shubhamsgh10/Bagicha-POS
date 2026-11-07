@@ -489,6 +489,14 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle(IPC.APP_VERSION, () => app.getVersion());
 
+// Stall breaker (packages/api-client/stallBreaker.ts): the renderer found its API connection dead
+// (no answer, and a check request on the same connection silent too). Closing the session's
+// connections fails the stuck HTTP/2 request at once so it can be retried on a fresh connection.
+// Measured on Electron 33: open WebSockets — Pusher, which carries PRINT_JOB — are NOT closed by this.
+ipcMain.handle(IPC.NET_RESET_CONNECTIONS, async (e) => {
+  await e.sender.session.closeAllConnections();
+});
+
 ipcMain.handle(IPC.USB_SCAN, async () => {
   try {
     const devices = await listUsbDevices();

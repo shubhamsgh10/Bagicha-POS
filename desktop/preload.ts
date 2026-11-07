@@ -58,6 +58,9 @@ const electronAPI = {
 
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_VERSION),
 
+  /** Close every connection of this window's session (stall breaker — see packages/api-client). */
+  resetConnections: (): Promise<void> => ipcRenderer.invoke(IPC.NET_RESET_CONNECTIONS),
+
   // ── Print Station config (durable file, not localStorage — see desktop/main.ts) ────
 
   getPrintStationConfig: (): Promise<PrintStationConfig | null> =>

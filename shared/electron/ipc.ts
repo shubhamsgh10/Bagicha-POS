@@ -6,6 +6,8 @@ export const IPC = {
   PRINT_TEST: "print:test",
   USB_SCAN: "usb:scan",
   APP_VERSION: "app:version",
+  /** renderer → main: close every connection of this window's session (stall breaker, packages/api-client). */
+  NET_RESET_CONNECTIONS: "net:reset-connections",
 
   // ── Auto-update (main → renderer: notifications) ──────────────────────────
   UPDATE_STATUS:    "app:update-status",
