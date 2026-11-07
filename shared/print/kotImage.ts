@@ -18,6 +18,7 @@ import { formatISTDateTime } from "./formatDate";
 import { KOT_FACES, type KotFace } from "./kotGlyphs";
 import type { KOTItem } from "./generators";
 import type { KOTPrintSettings } from "./types";
+import { tableSectionLabel } from "../tableSection";
 
 /** Printer dots per text column — the same 12-dot cell the text tickets use (48 cols = 576 dots = 72 mm). */
 const DOTS_PER_COL = 12;
@@ -270,6 +271,8 @@ class Coverage {
 export interface KotImageParams {
   orderNumber: string;
   tableNumber: string | null;
+  /** tables.section for tableNumber's table; drawn as its own line under "Dine In". Ignored for takeaway. */
+  tableSection?: string | null;
   kotNumber?: string | number;
   isReprint: boolean;
   isDelta: boolean;
@@ -296,9 +299,13 @@ export interface KotBitmap {
 const labelOf = (name: string, size?: string | null) => (size ? `${name} (${size})` : name);
 const qtyText = (n: number) => String(n);
 
+/** The uppercased section line ("INNER"), or null — only a dine-in ticket (one with a table) has one. */
+const sectionLineOf = (p: KotImageParams): string | null =>
+  (p.tableNumber ? tableSectionLabel(p.tableSection)?.toUpperCase() : undefined) ?? null;
+
 /** Every string the ticket will draw — used to decide up front whether the face can render it. */
 function allStrings(p: KotImageParams): string[] {
-  const s: string[] = [String(p.tableNumber ?? ""), String(p.kotNumber ?? "")];
+  const s: string[] = [String(p.tableNumber ?? ""), String(p.kotNumber ?? ""), sectionLineOf(p) ?? ""];
   for (const i of [...p.newItems, ...p.modifiedItems]) s.push(labelOf(i.name, i.size), i.instructions ?? "");
   for (const i of p.cancelledItems) s.push(labelOf(i.name, i.size));
   return s;
@@ -362,6 +369,8 @@ export function renderKotBitmap(p: KotImageParams): KotBitmap | null {
     line(`KOT - ${p.kotNumber ?? 1}`, "regular", S.big, "center", 4);
   }
   line(p.tableNumber ? "Dine In" : "Take Away", "bold", S.big, "center", 4);
+  const sectionLine = sectionLineOf(p);
+  if (sectionLine) line(sectionLine, "bold", S.big, "center", 4);
   if (p.tableNumber) line(`Table No: ${p.tableNumber}`, "bold", S.big, "center", 4);
   if (p.isDelta) {
     y += 6;

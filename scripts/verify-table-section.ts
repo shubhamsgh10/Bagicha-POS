@@ -10,6 +10,7 @@ import { createTableSectionCache } from "../server/tableSectionCache";
 
 import * as E from "../shared/print/escpos";
 import { generateKOTBuffer } from "../shared/print/generators";
+import { renderKotBitmap, KOT_IMAGE_STYLE } from "../shared/print/kotImage";
 
 const checks: Array<[string, boolean]> = [];
 const check = (name: string, ok: boolean) => checks.push([name, ok]);
@@ -153,6 +154,19 @@ const latin = (b: Buffer) => b.toString("latin1");
   check("KOT text: no section → the header is exactly the old double-size TABLE line", plain.indexOf(Buffer.concat([E.DOUBLE_SIZE_ON, Buffer.from("TABLE - 3\n"), E.DOUBLE_SIZE_OFF])) >= 0 && !latin(plain).includes("INNER"));
   check("KOT text: null section is identical to no section", plain.equals(generateKOTBuffer({ ...kotBase, tableSection: null })));
   check("KOT text: takeaway ignores a section", generateKOTBuffer({ ...kotBase, tableNumber: null, tableSection: "inner" }).equals(generateKOTBuffer({ ...kotBase, tableNumber: null })));
+}
+
+// ── 4. KOT, image style ───────────────────────────────────────────────────────
+{
+  const imgBase = { ...kotBase, kotSettings: { ...kotSettings, kotStyle: "image" } as any, now: new Date("2026-11-07T07:30:00Z") };
+  const plain = renderKotBitmap(imgBase)!;
+  const withSection = renderKotBitmap({ ...imgBase, tableSection: "inner" })!;
+  const oneBigLine = Math.round(KOT_IMAGE_STYLE.big * KOT_IMAGE_STYLE.lineHeight) + 4;
+  check("KOT image: renders (the face covers the text)", !!plain && !!withSection);
+  check("KOT image: a section adds exactly one big line", withSection.heightDots - plain.heightDots === oneBigLine);
+  check("KOT image: null section is bit-identical to no section", Buffer.from(renderKotBitmap({ ...imgBase, tableSection: null })!.bits).equals(Buffer.from(plain.bits)));
+  check("KOT image: takeaway ignores a section", renderKotBitmap({ ...imgBase, tableNumber: null, tableSection: "inner" })!.heightDots === renderKotBitmap({ ...imgBase, tableNumber: null })!.heightDots);
+  check("KOT image: through generateKOTBuffer it is still the raster ticket", generateKOTBuffer({ ...imgBase, tableSection: "outer" }).indexOf(Buffer.from([0x1d, 0x76, 0x30, 0x00])) >= 0);
 }
 
 (async () => {
