@@ -61,6 +61,7 @@ import { sendMessage, getCustomerMessages } from "./services/crm/messagingServic
 import { runAutomationServerSide, triggerSettlementMessage, triggerDueBillMessage, sendConsolidatedEbill } from "./services/crm/automationRuleEngine";
 import { db } from "./db";
 import { registerPrintRoutes } from "./printRoutes";
+import { tableSectionFor, forgetTableSections } from "./tableSections";
 import { runPrintStep, runKotPrint, instrumentJson, savedOrderSnapshot } from "./services/printDispatch";
 import { parseSavePrintRequest } from "@shared/printRequest";
 import { createStageTimer } from "@shared/printPerf";
@@ -1544,6 +1545,7 @@ export async function registerRoutes(
         capacity: Number(capacity) || 4,
         section: String(section || "inner"),
       });
+      forgetTableSections();
       res.json(table);
     } catch (error) {
       res.status(500).json({ error: "Failed to create table" });
@@ -1559,6 +1561,7 @@ export async function registerRoutes(
       if (capacity !== undefined) data.capacity = Number(capacity);
       if (section !== undefined) data.section = String(section);
       const table = await storage.updateTable(id, data);
+      forgetTableSections();
       res.json(table);
     } catch (error) {
       res.status(500).json({ error: "Failed to update table" });
@@ -1576,6 +1579,7 @@ export async function registerRoutes(
         return res.status(409).json({ error: "This table has an active order — settle or move it first.", code: "table_busy" });
       }
       await storage.deleteTable(id);
+      forgetTableSections();
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete table" });
