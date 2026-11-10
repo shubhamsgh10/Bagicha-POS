@@ -538,14 +538,15 @@ The remaining slow KOT/Bill/Settle taps on the shop PC were silently dead connec
   - **Measured on Electron 33:** open WebSockets (Pusher → `PRINT_JOB`) survive `closeAllConnections`. An in-flight HTTP/2 request fails at once; HTTP/1.1 does not, hence the extra abort.
   - **Kill switch:** Admin → Settings → "Fast reconnect" (`desktopFastReconnect`, default on).
   - **Tests:** `scripts/verify-stall-breaker.ts`, `scripts/verify-timed-fetch-breaker.ts` (test:pure). Manual: `scripts/verify-stall-breaker-electron.cjs` (run with `env -u ELECTRON_RUN_AS_NODE` from VS Code's terminal; a dead keyed save recovers in ~3.0 s and reaches the server once).
-- **One-time request keys** — `server/requestKeys.ts` + `shared/requestKeys.ts`. Mounted after `requireAuth` on `POST /api/orders`, `PUT /api/orders/:id/items`, `POST /api/orders/:id/payment`, `POST /api/print/kot`, `POST /api/print/bill` and `POST /api/print/jobs/:id/claim`.
+- **One-time request keys** — `server/requestKeys.ts` + `shared/requestKeys.ts`. Mounted after `requireAuth` on `POST /api/orders`, `PUT /api/orders/:id/items`, `POST /api/orders/:id/payment`, `POST /api/print/kot`, `POST /api/print/bill`, `POST /api/print/jobs/:id/claim`, `POST /api/auth/verify-pin` and `PUT /api/orders/:id/cancel`.
+  - **Why verify-pin and cancel (10 Nov 2026):** a cancel makes two trips (PIN check, then the save or cancel). On 9 Nov both trips sat out the shop PC's ~10 s dead-connection stall, and as unkeyed writes the breaker could never resend them. On verify-pin the key runs **before** `pinLimiter`, so a replayed answer is never counted as a wrong guess. The replay returns `{valid}` only — the elevation grant was already written to the session by the first run.
   - **Claim:** a keyed request claims the key in `request_keys` (`INSERT … ON CONFLICT DO NOTHING`).
   - **Store:** the route's JSON answer is stored before it is sent.
   - **Repeats:** a repeat replays the stored answer (`Idempotent-Replayed: true`); one still running waits up to 8 s, then gets `409 request_in_progress`.
   - **Errors:** mismatch → `422`; no table → pass-through + loud log; any other DB error → `503`.
   - Requests without a key are unchanged.
   - **Every client caller of those routes must send a key:** `apiRequest(…, { idempotent: true })` or `timedFetch(path, withIdempotencyKey(init))`.
-  - **Tests:** `scripts/verify-request-keys.ts` (test:pure). Manual, DB: `scripts/verify-request-keys-db.ts` (needs `scripts/migrate-request-keys.mjs` run first).
+  - **Tests:** `scripts/verify-request-keys.ts` and `scripts/verify-keyed-routes.ts` (the keyed route list + their client callers; test:pure). Manual, DB: `scripts/verify-request-keys-db.ts` (needs `scripts/migrate-request-keys.mjs` run first).
 - **⚠️ Every new table needs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` in its migration.** All `public` tables have RLS on, and this DB's default privileges grant `anon` / `authenticated` full rights on new tables, so a table without RLS is readable and writable through Supabase's REST API with the public anon key. See `scripts/migrate-request-keys.mjs`.
 - **Diagnostics:**
   - `perf.stall_reset` (POST `/api/perf/stall-reset`; hidden-window resets ride along as `hiddenResets`)

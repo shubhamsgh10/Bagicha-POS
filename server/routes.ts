@@ -758,7 +758,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/auth/verify-pin", requireAuth, pinLimiter, async (req, res) => {
+  app.post("/api/auth/verify-pin", requireAuth, requestKeys, pinLimiter, async (req, res) => {
     try {
       const { pin, requiredRole } = req.body;
       if (!pin) return res.status(400).json({ valid: false });
@@ -3302,7 +3302,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Cancel Order ────────────────────────────────────────────────
-  app.put("/api/orders/:id/cancel", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.put("/api/orders/:id/cancel", requireAuth, requestKeys, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       // A reason is required — this is the whole point of the box: an accountable

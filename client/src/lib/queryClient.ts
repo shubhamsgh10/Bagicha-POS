@@ -19,7 +19,7 @@ export async function apiRequest(
   opts?: { idempotent?: boolean },
 ): Promise<Response> {
   // timedFetch: timed + reported when slow (lib/slowRequest.ts). A write is resent (once, by the
-  // desktop stall breaker) only when it carries a one-time key — opts.idempotent, used on the six
+  // desktop stall breaker) only when it carries a one-time key — opts.idempotent, used on the eight
   // routes server/requestKeys.ts protects. One call = one key; a new tap makes a new call.
   const headers: Record<string, string> = data ? { "Content-Type": "application/json" } : {};
   if (opts?.idempotent) headers[IDEMPOTENCY_HEADER] = newIdempotencyKey();

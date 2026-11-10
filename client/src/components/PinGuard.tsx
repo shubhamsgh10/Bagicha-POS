@@ -66,7 +66,7 @@ export function PinGuard({ actionLabel, requiredRole = "manager", onSuccess, onC
 
   const verifyMutation = useMutation({
     mutationFn: async (p: string) => {
-      const res = await apiRequest("POST", "/api/auth/verify-pin", { pin: p, requiredRole });
+      const res = await apiRequest("POST", "/api/auth/verify-pin", { pin: p, requiredRole }, { idempotent: true });
       return res.json();
     },
     onSuccess: (data) => {

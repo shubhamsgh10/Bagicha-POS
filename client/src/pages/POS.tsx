@@ -439,7 +439,7 @@ export default function POS() {
     if (!reason) return; // confirm button is already disabled for this, belt-and-suspenders
     setActionLoading(true);
     try {
-      await apiRequest("PUT", `/api/orders/${activeOrderId}/cancel`, { reason });
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/cancel`, { reason }, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });

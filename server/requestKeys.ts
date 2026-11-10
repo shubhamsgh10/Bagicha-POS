@@ -26,7 +26,9 @@ import {
 /**
  * One-time request keys — mount AFTER requireAuth on the hot write routes:
  *   POST /api/orders, PUT /api/orders/:id/items, POST /api/orders/:id/payment,
- *   POST /api/print/kot, POST /api/print/bill, POST /api/print/jobs/:id/claim.
+ *   POST /api/print/kot, POST /api/print/bill, POST /api/print/jobs/:id/claim,
+ *   POST /api/auth/verify-pin (before pinLimiter, so a replay is never counted as a wrong guess),
+ *   PUT /api/orders/:id/cancel. scripts/verify-keyed-routes.ts locks the list and the client callers.
  *
  * With an `Idempotency-Key` header the route runs at most once per (key, user): the first request
  * claims the key (INSERT … ON CONFLICT DO NOTHING — exactly one wins, across Vercel instances), its
