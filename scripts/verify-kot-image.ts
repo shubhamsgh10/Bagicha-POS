@@ -126,6 +126,16 @@ check("generateKOTBuffer then prints that ticket as plain text (no raster comman
 check("kotStyle 'image' → generateKOTBuffer yields the raster ticket", generateKOTBuffer(base).indexOf(Buffer.from([0x1d, 0x76, 0x30, 0x00])) >= 0);
 check("kotStyle 'text' → the classic text ticket, untouched", generateKOTBuffer({ ...base, kotSettings: { ...settings, kotStyle: "text" } }).indexOf(Buffer.from([0x1d, 0x76, 0x30])) < 0);
 check("kotStyle missing → the classic text ticket (old saved settings / tests keep working)", generateKOTBuffer({ ...base, kotSettings: { ...settings, kotStyle: undefined } }).indexOf(Buffer.from([0x1d, 0x76, 0x30])) < 0);
+// KOT 1712 (9 Nov 2026) printed in the old text font because a note was saved with a trailing newline
+// ("Note: with gravy\n" — Enter pressed in the note box). Whitespace is never drawn (wrapText splits on it).
+{
+  const newlineNote = { ...base, newItems: [
+    { name: "Herb Rice", quantity: 1, serviceMode: "dinein", instructions: "Note: with gravy\n" },
+    { name: "Garlic Bread", quantity: 1, serviceMode: "dinein", instructions: "Note: one\r\n\tcrispy" },
+  ] };
+  check("canDraw ignores whitespace (newline, tab, CR)", canDraw("Note: with gravy\n") && canDraw("a\r\n\tb"));
+  check("a note with a newline still prints as the image ticket", generateKOTBuffer(newlineNote).indexOf(Buffer.from([0x1d, 0x76, 0x30, 0x00])) >= 0);
+}
 check("an absurdly long ticket falls back to text instead of a megabyte image", generateKOTImageBuffer({ ...base, newItems: Array.from({ length: 400 }, (_, i) => ({ name: `Item number ${i + 1}`, quantity: 1, serviceMode: "dinein" })) }) === null);
 
 // ── Virtual-printer round trip (what the browser-print fallback shows) ────────

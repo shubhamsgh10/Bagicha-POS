@@ -125,9 +125,14 @@ function contoursOf(weight: Weight, ch: string): Pt[][] {
   return c;
 }
 
-/** True if every character of `text` exists in both faces (so it can be drawn). */
+/**
+ * True if every character of `text` exists in both faces (so it can be drawn). Whitespace is skipped:
+ * wrapText splits on it, so a newline/tab in a note is never drawn — it used to fail this check and send
+ * the whole ticket to the old text font (KOT 1712, a note saved as "Note: with gravy\n").
+ */
 export function canDraw(text: string): boolean {
   for (const ch of Array.from(text)) {
+    if (/\s/.test(ch)) continue;
     if (!KOT_FACES.regular.glyphs[ch] || !KOT_FACES.bold.glyphs[ch]) return false;
   }
   return true;
