@@ -44,6 +44,17 @@ kitchenStations?: {
 skipKot?: { categoryIds: number[]; itemIds: number[] };   // default empty; applies even when stations are off
 ```
 
+A station is a **chef**, not a category: it holds as many categories as that chef cooks, and
+all of them print on that chef's one ticket. Example setup for this restaurant:
+
+| Station (one ticket) | Categories |
+|---|---|
+| Main Course | Main Course, Combos, Indian Bread, Rice & Spice, Chakhana |
+| South Indian | (South Indian categories) |
+| Pizza | Woodfire Pizza, … |
+| Chinese | Wok Style, … |
+| General (auto) | everything not ticked above |
+
 Rules:
 - A category belongs to at most one station (UI enforces; if saved data has duplicates, the
   first station in list order wins).
