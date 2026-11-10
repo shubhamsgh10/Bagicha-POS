@@ -16,8 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, ChevronDown, Lock, User, Phone, Clock, MapPin } from "lucide-react";
+import { Plus, Minus, X, ShoppingCart, Search, Trash2, Edit2, ArrowLeft, LayoutGrid, Printer, MessageCircle, ChevronDown, Lock, User, Phone, Clock, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
 import { SettlementDialog, type SettlementData } from "@/components/SettlementDialog";
@@ -40,7 +41,6 @@ import { composeCartInstructions, rehydrateSelections, splitPersistedInstruction
 import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
 import { saveSignature, canSkipSaveBeforeSettle, type LastSave } from "@/lib/settleSkip";
 import { describeApiError } from "@/lib/apiError";
-import { buildEbillText } from "@shared/ebillText";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -153,22 +153,16 @@ function longPressHandlers(onLongPress: () => void) {
 }
 
 
-function sendWhatsAppBill(order: any, items: any[] = [], settings?: any, targetWindow?: Window | null) {
-  const phone = order.customerPhone?.replace(/\D/g, "");
-  if (!phone) {
-    if (targetWindow) targetWindow.close();
-    return false;
-  }
-  // Built from the order's persisted numbers (shared/ebillText.ts) — the old inline version derived
-  // Subtotal as total − tax, which folded the container charge into it and never printed the charge.
-  const lines = buildEbillText(order, items, settings);
-  const url = `https://wa.me/${phone.startsWith("91") ? phone : "91" + phone}?text=${encodeURIComponent(lines)}`;
-  if (targetWindow) {
-    targetWindow.location.href = url;
-  } else {
-    window.open(url, "_blank");
-  }
-  return true;
+/**
+ * Points the window the E-Bill tap opened at the WhatsApp link, or opens one. false = nothing could be opened
+ * (the caller then offers an "Open WhatsApp" action that runs from a fresh click).
+ */
+function openWaWindow(popup: Window | null, url: string): boolean {
+  if (popup && !popup.closed) { popup.location.href = url; return true; }
+  const w = window.open(url, "_blank");
+  // Electron denies window.open() and hands the link to the system browser itself, so a null return there is
+  // not "blocked".
+  return !!w || !!window.electronAPI?.isElectron;
 }
 
 
@@ -206,6 +200,9 @@ export default function POS() {
   const [activeOrderId, setActiveOrderId] = useState<number | null>(editOrderId);
   // Tracks what action triggered the submit
   const submitModeRef = useRef<"kot" | "kot-print" | "save" | "save-print" | "save-ebill" | "settle" | "bill-print">("save");
+  // The blank window an E-Bill tap opens synchronously (so popup blockers allow it); sendEbill() points it at
+  // the wa.me link once the server has built the text, or closes it on failure.
+  const ebillPopupRef = useRef<Window | null>(null);
   // Snapshot of existingOrder.items captured at KOT click time — used for delta preview
   const preKOTItemsRef = useRef<Array<{ menuItemId: number; quantity: number; size: string | null }>>([]);
   // Payment method selection
@@ -1019,9 +1016,10 @@ export default function POS() {
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
-        toast({ title: "Order saved!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
-        navigate("/tables");
+        // Stay on screen like Bill (Settle usually follows) and hand the SAVED order to the e-bill route.
+        setActiveOrderId(order.id);
+        setCartLoaded(false);
+        void sendEbill(order.id);
       } else if (mode === "bill-print") {
         // First-ever submit for this cart — Bill created the order itself (same as
         // kot-print above). Stay on screen, mirroring updateOrderMutation's existing
@@ -1054,6 +1052,7 @@ export default function POS() {
       toast({ title: "Failed to place order", description: info.message, variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-create must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed create must not leave KOT/Bill buttons frozen either
+      if (submitModeRef.current === "save-ebill") closeEbillPopup();
       endPrintTap();
     },
   });
@@ -1095,9 +1094,7 @@ export default function POS() {
           navigate("/tables");
         }
       } else if (mode === "save-ebill") {
-        toast({ title: "Order updated!", description: "WhatsApp bill sent" });
-        setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
-        navigate("/tables");
+        void sendEbill(vars.orderId);
       } else if (mode === "bill-print") {
         // Stays on screen (unlike save-print) — plain Bill is a mid-service
         // reprint/preview, not a "finish and leave" action.
@@ -1122,6 +1119,7 @@ export default function POS() {
       toast({ title: "Failed to update order", description: info.message || "Something went wrong", variant: "destructive" });
       setSettlePhase("idle"); // a failed settle-update must not leave the buttons frozen at "…"
       setIsPrinting(false); // a failed update must not leave KOT/Bill buttons frozen either
+      if (submitModeRef.current === "save-ebill") closeEbillPopup();
       endPrintTap(Number(vars?.orderId) || undefined);
     },
   });
@@ -1583,45 +1581,48 @@ export default function POS() {
 
   const handleSave = () => { cancelPendingAutoKot(); submitModeRef.current = "save"; triggerSubmit(); };
   const handleSaveAndPrint = () => { cancelPendingAutoKot(); startPrintTap("save-print"); submitModeRef.current = "save-print"; setIsPrinting(true); triggerSubmit(); };
-  const handleSaveEBill = () => {
-    const go = () => {
-      cancelPendingAutoKot();
-      // Build and open WhatsApp URL right here — synchronous with user click, browser never blocks it
-      const formData = form.getValues();
-      const rawPhone = formData.customerPhone?.replace(/\D/g, "");
-      if (!rawPhone) {
-        toast({ title: "No phone number", description: "Enter a customer phone number first", variant: "destructive" });
-        return;
-      }
-      const rName = settings?.restaurantName || "Bagicha Restaurant";
-      const addr = settings?.address ? `\n${settings.address}` : "";
-      const itemLines = cartItems.map(c => `  • ${c.name} × ${c.quantity}  ₹${(c.totalPrice * c.quantity).toFixed(0)}`).join("\n");
-      const msgLines = [
-        `🧾 *${rName}*${addr}`,
-        ``,
-        existingOrder?.orderNumber ? `Order: *${existingOrder.orderNumber}*` : null,
-        formData.tableNumber ? `Table: ${formData.tableNumber}` : null,
-        formData.customerName ? `Name: ${formData.customerName}` : null,
-        ``,
-        `*ITEMS*`,
-        itemLines || "—",
-        ``,
-        `Subtotal: ₹${subtotal.toFixed(0)}`,
-        discountAmt > 0 ? `Discount: -₹${discountAmt.toFixed(0)}` : null,
-        `Tax: ₹${tax.toFixed(0)}`,
 
-        containerCharge > 0 ? `Container Charge: ₹${containerCharge.toFixed(0)}` : null,
-        deliveryCharge > 0 ? `Delivery Charge: ₹${deliveryCharge.toFixed(0)}` : null,
-        `*TOTAL: ₹${grandTotal.toFixed(0)}*`,
-        ``,
-        settings?.footerNote || "Thank you for dining with us!",
-      ].filter(l => l !== null).join("\n");
-      const phone = rawPhone.startsWith("91") ? rawPhone : "91" + rawPhone;
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msgLines)}`, "_blank");
-      submitModeRef.current = "save-ebill";
-      triggerSubmit();
-    };
-    go();
+  // ── E-Bill: save the cart, then open WhatsApp with the SAVED order's bill text ready ────────────────────────
+  // The window is opened right here, during the tap, so popup blockers allow it (the pattern Reports' dues
+  // e-bill uses); it is pointed at the wa.me link once the server has built the text, or closed on failure.
+  const closeEbillPopup = () => {
+    try { ebillPopupRef.current?.close(); } catch { /* ignore */ }
+    ebillPopupRef.current = null;
+  };
+  const sendEbill = async (orderId: number) => {
+    const popup = ebillPopupRef.current;
+    ebillPopupRef.current = null;
+    try {
+      const res = await apiRequest("POST", `/api/orders/${orderId}/ebill`);
+      const { waUrl } = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
+      if (openWaWindow(popup, waUrl)) {
+        toast({ title: "E-bill ready", description: "Tap Send in WhatsApp" });
+      } else {
+        toast({
+          title: "E-bill ready",
+          description: "Your browser blocked the WhatsApp window.",
+          action: <ToastAction altText="Open WhatsApp" onClick={() => window.open(waUrl, "_blank")}>Open WhatsApp</ToastAction>,
+        });
+      }
+    } catch (err: any) {
+      try { popup?.close(); } catch { /* ignore */ }
+      toast({ title: "E-bill not sent", description: describeApiError(err).message, variant: "destructive" });
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+  const handleEBill = () => {
+    const digits = (form.getValues("customerPhone") || "").replace(/\D/g, "");
+    if (digits.length < 10) {
+      toast({ title: "Customer number needed", description: "Enter the customer's WhatsApp number first", variant: "destructive" });
+      return;
+    }
+    cancelPendingAutoKot();
+    try { ebillPopupRef.current = window.open("", "_blank"); } catch { ebillPopupRef.current = null; }
+    submitModeRef.current = "save-ebill";
+    setIsPrinting(true);
+    triggerSubmit();
   };
 
   const handleShortCode = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -3195,8 +3196,8 @@ export default function POS() {
               />
             ) : (
               <>
-            {/* KOT / Bill row */}
-            <div className="grid grid-cols-2 gap-1">
+            {/* KOT / Bill / E-Bill row */}
+            <div className="grid grid-cols-3 gap-1">
               <button
                 disabled={!hasItems || isPending || isOff("printKot")}
                 onClick={() => go("printKot", "Print KOT", handleKOT)}
@@ -3214,6 +3215,18 @@ export default function POS() {
               >
                 <Printer className="w-3 h-3" />
                 Bill
+                {isOff("printBill") && <Lock className="w-2.5 h-2.5 opacity-50" />}
+              </button>
+              {/* WhatsApp e-bill: reuses the printBill permission (no new CartAction). Not in Section POS —
+                  that mode has no customer-phone box to send to. */}
+              <button
+                disabled={!hasItems || isPending || isOff("printBill")}
+                onClick={() => go("printBill", "Send E-Bill", handleEBill)}
+                className="py-1.5 rounded text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
+                style={{ border: "1px solid var(--green-700)", color: "var(--green-800)", background: "var(--paper-100)" }}
+              >
+                <MessageCircle className="w-3 h-3" />
+                E-Bill
                 {isOff("printBill") && <Lock className="w-2.5 h-2.5 opacity-50" />}
               </button>
             </div>

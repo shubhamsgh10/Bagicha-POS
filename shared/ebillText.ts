@@ -1,4 +1,5 @@
 import { deriveBillTotals } from "./orderPricing";
+import { formatTableLabel } from "./tableSection";
 
 /**
  * The WhatsApp e-bill text a customer receives (pure — no window, no network; POS.tsx opens the wa.me
@@ -21,11 +22,13 @@ export function buildEbillText(order: any, items: any[] = [], settings?: EbillSe
     ? items.map((i: any) => `  • ${i.name || "Item"} × ${i.quantity}  ₹${(parseFloat(i.price) * i.quantity).toFixed(0)}`).join("\n")
     : "";
   const { subtotal, discount, tax, containerCharge, deliveryCharge, total } = deriveBillTotals(order);
+  // Same label as the thermal bill ("Inner - 3"); `order.tableSection` comes from the caller (the e-bill route).
+  const tableLabel = formatTableLabel(order.tableNumber, order.tableSection);
   return [
     `🧾 *${restaurantName}*${address}`,
     ``,
     `Order: *${order.orderNumber}*`,
-    order.tableNumber ? `Table: ${order.tableNumber}` : null,
+    tableLabel ? `Table: ${tableLabel}` : null,
     order.customerName ? `Name: ${order.customerName}` : null,
     ``,
     `*ITEMS*`,

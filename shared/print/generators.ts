@@ -4,6 +4,7 @@ import type { BillPrintSettings, BrowserPayload, KOTPrintSettings } from "./type
 import { deriveBillTotals, effectiveTaxRatePercent } from "../orderPricing";
 import { stripKitchenNotes } from "../orderItemText";
 import { generateKOTImageBuffer } from "./kotImage";
+import { tableSectionLabel, formatTableLabel } from "../tableSection";
 
 export interface KOTItem {
   name: string;
@@ -31,6 +32,8 @@ export interface BillRestaurantInfo {
 export function generateKOTBuffer(params: {
   orderNumber: string;
   tableNumber: string | null;
+  /** tables.section for tableNumber's table (inner | outer | …). Printed above the table line; ignored for takeaway. */
+  tableSection?: string | null;
   kotNumber?: string | number;
   isReprint: boolean;
   isDelta: boolean;
@@ -72,8 +75,11 @@ export function generateKOTBuffer(params: {
   }
 
   const tableHeader = params.tableNumber ? `TABLE - ${params.tableNumber}` : "TAKEAWAY";
+  // Inner / Outer on its own double-size line directly above the table, so a ticket for "3" can't be mistaken
+  // for another section's "3". Takeaway has no table, so it never carries one.
+  const sectionHeader = params.tableNumber ? tableSectionLabel(params.tableSection)?.toUpperCase() : undefined;
   parts.push(E.ALIGN_CENTER);
-  parts.push(E.DOUBLE_SIZE_ON, E.line(tableHeader), E.DOUBLE_SIZE_OFF);
+  parts.push(E.DOUBLE_SIZE_ON, ...(sectionHeader ? [E.line(sectionHeader)] : []), E.line(tableHeader), E.DOUBLE_SIZE_OFF);
 
   const subHeader = params.isDelta ? "MODIFIED KOT" : "KITCHEN ORDER";
   parts.push(E.BOLD_ON, E.line(subHeader), E.BOLD_OFF);
@@ -153,6 +159,8 @@ export function generateBillBuffer(params: {
   order: {
     orderNumber: string;
     tableNumber: string | null;
+    /** tables.section for tableNumber's table — printed as "Table: Inner - 3". */
+    tableSection?: string | null;
     customerName: string | null;
     orderType: string;
     totalAmount: string;
@@ -248,6 +256,10 @@ export function generateBillBuffer(params: {
     E.BOLD_ON, E.line(orderTypeLabel), E.BOLD_OFF,
   );
   parts.push(bodyLine(timeStr));
+  // Compulsory — no bill setting hides it. The bill used to print no table at all, so staff couldn't tell
+  // which table (or which section: Inner / Outer) a paper bill belonged to.
+  const tableLabel = formatTableLabel(order.tableNumber, order.tableSection);
+  if (tableLabel) parts.push(bodyLine(`Table: ${tableLabel}`));
   parts.push(tw(`Cashier: ${params.cashierName ?? "Admin"}`, `Bill No.: ${order.orderNumber}`));
   parts.push(E.divider("-", W));
 

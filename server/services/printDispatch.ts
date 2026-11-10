@@ -24,6 +24,7 @@ import {
 } from "@shared/printRequest";
 import { broadcastPayload } from "@shared/printJobBroadcast";
 import { logAudit } from "./auditService";
+import { tableSectionFor } from "../tableSections";
 import { createStageTimer, type StageTimer } from "@shared/printPerf";
 
 /**
@@ -225,6 +226,10 @@ export async function runKotPrint(p: {
   ]);
   if (!order) return { ok: false, status: 404, message: "Order not found" };
 
+  // Inner / Outer for the ticket header. Served from the in-process cache (no I/O in steady state) and it
+  // never throws — a lookup problem just prints the ticket without the section.
+  const tableSection = await tableSectionFor(order.tableId);
+
   const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
     itemId: i.menuItemId,
     name: i.name,
@@ -327,6 +332,7 @@ export async function runKotPrint(p: {
     const fallbackTicket = generateKOTBuffer({
       orderNumber: order.orderNumber,
       tableNumber: order.tableNumber,
+      tableSection,
       kotNumber: browserKotNum ?? String((order.kotPrintCount ?? 0) + 1),
       isReprint: reprint,
       isDelta,
@@ -416,6 +422,7 @@ export async function runKotPrint(p: {
       buffer: generateKOTBuffer({
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
+        tableSection,
         kotNumber: kotNumStr,
         isReprint: reprint,
         isDelta,
@@ -557,7 +564,7 @@ async function runKotCatchUp(
 }
 
 /** Server-side replacement for POST /api/orders/:id/bill-requested. Non-fatal by design. */
-async function markTableBilled(order: OrderRow): Promise<void> {
+export async function markTableBilled(order: OrderRow): Promise<void> {
   if (!order.tableId) return;
   // A reprint of a settled / cancelled bill must not mark the table "billed" — it may already
   // belong to the next party. Only a running order still holding its table flips it.
@@ -746,6 +753,9 @@ async function runBillAfterCatchUp(
   const { order, rawItems } = data;
   if (!order) return { ok: false, status: 404, message: "Order not found" };
 
+  // Same cached, never-throwing lookup as the KOT — the bill's "Table: Inner - 3" line.
+  const tableSection = await tableSectionFor(order.tableId);
+
   /** Every success exit goes through here: attach the catch-up result, then the optional flip. */
   const done = async (body: Record<string, unknown>): Promise<PrintResult> => {
     if (kotCatchUp) body.kotCatchUp = kotCatchUp;
@@ -793,6 +803,7 @@ async function runBillAfterCatchUp(
       order: {
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
+        tableSection,
         customerName: order.customerName,
         orderType: order.orderType,
         totalAmount: order.totalAmount,
