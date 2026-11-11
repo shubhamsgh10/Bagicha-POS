@@ -26,6 +26,7 @@ import { broadcastPayload } from "@shared/printJobBroadcast";
 import { logAudit } from "./auditService";
 import { tableSectionFor } from "../tableSections";
 import { createStageTimer, type StageTimer } from "@shared/printPerf";
+import { filterKotSkipped, groupByStation, assemblePrinterJobs, hasSkipRules, stationsActive } from "@shared/kotStations";
 
 /**
  * The KOT / Bill print pipeline, extracted from printRoutes.ts so ONE request can run it —
@@ -230,6 +231,30 @@ export async function runKotPrint(p: {
   // never throws — a lookup problem just prints the ticket without the section.
   const tableSection = await tableSectionFor(order.tableId);
 
+  const kotSkip = kotSettings.skipKot;
+  const stationsCfg = kotSettings.kitchenStations;
+  const overrides = kotSettings.categoryPrinterOverrides ?? {};
+  // Category of every item this KOT may touch: the current lines, plus items that were printed before
+  // are gone now (cancelled — needed to route their VOID and to apply the skip list to the old snapshot).
+  const catByItemId = new Map<number, number | null>(
+    rawItems.map((i) => [i.menuItemId, i.categoryId ?? null]),
+  );
+  const needCategories = hasSkipRules(kotSkip) || stationsActive(stationsCfg) || Object.keys(overrides).length > 0;
+  const priorItems = ((order.lastKotSnapshot as KotSnapshot | null)?.items ?? []);
+  const missingCatIds = needCategories
+    ? Array.from(new Set(priorItems.map((i) => i.itemId).filter((id) => id >= 0 && !catByItemId.has(id))))
+    : [];
+  if (missingCatIds.length > 0) {
+    const rows = await timer.time("db_cat", () =>
+      db
+        .select({ id: menuItems.id, categoryId: menuItems.categoryId })
+        .from(menuItems)
+        .where(inArray(menuItems.id, missingCatIds)),
+    );
+    for (const r of rows) catByItemId.set(r.id, r.categoryId ?? null);
+  }
+  const catOf = (id: number) => catByItemId.get(id);
+
   const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
     itemId: i.menuItemId,
     name: i.name,
@@ -245,10 +270,11 @@ export async function runKotPrint(p: {
   );
 
   // A full (non-delta) ticket prints each line as it is, with that line's OWN instructions.
-  let newItems: Array<SnapshotItem & { instructions?: string | null; previousQty?: number }> = currentSnapshot.map((i, idx) => ({
-    ...i,
-    instructions: rawItems[idx].specialInstructions ?? null,
-  }));
+  let newItems: Array<SnapshotItem & { instructions?: string | null; previousQty?: number }> = filterKotSkipped(
+    currentSnapshot.map((i, idx) => ({ ...i, instructions: rawItems[idx].specialInstructions ?? null })),
+    catOf,
+    kotSkip,
+  );
   let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
   let cancelledItems: SnapshotItem[] = [];
   let isDelta = false;
@@ -282,7 +308,13 @@ export async function runKotPrint(p: {
   };
 
   if (!reprint && lastSnapshot?.items?.length) {
-    const delta = computeDelta(currentSnapshot, lastSnapshot.items);
+    // Skipped items (e.g. Mineral Water) are removed from BOTH sides, so adding/removing them is never a
+    // delta and an old order whose water was printed doesn't print "VOID Water". The claimed snapshot below
+    // stays unfiltered, so a later change to the skip list still compares consistently.
+    const delta = computeDelta(
+      filterKotSkipped(currentSnapshot, catOf, kotSkip),
+      filterKotSkipped(lastSnapshot.items, catOf, kotSkip),
+    );
     const hasNew = delta.newItems.length > 0;
     const hasMod =
       kotSettings.printModifiedKOT &&
@@ -301,6 +333,11 @@ export async function runKotPrint(p: {
     if (!kotSettings.printModifiedItemsOnly) modifiedItems = []; // same switch the generator checks
     cancelledItems = kotSettings.printCancelledKOT ? delta.cancelledItems : [];
     isDelta = true;
+  }
+
+  // Everything on the order is on the skip list → no ticket at all (Bill's silent catch-up stays silent).
+  if (!isDelta && newItems.length === 0 && currentSnapshot.length > 0) {
+    return { ok: true, body: { printed: false, reason: "no_delta" } };
   }
 
   const printer = printers.find((pr) => pr.id === kotSettings.kotPrinterId);
@@ -329,24 +366,32 @@ export async function runKotPrint(p: {
     // received (this restaurant's KOT settings, real KOT number, delta/VOID/modified rows), which
     // the client renders instead of building a layout of its own. Same numbering rule as the
     // hardware path below: the ticket's number, else the next one.
-    const fallbackTicket = generateKOTBuffer({
-      orderNumber: order.orderNumber,
-      tableNumber: order.tableNumber,
-      tableSection,
-      kotNumber: browserKotNum ?? String((order.kotPrintCount ?? 0) + 1),
-      isReprint: reprint,
-      isDelta,
-      newItems,
-      modifiedItems,
-      cancelledItems,
-      kotSettings,
-      width: 48,
-    });
+    const fallbackTickets = groupByStation({ newItems, modifiedItems, cancelledItems }, catOf, stationsCfg);
+    if (fallbackTickets.length === 0) fallbackTickets.push({ key: "general", name: null, newItems, modifiedItems, cancelledItems });
+    const fallbackPayloads = fallbackTickets.map((g) =>
+      toBrowserPayload(
+        generateKOTBuffer({
+          orderNumber: order.orderNumber,
+          tableNumber: order.tableNumber,
+          tableSection,
+          stationName: g.name,
+          kotNumber: browserKotNum ?? String((order.kotPrintCount ?? 0) + 1),
+          isReprint: reprint,
+          isDelta,
+          newItems: g.newItems,
+          modifiedItems: g.modifiedItems,
+          cancelledItems: g.cancelledItems,
+          kotSettings,
+          width: 48,
+        }),
+        48,
+      ),
+    );
     return {
       ok: true,
       body: {
         browserPrint: true,
-        browserPayloads: [toBrowserPayload(fallbackTicket, 48)],
+        browserPayloads: fallbackPayloads,
         isDelta,
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
@@ -360,48 +405,39 @@ export async function runKotPrint(p: {
     ? (reprint ? orderKotTickets[0].kotNumber : orderKotTickets[orderKotTickets.length - 1].kotNumber)
     : String((order.kotPrintCount ?? 0) + 1);
 
-  // ── Category → printer routing (multi-section KOT split) ────────────────
-  const overrides = kotSettings.categoryPrinterOverrides ?? {};
-  const catByItemId = new Map<number, number | null>(
-    rawItems.map((i) => [i.menuItemId, i.categoryId ?? null]),
-  );
-  const routedItemIds = [...newItems, ...modifiedItems, ...cancelledItems].map((i) => i.itemId);
-  const missingCatIds = Array.from(new Set(routedItemIds.filter((id) => !catByItemId.has(id))));
-  if (missingCatIds.length > 0) {
-    // Cancelled items may no longer be in the order — resolve their categories directly.
-    const rows = await timer.time("db_cat", () =>
-      db
-        .select({ id: menuItems.id, categoryId: menuItems.categoryId })
-        .from(menuItems)
-        .where(inArray(menuItems.id, missingCatIds)),
-    );
-    for (const r of rows) catByItemId.set(r.id, r.categoryId ?? null);
-  }
+  // ── Station tickets, each routed to its printer (category overrides → KOT printer) ──
   const resolveKotPrinter = (itemId: number): PrinterConfig => {
     const catId = catByItemId.get(itemId);
     const overrideId = catId != null ? overrides[String(catId)] : null;
     return (overrideId ? printers.find((pr) => pr.id === overrideId) : undefined) ?? printer;
   };
 
-  type RoutedGroup = {
+  type TicketGroup = {
     printer: PrinterConfig;
+    stationName: string | null;
     newItems: typeof newItems;
     modifiedItems: typeof modifiedItems;
     cancelledItems: typeof cancelledItems;
   };
-  const groups = new Map<string, RoutedGroup>();
-  const groupFor = (pr: PrinterConfig): RoutedGroup => {
-    let g = groups.get(pr.id);
-    if (!g) {
-      g = { printer: pr, newItems: [], modifiedItems: [], cancelledItems: [] };
-      groups.set(pr.id, g);
-    }
-    return g;
-  };
-  for (const it of newItems) groupFor(resolveKotPrinter(it.itemId)).newItems.push(it);
-  for (const it of modifiedItems) groupFor(resolveKotPrinter(it.itemId)).modifiedItems.push(it);
-  for (const it of cancelledItems) groupFor(resolveKotPrinter(it.itemId)).cancelledItems.push(it);
-  if (groups.size === 0) groupFor(printer);
+  const ticketGroups: TicketGroup[] = [];
+  for (const sg of groupByStation({ newItems, modifiedItems, cancelledItems }, catOf, stationsCfg)) {
+    const byPrinter = new Map<string, TicketGroup>();
+    const into = (pr: PrinterConfig) => {
+      let g = byPrinter.get(pr.id);
+      if (!g) {
+        g = { printer: pr, stationName: sg.name, newItems: [], modifiedItems: [], cancelledItems: [] };
+        byPrinter.set(pr.id, g);
+      }
+      return g;
+    };
+    for (const it of sg.newItems) into(resolveKotPrinter(it.itemId)).newItems.push(it);
+    for (const it of sg.modifiedItems) into(resolveKotPrinter(it.itemId)).modifiedItems.push(it);
+    for (const it of sg.cancelledItems) into(resolveKotPrinter(it.itemId)).cancelledItems.push(it);
+    ticketGroups.push(...Array.from(byPrinter.values()));
+  }
+  if (ticketGroups.length === 0) {
+    ticketGroups.push({ printer, stationName: null, newItems: [], modifiedItems: [], cancelledItems: [] });
+  }
 
   // Started now so it overlaps building the tickets (the bitmap KOT takes 15–55 ms).
   const claimed = timer.time("commit", claimKot);
@@ -413,26 +449,29 @@ export async function runKotPrint(p: {
     serviceMode: (i as any).serviceMode ?? null,
   }));
 
-  // One ticket per routed printer — same KOT number on every ticket.
+  // One ticket per (station, printer); each printer's tickets joined into ONE job, cut between tickets.
+  // Same KOT number on every ticket.
   let kotJobs: Awaited<ReturnType<typeof buildKotJobs>>;
   const buildKotJobs = () => timer.time("build", async () =>
-    Array.from(groups.values()).map((g) => ({
-      printer: g.printer,
-      escPosOk: supportsRawEscPos(g.printer),
-      buffer: generateKOTBuffer({
-        orderNumber: order.orderNumber,
-        tableNumber: order.tableNumber,
-        tableSection,
-        kotNumber: kotNumStr,
-        isReprint: reprint,
-        isDelta,
-        newItems: g.newItems,
-        modifiedItems: g.modifiedItems,
-        cancelledItems: g.cancelledItems,
-        kotSettings,
-        width: g.printer.width ?? 48,
-      }),
-    })),
+    assemblePrinterJobs(
+      ticketGroups.map((g) => ({
+        printer: g.printer,
+        buffer: generateKOTBuffer({
+          orderNumber: order.orderNumber,
+          tableNumber: order.tableNumber,
+          tableSection,
+          stationName: g.stationName,
+          kotNumber: kotNumStr,
+          isReprint: reprint,
+          isDelta,
+          newItems: g.newItems,
+          modifiedItems: g.modifiedItems,
+          cancelledItems: g.cancelledItems,
+          kotSettings,
+          width: g.printer.width ?? 48,
+        }),
+      })),
+    ).map((j) => ({ ...j, escPosOk: supportsRawEscPos(j.printer) })),
   );
   try {
     kotJobs = await buildKotJobs();
@@ -525,7 +564,7 @@ export async function runKotPrint(p: {
       browserPrint: nonEscPosJobs.length > 0,
       // Every ticket the non-thermal printer(s) could not take, as real ESC/POS bytes (see above).
       browserPayloads: nonEscPosJobs.length > 0
-        ? nonEscPosJobs.map((j) => toBrowserPayload(j.buffer, j.printer.width ?? 48))
+        ? nonEscPosJobs.flatMap((j) => j.tickets.map((t) => toBrowserPayload(t, j.printer.width ?? 48)))
         : undefined,
       reason: allNonEscPos ? "non_escpos_printer" : undefined,
       message: nonEscPosJobs.length > 0 ? nonEscPosPrinterMessage(nonEscPosJobs[0].printer) : failureMessage,

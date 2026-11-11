@@ -36,19 +36,40 @@ const key = (itemId: number, size: string | null, serviceMode: string | null | u
   `${itemId}:${size ?? ""}:${serviceMode ?? ""}`;
 
 /**
+ * The kitchen-visible lines this save drops: computeDelta's cancelled items, after leaving out every
+ * dish on the "Don't print on KOT" list (`isSkipped(itemId)`). A skipped dish (e.g. Mineral Water) never
+ * reached the kitchen or the Kitchen screen, so removing it is not a cancellation of kitchen work and
+ * needs neither a reason nor a manager PIN. Both snapshots are filtered by item id, so a skipped dish
+ * can't pair up with anything else in computeDelta's flip-netting.
+ */
+export function droppedKitchenItems(
+  current: SnapshotItem[],
+  last: SnapshotItem[],
+  isSkipped?: (itemId: number) => boolean,
+): SnapshotItem[] {
+  if (!isSkipped) return computeDelta(current, last).cancelledItems;
+  return computeDelta(
+    current.filter((i) => !isSkipped(i.itemId)),
+    last.filter((i) => !isSkipped(i.itemId)),
+  ).cancelledItems;
+}
+
+/**
  * Given the current (post-edit) item snapshot, the item snapshot to diff against (in
  * practice: the order's persisted state immediately before this save — see the file-level
  * comment above for why), and whatever cancellation reasons the client provided, returns the
  * subset of already-known-to-the-kitchen items that are missing a matching, non-empty reason
  * — i.e. still need one before the save may be accepted. An empty return means every dropped
- * item (if any) is accounted for.
+ * item (if any) is accounted for. `isSkipped` leaves "Don't print on KOT" dishes out (see
+ * droppedKitchenItems).
  */
 export function findMissingKotCancelReasons(
   current: SnapshotItem[],
   last: SnapshotItem[],
   provided: CancelledKotItemInput[],
+  isSkipped?: (itemId: number) => boolean,
 ): SnapshotItem[] {
-  const dropped = computeDelta(current, last).cancelledItems;
+  const dropped = droppedKitchenItems(current, last, isSkipped);
   if (dropped.length === 0) return [];
 
   const providedKeys = new Set(
