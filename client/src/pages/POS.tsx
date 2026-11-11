@@ -3183,18 +3183,29 @@ export default function POS() {
               aria-expanded={summaryOpen}
               aria-controls="cart-summary-body"
               aria-label={summaryOpen ? "Hide order summary" : "Show order summary"}
-              className="md:hidden shrink-0 flex items-center justify-between gap-3 px-3 h-11 border-t active:bg-black/[0.03] transition-colors"
+              className={`md:hidden shrink-0 flex items-center justify-between gap-3 px-3 ${compact ? "h-10" : "h-11"} border-t active:bg-black/[0.03] transition-colors`}
               style={{
                 background: "var(--paper-50)",
                 boxShadow: summaryOpen ? "none" : "0 -6px 16px rgba(20,34,27,0.08)",
               }}
             >
-              <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
-              <span className="flex items-center gap-1.5">
-                <span className="text-[11px] font-medium text-gray-500">Total</span>
-                <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
-              </span>
+              {compact ? (
+                <>
+                  <span className="text-[11.5px] truncate" style={{ color: "var(--text-2)" }}>
+                    {cartTotalsHint({ open: summaryOpen, subtotal, tax, fmt })}
+                  </span>
+                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${summaryOpen ? "rotate-180" : ""}`} style={{ color: "var(--text-2)" }} />
+                </>
+              ) : (
+                <>
+                  <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-gray-500">Total</span>
+                    <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
+                  </span>
+                </>
+              )}
             </button>
           )}
 
@@ -3350,7 +3361,8 @@ export default function POS() {
             }) : undefined}
           />
 
-          {/* Action buttons */}
+          {/* Action buttons — compact phones use PosMobileActionDock below the collapsible instead */}
+          {!compact && (
           <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-1.5">
             {isSectionMode ? (
               /* Quick-POS section: the grand total (tax + container included) lives ON the
@@ -3440,32 +3452,52 @@ export default function POS() {
               </>
             )}
           </div>
+          )}
            </div>
           </div>
+          {compact && (
+            <PosMobileActionDock
+              actions={[
+                { key: "kot", label: "KOT", tone: "ink", disabled: !hasItems || isPending || isOff("printKot"), locked: isOff("printKot"), onClick: () => go("printKot", "Print KOT", handleKOT) },
+                { key: "bill", label: "Bill", tone: "clay", disabled: !hasItems || isPending || isOff("printBill"), locked: isOff("printBill"), onClick: () => go("printBill", "Print Bill", handleBillPrint) },
+                { key: "ebill", label: "E-Bill", tone: "green", disabled: !hasItems || isPending || isOff("printBill"), locked: isOff("printBill"), onClick: () => go("printBill", "Send E-Bill", handleEBill) },
+                {
+                  key: "save",
+                  label: (createOrderMutation.isPending || updateOrderMutation.isPending) && submitModeRef.current === "save" ? "Saving…" : "Save",
+                  tone: "plain", disabled: !hasItems || isPending || isOff("saveOrder"), locked: isOff("saveOrder"),
+                  onClick: () => go("saveOrder", "Save Order", handleSave),
+                },
+                { key: "hold", label: "Hold", tone: "amber", disabled: !activeOrderId || isPending || isOff("holdOrder"), locked: isOff("holdOrder"), onClick: () => go("holdOrder", "Hold Order", () => setShowHoldConfirm(true)) },
+              ] satisfies DockAction[]}
+              settleLabel={settleButtonLabel({ phase: settlePhase, busy: settleMutation.isPending, total: grandTotal, lines: cartItems.length, fmt })}
+              settleDisabled={!hasItems || isPending || isOff("settleOrder")}
+              settleLocked={isOff("settleOrder")}
+              onSettle={() => go("settleOrder", "Settle Order", handleSettle)}
+            />
+          )}
         </div>
       </div>
 
       {/* ── Mobile: Menu / Cart tab switcher ────────────────────────────────── */}
-      <div className="md:hidden shrink-0 bg-white border-t flex">
+      <div className="md:hidden shrink-0 bg-white grid grid-cols-2 px-1.5 pt-1.5 pb-1.5" style={{ borderTop: "1px solid var(--line)" }}>
         <button
+          type="button"
           onClick={() => setMobileTab("menu")}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 transition-colors ${
-            mobileTab === "menu" ? "text-green-600" : "text-gray-400"
-          }`}
+          className="h-11 flex items-center justify-center gap-[7px] text-[12.5px] font-bold"
+          style={{ color: mobileTab === "menu" ? "var(--green-800)" : "var(--text-2)" }}
         >
-          <LayoutGrid className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Menu</span>
+          <LayoutGrid className="w-[18px] h-[18px]" />Menu
         </button>
         <button
+          type="button"
           onClick={() => setMobileTab("cart")}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 relative transition-colors ${
-            mobileTab === "cart" ? "text-green-600" : "text-gray-400"
-          }`}
+          className="h-11 flex items-center justify-center gap-[7px] text-[12.5px] font-bold"
+          style={{ color: mobileTab === "cart" ? "var(--green-800)" : "var(--text-2)" }}
         >
-          <ShoppingCart className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Cart</span>
+          <ShoppingCart className="w-[18px] h-[18px]" />Cart
           {cartItems.length > 0 && (
-            <span className="absolute top-2 left-[calc(50%+6px)] min-w-[16px] h-4 text-[9px] font-bold bg-green-600 text-white rounded-full flex items-center justify-center px-1">
+            <span className="min-w-[18px] h-[18px] px-[5px] rounded-full font-mono text-[10.5px] font-bold inline-flex items-center justify-center text-[#F4F8F0]"
+              style={{ background: "var(--green-800)" }}>
               {cartItems.length}
             </span>
           )}
