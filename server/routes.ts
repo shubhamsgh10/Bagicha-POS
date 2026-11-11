@@ -87,6 +87,7 @@ import { menuPriceError, menuSizesError } from "@shared/menuValidation";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { orderEditBlock, isNoopItemsSave, kitchenTicketLines, discountNeedsApproval } from "@shared/orderItemsSave";
 import { buildSpecialInstructions } from "@shared/orderItemText";
+import { isKotSkipped } from "@shared/kotStations";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { cachedPrincipal, forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
@@ -2143,7 +2144,16 @@ export async function registerRoutes(
       // Both numbers are only taken once the order is known to be valid. Each is one atomic
       // UPDATE of the settings row; issuing them together saves a round trip (Postgres queues the
       // second behind the first's row lock).
-      const [billNo, kotNo] = await Promise.all([incrementBillCounter(), incrementKotCounter()]);
+      // Kitchen-screen lines: everything except the "Don't print on KOT" list (getSettings — not money).
+      // An order whose lines are ALL skipped takes no KOT number and creates no kot_tickets row.
+      const kotSkip = getSettings().printSettings.kot.skipKot;
+      const kitchenLines = lineItems.filter(
+        (item: any) => !isKotSkipped(Number(item.menuItemId), menuById.get(Number(item.menuItemId))?.categoryId, kotSkip),
+      );
+      const [billNo, kotNo] = await Promise.all([
+        incrementBillCounter(),
+        kitchenLines.length > 0 ? incrementKotCounter() : Promise.resolve(null),
+      ]);
       const orderNumber = `ORD${String(billNo).padStart(4, "0")}`;
       const actor = req.user as any;
       // Staff-member sessions ({ id, _isStaffMember }) share the integer id space with
@@ -2172,13 +2182,17 @@ export async function registerRoutes(
 
       // KOT ticket lines (kotTickets.items — what the Kitchen screen lists; the printed KOT
       // re-derives from orderItems via the print pipeline).
-      const kotNumber = String(kotNo).padStart(3, "0");
-      const kotItems = lineItems.map((item: any) => ({
-        name: item.name,
-        quantity: item.quantity,
-        instructions: buildSpecialInstructions(item.specialInstructions, item.addons) || undefined,
-        serviceMode: item.serviceMode || undefined,
-      }));
+      const kotTicketRow = kotNo != null
+        ? {
+            kotNumber: String(kotNo).padStart(3, "0"),
+            items: kitchenLines.map((item: any) => ({
+              name: item.name,
+              quantity: item.quantity,
+              instructions: buildSpecialInstructions(item.specialInstructions, item.addons) || undefined,
+              serviceMode: item.serviceMode || undefined,
+            })) as any,
+          }
+        : undefined;
 
       // Order + items + KOT are created atomically (see storage.createOrderWithItems).
       // ORDER_CREATE_FORCED_DEFAULTS spread LAST: paymentStatus/paidAmount/changeAmount/
@@ -2201,7 +2215,7 @@ export async function registerRoutes(
           ...ORDER_CREATE_FORCED_DEFAULTS,
         },
         itemsToInsert,
-        { kotNumber, items: kotItems as any },
+        kotTicketRow,
       );
       const order = created.order;
 
@@ -2282,7 +2296,7 @@ export async function registerRoutes(
           req,
           orderId: order.id,
           order,
-          snapshot: savedOrderSnapshot(order, created.items, menuRows, [created.kotTicket]),
+          snapshot: savedOrderSnapshot(order, created.items, menuRows, created.kotTicket ? [created.kotTicket] : []),
           mode: printReq.mode,
           auto: printReq.auto,
           markBilled: printReq.markBilled,
@@ -2504,7 +2518,14 @@ export async function registerRoutes(
       // quantity increases (as the increment) — same rule as the printed KOT delta. It used to key
       // on menuItemId alone, so "1 → 3 naan" or "a Large next to the Regular" never reached the
       // screen (and the print then reused the previous ticket's KOT number).
-      const ticketLines = kitchenTicketLines(lineItems, existingItems);
+      // "Don't print on KOT" items never reach the Kitchen screen either — filtered on both sides, like the print.
+      const kotSkip = getSettings().printSettings.kot.skipKot;
+      const menuCatById = new Map(menuRows.map((m) => [m.id, m.categoryId]));
+      const keepForKitchen = (menuItemId: number) => !isKotSkipped(menuItemId, menuCatById.get(menuItemId), kotSkip);
+      const ticketLines = kitchenTicketLines(
+        lineItems.filter((i: any) => keepForKitchen(Number(i.menuItemId))),
+        existingItems.filter((i) => keepForKitchen(i.menuItemId)),
+      );
       // The KOT number is issued ALONGSIDE the replace transaction (independent rows), and the
       // ticket is inserted inside it — the counter and the ticket used to be two more round trips
       // after the commit, in front of the print. A number burnt by a failed save is a gap, the same

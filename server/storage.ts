@@ -180,8 +180,8 @@ export interface IStorage {
   createOrderWithItems(
     order: InsertOrder,
     items: Array<Omit<InsertOrderItem, "orderId">>,
-    kot: Omit<InsertKotTicket, "orderId">,
-  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket }>;
+    kot?: Omit<InsertKotTicket, "orderId">,
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }>;
   updateOrder(id: number, order: Partial<InsertOrder>): Promise<Order>;
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
@@ -1032,8 +1032,8 @@ export class DatabaseStorage implements IStorage {
   async createOrderWithItems(
     order: InsertOrder,
     items: Array<Omit<InsertOrderItem, "orderId">>,
-    kot: Omit<InsertKotTicket, "orderId">,
-  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket }> {
+    kot?: Omit<InsertKotTicket, "orderId">,
+  ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }> {
     return await db.transaction(async (tx) => {
       const [newOrder] = await tx.insert(orders).values({
         ...(order as any),
@@ -1046,8 +1046,12 @@ export class DatabaseStorage implements IStorage {
             items.map((it) => ({ ...(it as any), orderId: newOrder.id })),
           ).returning()
         : [];
-      const kotItems = Array.isArray(kot.items) ? kot.items : undefined;
-      const [kotTicket] = await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id }).returning();
+      // No ticket when every line is on the "Don't print on KOT" list (nothing for the kitchen).
+      let kotTicket: KotTicket | null = null;
+      if (kot) {
+        const kotItems = Array.isArray(kot.items) ? kot.items : undefined;
+        [kotTicket] = await tx.insert(kotTickets).values({ ...(kot as any), items: kotItems, orderId: newOrder.id }).returning();
+      }
       return { order: newOrder, items: insertedItems, kotTicket };
     });
   }
