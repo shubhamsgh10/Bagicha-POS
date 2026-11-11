@@ -178,10 +178,23 @@ export default function LiveAnalytics() {
   ];
 
   return (
-    <div className="h-[100dvh] w-screen flex flex-col bg-background overflow-hidden">
+    <div className="h-[100dvh] max-sm:h-full w-screen max-sm:w-full flex flex-col bg-background max-sm:bg-[var(--paper-50)] overflow-hidden">
 
       {/* ── Top Bar ─────────────────────────────────────────────────────────── */}
-      <header className="shrink-0 bg-card border-b border-border shadow-sm">
+      {/* Phone header: MobilePOS look (eyebrow + serif title), same as the shared page Header */}
+      <div className="sm:hidden shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border" style={{ background: "var(--paper-50)" }}>
+        <div className="min-w-0">
+          <p className="bg-eyebrow mb-1">Live · refresh 15s</p>
+          <h1 className="font-display font-semibold text-[28px] leading-none text-foreground truncate">Live View</h1>
+        </div>
+        <div className="flex items-center gap-2 bg-muted rounded-full px-3 py-2 shrink-0">
+          <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold text-foreground tabular-nums">
+            {now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })}
+          </span>
+        </div>
+      </div>
+      <header className="max-sm:hidden shrink-0 bg-card border-b border-border shadow-sm">
         <div className="flex items-center justify-between px-4 h-14 gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="text-base font-bold text-foreground tracking-tight whitespace-nowrap">
@@ -201,12 +214,12 @@ export default function LiveAnalytics() {
       </header>
 
       {/* ── Content ─────────────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto px-5 pt-5 pb-28 md:pb-8 space-y-5 min-h-0 overscroll-contain">
+      <main className="flex-1 overflow-y-auto px-5 pt-5 pb-28 md:pb-8 max-sm:px-3 max-sm:pt-3 max-sm:pb-6 space-y-5 max-sm:space-y-3 min-h-0 overscroll-contain">
 
         {/* ── Stat Cards (always today) — plain static tiles, no expand-on-click.
              Detailed breakdowns (sales chart, category, top items, low stock) now
              live on the Reports page — this page is the real-time operational glance. */}
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 max-sm:gap-2.5">
           {statCards.map((card, i) => (
             <motion.div
               key={card.label}
@@ -214,14 +227,14 @@ export default function LiveAnalytics() {
               initial="hidden"
               animate="visible"
               variants={cardAnim}
-              className={`rounded-2xl p-4 border border-border/40 shadow-sm select-none ${card.bg}`}
+              className={`rounded-2xl p-4 max-sm:p-3.5 border border-border/40 shadow-sm select-none ${card.bg} ${i === 0 ? "max-sm:col-span-2 max-sm:!bg-[var(--green-800)] max-sm:!border-[var(--green-800)]" : ""}`}
             >
-              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm`}>
+              <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center mb-3 shadow-sm max-sm:hidden`}>
                 <card.icon className="w-4 h-4 text-white" />
               </div>
-              <p className="text-[11px] font-medium text-muted-foreground mb-0.5">{card.label}</p>
-              <p className="text-lg font-bold text-foreground leading-tight truncate">{card.value}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{card.sub}</p>
+              <p className={`text-[11px] font-medium text-muted-foreground mb-0.5 max-sm:text-[10px] max-sm:font-extrabold max-sm:uppercase max-sm:tracking-widest ${i === 0 ? "max-sm:!text-[var(--green-300)]" : ""}`}>{card.label}</p>
+              <p className={`text-lg font-bold text-foreground leading-tight truncate ${i === 0 ? "max-sm:!text-[#F4F8F0] max-sm:text-[32px] max-sm:font-display max-sm:font-semibold" : ""}`}>{card.value}</p>
+              <p className={`text-[11px] text-muted-foreground mt-0.5 truncate ${i === 0 ? "max-sm:!text-[rgba(244,248,240,0.72)]" : ""}`}>{card.sub}</p>
             </motion.div>
           ))}
         </div>
@@ -234,7 +247,7 @@ export default function LiveAnalytics() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.45, duration: 0.4 }}
-          className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm"
+          className="rounded-2xl border border-border/40 bg-card p-5 max-sm:p-3.5 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm font-semibold">Live Orders</p>
