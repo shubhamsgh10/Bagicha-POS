@@ -2664,13 +2664,13 @@ export default function POS() {
 
           {/* Mobile category pills — horizontal scroll, mobile only */}
           <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 scrollbar-hide shrink-0"
-            style={{ background: "var(--paper-0)", borderBottom: "1px solid var(--line)" }}>
+            style={{ background: "var(--paper-50)" }}>
             <button
               onClick={() => selectCategory("all")}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+              className={`shrink-0 h-[34px] px-3 rounded-full text-xs font-bold border transition-colors ${
                 selectedCategory === "all"
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-100 text-gray-600"
+                  ? "bg-[var(--green-800)] text-[#F4F8F0] border-[var(--green-800)]"
+                  : "bg-white text-[var(--text-1)] border-[var(--line-strong)]"
               }`}
             >
               All
@@ -2679,10 +2679,10 @@ export default function POS() {
               <button
                 key={cat.id}
                 onClick={() => selectCategory(cat.id)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                className={`shrink-0 h-[34px] px-3 rounded-full text-xs font-bold border transition-colors ${
                   selectedCategory === cat.id
-                    ? "bg-green-600 text-white"
-                    : "bg-gray-100 text-gray-600"
+                    ? "bg-[var(--green-800)] text-[#F4F8F0] border-[var(--green-800)]"
+                    : "bg-white text-[var(--text-1)] border-[var(--line-strong)]"
                 }`}
               >
                 {cat.name}
@@ -2691,14 +2691,20 @@ export default function POS() {
           </div>
 
           <ScrollArea className="flex-1">
-            <div className="p-3">
+            <div className={compact ? "px-3 pb-3" : "p-3"}>
               {filteredItems?.length === 0 && (
-                <div className="text-center py-16 text-sm" style={{ color: "var(--text-3)" }}>No items found</div>
+                <div className="text-center py-16 px-6 text-sm" style={{ color: "var(--text-3)" }}>
+                  {compact && searchQuery
+                    ? `Nothing on the menu matches “${searchQuery}”. Use Open item in the cart for one-offs.`
+                    : "No items found"}
+                </div>
               )}
               {(() => {
                 const gridCls = isSectionMode
                   ? "grid grid-cols-2 md:grid-cols-3 gap-3"
-                  : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2";
+                  : compact
+                    ? "grid grid-cols-2 gap-1.5"
+                    : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2";
                 const renderTile = (item: any) => {
                   const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
                   const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
@@ -2720,6 +2726,47 @@ export default function POS() {
                     ? (singleLine ? singleLine.quantity : 0)
                     : (cartItems.find(c => c.cartKey === plainCartKey)?.quantity ?? 0);
                   const showPill = pillQty > 0 && pillCartKey !== null;
+                  if (compact) {
+                    const qtyText = pillQty % 1 === 0 ? pillQty : pillQty.toFixed(1);
+                    const priceText = hasSizes
+                      ? `${fmt(Math.min.apply(null, item.sizes.map((s: SizeOption) => Number(s.price))))}+`
+                      : fmt(parseFloat(item.price || "0"));
+                    return (
+                      <div key={item.id}
+                        className={`flex items-center gap-1.5 min-h-[52px] pl-2.5 pr-1 py-1 rounded-xl border ${isAvailable ? "" : "opacity-40"}`}
+                        style={{ background: showPill ? "var(--green-50)" : "var(--paper-0)", borderColor: showPill ? "var(--green-600)" : "var(--line)" }}>
+                        <button type="button" disabled={!isAvailable} onClick={activate}
+                          className="flex-1 min-w-0 text-left py-0.5 flex flex-col gap-0.5 disabled:cursor-not-allowed">
+                          <span className="text-[12.5px] font-semibold leading-tight line-clamp-2" style={{ color: "var(--text-strong)" }}>{item.name}</span>
+                          <span className="text-[12.5px] font-extrabold tabular-nums" style={{ color: "var(--text-strong)" }}>{priceText}</span>
+                          {!isAvailable && <span className="text-[10px] font-medium" style={{ color: "var(--danger)" }}>Unavailable</span>}
+                        </button>
+                        {showPill ? (
+                          <div className="shrink-0 flex items-center rounded-[10px] overflow-hidden text-[#F4F8F0]" style={{ background: "var(--green-800)" }}>
+                            <button type="button" aria-label={`One less ${item.name}`}
+                              disabled={pillQty <= 1 ? isOff("removeItem") : isOff("editItem")}
+                              onClick={() => bumpCartQty(pillCartKey!, -1)}
+                              className="w-9 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="font-mono text-[11.5px] font-bold min-w-[14px] text-center tabular-nums">{qtyText}</span>
+                            <button type="button" aria-label={`One more ${item.name}`}
+                              disabled={needsPicker ? isOff("editItem") : false}
+                              onClick={() => needsPicker ? bumpCartQty(pillCartKey!, 1) : (isAvailable && directAddItem(item))}
+                              className="w-9 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" aria-label={`Add ${item.name}`} disabled={!isAvailable} onClick={activate}
+                            className="shrink-0 w-10 h-11 rounded-[10px] flex items-center justify-center text-[#F4F8F0] disabled:opacity-40 active:scale-[0.94] transition-transform"
+                            style={{ background: "var(--green-800)" }}>
+                            <Plus className="w-[17px] h-[17px]" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
@@ -2803,10 +2850,11 @@ export default function POS() {
                 if (leftover.length) groups.push({ cat: { id: "uncategorized", name: "Other" }, items: leftover });
 
                 return groups.map(({ cat, items }: any) => (
-                  <div key={cat.id} className="mb-4 last:mb-0">
-                    <div className="flex items-baseline gap-2.5 mb-2.5">
-                      <h2 className="font-display font-semibold text-[1.375rem] leading-none" style={{ color: "var(--text-strong)" }}>{cat.name}</h2>
+                  <div key={cat.id} className={compact ? "" : "mb-4 last:mb-0"}>
+                    <div className={compact ? "flex items-center gap-2.5 pt-2 pb-1.5" : "flex items-baseline gap-2.5 mb-2.5"}>
+                      <h2 className={`font-display font-semibold leading-none ${compact ? "text-lg" : "text-[1.375rem]"}`} style={{ color: "var(--text-strong)" }}>{cat.name}</h2>
                       <div className="flex-1 h-px" style={{ background: "var(--line)" }} />
+                      {compact && <span className="font-mono text-[10px]" style={{ color: "var(--text-2)" }}>{items.length}</span>}
                     </div>
                     <div className={gridCls}>
                       {items.map((item: any) => renderTile(item))}
