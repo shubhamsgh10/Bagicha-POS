@@ -11,6 +11,7 @@ import {
 import { toPrintJob } from "@shared/print/generators";
 import { deriveBillTotals, effectiveTaxRatePercent } from "@shared/orderPricing";
 import { stripKitchenNotes } from "@shared/orderItemText";
+import { filterKotSkipped, groupByStation, hasSkipRules, stationsActive } from "@shared/kotStations";
 import { formatISTDateTime } from "@shared/print/formatDate";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { runKotPrint, runBillPrint, instrumentJson } from "./services/printDispatch";
@@ -477,6 +478,7 @@ export function registerPrintRoutes(app: Express): void {
         const rawItems = await db
           .select({
             menuItemId: orderItems.menuItemId,
+            categoryId: menuItems.categoryId,
             name: sql<string>`coalesce(${orderItems.name}, ${menuItems.name}, 'Item')`,
             quantity: orderItems.quantity,
             size: orderItems.size,
@@ -486,6 +488,24 @@ export function registerPrintRoutes(app: Express): void {
           .from(orderItems)
           .leftJoin(menuItems, eq(orderItems.menuItemId, menuItems.id))
           .where(eq(orderItems.orderId, orderId));
+
+        // Same rules as runKotPrint (printDispatch.ts): the "Don't print on KOT" list is removed from both
+        // sides of the delta, and the ticket is split into one section per kitchen station.
+        const kotSkip = kotSettings.skipKot;
+        const catByItemId = new Map<number, number | null>(rawItems.map((i) => [i.menuItemId, i.categoryId ?? null]));
+        const lastKotSnap = order.lastKotSnapshot as KotSnapshot | null;
+        // Items printed before but gone from the order now (their VOID) still need a category.
+        const missingCatIds = hasSkipRules(kotSkip) || stationsActive(kotSettings.kitchenStations)
+          ? Array.from(new Set((lastKotSnap?.items ?? []).map((i) => i.itemId).filter((id) => id >= 0 && !catByItemId.has(id))))
+          : [];
+        if (missingCatIds.length > 0) {
+          const catRows = await db
+            .select({ id: menuItems.id, categoryId: menuItems.categoryId })
+            .from(menuItems)
+            .where(inArray(menuItems.id, missingCatIds));
+          for (const r of catRows) catByItemId.set(r.id, r.categoryId ?? null);
+        }
+        const catOf = (id: number) => catByItemId.get(id);
 
         const currentSnapshot: SnapshotItem[] = rawItems.map((i) => ({
           itemId: i.menuItemId,
@@ -500,17 +520,24 @@ export function registerPrintRoutes(app: Express): void {
           rawItems.map((i) => ({ itemId: i.menuItemId, size: i.size ?? null, serviceMode: i.serviceMode ?? null, quantity: i.quantity, instructions: i.specialInstructions ?? null })),
         );
 
-        let newItems = currentSnapshot.map((i, idx) => ({
-          ...i,
-          instructions: rawItems[idx].specialInstructions ?? null,
-        }));
+        let newItems = filterKotSkipped(
+          currentSnapshot.map((i, idx) => ({
+            ...i,
+            instructions: rawItems[idx].specialInstructions ?? null,
+          })),
+          catOf,
+          kotSkip,
+        );
         let modifiedItems: Array<SnapshotItem & { previousQty: number; instructions?: string | null }> = [];
         let cancelledItems: SnapshotItem[] = [];
         let isDelta = false;
 
-        const lastSnapshot = order.lastKotSnapshot as KotSnapshot | null;
+        const lastSnapshot = lastKotSnap;
         if (!reprint && lastSnapshot?.items?.length) {
-          const delta = computeDelta(currentSnapshot, lastSnapshot.items);
+          const delta = computeDelta(
+            filterKotSkipped(currentSnapshot, catOf, kotSkip),
+            filterKotSkipped(lastSnapshot.items, catOf, kotSkip),
+          );
           newItems = delta.newItems.map((ni) => ({ ...ni, instructions: instrByKey.get(snapKey(ni)) ?? null }));
           modifiedItems = delta.modifiedItems.map((mi) => ({ ...mi, instructions: instrByKey.get(snapKey(mi)) ?? null }));
           cancelledItems = delta.cancelledItems;
@@ -528,18 +555,26 @@ export function registerPrintRoutes(app: Express): void {
           ? (reprint ? orderKotTickets[0].kotNumber : orderKotTickets[orderKotTickets.length - 1].kotNumber)
           : String((order.kotPrintCount ?? 0) + 1);
 
-        const lines = kotTextLines({
-          orderNumber: order.orderNumber,
-          tableNumber: order.tableNumber,
-          tableSection: await tableSectionFor(order.tableId),
-          kotNumber: kotNumStr,
-          isReprint: reprint,
-          isDelta,
-          newItems,
-          modifiedItems,
-          cancelledItems,
-          kotSettings,
-          width: W,
+        const stationGroups = groupByStation({ newItems, modifiedItems, cancelledItems }, catOf, kotSettings.kitchenStations);
+        const sections = stationGroups.length > 0 ? stationGroups : [{ name: null as string | null, newItems, modifiedItems, cancelledItems }];
+        const tableSection = await tableSectionFor(order.tableId);
+        const lines: string[] = [];
+        sections.forEach((g, idx) => {
+          if (idx > 0) lines.push("", "- - - - - - - - (cut) - - - - - - - -", "");
+          if (g.name) lines.push(`*** ${g.name.toUpperCase()} ***`);
+          lines.push(...kotTextLines({
+            orderNumber: order.orderNumber,
+            tableNumber: order.tableNumber,
+            tableSection,
+            kotNumber: kotNumStr,
+            isReprint: reprint,
+            isDelta,
+            newItems: g.newItems,
+            modifiedItems: g.modifiedItems,
+            cancelledItems: g.cancelledItems,
+            kotSettings,
+            width: W,
+          }));
         });
         return res.json({ lines, width: W });
       }
