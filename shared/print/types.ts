@@ -33,6 +33,29 @@ export interface KOTPrintSettings {
   kotStyle?: "image" | "text";
   /** categoryId (stringified) -> printerId; absent/null = fall back to kotPrinterId. */
   categoryPrinterOverrides?: Record<string, string | null>;
+  /** One KOT ticket per kitchen station (a chef = a set of categories). Off = one ticket per printer, as before. */
+  kitchenStations?: KitchenStationsSettings;
+  /** Categories / menu items that never go on any KOT nor on the Kitchen screen (still billed). */
+  skipKot?: SkipKotSettings;
+}
+
+export interface KitchenStation {
+  id: string;
+  name: string;
+  categoryIds: number[];
+}
+
+export interface KitchenStationsSettings {
+  enabled: boolean;
+  /** Print order = list order; the General ticket prints last. A category in two stations belongs to the first. */
+  stations: KitchenStation[];
+  /** Header of the ticket for items whose category is in no station. */
+  generalName: string;
+}
+
+export interface SkipKotSettings {
+  categoryIds: number[];
+  itemIds: number[];
 }
 
 /** A quick-POS section (e.g. "South Indian"): filtered menu + optional dedicated bill printer. */

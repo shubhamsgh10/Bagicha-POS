@@ -144,6 +144,8 @@ const DEFAULT_PRINT_SETTINGS: PrintConfigSettings = {
     kotNumbering: true,
     kotStyle: 'image',
     categoryPrinterOverrides: {},
+    kitchenStations: { enabled: false, stations: [], generalName: 'General' },
+    skipKot: { categoryIds: [], itemIds: [] },
   },
   bill: {
     taxDisplay: 'none',
