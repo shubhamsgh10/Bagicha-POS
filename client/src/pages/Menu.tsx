@@ -18,6 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useRole } from "@/hooks/useRole";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { ChipRow, Chip } from "@/components/mobile/ChipRow";
+import { MenuItemRow } from "@/components/mobile/MenuItemRow";
 import { computeMenuItemCost, computeMarginPercent } from "@shared/menuCost";
 
 interface Category { id: number; name: string; description?: string; }
@@ -43,6 +46,7 @@ function getInitialTab(): TabKey {
 export default function Menu() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState<TabKey>(getInitialTab);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -169,6 +173,28 @@ export default function Menu() {
 
   const handleDeleteItem = (item: MenuItem) => {
     if (window.confirm(`Delete "${item.name}"?`)) deleteMenuItemMutation.mutate(item.id);
+  };
+
+  // Phone list row: one mono line with the same facts the desktop card shows.
+  const marginText = (item: MenuItem): string | null => {
+    if (!canSeeCost || !item.inventoryLinks || item.inventoryLinks.length === 0) return null;
+    const result = computeMenuItemCost(item.inventoryLinks, costByInventoryId, 1);
+    if (result.hasIncompleteCost) return "Margin —";
+    const margin = computeMarginPercent(parseFloat(item.price), result.cost);
+    return margin == null ? null : `Margin ${margin.toFixed(0)}%`;
+  };
+  const rowMeta = (item: MenuItem): string => {
+    const price = item.sizes && item.sizes.length > 0
+      ? item.sizes.map((s) => `${s.size} ${formatCurrency(s.price)}`).join(" / ")
+      : formatCurrency(parseFloat(item.price));
+    return [
+      getCategoryName(item.categoryId),
+      price,
+      `Prep ${item.preparationTime}min`,
+      item.inventoryLinks && item.inventoryLinks.length > 0 ? `${item.inventoryLinks.length} ingr.` : null,
+      marginText(item),
+      `Sold ${soldToday[item.id] ?? 0}`,
+    ].filter(Boolean).join(" · ");
   };
 
   const switchTab = (tab: TabKey) => {
@@ -328,11 +354,19 @@ export default function Menu() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
-      <Header title="Menu" description="Manage your restaurant menu items and categories" />
+      <Header
+        title="Menu"
+        eyebrow={isMobile ? `${rawItems.length} items · ${categories.length} categories` : undefined}
+        description="Manage your restaurant menu items and categories"
+      />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Tab Bar */}
-        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-[var(--paper-100)] border border-[var(--line)] shadow-sm w-fit">
+        <ChipRow className="sm:hidden mb-3" ariaLabel="Menu sections">
+          <Chip active={activeTab === "items"} onClick={() => switchTab("items")}>Menu items</Chip>
+          <Chip active={activeTab === "categories"} onClick={() => switchTab("categories")}>Categories</Chip>
+        </ChipRow>
+        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl bg-[var(--paper-100)] border border-[var(--line)] shadow-sm w-fit max-sm:hidden">
           <button
             onClick={() => switchTab("items")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
@@ -369,17 +403,17 @@ export default function Menu() {
                 {/* Toolbar */}
                 <div className="mb-4 flex flex-wrap justify-between items-center gap-3">
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-800">Menu Items</h2>
+                    <h2 className="text-xl font-semibold text-gray-800 max-sm:hidden">Menu Items</h2>
                     <p className="text-sm text-gray-500">
                       {menuItems.length} of {rawItems.length} items
                       {hasActiveFilters && " (filtered)"}
                     </p>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="flex gap-2 flex-wrap max-sm:w-full">
                     <motion.button
                       whileTap={{ scale: 0.95 }}
                       onClick={() => { setBulkMode((v) => !v); setSelectedIds(new Set()); }}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border ${
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border max-sm:flex-1 max-sm:justify-center max-sm:min-h-[44px] ${
                         bulkMode
                           ? "bg-amber-50 border-amber-300 text-amber-700"
                           : "bg-[var(--paper-0)] border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)]"
@@ -391,7 +425,7 @@ export default function Menu() {
                     <motion.button
                       whileTap={{ scale: 0.95 }}
                       onClick={() => setShowFilters((v) => !v)}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border ${
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all border max-sm:flex-1 max-sm:justify-center max-sm:min-h-[44px] ${
                         showFilters || hasActiveFilters
                           ? "bg-emerald-50 border-emerald-300 text-emerald-700"
                           : "bg-[var(--paper-0)] border-[var(--line)] text-gray-600 hover:bg-[var(--paper-0)]"
@@ -407,12 +441,21 @@ export default function Menu() {
                       onClick={handleAddItem}
                       className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
                                  bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm
-                                 hover:shadow-emerald-400/40 hover:shadow-md transition-all"
+                                 hover:shadow-emerald-400/40 hover:shadow-md transition-all max-sm:order-first max-sm:w-full max-sm:justify-center max-sm:min-h-[44px]"
                     >
                       <Plus className="w-4 h-4" /> Add Item
                     </motion.button>
                   </div>
                 </div>
+
+                <ChipRow className="sm:hidden mb-3" ariaLabel="Filter by category">
+                  <Chip active={filterCategory === "all"} onClick={() => setFilterCategory("all")}>All</Chip>
+                  {categories.map((c) => (
+                    <Chip key={c.id} active={filterCategory === c.id.toString()} onClick={() => setFilterCategory(c.id.toString())}>
+                      {c.name}
+                    </Chip>
+                  ))}
+                </ChipRow>
 
                 {/* ── Search + Filters Panel ── */}
                 {/* grid-template-rows trick: pure CSS height expand, no JS layout thrash */}
@@ -623,8 +666,25 @@ export default function Menu() {
                   </div>
                 )}
 
+                {menuItems.length > 0 && <div className="md:hidden rounded-2xl overflow-hidden border" style={{ borderColor: "var(--line)" }}>
+                  {menuItems.map((item) => (
+                    <MenuItemRow
+                      key={item.id}
+                      name={item.name}
+                      meta={rowMeta(item)}
+                      available={!!item.isAvailable}
+                      bulkMode={bulkMode}
+                      selected={selectedIds.has(item.id)}
+                      deleting={deleteMenuItemMutation.isPending}
+                      onToggleSelect={() => toggleSelect(item.id)}
+                      onEdit={() => handleEditItem(item)}
+                      onDelete={() => handleDeleteItem(item)}
+                    />
+                  ))}
+                </div>}
+
                 {/* Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-5">
                   {menuItems.map((item, i) => {
                     const isSelected = selectedIds.has(item.id);
                     return (
