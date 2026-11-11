@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
 import { RoleSwitcher } from "./RoleSwitcher";
+import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
   LayoutGrid, History, UtensilsCrossed, Package,
@@ -101,15 +102,20 @@ export function TopNav() {
         {/* Hamburger — mobile only */}
         <button
           onClick={() => setSidebarOpen(true)}
-          className="md:hidden p-2 rounded-lg text-[var(--text-2)] hover:bg-[var(--paper-100)] hover:text-[var(--text-strong)] transition-colors shrink-0"
+          className="md:hidden w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-[var(--line)] text-[var(--text-1)] hover:bg-[var(--paper-100)] transition-colors shrink-0"
           aria-label="Open menu"
         >
           <Menu className="w-5 h-5" />
         </button>
 
         {/* Logo */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="hidden md:flex items-center gap-2 shrink-0">
           <BagichaLogo size="sm" />
+        </div>
+        {/* Phone: logo + single-colour wordmark (Compact POS design) */}
+        <div className="md:hidden flex items-center gap-2 min-w-0">
+          <img src={bagichaLogoImg} alt="Bagicha" width={32} height={32} className="shrink-0" style={{ objectFit: "contain", mixBlendMode: "multiply" }} />
+          <span className="bg-wordmark text-[21px] leading-none tracking-[0.18em] truncate">Bagicha</span>
         </div>
 
         <div className="w-px h-7 bg-[var(--line)] mx-1 shrink-0 hidden md:block" />
