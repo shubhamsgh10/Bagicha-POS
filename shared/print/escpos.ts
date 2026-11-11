@@ -22,6 +22,17 @@ export const TALL_BOLD_OFF   = Buffer.from([0x1B, 0x21, 0x00]); // ESC ! 0x00 �
 export const LOGO_NV_FLASH   = Buffer.from([0x1C, 0x70, 0x01, 0x00]); // FS p 1 0 — print NV bitmap slot 1
 export const CUT = Buffer.from([GS, 0x56, 0x41, 0x00]);
 
+/** GS B n — white-on-black (reverse) printing on/off. */
+export const REVERSE_ON = Buffer.from([GS, 0x42, 0x01]);
+export const REVERSE_OFF = Buffer.from([GS, 0x42, 0x00]);
+
+/** GS ! n — character size multipliers (1–8 each). charSize(1, 1) = normal. */
+export function charSize(width: number, height: number): Buffer {
+  const w = Math.max(1, Math.min(8, Math.round(width))) - 1;
+  const h = Math.max(1, Math.min(8, Math.round(height))) - 1;
+  return Buffer.from([GS, 0x21, (w << 4) | h]);
+}
+
 export function feed(n: number): Buffer {
   return Buffer.from([ESC, 0x64, Math.min(n, 255)]);
 }

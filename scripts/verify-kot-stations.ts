@@ -8,6 +8,9 @@ import {
 } from "../shared/kotStations";
 import { computeDelta } from "../shared/kotDelta";
 import type { KitchenStationsSettings, SkipKotSettings } from "../shared/print/types";
+import { generateKOTBuffer } from "../shared/print/generators";
+import { renderKotBitmap, KOT_IMAGE_STYLE } from "../shared/print/kotImage";
+import { interpretEscPos } from "../shared/print/escposInterpret";
 
 const checks: Array<[string, boolean]> = [];
 const check = (name: string, ok: boolean) => checks.push([name, ok]);
@@ -87,6 +90,50 @@ const jobs = assemblePrinterJobs([
 check("one job per printer", jobs.length === 2);
 check("a printer's tickets are joined in order", jobs[0].printer.id === "p1" && jobs[0].buffer.toString() === "AC");
 check("each job keeps its separate tickets (browser fallback)", jobs[0].tickets.length === 2 && jobs[1].tickets.length === 1);
+
+// ── Station header ──
+const kotSettings = {
+  enabled: true, printModifiedKOT: true, printModifiedItemsOnly: true, printCancelledKOT: true, printAddons: true,
+  showDuplicateWatermark: true, kotNumbering: true,
+} as any;
+const ticketBase = {
+  orderNumber: "1", tableNumber: "5", kotNumber: 42, isReprint: false, isDelta: false,
+  newItems: [{ name: "Masala Dosa", quantity: 1, serviceMode: "dinein" }],
+  modifiedItems: [], cancelledItems: [], width: 48, now: new Date("2026-11-11T07:30:00Z"),
+};
+const text = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" }, stationName: "South Indian" });
+check("text style: station name uppercased on the ticket", text.includes("SOUTH INDIAN"));
+check("text style: reverse (white-on-black) on", text.indexOf(Buffer.from([0x1d, 0x42, 0x01])) >= 0);
+check("text style: triple size for a short name", text.indexOf(Buffer.from([0x1d, 0x21, 0x22])) >= 0);
+check("text style: size + reverse reset after the header", text.indexOf(Buffer.from([0x1d, 0x21, 0x00])) > text.indexOf(Buffer.from([0x1d, 0x21, 0x22])) && text.indexOf(Buffer.from([0x1d, 0x42, 0x00])) >= 0);
+check("text style: header comes before the table line", text.indexOf("SOUTH INDIAN") < text.indexOf("TABLE - 5"));
+// 48 cols: triple fits 16 chars (incl. the 2 padding spaces), double 24. "Tandoor and Breads" = 20 → double.
+const longName = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" }, stationName: "Tandoor and Breads" });
+check("text style: a long name drops to double size", longName.indexOf(Buffer.from([0x1d, 0x21, 0x11])) >= 0 && longName.indexOf(Buffer.from([0x1d, 0x21, 0x22])) < 0);
+const hugeName = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" }, stationName: "Tandoor and Indian Breads" });
+check("text style: a very long name drops to normal size", hugeName.indexOf(Buffer.from([0x1d, 0x21, 0x11])) < 0 && hugeName.indexOf(Buffer.from([0x1d, 0x21, 0x22])) < 0 && hugeName.includes("TANDOOR AND INDIAN BREADS"));
+const plain = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" } });
+check("text style: no station → no reverse header", plain.indexOf(Buffer.from([0x1d, 0x42, 0x01])) < 0);
+
+const imgPlain = renderKotBitmap({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" } })!;
+const imgStation = renderKotBitmap({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" }, stationName: "South Indian" })!;
+check("image style: renders with a station", !!imgStation);
+check("image style: header adds at least the bar's height", imgStation.heightDots >= imgPlain.heightDots + Math.round(KOT_IMAGE_STYLE.station * 1.2));
+const wbS = Math.ceil(imgStation.widthDots / 8);
+const inkRow = (y: number) => { let n = 0; for (let x = 0; x < imgStation.widthDots; x++) if (imgStation.bits[y * wbS + (x >> 3)] & (0x80 >> (x & 7))) n++; return n; };
+const barRowY = KOT_IMAGE_STYLE.padTop + 2;
+check("image style: the very top is a black bar across the paper", inkRow(barRowY) > imgStation.widthDots * 0.85);
+check("image style: the bar has white letters in it", (() => { for (let y = barRowY; y < barRowY + KOT_IMAGE_STYLE.station; y++) if (inkRow(y) < imgStation.widthDots * 0.8) return true; return false; })());
+check("image style: margins stay white", (() => { for (let y = 0; y < imgStation.heightDots; y++) { for (let x = 0; x < KOT_IMAGE_STYLE.marginX - 2; x++) if (imgStation.bits[y * wbS + (x >> 3)] & (0x80 >> (x & 7))) return false; } return true; })());
+
+// Two image tickets for one printer → the virtual printer sees two cuts.
+const two = Buffer.concat([
+  generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" }, stationName: "Main Course" }),
+  generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" }, stationName: "Pizza" }),
+]);
+const cutCount = (b: Buffer) => { let n = 0, i = -1; const c = Buffer.from([0x1d, 0x56, 0x41, 0x00]); while ((i = b.indexOf(c, i + 1)) >= 0) n++; return n; };
+check("a joined printer job has one cut per station ticket", cutCount(two) === 2);
+check("the joined job still interprets (rasters present)", interpretEscPos(new Uint8Array(two), 48).items.some((i: any) => i.type === "raster"));
 
 let failed = 0;
 for (const [name, ok] of checks) {

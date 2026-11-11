@@ -32,6 +32,8 @@ export const KOT_IMAGE_STYLE = {
   small: 24,
   /** Em size of the DUPLICATE / MODIFIED KOT banners. */
   banner: 26,
+  /** Em size of the kitchen-station header bar (white on black, very top). Shrinks only if the name won't fit. */
+  station: 60,
   /** Line box height as a multiple of the em size. */
   lineHeight: 1.2,
   /** Extra air between two item rows. */
@@ -278,6 +280,8 @@ export interface KotImageParams {
   tableNumber: string | null;
   /** tables.section for tableNumber's table; drawn as its own line under "Dine In". Ignored for takeaway. */
   tableSection?: string | null;
+  /** Kitchen station name — drawn as a big white-on-black bar at the very top. */
+  stationName?: string | null;
   kotNumber?: string | number;
   isReprint: boolean;
   isDelta: boolean;
@@ -310,7 +314,7 @@ const sectionLineOf = (p: KotImageParams): string | null =>
 
 /** Every string the ticket will draw — used to decide up front whether the face can render it. */
 function allStrings(p: KotImageParams): string[] {
-  const s: string[] = [String(p.tableNumber ?? ""), String(p.kotNumber ?? ""), sectionLineOf(p) ?? ""];
+  const s: string[] = [String(p.tableNumber ?? ""), String(p.kotNumber ?? ""), sectionLineOf(p) ?? "", p.stationName?.trim().toUpperCase() ?? ""];
   for (const i of [...p.newItems, ...p.modifiedItems]) s.push(labelOf(i.name, i.size), i.instructions ?? "");
   for (const i of p.cancelledItems) s.push(labelOf(i.name, i.size));
   return s;
@@ -364,6 +368,13 @@ export function renderKotBitmap(p: KotImageParams): KotBitmap | null {
   };
 
   // ── Header ──
+  if (p.stationName?.trim()) {
+    const label = p.stationName.trim().toUpperCase();
+    let size: number = S.station;
+    while (size > S.big && measure(label, "bold", size) > rightEdge - mx - 24) size -= 2;
+    bar(label, size);
+    y += 4;
+  }
   if (p.isReprint && p.kotSettings.showDuplicateWatermark) {
     line("** DUPLICATE **", "bold", S.banner, "center", 2);
     rule();

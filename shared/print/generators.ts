@@ -29,11 +29,24 @@ export interface BillRestaurantInfo {
   footerNote: string;
 }
 
+/** The station banner: reverse + the largest size that keeps the name (plus a space each side) on one line. */
+function stationHeaderText(name: string, W: number): Buffer[] {
+  const label = ` ${name.trim().toUpperCase()} `;
+  const mult = label.length <= Math.floor(W / 3) ? 3 : label.length <= Math.floor(W / 2) ? 2 : 1;
+  return [
+    E.ALIGN_CENTER, E.BOLD_ON, E.REVERSE_ON, E.charSize(mult, mult),
+    E.line(label),
+    E.charSize(1, 1), E.REVERSE_OFF, E.BOLD_OFF, E.LF,
+  ];
+}
+
 export function generateKOTBuffer(params: {
   orderNumber: string;
   tableNumber: string | null;
   /** tables.section for tableNumber's table (inner | outer | …). Printed above the table line; ignored for takeaway. */
   tableSection?: string | null;
+  /** Kitchen station ticket header ("South Indian"), printed first as a huge white-on-black line. Absent = none. */
+  stationName?: string | null;
   kotNumber?: string | number;
   isReprint: boolean;
   isDelta: boolean;
@@ -68,6 +81,8 @@ export function generateKOTBuffer(params: {
   const parts: Buffer[] = [];
 
   parts.push(E.INIT);
+
+  if (params.stationName?.trim()) parts.push(...stationHeaderText(params.stationName, W));
 
   if (params.isReprint && params.kotSettings.showDuplicateWatermark) {
     parts.push(E.ALIGN_CENTER, E.BOLD_ON, E.line("** DUPLICATE **"), E.BOLD_OFF);
