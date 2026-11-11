@@ -44,10 +44,10 @@ export function BottomNav() {
       style={{
         background: "var(--paper-0)",
         borderTop: "1px solid var(--line)",
-        boxShadow: "0 -6px 20px rgba(20,34,27,0.07)",
+        boxShadow: "0 -6px 20px rgba(20,34,27,0.05)",
       }}
     >
-      <div className="flex items-center h-[56px]">
+      <div className="flex items-stretch min-h-[60px] px-1.5 pt-1.5 pb-1">
         {visibleItems.map(item => {
           const Icon     = item.icon;
           const isActive = location === item.href || location.startsWith(item.href + "/");
@@ -56,11 +56,11 @@ export function BottomNav() {
             <button
               key={item.href}
               onClick={() => navigate(item.href)}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 touch-manipulation"
+              className="flex-1 flex flex-col items-center justify-center gap-[5px] py-1.5 touch-manipulation"
               style={{ color: isActive ? "var(--green-800)" : "var(--text-3)" }}
             >
-              <Icon className="w-5 h-5 transition-colors" />
-              <span className="text-[9px] font-semibold leading-none">
+              <Icon className="w-[21px] h-[21px] transition-colors" />
+              <span className="text-[10.5px] font-bold leading-none">
                 {item.label}
               </span>
             </button>

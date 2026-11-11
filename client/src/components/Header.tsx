@@ -32,11 +32,11 @@ export function Header({ title, description, eyebrow, onNewOrder, action }: Head
   };
 
   return (
-    <header className="bg-card shadow-sm border-b border-border px-4 sm:px-6 py-3 sm:py-4 sticky top-0 z-10">
+    <header className="bg-card max-sm:bg-[var(--paper-50)] shadow-sm max-sm:shadow-none border-b border-border px-4 sm:px-6 py-3 max-sm:py-2.5 sm:py-4 sticky top-0 z-10">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           {eyebrow && <p className="bg-eyebrow mb-1">{eyebrow}</p>}
-          <h1 className="font-display font-semibold text-2xl sm:text-3xl leading-none text-foreground truncate">{title}</h1>
+          <h1 className="font-display font-semibold text-[28px] sm:text-3xl leading-none text-foreground truncate">{title}</h1>
           <p className="text-sm text-muted-foreground truncate hidden sm:block mt-1">{description}</p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">

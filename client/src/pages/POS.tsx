@@ -41,6 +41,10 @@ import { composeCartInstructions, rehydrateSelections, splitPersistedInstruction
 import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
 import { saveSignature, canSkipSaveBeforeSettle, type LastSave } from "@/lib/settleSkip";
 import { describeApiError } from "@/lib/apiError";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { PosMobileHeader } from "@/components/pos-mobile/PosMobileHeader";
+import { PosMobileActionDock, type DockAction } from "@/components/pos-mobile/PosMobileActionDock";
+import { settleButtonLabel, cartTotalsHint } from "@/lib/posMobile";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -259,14 +263,19 @@ export default function POS() {
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
-  // Mobile: collapse the cart order-summary (totals + action buttons) to browse more items
-  const [summaryOpen, setSummaryOpen] = useState(true);
+  // Compact phone layout (Compact POS design). Section POS keeps its own counter layout.
+  const isMobile = useIsMobile();
+  const compact = isMobile && !isSectionMode;
+  // Mobile: collapse the cart totals. In compact mode the action dock lives OUTSIDE this
+  // collapsible, so it starts (and stays) collapsed; Section POS keeps its actions inside
+  // and still auto-opens.
+  const [summaryOpen, setSummaryOpen] = useState(!compact);
   const prevHasItemsRef = useRef(false);
   useEffect(() => {
-    // Auto-open the summary when the cart goes from empty → has items
-    if (cartItems.length > 0 && !prevHasItemsRef.current) setSummaryOpen(true);
+    // Auto-open the summary when the cart goes from empty → has items (not in compact mode)
+    if (cartItems.length > 0 && !prevHasItemsRef.current && !compact) setSummaryOpen(true);
     prevHasItemsRef.current = cartItems.length > 0;
-  }, [cartItems.length]);
+  }, [cartItems.length, compact]);
   // Mobile customer autocomplete dropdown
   const [showMobileCustomerDropdown, setShowMobileCustomerDropdown] = useState(false);
   // Discount input ref (for re-focus after PIN unlock)
@@ -1656,6 +1665,19 @@ export default function POS() {
 
   const tableLabel = preselectedTableName || (preselectedTableId ? `Table ${preselectedTableId}` : null);
 
+  // Clear all: on a saved order only lines not yet saved can go — removing a line the kitchen
+  // already has needs its own cancel reason (× on the row); clearing everything used to make every
+  // later save fail with a 400.
+  const handleClearAll = () => {
+    if (activeOrderId) {
+      const kept = cartItems.filter(wasItemKotd);
+      setCartItems(kept);
+      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
+      return;
+    }
+    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+  };
+
   const hasItems = cartItems.length > 0;
   const orderTypeLabel = { "dine-in": "Dine In", takeaway: "Pick Up", delivery: "Delivery" }[form.watch("orderType")] || "Dine In";
 
@@ -2017,6 +2039,38 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
+      {compact && (
+        <PosMobileHeader
+          onBack={handleBackToTables}
+          title={posMode === "delivery" ? "Delivery" : posMode === "pickup" ? "Pickup" : (tableLabel ?? "Dine In")}
+          timer={isEditMode && existingOrder?.createdAt ? <POSTimer startedAt={existingOrder.createdAt} /> : undefined}
+          orderTypeLabel={(() => {
+            const ot = form.watch("orderType");
+            return ot === "delivery" ? "Delivery" : ot === "takeaway" ? "Pickup" : "Dine-in";
+          })()}
+          orderNumber={activeOrderId ? serialNum(activeOrderId) : undefined}
+          roleSwitcher={
+            <RoleSwitcher
+              activeRole={activeRole}
+              loginRole={loginRole}
+              secondsLeft={secondsLeft}
+              isElevated={isElevated}
+              onElevate={elevateRole}
+              onRevert={revertRole}
+            />
+          }
+          searchQuery={searchQuery}
+          onSearchChange={v => { setSearchQuery(v); setMobileTab("menu"); }}
+          guestName={form.watch("customerName") || ""}
+          guestPhone={form.watch("customerPhone") || ""}
+          onGuestNameChange={v => form.setValue("customerName", v)}
+          onGuestPhoneChange={v => form.setValue("customerPhone", v)}
+          onPickCustomer={c => { form.setValue("customerName", c.name); form.setValue("customerPhone", c.phone); }}
+          customers={uniqueCustomers}
+          dropdownLimit={CUSTOMER_DROPDOWN_LIMIT}
+        />
+      )}
+      {!compact && (
       <div className="shrink-0 relative z-40"
         style={{
           background: "var(--paper-0)",
@@ -2311,6 +2365,7 @@ export default function POS() {
           </div>}
         </div>
       </div>
+      )}
 
       {/* Section counter: big Eating Here/Parcel toggle — sets the mode NEW items are
           added as (per-item, same backend logic as tables; orders can mix both) */}
@@ -2526,7 +2581,7 @@ export default function POS() {
 
       {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped.
            Hidden at section counters (anonymous walk-ups). ── */}
-      {!isSectionMode && <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
+      {!isSectionMode && !compact && <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
         style={{ background: "var(--paper-0)" }}>
         {(() => {
           const nameVal = form.watch("customerName") || "";
@@ -2622,13 +2677,13 @@ export default function POS() {
 
           {/* Mobile category pills — horizontal scroll, mobile only */}
           <div className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 scrollbar-hide shrink-0"
-            style={{ background: "var(--paper-0)", borderBottom: "1px solid var(--line)" }}>
+            style={{ background: "var(--paper-50)" }}>
             <button
               onClick={() => selectCategory("all")}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+              className={`shrink-0 h-[34px] px-3 rounded-full text-xs font-bold border transition-colors ${
                 selectedCategory === "all"
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-100 text-gray-600"
+                  ? "bg-[var(--green-800)] text-[#F4F8F0] border-[var(--green-800)]"
+                  : "bg-white text-[var(--text-1)] border-[var(--line-strong)]"
               }`}
             >
               All
@@ -2637,10 +2692,10 @@ export default function POS() {
               <button
                 key={cat.id}
                 onClick={() => selectCategory(cat.id)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                className={`shrink-0 h-[34px] px-3 rounded-full text-xs font-bold border transition-colors ${
                   selectedCategory === cat.id
-                    ? "bg-green-600 text-white"
-                    : "bg-gray-100 text-gray-600"
+                    ? "bg-[var(--green-800)] text-[#F4F8F0] border-[var(--green-800)]"
+                    : "bg-white text-[var(--text-1)] border-[var(--line-strong)]"
                 }`}
               >
                 {cat.name}
@@ -2649,14 +2704,20 @@ export default function POS() {
           </div>
 
           <ScrollArea className="flex-1">
-            <div className="p-3">
+            <div className={compact ? "px-3 pb-3" : "p-3"}>
               {filteredItems?.length === 0 && (
-                <div className="text-center py-16 text-sm" style={{ color: "var(--text-3)" }}>No items found</div>
+                <div className="text-center py-16 px-6 text-sm" style={{ color: "var(--text-3)" }}>
+                  {compact && searchQuery
+                    ? `Nothing on the menu matches “${searchQuery}”. Use Open item in the cart for one-offs.`
+                    : "No items found"}
+                </div>
               )}
               {(() => {
                 const gridCls = isSectionMode
                   ? "grid grid-cols-2 md:grid-cols-3 gap-3"
-                  : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2";
+                  : compact
+                    ? "grid grid-cols-2 gap-1.5"
+                    : "grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2";
                 const renderTile = (item: any) => {
                   const hasSizes = Array.isArray(item.sizes) && item.sizes.length > 0;
                   const hasAddons = item.addonsEnabled && Array.isArray(item.addons) && item.addons.length > 0;
@@ -2678,6 +2739,47 @@ export default function POS() {
                     ? (singleLine ? singleLine.quantity : 0)
                     : (cartItems.find(c => c.cartKey === plainCartKey)?.quantity ?? 0);
                   const showPill = pillQty > 0 && pillCartKey !== null;
+                  if (compact) {
+                    const qtyText = pillQty % 1 === 0 ? pillQty : pillQty.toFixed(1);
+                    const priceText = hasSizes
+                      ? `${fmt(Math.min.apply(null, item.sizes.map((s: SizeOption) => Number(s.price))))}+`
+                      : fmt(parseFloat(item.price || "0"));
+                    return (
+                      <div key={item.id}
+                        className={`flex items-center gap-1.5 min-h-[52px] pl-2.5 pr-1 py-1 rounded-xl border ${isAvailable ? "" : "opacity-40"}`}
+                        style={{ background: showPill ? "var(--green-50)" : "var(--paper-0)", borderColor: showPill ? "var(--green-600)" : "var(--line)" }}>
+                        <button type="button" disabled={!isAvailable} onClick={activate}
+                          className="flex-1 min-w-0 text-left py-0.5 flex flex-col gap-0.5 disabled:cursor-not-allowed">
+                          <span className="text-[12.5px] font-semibold leading-tight line-clamp-2" style={{ color: "var(--text-strong)" }}>{item.name}</span>
+                          <span className="text-[12.5px] font-extrabold tabular-nums" style={{ color: "var(--text-strong)" }}>{priceText}</span>
+                          {!isAvailable && <span className="text-[10px] font-medium" style={{ color: "var(--danger)" }}>Unavailable</span>}
+                        </button>
+                        {showPill ? (
+                          <div className="shrink-0 flex items-center rounded-[10px] overflow-hidden text-[#F4F8F0]" style={{ background: "var(--green-800)" }}>
+                            <button type="button" aria-label={`One less ${item.name}`}
+                              disabled={pillQty <= 1 ? isOff("removeItem") : isOff("editItem")}
+                              onClick={() => bumpCartQty(pillCartKey!, -1)}
+                              className="w-9 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="font-mono text-[11.5px] font-bold min-w-[14px] text-center tabular-nums">{qtyText}</span>
+                            <button type="button" aria-label={`One more ${item.name}`}
+                              disabled={needsPicker ? isOff("editItem") : false}
+                              onClick={() => needsPicker ? bumpCartQty(pillCartKey!, 1) : (isAvailable && directAddItem(item))}
+                              className="w-9 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" aria-label={`Add ${item.name}`} disabled={!isAvailable} onClick={activate}
+                            className="shrink-0 w-10 h-11 rounded-[10px] flex items-center justify-center text-[#F4F8F0] disabled:opacity-40 active:scale-[0.94] transition-transform"
+                            style={{ background: "var(--green-800)" }}>
+                            <Plus className="w-[17px] h-[17px]" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
@@ -2761,10 +2863,11 @@ export default function POS() {
                 if (leftover.length) groups.push({ cat: { id: "uncategorized", name: "Other" }, items: leftover });
 
                 return groups.map(({ cat, items }: any) => (
-                  <div key={cat.id} className="mb-4 last:mb-0">
-                    <div className="flex items-baseline gap-2.5 mb-2.5">
-                      <h2 className="font-display font-semibold text-[1.375rem] leading-none" style={{ color: "var(--text-strong)" }}>{cat.name}</h2>
+                  <div key={cat.id} className={compact ? "" : "mb-4 last:mb-0"}>
+                    <div className={compact ? "flex items-center gap-2.5 pt-2 pb-1.5" : "flex items-baseline gap-2.5 mb-2.5"}>
+                      <h2 className={`font-display font-semibold leading-none ${compact ? "text-lg" : "text-[1.375rem]"}`} style={{ color: "var(--text-strong)" }}>{cat.name}</h2>
                       <div className="flex-1 h-px" style={{ background: "var(--line)" }} />
+                      {compact && <span className="font-mono text-[10px]" style={{ color: "var(--text-2)" }}>{items.length}</span>}
                     </div>
                     <div className={gridCls}>
                       {items.map((item: any) => renderTile(item))}
@@ -2785,6 +2888,40 @@ export default function POS() {
           }}>
 
           {/* Panel header */}
+          {compact && (
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2" style={{ background: "var(--paper-50)" }}>
+              <span className="text-[10.5px] font-extrabold uppercase tracking-[0.1em]" style={{ color: "var(--text-1)" }}>Order</span>
+              {activeOrderId && (
+                <button
+                  type="button"
+                  {...longPressHandlers(() => hasItems && setShowSettleDialog(true))}
+                  onClick={() => hasItems && setShowSettleDialog(true)}
+                  title="Tap or long-press for full details, settle, or Pay Later"
+                  className="font-mono text-[11px] font-bold rounded-md px-1.5 py-[3px] select-none"
+                  style={{ color: "var(--green-700)", background: "var(--success-bg)" }}
+                >
+                  {serialNum(activeOrderId)}
+                </button>
+              )}
+              <span className="flex-1" />
+              <button type="button" disabled={isOff("openItem")}
+                onClick={() => go("openItem", "Add Open Item", () => setShowOpenItemDialog(true))}
+                className="h-[34px] px-2.5 rounded-full flex items-center gap-1 text-[11.5px] font-bold bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ border: "1px dashed var(--green-600)", color: "var(--green-700)" }}>
+                <Plus className="w-[13px] h-[13px]" />Open item
+              </button>
+              {hasItems && (
+                <button type="button" disabled={isOff("clearCart")}
+                  onClick={() => go("clearCart", "Clear All Items", handleClearAll)}
+                  className="h-[34px] px-2 flex items-center gap-1 text-[11.5px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ color: "var(--danger)" }}>
+                  <Trash2 className="w-[13px] h-[13px]" />Clear
+                  {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
+                </button>
+              )}
+            </div>
+          )}
+          {!compact && (
           <div className="px-3 py-2 shrink-0 flex items-center justify-between"
             style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-0)" }}>
             <div className="flex items-center gap-2">
@@ -2816,18 +2953,7 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => {
-                    // On a saved order, only lines not yet saved can go here — removing a line the
-                    // kitchen already has needs its own cancel reason (× on the row), and clearing
-                    // everything used to make every later save fail with a 400.
-                    if (activeOrderId) {
-                      const kept = cartItems.filter(wasItemKotd);
-                      setCartItems(kept);
-                      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
-                      return;
-                    }
-                    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
-                  })}
+                  onClick={() => go("clearCart", "Clear All Items", handleClearAll)}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >
@@ -2838,9 +2964,10 @@ export default function POS() {
               )}
             </div>
           </div>
+          )}
 
           {/* Column headers — skipped at section counters (bigger rows carry their own layout) */}
-          {hasItems && !isSectionMode && (
+          {hasItems && !isSectionMode && !compact && (
             <div className="grid grid-cols-[auto_1fr_auto] gap-2 px-3 py-1 shrink-0"
               style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-50)" }}>
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-[52px]">Qty</span>
@@ -2947,6 +3074,55 @@ export default function POS() {
                   </div>
                 </div>
               );
+              const renderCompactCartRow = (item: CartItem) => {
+                const kotd = wasItemKotd(item);
+                const qtyText = item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1);
+                const meta = [
+                  item.addons.map(a => `+ ${a.name}`).join(", "),
+                  Object.entries(item.variants || {}).map(([g, v]) => `${g}: ${v}`).join(", "),
+                  item.extras || "",
+                  item.notes ? `📝 ${item.notes}` : "",
+                ].filter(Boolean).join(" · ") || `${fmt(item.totalPrice)} each · tap to edit`;
+                const openEdit = () => go("editItem", "Edit Item", () => (item.id > 0 ? openEditPicker(item) : openOpenItemEditor(item)));
+                return (
+                  <div key={item.cartKey} className="flex items-center gap-2 pl-2.5 pr-1 py-[5px] min-h-[52px] border-b" style={{ borderColor: "#F0EADC" }}>
+                    <div className="shrink-0 flex items-center rounded-[10px]" style={{ border: "1px solid var(--line)", background: "var(--paper-50)" }}>
+                      <button type="button" aria-label={`One less ${item.name}`}
+                        disabled={item.quantity <= 1 ? isOff(kotd ? "cancelKotItem" : "removeItem") : isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, item.quantity <= 1 ? -item.quantity : -1)}
+                        className="w-10 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "var(--text-2)" }}>
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="min-w-[16px] text-center font-mono text-[13px] font-bold tabular-nums" style={{ color: "var(--text-strong)" }}>{qtyText}</span>
+                      <button type="button" aria-label={`One more ${item.name}`} disabled={isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, 1)}
+                        className="w-10 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "var(--green-700)" }}>
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button type="button" disabled={isOff("editItem")} onClick={openEdit}
+                      className="flex-1 min-w-0 text-left py-0.5 flex flex-col gap-0.5 disabled:cursor-not-allowed">
+                      <span className="text-[13px] font-bold leading-tight truncate" style={{ color: "var(--text-strong)" }}>
+                        {item.name}{item.size ? ` (${item.size})` : ""}
+                        {item.id < 0 && (
+                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide rounded px-1 py-px align-middle" style={{ color: "var(--green-700)", background: "var(--green-50)", border: "1px solid var(--green-200)" }}>Open</span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-[5px] text-[10.5px] min-w-0" style={{ color: "var(--text-2)" }}>
+                        <Edit2 className="w-2.5 h-2.5 shrink-0" style={{ color: "var(--green-700)" }} />
+                        <span className="truncate">{meta}</span>
+                      </span>
+                    </button>
+                    <span className="shrink-0 text-[13.5px] font-extrabold tabular-nums" style={{ color: "var(--text-strong)" }}>{fmt(item.totalPrice * item.quantity)}</span>
+                    <button type="button" aria-label={`Remove ${item.name}`} disabled={isOff(kotd ? "cancelKotItem" : "removeItem")}
+                      onClick={() => requestRemoveFromCart(item)}
+                      className="shrink-0 w-10 h-11 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed" style={{ color: "var(--text-2)" }}>
+                      <X className="w-[15px] h-[15px]" />
+                    </button>
+                  </div>
+                );
+              };
+              const rowRenderer = compact ? renderCompactCartRow : renderCartRow;
 
               if (cartItems.length === 0) return (
                 <div className="flex flex-col items-center justify-center text-center px-6 py-10">
@@ -2977,17 +3153,17 @@ export default function POS() {
                   delivery: { label: "🛵 Delivery", headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
                 };
                 return (
-                  <div className="p-3 space-y-3">
+                  <div className={compact ? "bg-white" : "p-3 space-y-3"}>
                     {(["dinein", "pickup", "delivery"] as const).map(mode => {
                       const modeItems = cartItems.filter(i => (i.serviceMode ?? "dinein") === mode);
                       if (modeItems.length === 0) return null;
                       const cfg = modeConfig[mode];
                       return (
                         <div key={mode}>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm mb-1.5 border ${cfg.headerCls}`}>
+                          <div className={compact ? `text-[10px] font-extrabold uppercase tracking-[0.1em] px-3 py-1 border-b ${cfg.headerCls}` : `text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm mb-1.5 border ${cfg.headerCls}`}>
                             {cfg.label}
                           </div>
-                          <div className="space-y-2">{modeItems.map(renderCartRow)}</div>
+                          <div className={compact ? "" : "space-y-2"}>{modeItems.map(rowRenderer)}</div>
                         </div>
                       );
                     })}
@@ -2995,7 +3171,7 @@ export default function POS() {
                 );
               }
 
-              return <div className="p-3 space-y-2">{cartItems.map(renderCartRow)}</div>;
+              return <div className={compact ? "bg-white" : "p-3 space-y-2"}>{cartItems.map(rowRenderer)}</div>;
             })()}
           </div>
 
@@ -3007,18 +3183,29 @@ export default function POS() {
               aria-expanded={summaryOpen}
               aria-controls="cart-summary-body"
               aria-label={summaryOpen ? "Hide order summary" : "Show order summary"}
-              className="md:hidden shrink-0 flex items-center justify-between gap-3 px-3 h-11 border-t active:bg-black/[0.03] transition-colors"
+              className={`md:hidden shrink-0 flex items-center justify-between gap-3 px-3 ${compact ? "h-10" : "h-11"} border-t active:bg-black/[0.03] transition-colors`}
               style={{
                 background: "var(--paper-50)",
                 boxShadow: summaryOpen ? "none" : "0 -6px 16px rgba(20,34,27,0.08)",
               }}
             >
-              <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
-              <span className="flex items-center gap-1.5">
-                <span className="text-[11px] font-medium text-gray-500">Total</span>
-                <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
-              </span>
+              {compact ? (
+                <>
+                  <span className="text-[11.5px] truncate" style={{ color: "var(--text-2)" }}>
+                    {cartTotalsHint({ open: summaryOpen, subtotal, tax, fmt })}
+                  </span>
+                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${summaryOpen ? "rotate-180" : ""}`} style={{ color: "var(--text-2)" }} />
+                </>
+              ) : (
+                <>
+                  <span className="w-9 h-1.5 rounded-full bg-gray-300" aria-hidden />
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-gray-500">Total</span>
+                    <span className="text-sm font-bold text-green-600">{fmt(grandTotal)}</span>
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${summaryOpen ? "" : "rotate-180"}`} />
+                  </span>
+                </>
+              )}
             </button>
           )}
 
@@ -3174,7 +3361,8 @@ export default function POS() {
             }) : undefined}
           />
 
-          {/* Action buttons */}
+          {/* Action buttons — compact phones use PosMobileActionDock below the collapsible instead */}
+          {!compact && (
           <div className="px-2 pb-2 shrink-0 space-y-1 border-t pt-1.5">
             {isSectionMode ? (
               /* Quick-POS section: the grand total (tax + container included) lives ON the
@@ -3264,32 +3452,52 @@ export default function POS() {
               </>
             )}
           </div>
+          )}
            </div>
           </div>
+          {compact && (
+            <PosMobileActionDock
+              actions={[
+                { key: "kot", label: "KOT", tone: "ink", disabled: !hasItems || isPending || isOff("printKot"), locked: isOff("printKot"), onClick: () => go("printKot", "Print KOT", handleKOT) },
+                { key: "bill", label: "Bill", tone: "clay", disabled: !hasItems || isPending || isOff("printBill"), locked: isOff("printBill"), onClick: () => go("printBill", "Print Bill", handleBillPrint) },
+                { key: "ebill", label: "E-Bill", tone: "green", disabled: !hasItems || isPending || isOff("printBill"), locked: isOff("printBill"), onClick: () => go("printBill", "Send E-Bill", handleEBill) },
+                {
+                  key: "save",
+                  label: (createOrderMutation.isPending || updateOrderMutation.isPending) && submitModeRef.current === "save" ? "Saving…" : "Save",
+                  tone: "plain", disabled: !hasItems || isPending || isOff("saveOrder"), locked: isOff("saveOrder"),
+                  onClick: () => go("saveOrder", "Save Order", handleSave),
+                },
+                { key: "hold", label: "Hold", tone: "amber", disabled: !activeOrderId || isPending || isOff("holdOrder"), locked: isOff("holdOrder"), onClick: () => go("holdOrder", "Hold Order", () => setShowHoldConfirm(true)) },
+              ] satisfies DockAction[]}
+              settleLabel={settleButtonLabel({ phase: settlePhase, busy: settleMutation.isPending, total: grandTotal, lines: cartItems.length, fmt })}
+              settleDisabled={!hasItems || isPending || isOff("settleOrder")}
+              settleLocked={isOff("settleOrder")}
+              onSettle={() => go("settleOrder", "Settle Order", handleSettle)}
+            />
+          )}
         </div>
       </div>
 
       {/* ── Mobile: Menu / Cart tab switcher ────────────────────────────────── */}
-      <div className="md:hidden shrink-0 bg-white border-t flex">
+      <div className="md:hidden shrink-0 bg-white grid grid-cols-2 px-1.5 pt-1.5 pb-1.5" style={{ borderTop: "1px solid var(--line)" }}>
         <button
+          type="button"
           onClick={() => setMobileTab("menu")}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 transition-colors ${
-            mobileTab === "menu" ? "text-green-600" : "text-gray-400"
-          }`}
+          className="h-11 flex items-center justify-center gap-[7px] text-[12.5px] font-bold"
+          style={{ color: mobileTab === "menu" ? "var(--green-800)" : "var(--text-2)" }}
         >
-          <LayoutGrid className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Menu</span>
+          <LayoutGrid className="w-[18px] h-[18px]" />Menu
         </button>
         <button
+          type="button"
           onClick={() => setMobileTab("cart")}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-3 relative transition-colors ${
-            mobileTab === "cart" ? "text-green-600" : "text-gray-400"
-          }`}
+          className="h-11 flex items-center justify-center gap-[7px] text-[12.5px] font-bold"
+          style={{ color: mobileTab === "cart" ? "var(--green-800)" : "var(--text-2)" }}
         >
-          <ShoppingCart className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Cart</span>
+          <ShoppingCart className="w-[18px] h-[18px]" />Cart
           {cartItems.length > 0 && (
-            <span className="absolute top-2 left-[calc(50%+6px)] min-w-[16px] h-4 text-[9px] font-bold bg-green-600 text-white rounded-full flex items-center justify-center px-1">
+            <span className="min-w-[18px] h-[18px] px-[5px] rounded-full font-mono text-[10.5px] font-bold inline-flex items-center justify-center text-[#F4F8F0]"
+              style={{ background: "var(--green-800)" }}>
               {cartItems.length}
             </span>
           )}

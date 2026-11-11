@@ -22,87 +22,11 @@ import { SectionOrdersFlyout } from "@/components/live-tables/SectionOrdersFlyou
 import { usePermission } from "@/hooks/usePermission";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { PinGuard } from "@/components/PinGuard";
-
-interface Table {
-  id: number;
-  name: string;
-  capacity: number;
-  status: "free" | "running" | "billed";
-  currentOrderId?: number | null;
-  section: string;
-  runningTotal?: number;
-  orderCreatedAt?: string;
-  servedByName?: string | null;
-}
-
-const SECTION_OPTIONS = [
-  { value: "inner",   label: "Inner" },
-  { value: "outer",   label: "Outer" },
-  { value: "vip",     label: "VIP" },
-  { value: "terrace", label: "Terrace" },
-  { value: "hall",    label: "Hall" },
-];
-
-// Warm garden status card styles (free / running / billed)
-const statusConfig = {
-  free: {
-    style: {
-      background: "var(--paper-0)",
-      border: "1.5px dashed var(--line-strong)",
-      boxShadow: "var(--shadow-xs)",
-    },
-    nameText: "text-[var(--text-1)]",
-    subText: "text-[var(--text-3)]",
-  },
-  running: {
-    style: {
-      background: "var(--success-bg)",
-      border: "1px solid #BBD9C4",
-      boxShadow: "0 4px 20px rgba(46,139,87,0.10)",
-    },
-    nameText: "text-[var(--green-900)]",
-    subText: "text-[var(--green-700)]",
-  },
-  billed: {
-    style: {
-      background: "var(--warning-bg)",
-      border: "1px solid #EAD9AE",
-      boxShadow: "0 4px 20px rgba(198,138,46,0.10)",
-    },
-    nameText: "text-[var(--clay-700)]",
-    subText: "text-[var(--amber-600)]",
-  },
-};
-
-const fmt = (n: number) => `₹${n.toFixed(0)}`;
-
-/** Shows elapsed time as "X Min" or "Xh Xm", updates every minute */
-function RunningTimer({ startedAt }: { startedAt: string }) {
-  const getElapsed = (s: string) => {
-    const totalMins = Math.floor((Date.now() - new Date(s).getTime()) / 60000);
-    const h = Math.floor(totalMins / 60);
-    const m = totalMins % 60;
-    return { h, m };
-  };
-  const [elapsed, setElapsed] = useState(() => getElapsed(startedAt));
-  useEffect(() => {
-    setElapsed(getElapsed(startedAt));
-    const id = setInterval(() => setElapsed(getElapsed(startedAt)), 60000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-  const display = elapsed.h > 0 ? `${elapsed.h}h ${elapsed.m}m` : `${elapsed.m} Min`;
-  return <span>{display}</span>;
-}
-
-/** Fetches order createdAt when not available from table data */
-function TableTimer({ orderId }: { orderId: number }) {
-  const { data } = useQuery<any>({
-    queryKey: ["/api/orders", String(orderId)],
-    staleTime: Infinity,
-  });
-  if (!data?.createdAt) return <span>Active</span>;
-  return <RunningTimer startedAt={data.createdAt} />;
-}
+import { useIsMobile } from "@/hooks/use-mobile";
+import { TablesMobileView } from "@/components/tables/TablesMobileView";
+import {
+  type Table, SECTION_OPTIONS, statusConfig, fmt, RunningTimer, TableTimer, sectionLabel,
+} from "@/components/tables/tableShared";
 
 function groupBySection(tables: Table[]): Record<string, Table[]> {
   return tables.reduce((acc, t) => {
@@ -112,15 +36,11 @@ function groupBySection(tables: Table[]): Record<string, Table[]> {
   }, {} as Record<string, Table[]>);
 }
 
-function sectionLabel(s: string) {
-  return SECTION_OPTIONS.find(x => x.value === s)?.label
-    ?? (s.charAt(0).toUpperCase() + s.slice(1));
-}
-
 export default function Tables() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { deliveryOrders, pickupOrders, sectionOrders } = useLiveOrders();
+  const isMobile = useIsMobile();
 
   const printTableBill = async (orderId: number) => {
     try {
@@ -201,7 +121,10 @@ export default function Tables() {
     return () => mql.removeEventListener("change", sync);
   }, []);
   useEffect(() => {
-    if (!showSalesSplit) return;
+    // Phones: the split is a row that pushes the grid down, so closing it on an outside
+    // pointerdown moved the grid under the finger and the tap missed its target. There it
+    // closes only by tapping Sales again.
+    if (!showSalesSplit || isMobile) return;
     const onPointerDown = (e: PointerEvent) => {
       if (!salesRef.current?.contains(e.target as Node)) setShowSalesSplit(false);
     };
@@ -212,7 +135,7 @@ export default function Tables() {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [showSalesSplit]);
+  }, [showSalesSplit, isMobile]);
 
   const { data: liveStatus } = useQuery<{
     runningTables: number;
@@ -348,6 +271,33 @@ export default function Tables() {
         />
       )}
 
+      {isMobile ? (
+        <TablesMobileView
+          tables={tables}
+          isLoading={isLoading}
+          grouped={grouped}
+          sectionOrder={sectionOrder}
+          liveStatus={liveStatus}
+          showSalesSplit={showSalesSplit}
+          onToggleSalesSplit={() => setShowSalesSplit(v => !v)}
+          salesRef={salesRef}
+          shiftFrom={shiftFrom}
+          deliveryOrders={deliveryOrders}
+          pickupOrders={pickupOrders}
+          posSections={posSections}
+          sectionOrders={sectionOrders}
+          onTableClick={handleTableClick}
+          onPrint={printTableBill}
+          onMove={t => go("moveTable", "Shift Table", () => setShiftFrom(t))}
+          onEdit={openEdit}
+          onDelete={handleDelete}
+          onAddTable={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
+          onDelivery={() => navigate("/pos?mode=delivery")}
+          onPickup={() => navigate("/pos?mode=pickup")}
+          onSectionNewOrder={s => navigate(`/pos?section=${encodeURIComponent(s.id)}&sectionName=${encodeURIComponent(s.name)}`)}
+        />
+      ) : (
+        <>
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 sm:px-4 py-2"
         style={{
@@ -745,6 +695,8 @@ export default function Tables() {
           );
         })}
       </main>
+        </>
+      )}
 
       {/* ── Add / Edit Table Dialog ────────────────────────────────────────────── */}
       <Dialog

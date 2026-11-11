@@ -328,14 +328,14 @@ export default function LiveTablesDashboard() {
     <div className="h-full flex flex-col overflow-hidden">
 
       {/* ── Page header ────────────────────────────────────────── */}
-      <div className="shrink-0 px-3 sm:px-5 pt-2.5 sm:pt-4 pb-2 sm:pb-3 flex items-center justify-between gap-2">
+      <div className="shrink-0 px-3 sm:px-5 pt-2.5 sm:pt-4 pb-2 sm:pb-3 flex items-center justify-between gap-2 max-sm:bg-[var(--paper-50)] max-sm:px-4">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-emerald-100/80">
+          <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-emerald-100/80 max-sm:hidden">
             <Monitor className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
           </div>
-          <div>
-            <h1 className="text-base sm:text-xl font-bold text-gray-900 leading-tight">Live View</h1>
-            <p className="text-[10px] sm:text-xs text-gray-400">
+          <div className="max-sm:flex max-sm:flex-col-reverse max-sm:gap-1">
+            <h1 className="text-base sm:text-xl font-bold text-gray-900 leading-tight max-sm:font-display max-sm:text-[28px] max-sm:font-semibold max-sm:leading-none">Live View</h1>
+            <p className="text-[10px] sm:text-xs text-gray-400 max-sm:text-[10.5px] max-sm:font-bold max-sm:uppercase max-sm:tracking-[0.1em] max-sm:text-[var(--green-700)]">
               {allOrders.length} order{allOrders.length !== 1 ? "s" : ""} · live
             </p>
           </div>
@@ -353,7 +353,7 @@ export default function LiveTablesDashboard() {
             {isConnected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
           </div>
           <button onClick={() => setSoundEnabled(v => !v)} title={soundEnabled ? "Mute" : "Sound on"}
-            className={`p-1.5 rounded-lg transition-colors ${soundEnabled ? "text-emerald-600 bg-emerald-50" : "text-gray-400 hover:bg-gray-100"}`}>
+            className={`p-1.5 max-sm:w-11 max-sm:h-11 max-sm:flex max-sm:items-center max-sm:justify-center rounded-lg transition-colors ${soundEnabled ? "text-emerald-600 bg-emerald-50" : "text-gray-400 hover:bg-gray-100"}`}>
             {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
           <button onClick={() => setCompact(v => !v)} title={compact ? "Comfortable view" : "Compact view"}
@@ -361,7 +361,7 @@ export default function LiveTablesDashboard() {
             {compact ? <LayoutGrid className="w-3.5 h-3.5" /> : <Rows3 className="w-3.5 h-3.5" />}
           </button>
           <button onClick={handleRefresh} disabled={isRefreshing}
-            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors disabled:opacity-40">
+            className="p-1.5 max-sm:w-11 max-sm:h-11 max-sm:flex max-sm:items-center max-sm:justify-center rounded-lg text-gray-400 hover:bg-gray-100 transition-colors disabled:opacity-40">
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
@@ -370,7 +370,7 @@ export default function LiveTablesDashboard() {
       {/* ── Stats + Channel tabs combined row ──────────────────── */}
       <div className="shrink-0 border-b border-gray-200 bg-white">
         {/* Stats — compact inline row on mobile */}
-        <div className="flex items-center gap-1.5 px-3 sm:px-5 pt-1.5 pb-1.5 overflow-x-auto scrollbar-none sm:hidden">
+        <div className="flex items-center gap-1.5 px-3 sm:px-5 pt-1.5 pb-1.5 overflow-x-auto scrollbar-hide sm:hidden">
           {[
             { label: "Total",    value: stats.total,    color: "text-gray-700"    },
             { label: "Dine-in",  value: stats.dineIn,   color: "text-emerald-600" },
@@ -378,9 +378,9 @@ export default function LiveTablesDashboard() {
             { label: "Pickup",   value: stats.pickup,   color: "text-orange-500"  },
             { label: "Ready",    value: stats.ready,    color: "text-green-600"   },
           ].map(s => (
-            <div key={s.label} className="shrink-0 flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1">
-              <span className={`text-sm font-bold leading-none ${s.color}`}>{s.value}</span>
-              <span className="text-[9px] text-gray-400 font-medium">{s.label}</span>
+            <div key={s.label} className="shrink-0 flex items-center gap-1.5 bg-gray-50 border border-gray-100 rounded-xl px-3 py-1.5">
+              <span className={`text-base font-bold leading-none ${s.color}`}>{s.value}</span>
+              <span className="text-[10px] text-gray-500 font-semibold">{s.label}</span>
             </div>
           ))}
         </div>
@@ -402,20 +402,20 @@ export default function LiveTablesDashboard() {
               <button
                 key={tab.key}
                 onClick={() => { setChannelFilter(tab.key); setStatusFilter("all"); }}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-3 px-2 relative transition-colors touch-manipulation ${
-                  active ? "text-red-500" : "text-gray-400 hover:text-gray-600"
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 max-sm:py-3 sm:py-3 px-2 relative transition-colors touch-manipulation ${
+                  active ? "text-red-500 max-sm:text-[var(--green-800)]" : "text-gray-400 hover:text-gray-600"
                 }`}
               >
                 <tab.icon className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-                <span className="text-[10px] sm:text-[11px] font-semibold">{tab.label}</span>
+                <span className="text-[10px] max-sm:text-[11px] sm:text-[11px] font-semibold">{tab.label}</span>
                 {count > 0 && (
                   <span className={`text-[8px] font-bold px-1 py-px rounded-full leading-none ${
-                    active ? "bg-red-500 text-white" : "bg-gray-200 text-gray-600"
+                    active ? "bg-red-500 max-sm:bg-[var(--green-800)] text-white" : "bg-gray-200 text-gray-600"
                   }`}>
                     {count}
                   </span>
                 )}
-                {active && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-500 rounded-t-full" />}
+                {active && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-500 max-sm:bg-[var(--green-800)] rounded-t-full" />}
               </button>
             );
           })}
@@ -423,7 +423,7 @@ export default function LiveTablesDashboard() {
       </div>
 
       {/* ── Filter + search bar ────────────────────────────────── */}
-      <div className="shrink-0 px-3 sm:px-5 py-1.5 sm:py-2.5 bg-[var(--paper-0)] border-b border-gray-100/60 flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none">
+      <div className="shrink-0 px-3 sm:px-5 py-1.5 sm:py-2.5 bg-[var(--paper-0)] border-b border-gray-100/60 flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
         {([
           { key: "food-ready" as StatusFilter, label: "Food Ready", short: "Ready",      count: statusCounts["food-ready"], active: "bg-green-600 text-white", inactive: "text-gray-600 bg-white" },
           { key: "dispatched" as StatusFilter, label: "Dispatched", short: "Dispatched", count: statusCounts.dispatched,    active: "bg-blue-600 text-white",  inactive: "text-gray-600 bg-white" },
@@ -431,7 +431,7 @@ export default function LiveTablesDashboard() {
         ] as const).map(sf => (
           <button key={sf.key}
             onClick={() => setStatusFilter(prev => prev === sf.key ? "all" : sf.key)}
-            className={`shrink-0 flex items-center gap-1 text-[10px] sm:text-xs font-semibold px-2 py-1 sm:px-3 sm:py-1.5 rounded-full border transition-colors touch-manipulation ${
+            className={`shrink-0 flex items-center gap-1 text-[10px] sm:text-xs max-sm:text-xs max-sm:min-h-[36px] max-sm:px-3 font-semibold px-2 py-1 sm:px-3 sm:py-1.5 rounded-full border transition-colors touch-manipulation ${
               statusFilter === sf.key ? sf.active + " border-transparent" : sf.inactive + " border-gray-200"
             }`}
           >
@@ -446,7 +446,7 @@ export default function LiveTablesDashboard() {
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search…"
-            className="w-full pl-6 pr-2 py-1 text-base sm:text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-300 placeholder:text-gray-300"
+            className="w-full pl-6 pr-2 py-1 max-sm:py-2 max-sm:min-h-[36px] text-base sm:text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-300 placeholder:text-gray-300"
           />
         </div>
       </div>

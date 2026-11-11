@@ -19,6 +19,8 @@ import { PrintPreviewModal, type PrintPreview } from "@/components/PrintPreviewM
 import { billLines } from "@/lib/receiptText";
 import { serialNum, avatarNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { ChipRow, Chip } from "@/components/mobile/ChipRow";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { paymentLabel, matchesPaymentFilter, paymentFilterCounts, isDueOrder, collectedBusinessDate, type PaymentFilter } from "@shared/paymentSplit";
@@ -174,10 +176,10 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
     >
       {/* ── Summary row ── */}
       <div
-        className="flex items-center justify-between px-4 py-3 cursor-pointer"
+        className="flex max-sm:flex-wrap items-center justify-between max-sm:gap-y-2 px-3 sm:px-4 py-3 cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 max-sm:basis-full">
           {/* avatar */}
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#2E8B57] to-[#1B4D33] flex items-center justify-center text-white text-[11px] font-bold shrink-0 shadow-sm">
             {avatarNum(order.id)}
@@ -216,12 +218,12 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className="flex items-center gap-2 shrink-0 sm:ml-3 max-sm:w-full">
           {/* How it was paid, read just before the amount it refers to. */}
           <PaymentTag order={order} className="hidden sm:inline-flex" onSettleDue={canSettleDue ? () => setSettlingDue(true) : undefined} />
 
           {/* amount */}
-          <div className="text-right hidden sm:block mr-1">
+          <div className="text-right mr-1 max-sm:mr-auto max-sm:text-left">
             <p className="font-bold text-sm text-gray-800">{fmt(parseFloat(order.totalAmount || "0"))}</p>
             <div className="flex items-center justify-end gap-1 mt-0.5">
               <span className={`w-1.5 h-1.5 rounded-full ${neonDot[order.status] || "bg-gray-400"}`} />
@@ -231,7 +233,7 @@ const OrderDetailRow = memo(function OrderDetailRow({ order, onStatusChange }: {
           {/* status select */}
           <div onClick={(e) => e.stopPropagation()}>
             <Select value={order.status} onValueChange={(v) => onStatusChange(order.id, v)}>
-              <SelectTrigger className="h-7 text-xs w-28 rounded-xl bg-[var(--paper-0)] border-[var(--line)]">
+              <SelectTrigger className="h-9 sm:h-7 text-xs w-28 rounded-xl bg-[var(--paper-0)] border-[var(--line)]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -538,6 +540,7 @@ const PAYMENT_FILTERS: { key: PaymentFilter; label: string; dot: string; hint: s
 ];
 
 export default function Orders() {
+  const isMobile = useIsMobile();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [payFilter, setPayFilter] = useState<PaymentFilter>("all");
@@ -655,7 +658,13 @@ export default function Orders() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "transparent" }}>
-      <Header title="Order History" description="View and manage all restaurant orders" />
+      <Header
+        title={isMobile ? "Orders" : "Order History"}
+        eyebrow={isMobile
+          ? `${showAll ? "All dates" : businessDate === todayBusinessDate() ? "Today" : businessDate} · ${((orders as any[]) ?? []).length} orders`
+          : undefined}
+        description="View and manage all restaurant orders"
+      />
 
       {/* ── Toolbar ── */}
       <div className="px-3 sm:px-6 pt-3 sm:pt-4 flex items-center gap-2 flex-wrap">
@@ -664,10 +673,11 @@ export default function Orders() {
           onClick={() => navigate("/tables")}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold
                      bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white
-                     hover:shadow-md transition-all"
+                     hover:shadow-md transition-all max-sm:order-3 max-sm:min-h-[44px] max-sm:px-3.5"
           style={{ boxShadow: "var(--shadow-green)" }}
+          aria-label="New order"
         >
-          <Plus className="w-4 h-4" /> New Order
+          <Plus className="w-4 h-4" /> <span className="max-sm:hidden">New Order</span>
         </motion.button>
 
         <motion.button
@@ -675,31 +685,34 @@ export default function Orders() {
           onClick={() => refetch()}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
                      bg-[var(--paper-0)] border border-[var(--line)] text-gray-600
-                     hover:bg-[var(--paper-0)] hover:shadow-sm transition-all"
+                     hover:bg-[var(--paper-0)] hover:shadow-sm transition-all max-sm:order-4 max-sm:min-h-[44px] max-sm:px-3.5"
+          aria-label="Refresh"
         >
-          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          <RefreshCw className="w-3.5 h-3.5" /> <span className="max-sm:hidden">Refresh</span>
         </motion.button>
 
         {/* Changing the date (day, arrows, Today, All Dates) drops the Cash/UPI/Due chip back to
             "All" — a "Due" check on one day shouldn't silently stay applied to the next. */}
-        <DayPicker
-          value={businessDate}
-          onChange={(d) => { setBusinessDate(d); setPayFilter("all"); }}
-          allDates={showAll}
-          onAllDatesChange={(v) => { setShowAll(v); setPayFilter("all"); }}
-        />
+        <div className="max-sm:order-2">
+          <DayPicker
+            value={businessDate}
+            onChange={(d) => { setBusinessDate(d); setPayFilter("all"); }}
+            allDates={showAll}
+            onAllDatesChange={(v) => { setShowAll(v); setPayFilter("all"); }}
+          />
+        </div>
 
         {/* Search */}
         <div className="flex items-center gap-2 bg-[var(--paper-0)] border border-[var(--line)]
                         rounded-xl px-3 py-1.5 flex-1 max-w-sm ml-1
                         focus-within:ring-2 focus-within:ring-emerald-400/50 focus-within:bg-[var(--paper-0)]
-                        transition-all">
+                        transition-all max-sm:order-1 max-sm:basis-full max-sm:max-w-none max-sm:ml-0 max-sm:min-h-[44px]">
           <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search order, customer, phone, table…"
-            className="bg-transparent text-sm outline-none w-full text-gray-700 placeholder-gray-400"
+            className="bg-transparent text-base sm:text-sm outline-none w-full text-gray-700 placeholder-gray-400"
           />
           {search && (
             <button onClick={() => setSearch("")}>
@@ -713,7 +726,7 @@ export default function Orders() {
         <div
           role="group"
           aria-label="Filter by payment"
-          className="flex items-center gap-0.5 rounded-xl p-1"
+          className="hidden sm:flex items-center gap-0.5 rounded-xl p-1"
           style={{ background: "var(--paper-100)", border: "1px solid var(--line)", boxShadow: "var(--shadow-xs)" }}
         >
           {PAYMENT_FILTERS.map(({ key, label, dot, hint }) => {
@@ -738,24 +751,26 @@ export default function Orders() {
             );
           })}
         </div>
+        <ChipRow className="sm:hidden max-sm:order-5 basis-full" ariaLabel="Filter by payment">
+          {PAYMENT_FILTERS.map(({ key, label, dot, hint }) => (
+            <Chip key={key} title={hint} active={payFilter === key} dot={dot} count={payCounts[key]} onClick={() => setPayFilter(key)}>
+              {label}
+            </Chip>
+          ))}
+        </ChipRow>
       </div>
 
       {/* ── Tabs + Orders ── */}
       <main className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-3 sm:px-6 pt-3 sm:pt-4 pb-6">
         <Tabs defaultValue="all" className="w-full">
-          <TabsList className="flex w-full justify-start overflow-x-auto rounded-xl p-1 mb-4 gap-0.5"
-            style={{
-              background: "var(--paper-100)",
-              border: "1px solid var(--line)",
-              boxShadow: "var(--shadow-xs)",
-            }}>
+          <TabsList className="flex w-full justify-start overflow-x-auto scrollbar-hide rounded-xl p-1 mb-4 gap-0.5 sm:bg-[var(--paper-100)] sm:border sm:border-[var(--line)] sm:shadow-[var(--shadow-xs)] max-sm:bg-transparent max-sm:p-0 max-sm:gap-1.5 max-sm:h-auto">
             {["all","pending","preparing","ready","served","delivered","cancelled"].map((t) => (
               <TabsTrigger
                 key={t}
                 value={t}
                 className="rounded-lg text-xs font-semibold capitalize shrink-0 px-3 min-h-[36px]
                            data-[state=active]:bg-white data-[state=active]:shadow-sm
-                           data-[state=active]:text-emerald-700 transition-all"
+                           data-[state=active]:text-emerald-700 transition-all max-sm:rounded-full max-sm:border max-sm:border-[var(--line-strong)] max-sm:bg-white max-sm:font-bold max-sm:data-[state=active]:!bg-[var(--green-800)] max-sm:data-[state=active]:!text-[#F4F8F0] max-sm:data-[state=active]:!border-[var(--green-800)] max-sm:data-[state=active]:!shadow-none"
               >
                 {t}
               </TabsTrigger>

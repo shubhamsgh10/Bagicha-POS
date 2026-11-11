@@ -65,7 +65,7 @@ export function DayPicker({
       <button
         type="button"
         onClick={() => shift(-1)}
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
+        className="w-10 h-10 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
         title="Previous day"
       >
         <ChevronLeft className="w-4 h-4" />
@@ -75,7 +75,7 @@ export function DayPicker({
         <button
           type="button"
           onClick={() => setOpen(o => !o)}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          className="flex items-center gap-1.5 px-2.5 py-2.5 sm:px-2 sm:py-1 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
         >
           <Calendar className="w-3.5 h-3.5 text-emerald-500" />
           <span>{label}</span>
@@ -137,7 +137,7 @@ export function DayPicker({
         type="button"
         onClick={() => shift(1)}
         disabled={isToday}
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="w-10 h-10 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         title="Next day"
       >
         <ChevronRight className="w-4 h-4" />
