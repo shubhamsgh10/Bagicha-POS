@@ -80,7 +80,9 @@ export function KitchenStationsSection({ value, onChange }: {
             {active.map(c => {
               const owner = ownerOf(c.id);
               const mine = s.categoryIds.indexOf(c.id) >= 0;
-              const taken = !!owner && owner.id !== s.id;
+              // Locked only while ANOTHER station owns it and this one doesn't hold it: a category saved
+              // in two stations must stay untickable here (it is checked, so it has to be removable).
+              const taken = !!owner && owner.id !== s.id && !mine;
               return (
                 <label key={c.id} className={`flex items-center gap-2 text-xs py-1 ${taken ? "text-gray-300" : "text-gray-700"}`}>
                   <input

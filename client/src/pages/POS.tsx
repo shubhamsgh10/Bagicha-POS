@@ -37,6 +37,7 @@ import { printKotFallback, printBillFallback, BROWSER_BILL_TOAST, BROWSER_KOT_TO
 import { startPrintTap, timePrintStage, endPrintTap, notePrintResponse } from "@/lib/printPerfClient";
 import { printFieldsForSubmitMode } from "@shared/printRequest";
 import { paymentLabel } from "@shared/paymentSplit";
+import { isKotSkipped } from "@shared/kotStations";
 import { composeCartInstructions, rehydrateSelections, splitPersistedInstructions } from "@shared/orderItemText";
 import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
 import { saveSignature, canSkipSaveBeforeSettle, type LastSave } from "@/lib/settleSkip";
@@ -1277,12 +1278,22 @@ export default function POS() {
       && (s.serviceMode ?? null) === (item.serviceMode ?? null));
   };
 
+  // A dish on the "Don't print on KOT" list (Admin → Print Settings: by item or by category) never
+  // reaches the kitchen, so removing a saved one is NOT a kitchen cancellation — same rule as the
+  // server's guard in PUT /api/orders/:id/items (shared/kotItemCancel.ts droppedKitchenItems).
+  const kotSkipRules = (settings as any)?.printSettings?.kot?.skipKot;
+  const isSkippedFromKot = (item: CartItem): boolean =>
+    isKotSkipped(item.id, menuItems?.find((m: any) => m.id === item.id)?.categoryId, kotSkipRules);
+  // Saved AND actually sent to the kitchen — the lines that need a cancel reason to remove.
+  const needsKotCancel = (item: CartItem): boolean => wasItemKotd(item) && !isSkippedFromKot(item);
+
   // Gate for removing a cart line ENTIRELY (not a quantity decrease — that stays plain
   // "editItem", see bumpCartQty below). A line already on a sent KOT is a real
   // cancellation of kitchen-sent work — routes through the new "cancelKotItem"
-  // reason+PIN dialog instead of the plain "removeItem" PIN-only gate.
+  // reason+PIN dialog instead of the plain "removeItem" PIN-only gate (a skipped dish
+  // keeps the plain gate: the kitchen never saw it).
   const requestRemoveFromCart = (item: CartItem) => {
-    if (wasItemKotd(item)) {
+    if (needsKotCancel(item)) {
       go("cancelKotItem", "Cancel Item", () => setPendingCancelTarget(item));
     } else {
       go("removeItem", "Remove Item", () => removeFromCart(item.cartKey));
@@ -2821,7 +2832,7 @@ export default function POS() {
                     // kitchen already has needs its own cancel reason (× on the row), and clearing
                     // everything used to make every later save fail with a 400.
                     if (activeOrderId) {
-                      const kept = cartItems.filter(wasItemKotd);
+                      const kept = cartItems.filter(needsKotCancel);
                       setCartItems(kept);
                       if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
                       return;
@@ -2863,7 +2874,7 @@ export default function POS() {
                         the Edit/Remove buttons below already sit behind (see bumpCartQty). */}
                     <div className="flex items-center gap-1 rounded-full px-1 py-0.5 shrink-0" style={{ background: "var(--paper-100)" }}>
                       <button
-                        disabled={item.quantity <= 1 ? isOff(wasItemKotd(item) ? "cancelKotItem" : "removeItem") : isOff("editItem")}
+                        disabled={item.quantity <= 1 ? isOff(needsKotCancel(item) ? "cancelKotItem" : "removeItem") : isOff("editItem")}
                         onClick={() => bumpCartQty(item.cartKey, item.quantity <= 1 ? -item.quantity : -1)}
                         className="w-5 h-5 rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{ background: "var(--paper-0)", color: "var(--green-800)", boxShadow: "var(--shadow-xs)" }}
@@ -2908,7 +2919,7 @@ export default function POS() {
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <span className={`${isSectionMode ? "text-base" : "text-xs"} font-bold tabular-nums whitespace-nowrap`} style={{ color: "var(--text-strong)" }}>{fmt(item.totalPrice * item.quantity)}</span>
                       <button
-                        disabled={isOff(wasItemKotd(item) ? "cancelKotItem" : "removeItem")}
+                        disabled={isOff(needsKotCancel(item) ? "cancelKotItem" : "removeItem")}
                         onClick={() => requestRemoveFromCart(item)}
                         className="transition-colors hover:opacity-70 disabled:opacity-30 disabled:cursor-not-allowed"
                         style={{ color: "var(--text-3)" }}

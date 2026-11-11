@@ -15,8 +15,8 @@ import { summarizeCollected, collectedBusinessDate } from "@shared/paymentSplit"
 import { planPaymentEdit } from "@shared/paymentEdit";
 import { planDueSettlement } from "@shared/dueSettlement";
 import { diffOrderLines, type AuditLine } from "@shared/orderAudit";
-import { computeDelta, type SnapshotItem } from "@shared/kotDelta";
-import { findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
+import type { SnapshotItem } from "@shared/kotDelta";
+import { droppedKitchenItems, findMissingKotCancelReasons, type CancelledKotItemInput } from "@shared/kotItemCancel";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import crypto from "crypto";
@@ -2145,14 +2145,15 @@ export async function registerRoutes(
       // UPDATE of the settings row; issuing them together saves a round trip (Postgres queues the
       // second behind the first's row lock).
       // Kitchen-screen lines: everything except the "Don't print on KOT" list (getSettings — not money).
-      // An order whose lines are ALL skipped takes no KOT number and creates no kot_tickets row.
+      // A NON-EMPTY order whose lines are ALL skipped takes no KOT number and creates no kot_tickets row;
+      // an order with no lines at all keeps today's behaviour (a KOT number and an empty ticket row).
       const kotSkip = getSettings().printSettings.kot.skipKot;
       const kitchenLines = lineItems.filter(
         (item: any) => !isKotSkipped(Number(item.menuItemId), menuById.get(Number(item.menuItemId))?.categoryId, kotSkip),
       );
       const [billNo, kotNo] = await Promise.all([
         incrementBillCounter(),
-        kitchenLines.length > 0 ? incrementKotCounter() : Promise.resolve(null),
+        lineItems.length === 0 || kitchenLines.length > 0 ? incrementKotCounter() : Promise.resolve(null),
       ]);
       const orderNumber = `ORD${String(billNo).padStart(4, "0")}`;
       const actor = req.user as any;
@@ -2497,12 +2498,32 @@ export async function registerRoutes(
         size: i.size ?? null,
         serviceMode: i.serviceMode ?? null,
       }));
-      const droppedKotItems = computeDelta(currentKotSnapshot, existingKotSnapshot).cancelledItems;
+      // "Don't print on KOT" dishes (e.g. Mineral Water) never reached the kitchen or the Kitchen
+      // screen, so dropping one is no kitchen cancellation: no reason, no PIN, no order.item_cancel
+      // row. The skip list is by item and by category; a dropped dish is NOT in this save's menu
+      // rows (it left the payload), so its category is looked up only when a category rule exists.
+      const kotSkip = getSettings().printSettings.kot.skipKot;
+      const menuCatById = new Map<number, number | null>(menuRows.map((m) => [m.id, m.categoryId]));
+      const rawDroppedKotItems = droppedKitchenItems(currentKotSnapshot, existingKotSnapshot);
+      if (rawDroppedKotItems.length > 0 && (kotSkip?.categoryIds?.length ?? 0) > 0) {
+        const unknownIds = Array.from(new Set(rawDroppedKotItems.map((d) => d.itemId).filter((x) => x > 0 && !menuCatById.has(x))));
+        if (unknownIds.length > 0) {
+          try {
+            for (const m of await storage.getMenuRowsForOrder(unknownIds)) menuCatById.set(m.id, m.categoryId);
+          } catch (catErr) {
+            // Falls back to the item-level skip only — the stricter side (a reason is asked for).
+            console.error("[order] skip-list category lookup failed (non-fatal):", catErr);
+          }
+        }
+      }
+      const keepForKitchen = (menuItemId: number) => !isKotSkipped(menuItemId, menuCatById.get(menuItemId), kotSkip);
+      const isKotSkippedItem = (menuItemId: number) => !keepForKitchen(menuItemId);
+      const droppedKotItems = droppedKitchenItems(currentKotSnapshot, existingKotSnapshot, isKotSkippedItem);
       const cancelledKotItemsInput: CancelledKotItemInput[] =
         Array.isArray(req.body?.cancelledKotItems) ? req.body.cancelledKotItems : [];
 
       if (droppedKotItems.length > 0) {
-        const missingReasons = findMissingKotCancelReasons(currentKotSnapshot, existingKotSnapshot, cancelledKotItemsInput);
+        const missingReasons = findMissingKotCancelReasons(currentKotSnapshot, existingKotSnapshot, cancelledKotItemsInput, isKotSkippedItem);
         if (missingReasons.length > 0) {
           return res.status(400).json({
             error: `A cancellation reason is required for: ${missingReasons.map((m) => m.name).join(", ")}`,
@@ -2518,10 +2539,8 @@ export async function registerRoutes(
       // quantity increases (as the increment) — same rule as the printed KOT delta. It used to key
       // on menuItemId alone, so "1 → 3 naan" or "a Large next to the Regular" never reached the
       // screen (and the print then reused the previous ticket's KOT number).
-      // "Don't print on KOT" items never reach the Kitchen screen either — filtered on both sides, like the print.
-      const kotSkip = getSettings().printSettings.kot.skipKot;
-      const menuCatById = new Map(menuRows.map((m) => [m.id, m.categoryId]));
-      const keepForKitchen = (menuItemId: number) => !isKotSkipped(menuItemId, menuCatById.get(menuItemId), kotSkip);
+      // "Don't print on KOT" items never reach the Kitchen screen either — filtered on both sides, like the print
+      // (kotSkip / keepForKitchen are defined with the cancel guard above).
       const ticketLines = kitchenTicketLines(
         lineItems.filter((i: any) => keepForKitchen(Number(i.menuItemId))),
         existingItems.filter((i) => keepForKitchen(i.menuItemId)),

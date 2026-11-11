@@ -11,6 +11,7 @@ import type { KitchenStationsSettings, SkipKotSettings } from "../shared/print/t
 import { generateKOTBuffer } from "../shared/print/generators";
 import { renderKotBitmap, KOT_IMAGE_STYLE } from "../shared/print/kotImage";
 import { interpretEscPos } from "../shared/print/escposInterpret";
+import { browserPayloadsOf, withBrowserPayloads, splitEscPosAtCuts } from "../shared/print/browserPayload";
 
 const checks: Array<[string, boolean]> = [];
 const check = (name: string, ok: boolean) => checks.push([name, ok]);
@@ -134,6 +135,63 @@ const two = Buffer.concat([
 const cutCount = (b: Buffer) => { let n = 0, i = -1; const c = Buffer.from([0x1d, 0x56, 0x41, 0x00]); while ((i = b.indexOf(c, i + 1)) >= 0) n++; return n; };
 check("a joined printer job has one cut per station ticket", cutCount(two) === 2);
 check("the joined job still interprets (rasters present)", interpretEscPos(new Uint8Array(two), 48).items.some((i: any) => i.type === "raster"));
+
+// ── Browser-print fallback (Electron host, client-side): one payload per ticket of a joined job ──
+{
+  const CUT = Buffer.from([0x1d, 0x56, 0x41, 0x00]);
+  const b64 = (b: Buffer) => b.toString("base64");
+  const lift = (buf: Buffer, width = 48) =>
+    browserPayloadsOf(withBrowserPayloads({ printJob: { printerId: "p1", data: b64(buf) } } as any, () => width));
+  const bytesOf = (p: { data: string }) => Buffer.from(p.data, "base64");
+
+  const imgA = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" }, stationName: "Main Course" });
+  const imgB = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "image" }, stationName: "Pizza" });
+  const imgPayloads = lift(Buffer.concat([imgA, imgB]));
+  check("fallback: two joined image tickets → 2 payloads", imgPayloads.length === 2);
+  check("fallback: each payload is exactly its ticket's bytes (cut stays with the ticket before it)",
+    imgPayloads.length === 2 && bytesOf(imgPayloads[0]).equals(imgA) && bytesOf(imgPayloads[1]).equals(imgB));
+  check("fallback: every payload ends with its cut and has just that one", imgPayloads.every((p) => {
+    const b = bytesOf(p); return b.subarray(b.length - 4).equals(CUT) && cutCount(b) === 1;
+  }));
+  check("fallback: the payloads keep the printer width", imgPayloads.every((p) => p.width === 48));
+  check("fallback: each split payload still interprets with its raster", imgPayloads.every((p) =>
+    interpretEscPos(new Uint8Array(bytesOf(p)), 48).items.some((i: any) => i.type === "raster")));
+
+  const txtA = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" }, stationName: "Main Course" });
+  const txtB = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" }, stationName: "Pizza" });
+  const txtC = generateKOTBuffer({ ...ticketBase, kotSettings: { ...kotSettings, kotStyle: "text" } });
+  const txtPayloads = lift(Buffer.concat([txtA, txtB, txtC]), 32);
+  check("fallback: three joined text tickets → 3 payloads in print order", txtPayloads.length === 3
+    && bytesOf(txtPayloads[0]).includes("MAIN COURSE") && bytesOf(txtPayloads[1]).includes("PIZZA") && !bytesOf(txtPayloads[2]).includes("PIZZA"));
+  check("fallback: width comes from the printer for every split payload", txtPayloads.every((p) => p.width === 32));
+
+  // Single-ticket job: untouched — same base64 string, one payload.
+  const one = lift(imgA);
+  check("fallback: a single ticket stays ONE payload with the original data string", one.length === 1 && one[0].data === b64(imgA));
+  check("fallback: single text ticket unchanged too", lift(txtA).length === 1 && lift(txtA)[0].data === b64(txtA));
+
+  // No trailing cut (e.g. a bill): the tail is kept as the last piece; a stream that ENDS on a cut has no empty piece.
+  const noCut = Buffer.concat([txtA.subarray(0, txtA.length - 4), Buffer.from("tail")]);
+  check("fallback: bytes after the last cut form a final payload", lift(Buffer.concat([txtA, noCut])).length === 2);
+  check("fallback: nothing after the last cut → no empty payload", lift(Buffer.concat([txtA, txtB])).length === 2);
+
+  // A look-alike cut inside raster data must NOT split the ticket: GS v 0 m xL=2 xH=0 yL=4 yH=0 → 8 data bytes
+  // (01 02, a cut-like 1d 56 41 00, 03 04).
+  const lookalike = Buffer.concat([
+    Buffer.from([0x1b, 0x40, 0x1d, 0x76, 0x30, 0x00, 0x02, 0x00, 0x04, 0x00, 0x01, 0x02]), CUT, Buffer.from([0x03, 0x04]),
+    Buffer.from("after raster\n"), CUT,
+  ]);
+  check("fallback: a cut-like byte run inside raster data is not a ticket boundary", splitEscPosAtCuts(new Uint8Array(lookalike)).length === 1);
+  check("fallback: the cut after the raster still splits", splitEscPosAtCuts(new Uint8Array(Buffer.concat([lookalike, lookalike]))).length === 2);
+
+  // Several jobs (two printers): each job split on its own, order preserved, each with its own width.
+  const multi = browserPayloadsOf(withBrowserPayloads(
+    { printJobs: [{ printerId: "p1", data: b64(Buffer.concat([txtA, txtB])) }, { printerId: "p2", data: b64(txtC) }] } as any,
+    (id) => (id === "p2" ? 32 : 48),
+  ));
+  check("fallback: multi-printer response → tickets flattened in order with per-printer widths",
+    multi.length === 3 && multi[0].width === 48 && multi[1].width === 48 && multi[2].width === 32);
+}
 
 let failed = 0;
 for (const [name, ok] of checks) {

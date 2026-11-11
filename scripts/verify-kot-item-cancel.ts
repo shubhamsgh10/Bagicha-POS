@@ -7,7 +7,8 @@
  * future refactor stops reusing it, this is the test that should catch it.
  * Run: npx tsx scripts/verify-kot-item-cancel.ts
  */
-import { findMissingKotCancelReasons, type CancelledKotItemInput } from "../shared/kotItemCancel";
+import { droppedKitchenItems, findMissingKotCancelReasons, type CancelledKotItemInput } from "../shared/kotItemCancel";
+import { isKotSkipped } from "../shared/kotStations";
 import type { SnapshotItem } from "../shared/kotDelta";
 
 const checks: Array<[string, boolean]> = [];
@@ -79,6 +80,40 @@ const item = (over: Partial<SnapshotItem> = {}): SnapshotItem => ({
   const current = [item({ serviceMode: "pickup" })];
   const missing = findMissingKotCancelReasons(current, last, []);
   checks.push(["pure serviceMode flip on KOT'd item: NOT treated as cancelled, no reason required", missing.length === 0]);
+}
+
+// 7. "Don't print on KOT" dishes (isSkipped) never reached the kitchen, so dropping one is no
+//    cancellation: no reason needed, and it is left out of droppedKitchenItems (which also feeds the
+//    order.item_cancel audit rows). A kitchen dish dropped in the same save still needs its reason.
+{
+  const water = item({ itemId: 9, name: "Mineral Water", quantity: 1 });
+  const paneer = item({ itemId: 1 });
+  const skipWater = (id: number) => id === 9;
+
+  const last = [paneer, water];
+  const current = [paneer]; // water removed
+  checks.push(["skipped dish removed: not a kitchen cancellation (droppedKitchenItems empty)", droppedKitchenItems(current, last, skipWater).length === 0]);
+  checks.push(["skipped dish removed: no reason required", findMissingKotCancelReasons(current, last, [], skipWater).length === 0]);
+  checks.push(["without the skip list the same removal IS a cancellation (guard unchanged)", findMissingKotCancelReasons(current, last, []).length === 1]);
+
+  const both = findMissingKotCancelReasons([], last, [], skipWater);
+  checks.push(["skipped + kitchen dish both removed: only the kitchen dish is reported", both.length === 1 && both[0].itemId === 1]);
+
+  const dropped = droppedKitchenItems([], last, skipWater);
+  checks.push(["audit list (droppedKitchenItems) excludes the skipped dish", dropped.length === 1 && dropped[0].itemId === 1]);
+
+  // A skipped dish whose mode flipped must not interfere with anything either.
+  const flipped = findMissingKotCancelReasons([item({ itemId: 9, serviceMode: "pickup" })], [item({ itemId: 9, serviceMode: "dinein" })], [], skipWater);
+  checks.push(["skipped dish mode flip: nothing missing", flipped.length === 0]);
+
+  // Open items (negative ids) are never skipped by isKotSkipped, so they keep the guard.
+  const open = item({ itemId: -123, name: "Open Item" });
+  const viaRules = (id: number) => isKotSkipped(id, undefined, { categoryIds: [3], itemIds: [9] });
+  checks.push(["open item removal still needs a reason", findMissingKotCancelReasons([], [open], [], viaRules).length === 1]);
+
+  // Category rule: the route resolves a dropped dish's category and feeds it through isKotSkipped.
+  const byCat = (id: number) => isKotSkipped(id, id === 9 ? 3 : 1, { categoryIds: [3], itemIds: [] });
+  checks.push(["dish in a skipped category removed: no reason required", findMissingKotCancelReasons(current, last, [], byCat).length === 0]);
 }
 
 let failed = 0;
