@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/Header";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -340,6 +341,7 @@ function DuesCustomerCard({ c, onEbill, onSettle, ebillPending, settlePending }:
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState("sales");
+  const isMobile = useIsMobile();
   // Cost/margin is sensitive business data (same tier as payroll) — never shown to staff.
   const role = useRole();
   const canSeeCost = role === "admin" || role === "manager";
@@ -645,23 +647,27 @@ export default function Reports() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--paper-50)]">
-      <Header title="Reports" description="Analytics and insights for your restaurant performance" />
+      <Header
+        title="Reports"
+        eyebrow={isMobile ? formatRangeLabel(dateRange.start, dateRange.end) : undefined}
+        description="Analytics and insights for your restaurant performance"
+      />
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
         {/* Toolbar */}
-        <div className="mb-6 flex justify-between items-center flex-wrap gap-3">
-          <div>
+        <div className="mb-6 max-sm:mb-4 flex justify-between items-center flex-wrap gap-3">
+          <div className="max-sm:hidden">
             <h2 className="text-xl font-semibold text-gray-800">Sales Analytics</h2>
             <p className="text-sm text-gray-500">{formatRangeLabel(dateRange.start, dateRange.end)}</p>
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-2 items-center max-sm:w-full max-sm:justify-between">
             <DateRangePicker value={dateRange} onChange={setDateRange} />
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handleExport}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium
                          bg-[var(--paper-0)] border border-[var(--line)] text-gray-600
-                         hover:bg-[var(--paper-0)] transition-all"
+                         hover:bg-[var(--paper-0)] transition-all max-sm:min-h-[44px]"
             >
               <Download className="w-4 h-4" /> Export
             </motion.button>
@@ -669,39 +675,39 @@ export default function Reports() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+        <div className="grid max-sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4 grid-cols-1 gap-5 max-sm:gap-2.5 mb-6 max-sm:mb-4">
           {statCards.map((card, i) => (
             <motion.div
               key={card.label}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05, duration: 0.2 }}
-              className="rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5
+              className={`rounded-2xl bg-[var(--paper-100)] border border-[var(--line)] shadow-md p-5 max-sm:p-3.5
                          hover:scale-[1.01] hover:shadow-xl hover:shadow-emerald-500/10 hover:bg-[var(--paper-0)]
-                         transition-all duration-200"
+                         transition-all duration-200 ${i === 0 ? "max-sm:col-span-2 max-sm:!bg-[var(--green-800)] max-sm:!border-[var(--green-800)]" : ""}`}
             >
               <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-gray-500">{card.label}</p>
-                  <p className="text-2xl font-bold text-gray-800 mt-0.5">{card.value}</p>
-                  <p className={`text-xs mt-1 ${card.subColor}`}>{card.sub}</p>
+                <div className="min-w-0">
+                  <p className={`text-sm text-gray-500 ${i === 0 ? "max-sm:!text-[var(--green-300)] max-sm:uppercase max-sm:text-[10px] max-sm:font-extrabold max-sm:tracking-widest" : "max-sm:text-[10px] max-sm:uppercase max-sm:font-extrabold max-sm:tracking-widest"}`}>{card.label}</p>
+                  <p className={`text-2xl font-bold text-gray-800 mt-0.5 ${i === 0 ? "max-sm:!text-[#F4F8F0] max-sm:text-[32px] max-sm:font-display max-sm:font-semibold" : "max-sm:text-xl"}`}>{card.value}</p>
+                  <p className={`text-xs mt-1 ${card.subColor} ${i === 0 ? "max-sm:!text-[rgba(244,248,240,0.72)]" : "max-sm:truncate"}`}>{card.sub}</p>
                 </div>
-                {card.icon}
+                <span className="max-sm:hidden">{card.icon}</span>
               </div>
             </motion.div>
           ))}
         </div>
 
         {/* Tabs */}
-        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex gap-1 mb-5 w-fit max-w-full overflow-x-auto">
+        <div className="rounded-xl bg-[var(--paper-100)] border border-[var(--line)] p-1 flex gap-1 mb-5 w-fit max-w-full overflow-x-auto scrollbar-hide max-sm:w-full max-sm:bg-transparent max-sm:border-0 max-sm:p-0 max-sm:gap-1.5 max-sm:mb-4">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition-all max-sm:rounded-full max-sm:min-h-[36px] max-sm:px-3.5 max-sm:text-xs max-sm:font-bold max-sm:border ${
                 activeTab === tab.id
-                  ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-[var(--paper-0)]"
+                  ? "bg-gradient-to-r from-[#226B43] to-[#1B4D33] text-white shadow-sm max-sm:border-[var(--green-800)]"
+                  : "text-gray-600 hover:bg-[var(--paper-0)] max-sm:bg-white max-sm:border-[var(--line-strong)] max-sm:text-[var(--text-1)]"
               }`}
             >
               {tab.label}
