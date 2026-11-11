@@ -41,6 +41,10 @@ import { composeCartInstructions, rehydrateSelections, splitPersistedInstruction
 import { markSettleClick, reportSlowSettle, type SettleClick } from "@/lib/slowSettle";
 import { saveSignature, canSkipSaveBeforeSettle, type LastSave } from "@/lib/settleSkip";
 import { describeApiError } from "@/lib/apiError";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { PosMobileHeader } from "@/components/pos-mobile/PosMobileHeader";
+import { PosMobileActionDock, type DockAction } from "@/components/pos-mobile/PosMobileActionDock";
+import { settleButtonLabel, cartTotalsHint } from "@/lib/posMobile";
 
 function POSTimer({ startedAt }: { startedAt: string }) {
   const getElapsed = (s: string) => {
@@ -259,14 +263,19 @@ export default function POS() {
   const [activeItemMode, setActiveItemMode] = useState<ItemServiceMode>("dinein");
   // Mobile tab: switch between menu and cart panels
   const [mobileTab, setMobileTab] = useState<"menu" | "cart">("menu");
-  // Mobile: collapse the cart order-summary (totals + action buttons) to browse more items
-  const [summaryOpen, setSummaryOpen] = useState(true);
+  // Compact phone layout (Compact POS design). Section POS keeps its own counter layout.
+  const isMobile = useIsMobile();
+  const compact = isMobile && !isSectionMode;
+  // Mobile: collapse the cart totals. In compact mode the action dock lives OUTSIDE this
+  // collapsible, so it starts (and stays) collapsed; Section POS keeps its actions inside
+  // and still auto-opens.
+  const [summaryOpen, setSummaryOpen] = useState(!compact);
   const prevHasItemsRef = useRef(false);
   useEffect(() => {
-    // Auto-open the summary when the cart goes from empty → has items
-    if (cartItems.length > 0 && !prevHasItemsRef.current) setSummaryOpen(true);
+    // Auto-open the summary when the cart goes from empty → has items (not in compact mode)
+    if (cartItems.length > 0 && !prevHasItemsRef.current && !compact) setSummaryOpen(true);
     prevHasItemsRef.current = cartItems.length > 0;
-  }, [cartItems.length]);
+  }, [cartItems.length, compact]);
   // Mobile customer autocomplete dropdown
   const [showMobileCustomerDropdown, setShowMobileCustomerDropdown] = useState(false);
   // Discount input ref (for re-focus after PIN unlock)
@@ -2017,6 +2026,38 @@ export default function POS() {
       {/* ═══════════════════════════════════════════════════════════════════════
            TOP BAR — Petpooja style
       ════════════════════════════════════════════════════════════════════════ */}
+      {compact && (
+        <PosMobileHeader
+          onBack={handleBackToTables}
+          title={posMode === "delivery" ? "Delivery" : posMode === "pickup" ? "Pickup" : (tableLabel ?? "Dine In")}
+          timer={isEditMode && existingOrder?.createdAt ? <POSTimer startedAt={existingOrder.createdAt} /> : undefined}
+          orderTypeLabel={(() => {
+            const ot = form.watch("orderType");
+            return ot === "delivery" ? "Delivery" : ot === "takeaway" ? "Pickup" : "Dine-in";
+          })()}
+          orderNumber={activeOrderId ? serialNum(activeOrderId) : undefined}
+          roleSwitcher={
+            <RoleSwitcher
+              activeRole={activeRole}
+              loginRole={loginRole}
+              secondsLeft={secondsLeft}
+              isElevated={isElevated}
+              onElevate={elevateRole}
+              onRevert={revertRole}
+            />
+          }
+          searchQuery={searchQuery}
+          onSearchChange={v => { setSearchQuery(v); setMobileTab("menu"); }}
+          guestName={form.watch("customerName") || ""}
+          guestPhone={form.watch("customerPhone") || ""}
+          onGuestNameChange={v => form.setValue("customerName", v)}
+          onGuestPhoneChange={v => form.setValue("customerPhone", v)}
+          onPickCustomer={c => { form.setValue("customerName", c.name); form.setValue("customerPhone", c.phone); }}
+          customers={uniqueCustomers}
+          dropdownLimit={CUSTOMER_DROPDOWN_LIMIT}
+        />
+      )}
+      {!compact && (
       <div className="shrink-0 relative z-40"
         style={{
           background: "var(--paper-0)",
@@ -2311,6 +2352,7 @@ export default function POS() {
           </div>}
         </div>
       </div>
+      )}
 
       {/* Section counter: big Eating Here/Parcel toggle — sets the mode NEW items are
           added as (per-item, same backend logic as tables; orders can mix both) */}
@@ -2526,7 +2568,7 @@ export default function POS() {
 
       {/* ── Mobile customer fill-up — outside overflow-hidden so dropdown isn't clipped.
            Hidden at section counters (anonymous walk-ups). ── */}
-      {!isSectionMode && <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
+      {!isSectionMode && !compact && <div className="md:hidden shrink-0 relative z-30 flex gap-2 px-3 py-2 border-b border-gray-100/60"
         style={{ background: "var(--paper-0)" }}>
         {(() => {
           const nameVal = form.watch("customerName") || "";
