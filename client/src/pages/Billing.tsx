@@ -30,6 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { serialNum } from "@/lib/orderDisplay";
 import { DayPicker } from "@/components/DayPicker";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { todayBusinessDate, businessDayRange } from "@shared/businessDay";
 import { deriveBillTotals } from "@shared/orderPricing";
 import { paymentLabel, isDueOrder } from "@shared/paymentSplit";
@@ -65,6 +66,7 @@ function ensureRazorpayScript(): Promise<boolean> {
 }
 
 export default function Billing() {
+  const isMobile = useIsMobile();
   const { toast } = useToast();
   const [payingOrder, setPayingOrder] = useState<any | null>(null);
   // An open due (served + unpaid) settles through the PIN-gated, audited settle-due route — the
@@ -477,6 +479,7 @@ export default function Billing() {
     <div className="flex-1 flex flex-col overflow-hidden">
       <Header
         title="Billing"
+        eyebrow={isMobile ? `${orders?.length || 0} pending payment${showAllPending ? " · all dates" : ""}` : undefined}
         description={showAllPending ? `${orders?.length || 0} orders pending payment (all dates)` : `${orders?.length || 0} orders pending payment`}
       />
 
@@ -496,7 +499,7 @@ export default function Billing() {
           </span>
           <button
             onClick={() => setShowAllPending(true)}
-            className="text-sm font-semibold text-amber-700 underline underline-offset-2 hover:text-amber-800 transition-colors shrink-0"
+            className="text-sm font-semibold text-amber-700 underline underline-offset-2 hover:text-amber-800 transition-colors shrink-0 max-sm:min-h-[44px] max-sm:px-2"
           >
             Show all
           </button>
@@ -511,9 +514,9 @@ export default function Billing() {
             <p className="text-muted-foreground text-sm">Ready and active orders will appear here</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             {orders?.map((order: any) => (
-              <Card key={order.id} className="bg-card shadow-sm hover:shadow-md transition-shadow">
+              <Card key={order.id} className="bg-card shadow-sm hover:shadow-md transition-shadow max-sm:rounded-2xl max-sm:border-[var(--line)]">
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <div>
@@ -592,7 +595,7 @@ export default function Billing() {
                     {order.paymentStatus !== "paid" && (
                       <Button
                         size="sm"
-                        className="flex-1 text-xs"
+                        className="flex-1 text-xs max-sm:h-11 max-sm:text-sm"
                         onClick={() => {
                           if (isDueOrder(order)) { setSettlingDue(order); return; }
                           setPayingOrder(order); setPaymentMethod(order.paymentMethod || "cash");
@@ -618,7 +621,7 @@ export default function Billing() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-xs"
+                      className="text-xs max-sm:h-11 max-sm:px-4 max-sm:text-sm"
                       onClick={() => fetchAndPrint(order)}
                     >
                       <Printer className="w-3 h-3 mr-1" />
