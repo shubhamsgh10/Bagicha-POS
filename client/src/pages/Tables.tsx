@@ -121,7 +121,10 @@ export default function Tables() {
     return () => mql.removeEventListener("change", sync);
   }, []);
   useEffect(() => {
-    if (!showSalesSplit) return;
+    // Phones: the split is a row that pushes the grid down, so closing it on an outside
+    // pointerdown moved the grid under the finger and the tap missed its target. There it
+    // closes only by tapping Sales again.
+    if (!showSalesSplit || isMobile) return;
     const onPointerDown = (e: PointerEvent) => {
       if (!salesRef.current?.contains(e.target as Node)) setShowSalesSplit(false);
     };
@@ -132,7 +135,7 @@ export default function Tables() {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [showSalesSplit]);
+  }, [showSalesSplit, isMobile]);
 
   const { data: liveStatus } = useQuery<{
     runningTables: number;
