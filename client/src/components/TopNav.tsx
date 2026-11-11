@@ -197,15 +197,23 @@ export function TopNav() {
             }}
           >
 
-            {/* Drawer header */}
-            <div className="flex items-center justify-between px-4 py-4 border-b border-[var(--line)]">
-              <div>
-                <p className="text-sm font-bold text-[var(--text-strong)]">{user?.username}</p>
-                <p className="text-xs text-[var(--text-3)] capitalize">{activeRole}</p>
+            {/* Drawer header — green panel with the wordmark (MobilePOS design) */}
+            <div className="flex items-start justify-between gap-3 px-4 pt-6 pb-4" style={{ background: "var(--green-800)", color: "#F4F8F0" }}>
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0">
+                  <img src={bagichaLogoImg} alt="" width={30} height={30} style={{ objectFit: "contain", mixBlendMode: "multiply" }} />
+                </span>
+                <div className="min-w-0">
+                  <div className="font-display text-[19px] font-semibold uppercase tracking-[0.18em] leading-none">Bagicha</div>
+                  <div className="font-mono text-[10px] mt-1.5 capitalize truncate" style={{ color: "var(--green-300)" }}>
+                    {user?.username} · {activeRole}
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="p-2 rounded-lg hover:bg-[var(--paper-100)] text-[var(--text-3)]"
+                aria-label="Close menu"
+                className="w-10 h-10 -mr-2 -mt-1 rounded-lg flex items-center justify-center hover:bg-white/10 shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -219,9 +227,9 @@ export function TopNav() {
                   <Link key={item.href} href={item.href}>
                     <div
                       onClick={() => setSidebarOpen(false)}
-                      className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-colors cursor-pointer ${
+                      className={`flex items-center gap-3 px-3 min-h-[48px] rounded-xl transition-colors cursor-pointer ${
                         active
-                          ? "bg-[var(--green-50)] text-[var(--green-800)]"
+                          ? "bg-[var(--success-bg)] text-[var(--green-800)]"
                           : "text-[var(--text-2)] hover:bg-[var(--paper-50)] hover:text-[var(--text-strong)]"
                       }`}
                     >
@@ -236,14 +244,22 @@ export function TopNav() {
               })}
             </nav>
 
-            {/* Logout */}
-            <div className="shrink-0 px-3 py-4 border-t border-[var(--line)]">
+            {/* Footer: who is signed in + logout */}
+            <div className="shrink-0 px-4 py-3 border-t border-[var(--line)] flex items-center gap-3">
+              <span className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0" style={{ background: "var(--info-bg)", color: "var(--ink-700)" }}>
+                {(user?.username ?? "?").slice(0, 2).toUpperCase()}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[13px] font-bold text-[var(--text-strong)] truncate">{user?.username}</span>
+                <span className="block text-[11px] text-[var(--text-3)] capitalize">{activeRole} · on shift</span>
+              </span>
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-colors"
+                aria-label="Logout"
+                className="w-11 h-11 rounded-xl border border-[var(--line)] bg-white flex items-center justify-center shrink-0 hover:bg-[var(--danger-bg)]"
+                style={{ color: "var(--clay-600)" }}
               >
-                <LogOut className="w-5 h-5" />
-                <span className="text-sm font-semibold">Logout</span>
+                <LogOut className="w-[18px] h-[18px]" />
               </button>
             </div>
           </div>
