@@ -7,6 +7,8 @@ import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, Wifi, Usb, TestTube2, CheckCircle2, X, ScanLine, Printer as PrinterIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { KitchenStationsSection, SkipKotSection, DEFAULT_STATIONS, DEFAULT_SKIP } from "@/components/print-settings/KitchenStationsSection";
+import type { KitchenStationsSettings, SkipKotSettings } from "@shared/print/types";
 
 // ── Types (mirror server/settingsStore.ts) ─────────────────────────────────────
 
@@ -40,6 +42,8 @@ interface KOTPrintSettings {
   kotStyle?: 'image' | 'text';
   /** categoryId (stringified) -> printerId; absent = default KOT printer. */
   categoryPrinterOverrides?: Record<string, string | null>;
+  kitchenStations?: KitchenStationsSettings;
+  skipKot?: SkipKotSettings;
 }
 
 interface PosSection {
@@ -88,6 +92,8 @@ const DEFAULT_KOT: KOTPrintSettings = {
   kotNumbering: true,
   kotStyle: 'image',
   categoryPrinterOverrides: {},
+  kitchenStations: DEFAULT_STATIONS,
+  skipKot: DEFAULT_SKIP,
 };
 
 const DEFAULT_BILL: BillPrintSettings = {
@@ -935,7 +941,14 @@ export function PrintSettingsPanel({
       );
       const cleanPs = {
         ...ps,
-        kot: { ...ps.kot, kotPrinterId: live(ps.kot.kotPrinterId), categoryPrinterOverrides: overrides },
+        kot: {
+          ...ps.kot,
+          kotPrinterId: live(ps.kot.kotPrinterId),
+          categoryPrinterOverrides: overrides,
+          kitchenStations: ps.kot.kitchenStations
+            ? { ...ps.kot.kitchenStations, stations: ps.kot.kitchenStations.stations.filter(s => s.name.trim() || s.categoryIds.length > 0) }
+            : undefined,
+        },
         bill: { ...ps.bill, billPrinterId: live(ps.bill.billPrinterId) },
       };
       const res = await apiRequest('PUT', '/api/settings', {
@@ -1060,6 +1073,14 @@ export function PrintSettingsPanel({
                 overrides={ps.kot.categoryPrinterOverrides ?? {}}
                 printers={ps.printers}
                 onChange={m => setKot('categoryPrinterOverrides', m)}
+              />
+              <KitchenStationsSection
+                value={ps.kot.kitchenStations}
+                onChange={v => setKot('kitchenStations', v)}
+              />
+              <SkipKotSection
+                value={ps.kot.skipKot}
+                onChange={v => setKot('skipKot', v)}
               />
               <ToggleRow label="Enable KOT Printing" checked={ps.kot.enabled} onChange={v => setKot('enabled', v)} />
               <ToggleRow
