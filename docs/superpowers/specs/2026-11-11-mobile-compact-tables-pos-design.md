@@ -34,7 +34,8 @@ mobile header gets this; that is intended and is the first piece of sub-project 
 **Stats strip.** One white rounded card split into 4 equal columns: Running · Free · Orders ·
 Sales (uppercase 10px label with a status dot, 15px bold value).
 - Running / Free toggle a client-side filter of the table grid (tap again to clear); the
-  active column gets the light-green background.
+  active column gets the light-green background. Running shows every occupied table
+  (running + billed); Free shows free tables.
 - Sales toggles the existing Cash / UPI / Due split (`showSalesSplit`), shown as a row of equal
   columns directly under the strip. Data stays `/api/live-status`.
 
@@ -67,8 +68,8 @@ section cards with `SectionOrdersFlyout`, loading skeleton, empty state, `LiveOr
 
 **Header row 1.** Back (40px square) · dark-green pill with the table name + mono timer
 (for pickup/delivery: the mode name, no timer) · small uppercase order-type chip · order
-number (mono, right-aligned, existing `serialNum`, keeps the long-press → settle handlers) ·
-RoleSwitcher.
+number (mono, right-aligned, plain text — the tap/long-press → settle handler stays on the
+cart bar's order chip) · RoleSwitcher.
 
 **Header row 2.** Search box (existing search state) · "Guest" button showing the entered
 name/phone or "Guest". Tapping it expands a row with the existing customer name and phone
@@ -98,7 +99,8 @@ get the green border/fill. Empty search shows "Nothing matches … use Open item
 
 **Bottom bar.** Menu | Cart (44px, icon + label, active = green) with a count badge on Cart.
 
-**Unchanged:** Section POS (`isSectionMode`) mobile layout, every dialog (settlement, cancel,
+**Unchanged:** Section POS (`isSectionMode`) mobile layout — except the two bars it shares with
+the normal phone POS (category chips, Menu | Cart bottom bar), which take the new look — every dialog (settlement, cancel,
 item cancel, PIN, hold, move/merge, edit item, open item), desktop layout.
 
 ## Testing
