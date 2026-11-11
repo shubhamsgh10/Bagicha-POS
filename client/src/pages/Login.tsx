@@ -4,12 +4,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
-import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Delete, ChevronLeft, ChevronsUp, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import bgImage from "@assets/Login Page Background.png";
 import pizzaBgImage from "@assets/Wood-Fire-Pizza.png";
+import { LoginBackdrop } from "@/components/LoginBackdrop";
 
 /* ─── Types ─── */
 interface LoginProps  { onLoginSuccess: () => void; }
@@ -82,11 +82,12 @@ function PinDots({ value, shake }: { value: string; shake: boolean }) {
 const PIN_KEYS = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
 
 function PinPad({
-  onDigit, onDelete, disabled,
+  onDigit, onDelete, disabled, compact,
 }: {
   onDigit: (d: string) => void;
   onDelete: () => void;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   useEffect(() => {
     if (disabled) return;
@@ -101,13 +102,20 @@ function PinPad({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [disabled, onDigit, onDelete]);
 
-  const keyStyle: React.CSSProperties = {
-    background:     "rgba(255,255,255,0.68)",
-    backdropFilter: "blur(10px)",
-    border:         "1px solid rgba(255,255,255,0.75)",
-    boxShadow:      "0 2px 8px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.95) inset",
-    borderRadius:   "16px",
-  };
+  const keyStyle: React.CSSProperties = compact
+    ? {
+        background:   "var(--paper-50)",
+        border:       "1px solid var(--line)",
+        boxShadow:    "none",
+        borderRadius: "14px",
+      }
+    : {
+        background:     "rgba(255,255,255,0.68)",
+        backdropFilter: "blur(10px)",
+        border:         "1px solid rgba(255,255,255,0.75)",
+        boxShadow:      "0 2px 8px rgba(0,0,0,0.07), 0 1px 0 rgba(255,255,255,0.95) inset",
+        borderRadius:   "16px",
+      };
 
   return (
     <div className="grid grid-cols-3 gap-2 sm:gap-2.5 w-full max-w-[280px] mx-auto">
@@ -116,7 +124,7 @@ function PinPad({
         if (k === "⌫") return (
           <motion.button key={i} whileTap={{ scale: 0.86 }} disabled={disabled}
             onClick={onDelete}
-            className="h-14 flex items-center justify-center text-gray-500 disabled:opacity-40 active:bg-red-50 transition-colors"
+            className={`${compact ? "h-[52px]" : "h-14"} flex items-center justify-center text-gray-500 disabled:opacity-40 active:bg-red-50 transition-colors`}
             style={keyStyle}
           >
             <Delete className="w-5 h-5" />
@@ -125,7 +133,7 @@ function PinPad({
         return (
           <motion.button key={i} whileTap={{ scale: 0.86 }} disabled={disabled}
             onClick={() => onDigit(k)}
-            className="h-14 text-[1.5rem] font-semibold text-gray-800 disabled:opacity-40 transition-colors"
+            className={`${compact ? "h-[52px]" : "h-14"} text-[1.5rem] font-semibold text-gray-800 disabled:opacity-40 transition-colors`}
             style={keyStyle}
           >
             {k}
@@ -323,10 +331,19 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
      m-auto avoids. */
   const compactWrap = (children: React.ReactNode, viewKey: string) => (
     <div key={viewKey} className="fixed inset-0 overflow-y-auto bg-white">
-      <div className="min-h-full flex flex-col items-center px-5 py-8">
-        <div className="m-auto w-full max-w-[22rem] flex flex-col items-center">
-          <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-4" style={{ width: 56, height: 56 }} />
-          <div className="w-full">
+      {/* Same chef picture as the splash; its own corner lockup is the logo (no second logo). */}
+      <LoginBackdrop />
+      {/* pb-36 keeps the card above the picture's bottom-right lockup on a normal phone. */}
+      <div className="relative z-10 min-h-full flex flex-col items-center px-5 pt-8 pb-36">
+        <div className="m-auto w-full max-w-[22rem]">
+          <div
+            className="w-full rounded-[22px] p-5"
+            style={{
+              background: "rgba(255,255,255,0.92)",
+              border: "1px solid var(--line)",
+              boxShadow: "0 2px 8px rgba(20,34,27,0.06)",
+            }}
+          >
             {children}
           </div>
         </div>
@@ -418,6 +435,7 @@ function StaffSelector({ onLoginSuccess }: LoginProps) {
             onDigit={d => setPin(p => p.length < 6 ? p + d : p)}
             onDelete={() => setPin(p => p.slice(0, -1))}
             disabled={loading}
+            compact
           />
         )}
         <button onClick={() => { setSelected(null); setPin(""); }}
@@ -573,13 +591,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   return (
     <div className="login-bg" style={{ backgroundImage: `url(${bgImage})` }}>
-      <div className="absolute inset-0 sm:hidden" style={{ backgroundImage: `url(${pizzaBgImage})`, backgroundSize: "cover", backgroundPosition: "center center", backgroundRepeat: "no-repeat" }} />
+      <LoginBackdrop className="sm:hidden" />
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 260, damping: 24 }}
         className="w-full max-w-[22rem] px-5 relative z-10">
+        {/* No separate logo: the picture behind the card already carries the BAGICHA lockup. */}
         <div className="flex flex-col items-center mb-6">
-          <img src={bagichaLogoImg} alt="Bagicha" className="login-logo-img mb-2" />
-          <p className="text-[11px] text-gray-400 uppercase tracking-[0.12em] font-medium">
+          <p className="text-[11px] text-gray-500 uppercase tracking-[0.12em] font-medium">
             Restaurant POS
           </p>
         </div>
