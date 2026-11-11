@@ -1665,6 +1665,19 @@ export default function POS() {
 
   const tableLabel = preselectedTableName || (preselectedTableId ? `Table ${preselectedTableId}` : null);
 
+  // Clear all: on a saved order only lines not yet saved can go — removing a line the kitchen
+  // already has needs its own cancel reason (× on the row); clearing everything used to make every
+  // later save fail with a 400.
+  const handleClearAll = () => {
+    if (activeOrderId) {
+      const kept = cartItems.filter(wasItemKotd);
+      setCartItems(kept);
+      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
+      return;
+    }
+    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
+  };
+
   const hasItems = cartItems.length > 0;
   const orderTypeLabel = { "dine-in": "Dine In", takeaway: "Pick Up", delivery: "Delivery" }[form.watch("orderType")] || "Dine In";
 
@@ -2875,6 +2888,40 @@ export default function POS() {
           }}>
 
           {/* Panel header */}
+          {compact && (
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2" style={{ background: "var(--paper-50)" }}>
+              <span className="text-[10.5px] font-extrabold uppercase tracking-[0.1em]" style={{ color: "var(--text-1)" }}>Order</span>
+              {activeOrderId && (
+                <button
+                  type="button"
+                  {...longPressHandlers(() => hasItems && setShowSettleDialog(true))}
+                  onClick={() => hasItems && setShowSettleDialog(true)}
+                  title="Tap or long-press for full details, settle, or Pay Later"
+                  className="font-mono text-[11px] font-bold rounded-md px-1.5 py-[3px] select-none"
+                  style={{ color: "var(--green-700)", background: "var(--success-bg)" }}
+                >
+                  {serialNum(activeOrderId)}
+                </button>
+              )}
+              <span className="flex-1" />
+              <button type="button" disabled={isOff("openItem")}
+                onClick={() => go("openItem", "Add Open Item", () => setShowOpenItemDialog(true))}
+                className="h-[34px] px-2.5 rounded-full flex items-center gap-1 text-[11.5px] font-bold bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ border: "1px dashed var(--green-600)", color: "var(--green-700)" }}>
+                <Plus className="w-[13px] h-[13px]" />Open item
+              </button>
+              {hasItems && (
+                <button type="button" disabled={isOff("clearCart")}
+                  onClick={() => go("clearCart", "Clear All Items", handleClearAll)}
+                  className="h-[34px] px-2 flex items-center gap-1 text-[11.5px] font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ color: "var(--danger)" }}>
+                  <Trash2 className="w-[13px] h-[13px]" />Clear
+                  {activeRole === "staff" && <Lock className="w-2.5 h-2.5" />}
+                </button>
+              )}
+            </div>
+          )}
+          {!compact && (
           <div className="px-3 py-2 shrink-0 flex items-center justify-between"
             style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-0)" }}>
             <div className="flex items-center gap-2">
@@ -2906,18 +2953,7 @@ export default function POS() {
               {hasItems && (
                 <button
                   disabled={isOff("clearCart")}
-                  onClick={() => go("clearCart", "Clear All Items", () => {
-                    // On a saved order, only lines not yet saved can go here — removing a line the
-                    // kitchen already has needs its own cancel reason (× on the row), and clearing
-                    // everything used to make every later save fail with a 400.
-                    if (activeOrderId) {
-                      const kept = cartItems.filter(wasItemKotd);
-                      setCartItems(kept);
-                      if (kept.length > 0) toast({ title: "Saved items kept", description: "Remove a saved item with × on its row — it needs a cancel reason." });
-                      return;
-                    }
-                    setCartItems([]); setDiscountPercent(0); setContainerCharge(0); setDeliveryCharge(0); pendingKotCancellationsRef.current = {};
-                  })}
+                  onClick={() => go("clearCart", "Clear All Items", handleClearAll)}
                   className="text-[10px] font-semibold rounded-md px-1.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:opacity-80"
                   style={{ color: "var(--danger)" }}
                 >
@@ -2928,9 +2964,10 @@ export default function POS() {
               )}
             </div>
           </div>
+          )}
 
           {/* Column headers — skipped at section counters (bigger rows carry their own layout) */}
-          {hasItems && !isSectionMode && (
+          {hasItems && !isSectionMode && !compact && (
             <div className="grid grid-cols-[auto_1fr_auto] gap-2 px-3 py-1 shrink-0"
               style={{ borderBottom: "1px solid var(--line)", background: "var(--paper-50)" }}>
               <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase w-[52px]">Qty</span>
@@ -3037,6 +3074,55 @@ export default function POS() {
                   </div>
                 </div>
               );
+              const renderCompactCartRow = (item: CartItem) => {
+                const kotd = wasItemKotd(item);
+                const qtyText = item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(1);
+                const meta = [
+                  item.addons.map(a => `+ ${a.name}`).join(", "),
+                  Object.entries(item.variants || {}).map(([g, v]) => `${g}: ${v}`).join(", "),
+                  item.extras || "",
+                  item.notes ? `📝 ${item.notes}` : "",
+                ].filter(Boolean).join(" · ") || `${fmt(item.totalPrice)} each · tap to edit`;
+                const openEdit = () => go("editItem", "Edit Item", () => (item.id > 0 ? openEditPicker(item) : openOpenItemEditor(item)));
+                return (
+                  <div key={item.cartKey} className="flex items-center gap-2 pl-2.5 pr-1 py-[5px] min-h-[52px] border-b" style={{ borderColor: "#F0EADC" }}>
+                    <div className="shrink-0 flex items-center rounded-[10px]" style={{ border: "1px solid var(--line)", background: "var(--paper-50)" }}>
+                      <button type="button" aria-label={`One less ${item.name}`}
+                        disabled={item.quantity <= 1 ? isOff(kotd ? "cancelKotItem" : "removeItem") : isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, item.quantity <= 1 ? -item.quantity : -1)}
+                        className="w-10 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "var(--text-2)" }}>
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="min-w-[16px] text-center font-mono text-[13px] font-bold tabular-nums" style={{ color: "var(--text-strong)" }}>{qtyText}</span>
+                      <button type="button" aria-label={`One more ${item.name}`} disabled={isOff("editItem")}
+                        onClick={() => bumpCartQty(item.cartKey, 1)}
+                        className="w-10 h-11 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" style={{ color: "var(--green-700)" }}>
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button type="button" disabled={isOff("editItem")} onClick={openEdit}
+                      className="flex-1 min-w-0 text-left py-0.5 flex flex-col gap-0.5 disabled:cursor-not-allowed">
+                      <span className="text-[13px] font-bold leading-tight truncate" style={{ color: "var(--text-strong)" }}>
+                        {item.name}{item.size ? ` (${item.size})` : ""}
+                        {item.id < 0 && (
+                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide rounded px-1 py-px align-middle" style={{ color: "var(--green-700)", background: "var(--green-50)", border: "1px solid var(--green-200)" }}>Open</span>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-[5px] text-[10.5px] min-w-0" style={{ color: "var(--text-2)" }}>
+                        <Edit2 className="w-2.5 h-2.5 shrink-0" style={{ color: "var(--green-700)" }} />
+                        <span className="truncate">{meta}</span>
+                      </span>
+                    </button>
+                    <span className="shrink-0 text-[13.5px] font-extrabold tabular-nums" style={{ color: "var(--text-strong)" }}>{fmt(item.totalPrice * item.quantity)}</span>
+                    <button type="button" aria-label={`Remove ${item.name}`} disabled={isOff(kotd ? "cancelKotItem" : "removeItem")}
+                      onClick={() => requestRemoveFromCart(item)}
+                      className="shrink-0 w-10 h-11 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed" style={{ color: "var(--text-2)" }}>
+                      <X className="w-[15px] h-[15px]" />
+                    </button>
+                  </div>
+                );
+              };
+              const rowRenderer = compact ? renderCompactCartRow : renderCartRow;
 
               if (cartItems.length === 0) return (
                 <div className="flex flex-col items-center justify-center text-center px-6 py-10">
@@ -3067,17 +3153,17 @@ export default function POS() {
                   delivery: { label: "🛵 Delivery", headerCls: "text-amber-700 border-amber-200 bg-amber-50"  },
                 };
                 return (
-                  <div className="p-3 space-y-3">
+                  <div className={compact ? "bg-white" : "p-3 space-y-3"}>
                     {(["dinein", "pickup", "delivery"] as const).map(mode => {
                       const modeItems = cartItems.filter(i => (i.serviceMode ?? "dinein") === mode);
                       if (modeItems.length === 0) return null;
                       const cfg = modeConfig[mode];
                       return (
                         <div key={mode}>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm mb-1.5 border ${cfg.headerCls}`}>
+                          <div className={compact ? `text-[10px] font-extrabold uppercase tracking-[0.1em] px-3 py-1 border-b ${cfg.headerCls}` : `text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm mb-1.5 border ${cfg.headerCls}`}>
                             {cfg.label}
                           </div>
-                          <div className="space-y-2">{modeItems.map(renderCartRow)}</div>
+                          <div className={compact ? "" : "space-y-2"}>{modeItems.map(rowRenderer)}</div>
                         </div>
                       );
                     })}
@@ -3085,7 +3171,7 @@ export default function POS() {
                 );
               }
 
-              return <div className="p-3 space-y-2">{cartItems.map(renderCartRow)}</div>;
+              return <div className={compact ? "bg-white" : "p-3 space-y-2"}>{cartItems.map(rowRenderer)}</div>;
             })()}
           </div>
 
