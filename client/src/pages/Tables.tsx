@@ -22,6 +22,8 @@ import { SectionOrdersFlyout } from "@/components/live-tables/SectionOrdersFlyou
 import { usePermission } from "@/hooks/usePermission";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { PinGuard } from "@/components/PinGuard";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { TablesMobileView } from "@/components/tables/TablesMobileView";
 import {
   type Table, SECTION_OPTIONS, statusConfig, fmt, RunningTimer, TableTimer, sectionLabel,
 } from "@/components/tables/tableShared";
@@ -38,6 +40,7 @@ export default function Tables() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { deliveryOrders, pickupOrders, sectionOrders } = useLiveOrders();
+  const isMobile = useIsMobile();
 
   const printTableBill = async (orderId: number) => {
     try {
@@ -265,6 +268,33 @@ export default function Tables() {
         />
       )}
 
+      {isMobile ? (
+        <TablesMobileView
+          tables={tables}
+          isLoading={isLoading}
+          grouped={grouped}
+          sectionOrder={sectionOrder}
+          liveStatus={liveStatus}
+          showSalesSplit={showSalesSplit}
+          onToggleSalesSplit={() => setShowSalesSplit(v => !v)}
+          salesRef={salesRef}
+          shiftFrom={shiftFrom}
+          deliveryOrders={deliveryOrders}
+          pickupOrders={pickupOrders}
+          posSections={posSections}
+          sectionOrders={sectionOrders}
+          onTableClick={handleTableClick}
+          onPrint={printTableBill}
+          onMove={t => go("moveTable", "Shift Table", () => setShiftFrom(t))}
+          onEdit={openEdit}
+          onDelete={handleDelete}
+          onAddTable={() => { setEditTable(null); setForm({ name: "", capacity: "4", section: "inner" }); setShowAdd(true); }}
+          onDelivery={() => navigate("/pos?mode=delivery")}
+          onPickup={() => navigate("/pos?mode=pickup")}
+          onSectionNewOrder={s => navigate(`/pos?section=${encodeURIComponent(s.id)}&sectionName=${encodeURIComponent(s.name)}`)}
+        />
+      ) : (
+        <>
       {/* ── Live Status Bar ────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 sm:px-4 py-2"
         style={{
@@ -662,6 +692,8 @@ export default function Tables() {
           );
         })}
       </main>
+        </>
+      )}
 
       {/* ── Add / Edit Table Dialog ────────────────────────────────────────────── */}
       <Dialog
