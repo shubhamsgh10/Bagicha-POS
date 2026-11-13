@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { persistOptions } from "./lib/queryPersistence";
+import { PERSIST_MAX_AGE_MS } from "./lib/persistPolicy";
 import * as Sentry from "@sentry/react";
 import { queryClient } from "./lib/queryClient";
 import { RealtimeProvider } from "./hooks/RealtimeProvider";
@@ -58,6 +59,12 @@ window.addEventListener("unhandledrejection", (event) => {
 // Desktop app only: saved screen data (IndexedDB) shows instantly at startup and during an
 // outage. Browsers/phones keep the plain provider and behave exactly as before.
 const persist = !!(window as any).electronAPI?.isElectron;
+// A query dropped from memory (default: 5 min unused) also drops out of the saved copy, so keep
+// them as long as the saved copy lives — else screens not opened recently aren't instant next start.
+if (persist) {
+  const defaults = queryClient.getDefaultOptions();
+  queryClient.setDefaultOptions({ ...defaults, queries: { ...defaults.queries, gcTime: PERSIST_MAX_AGE_MS } });
+}
 const tree = (
   <RealtimeProvider>
     <App />
