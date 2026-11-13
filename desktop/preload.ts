@@ -75,8 +75,8 @@ const electronAPI = {
 
   /** Is the window served by the local server? Falls back to the cloud client when it cannot start. */
   localStatus: (): Promise<LocalModeStatus> => ipcRenderer.invoke(IPC.LOCAL_STATUS),
-  /** Save the cloud URL + device token and relaunch into local mode. cloudUrl may be "" (main fills it in). */
-  enableLocalMode: (cfg: { cloudUrl: string; deviceToken: string }): Promise<LocalModeEnableResult> =>
+  /** Save the device token and relaunch into local mode. The app picks the cloud URL itself, never the page. */
+  enableLocalMode: (cfg: { deviceToken: string }): Promise<LocalModeEnableResult> =>
     ipcRenderer.invoke(IPC.LOCAL_ENABLE, cfg),
   /** Turn local mode off and relaunch as the normal cloud client. */
   disableLocalMode: (): Promise<LocalModeEnableResult> => ipcRenderer.invoke(IPC.LOCAL_DISABLE),

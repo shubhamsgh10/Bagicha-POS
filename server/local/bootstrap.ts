@@ -80,7 +80,8 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
   });
 
   app.get("/api/local/status", (_req, res) => {
-    res.json({ localMode: true, ...rt.worker.status() });
+    // nonce: the desktop supervisor only trusts a server that echoes its per-launch secret.
+    res.json({ localMode: true, nonce: process.env.BAGICHA_LOCAL_NONCE, ...rt.worker.status() });
   });
   app.post("/api/local/sync-now", requireAuth, async (_req, res) => {
     await rt.worker.pullNow(1500);

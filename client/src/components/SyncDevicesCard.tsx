@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiJson, getApiBaseUrl } from "@/lib/api";
+import { apiJson } from "@/lib/api";
 import type { LocalModeStatus } from "@shared/electron/ipc";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -43,8 +43,8 @@ export default function SyncDevicesCard() {
     if (!fresh || !desktop?.enableLocalMode) return;
     setLocalBusy(true);
     try {
-      // On the thin client the API base is the cloud URL; empty (same-origin) lets the app fill in the saved one.
-      const res = await desktop.enableLocalMode({ cloudUrl: getApiBaseUrl(), deviceToken: fresh.token });
+      // Only the token: the desktop app picks the cloud URL itself (host-config.json or its baked API base).
+      const res = await desktop.enableLocalMode({ deviceToken: fresh.token });
       if (res.ok) {
         toast({ title: "Local mode is on - the app is restarting" });
       } else {

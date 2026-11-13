@@ -8,6 +8,7 @@ import {
   LOCAL_READY_TIMEOUT_MS,
   LOCAL_CRASH_LIMIT,
   LOCAL_CRASH_WINDOW_MS,
+  isReadyStatusBody,
 } from "./localMode.js";
 
 export interface LocalServerOptions {
@@ -15,6 +16,8 @@ export interface LocalServerOptions {
   entry: string;
   env: NodeJS.ProcessEnv;
   port: number;
+  /** The BAGICHA_LOCAL_NONCE the child was given. */
+  nonce: string;
   readyTimeoutMs?: number;
   crashLimit?: number;
   crashWindowMs?: number;
@@ -26,8 +29,11 @@ export interface LocalServerOptions {
 
 export type StartOutcome = { ok: true } | { ok: false; reason: string };
 
-/** GET /api/local/status must answer 200 with { localMode: true } — /api/auth/context would also answer on a stray server. */
-export function probeLocalStatus(port: number, timeoutMs = 2000): Promise<boolean> {
+/**
+ * GET /api/local/status must answer 200 with { localMode: true, nonce } where nonce is this launch's
+ * secret - a stray listener on the port (or another app's local server) cannot pass it.
+ */
+export function probeLocalStatus(port: number, nonce: string, timeoutMs = 2000): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get({ hostname: "127.0.0.1", port, path: "/api/local/status", timeout: timeoutMs }, (res) => {
       let body = "";
@@ -35,7 +41,7 @@ export function probeLocalStatus(port: number, timeoutMs = 2000): Promise<boolea
       res.on("data", (c) => { if (body.length < 4096) body += c; });
       res.on("end", () => {
         if (res.statusCode !== 200) return resolve(false);
-        try { resolve(JSON.parse(body)?.localMode === true); } catch { resolve(false); }
+        try { resolve(isReadyStatusBody(JSON.parse(body), nonce)); } catch { resolve(false); }
       });
     });
     req.on("error", () => resolve(false));
@@ -123,7 +129,7 @@ export class LocalServer {
     if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = null;
     if (this.stopping || this.gaveUp) return;
-    void probeLocalStatus(this.o.port).then((ok) => {
+    void probeLocalStatus(this.o.port, this.o.nonce).then((ok) => {
       if (this.stopping || this.gaveUp) return;
       if (ok && this.proc) {
         const first = !this.ready;

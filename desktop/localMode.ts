@@ -1,6 +1,7 @@
 // Pure helpers for the thin client's "local mode" (shop PC runs the bundled server against its own
 // PGlite copy and forwards writes to the cloud — see server/local/*). No Electron, no I/O, so
 // scripts/verify-local-mode-config.ts can exercise every rule without a GUI.
+import { randomBytes, timingSafeEqual } from "crypto";
 
 /** What userData/host-config.json carries for local mode (other fields of that file are untouched). */
 export interface LocalHostSettings {
@@ -43,36 +44,67 @@ export type EnableResult =
   | { ok: true; cloudUrl: string; deviceToken: string }
   | { ok: false; error: string };
 
-/** Validates the renderer's `local:enable` request. `fallbackCloudUrl` fills in an empty cloudUrl. */
-export function validateEnableRequest(input: unknown, fallbackCloudUrl = ""): EnableResult {
+/**
+ * Resolves the `local:enable` request. The renderer supplies ONLY the device token: any `cloudUrl`
+ * it sends is ignored. The cloud URL is the one a human already put in host-config.json (e.g. a Vercel
+ * preview test), else the build-baked API base. Returns an error (and the caller writes nothing)
+ * when neither source is a valid URL.
+ */
+export function resolveEnableConfig(input: unknown, existingConfig: unknown, apiBaseEnv: string): EnableResult {
   if (!input || typeof input !== "object") return { ok: false, error: "Invalid request" };
-  const { cloudUrl, deviceToken } = input as { cloudUrl?: unknown; deviceToken?: unknown };
+  const { deviceToken } = input as { deviceToken?: unknown };
   if (!isValidDeviceToken(deviceToken)) {
     return { ok: false, error: "The device token must be 64 hex characters (copy it again from the Admin page)" };
   }
-  const url = normalizeCloudUrl(typeof cloudUrl === "string" && cloudUrl.trim() ? cloudUrl : fallbackCloudUrl);
+  const file = existingConfig && typeof existingConfig === "object" ? (existingConfig as Record<string, unknown>) : {};
+  const hand = typeof file.cloudUrl === "string" && file.cloudUrl.trim() ? file.cloudUrl : "";
+  const url = normalizeCloudUrl(hand || apiBaseEnv);
   if (!url) {
-    return { ok: false, error: "The cloud URL must be https://... (http:// is allowed only for localhost)" };
+    return { ok: false, error: "No valid cloud URL is configured for this app (https://... required; http:// only for localhost)" };
   }
   return { ok: true, cloudUrl: url, deviceToken: deviceToken.toLowerCase() };
 }
 
-/** Local settings out of a parsed host-config.json. `enabled` is false for any incomplete/invalid trio. */
-export function parseLocalHostSettings(file: unknown): { enabled: boolean; settings: LocalHostSettings | null; problem?: string } {
+/**
+ * Local settings out of a parsed host-config.json. `cloudUrl` comes from the file when a human set one,
+ * else `apiBaseEnv` (build-baked). `enabled` is false for any incomplete/invalid trio.
+ */
+export function parseLocalHostSettings(file: unknown, apiBaseEnv = ""): { enabled: boolean; settings: LocalHostSettings | null; problem?: string } {
   const f = file && typeof file === "object" ? (file as Record<string, unknown>) : {};
   if (f.localMode !== true) return { enabled: false, settings: null };
-  const cloudUrl = normalizeCloudUrl(f.cloudUrl);
-  if (!cloudUrl) return { enabled: false, settings: null, problem: "host-config.json: localMode is on but cloudUrl is missing or invalid" };
+  const raw = typeof f.cloudUrl === "string" && f.cloudUrl.trim() ? f.cloudUrl : apiBaseEnv;
+  const cloudUrl = normalizeCloudUrl(raw);
+  if (!cloudUrl) return { enabled: false, settings: null, problem: "host-config.json: localMode is on but the cloud URL is missing or invalid" };
   if (!isValidDeviceToken(f.deviceToken)) {
     return { enabled: false, settings: null, problem: "host-config.json: localMode is on but deviceToken is missing or invalid" };
   }
   return { enabled: true, settings: { localMode: true, cloudUrl, deviceToken: f.deviceToken.toLowerCase() } };
 }
 
+/** Fresh per-launch secret the local server echoes from /api/local/status so a stray listener cannot pass the probe. */
+export function newLocalNonce(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/** Constant-time nonce comparison; false for anything that is not a non-empty string equal to `expected`. */
+export function nonceMatches(expected: string, got: unknown): boolean {
+  if (typeof got !== "string" || !expected) return false;
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(got, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Readiness rule for a /api/local/status body: localMode true AND the launch nonce echoed back. */
+export function isReadyStatusBody(body: unknown, nonce: string): boolean {
+  if (!body || typeof body !== "object") return false;
+  const b = body as { localMode?: unknown; nonce?: unknown };
+  return b.localMode === true && nonceMatches(nonce, b.nonce);
+}
+
 /** Env keys the local server must never inherit (compared case-insensitively, as Windows does). */
 const STRIPPED_KEYS = [
   "DATABASE_URL", "DATABASE_CA_CERT", "BACKGROUND_JOBS", "SESSION_SECRET", "HOST",
-  "BAGICHA_EMBEDDED", "PRINT_BENCH", "VITE_DEV_SERVER_URL",
+  "BAGICHA_EMBEDDED", "PRINT_BENCH", "VITE_DEV_SERVER_URL", "BAGICHA_LOCAL_NONCE",
 ];
 
 export interface LocalChildEnvInput {
@@ -82,6 +114,8 @@ export interface LocalChildEnvInput {
   dataDir: string;
   port: string | number;
   sessionSecret: string;
+  /** Per-launch readiness nonce (never logged). */
+  nonce: string;
 }
 
 /**
@@ -109,6 +143,7 @@ export function buildLocalChildEnv(parent: NodeJS.ProcessEnv, o: LocalChildEnvIn
     PORT: String(o.port),
     HOST: "127.0.0.1",
     SESSION_SECRET: o.sessionSecret,
+    BAGICHA_LOCAL_NONCE: o.nonce,
   };
 }
 

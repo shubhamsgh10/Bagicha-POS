@@ -7,7 +7,10 @@ import path from "path";
 import {
   isValidDeviceToken,
   normalizeCloudUrl,
-  validateEnableRequest,
+  resolveEnableConfig,
+  newLocalNonce,
+  nonceMatches,
+  isReadyStatusBody,
   parseLocalHostSettings,
   buildLocalChildEnv,
   decideAfterExit,
@@ -36,31 +39,55 @@ for (const bad of ["http://app.vercel.app", "ftp://x.com", "https://u:p@x.com", 
   check(`cloud url ${JSON.stringify(bad)} rejected`, normalizeCloudUrl(bad) === null);
 }
 
-// ---- enable request ------------------------------------------------------------
-const okReq = validateEnableRequest({ cloudUrl: "https://app.vercel.app", deviceToken: TOKEN.toUpperCase() });
-check("valid enable request accepted (token lowercased)", okReq.ok && okReq.deviceToken === TOKEN && okReq.cloudUrl === "https://app.vercel.app");
-check("empty cloudUrl uses the fallback", (() => { const r = validateEnableRequest({ cloudUrl: "", deviceToken: TOKEN }, "https://fallback.app"); return r.ok && r.cloudUrl === "https://fallback.app"; })());
-check("empty cloudUrl and no fallback is rejected", !validateEnableRequest({ cloudUrl: "", deviceToken: TOKEN }).ok);
-check("bad token rejected", !validateEnableRequest({ cloudUrl: "https://a.app", deviceToken: "nope" }).ok);
-check("http non-loopback cloudUrl rejected", !validateEnableRequest({ cloudUrl: "http://a.app", deviceToken: TOKEN }).ok);
-check("non-object rejected", !validateEnableRequest(null).ok && !validateEnableRequest("x").ok);
-check("error text never contains the token", (() => { const r = validateEnableRequest({ cloudUrl: "http://a.app", deviceToken: TOKEN }); return !r.ok && !r.error.includes(TOKEN); })());
+// ---- enable request (the renderer sends only the token) ------------------------------
+const BAKED = "https://baked.example.app";
+const okReq = resolveEnableConfig({ deviceToken: TOKEN.toUpperCase() }, {}, BAKED);
+check("token-only request accepted (token lowercased), URL from the baked base", okReq.ok && okReq.deviceToken === TOKEN && okReq.cloudUrl === BAKED);
+check("renderer-supplied cloudUrl is ignored", (() => {
+  const r = resolveEnableConfig({ deviceToken: TOKEN, cloudUrl: "https://evil.example" }, {}, BAKED);
+  return r.ok && r.cloudUrl === BAKED;
+})());
+check("renderer cloudUrl cannot rescue a missing baked URL", !resolveEnableConfig({ deviceToken: TOKEN, cloudUrl: "https://evil.example" }, {}, "").ok);
+check("a hand-edited host-config cloudUrl wins over the baked base", (() => {
+  const r = resolveEnableConfig({ deviceToken: TOKEN }, { cloudUrl: "https://preview.vercel.app/" }, BAKED);
+  return r.ok && r.cloudUrl === "https://preview.vercel.app";
+})());
+check("renderer cloudUrl never beats the host-config one", (() => {
+  const r = resolveEnableConfig({ deviceToken: TOKEN, cloudUrl: "https://evil.example" }, { cloudUrl: "https://preview.vercel.app" }, BAKED);
+  return r.ok && r.cloudUrl === "https://preview.vercel.app";
+})());
+check("an invalid hand-edited cloudUrl is an error (no silent fallback to something else)", !resolveEnableConfig({ deviceToken: TOKEN }, { cloudUrl: "http://evil.example" }, BAKED).ok);
+check("no config and no baked URL is rejected", !resolveEnableConfig({ deviceToken: TOKEN }, {}, "").ok);
+check("http non-loopback baked URL rejected", !resolveEnableConfig({ deviceToken: TOKEN }, {}, "http://a.app").ok);
+check("http loopback baked URL accepted", resolveEnableConfig({ deviceToken: TOKEN }, {}, "http://127.0.0.1:9").ok);
+check("bad token rejected", !resolveEnableConfig({ deviceToken: "nope" }, {}, BAKED).ok);
+check("non-object rejected", !resolveEnableConfig(null, {}, BAKED).ok && !resolveEnableConfig("x", {}, BAKED).ok);
+check("error text never contains the token", (() => { const r = resolveEnableConfig({ deviceToken: TOKEN }, {}, ""); return !r.ok && !r.error.includes(TOKEN); })());
 
 // ---- host-config parsing -------------------------------------------------------
 check("localMode absent -> not enabled", !parseLocalHostSettings({ DATABASE_URL: "x" }).enabled);
 check("localMode false -> not enabled", !parseLocalHostSettings({ localMode: false, cloudUrl: "https://a.app", deviceToken: TOKEN }).enabled);
 check("valid trio -> enabled", (() => { const r = parseLocalHostSettings({ localMode: true, cloudUrl: "https://a.app/", deviceToken: TOKEN }); return r.enabled && r.settings?.cloudUrl === "https://a.app"; })());
+check("no cloudUrl in the file -> baked base is used", (() => { const r = parseLocalHostSettings({ localMode: true, deviceToken: TOKEN }, BAKED); return r.enabled && r.settings?.cloudUrl === BAKED; })());
+check("no cloudUrl in the file and no baked base -> disabled with a problem", (() => { const r = parseLocalHostSettings({ localMode: true, deviceToken: TOKEN }); return !r.enabled && !!r.problem; })());
 check("localMode on but no token -> disabled with a problem", (() => { const r = parseLocalHostSettings({ localMode: true, cloudUrl: "https://a.app" }); return !r.enabled && !!r.problem; })());
 check("localMode on but bad url -> disabled with a problem", (() => { const r = parseLocalHostSettings({ localMode: true, cloudUrl: "http://evil.example", deviceToken: TOKEN }); return !r.enabled && !!r.problem; })());
 check("non-object file -> not enabled", !parseLocalHostSettings(null).enabled && !parseLocalHostSettings("x").enabled);
 
 // ---- child env ------------------------------------------------------------------
+const NONCE = newLocalNonce();
+check("nonce is 32 hex chars and differs per call", /^[0-9a-f]{32}$/.test(NONCE) && newLocalNonce() !== NONCE);
+check("nonceMatches: right / wrong / missing / non-string / wrong length", nonceMatches(NONCE, NONCE) && !nonceMatches(NONCE, "0".repeat(32)) &&
+  !nonceMatches(NONCE, undefined) && !nonceMatches(NONCE, 5) && !nonceMatches(NONCE, NONCE + "0") && !nonceMatches("", ""));
+check("status body ready only with localMode:true and the nonce", isReadyStatusBody({ localMode: true, nonce: NONCE }, NONCE) &&
+  !isReadyStatusBody({ localMode: true }, NONCE) && !isReadyStatusBody({ localMode: true, nonce: "x" }, NONCE) &&
+  !isReadyStatusBody({ localMode: false, nonce: NONCE }, NONCE) && !isReadyStatusBody(null, NONCE));
 const parent: NodeJS.ProcessEnv = {
   DATABASE_URL: "postgres://prod", database_ca_cert: "x", BACKGROUND_JOBS: "on", SESSION_SECRET: "parent-secret",
   HOST: "0.0.0.0", BAGICHA_EMBEDDED: "1", PATH: "/bin", VITE_API_BASE_URL: "https://a.app",
 };
 const env = buildLocalChildEnv(parent, {
-  cloudUrl: "https://a.app", deviceToken: TOKEN, pgliteDir: "/u/localdb", dataDir: "/u", port: "5179", sessionSecret: "child-secret",
+  cloudUrl: "https://a.app", deviceToken: TOKEN, pgliteDir: "/u/localdb", dataDir: "/u", port: "5179", sessionSecret: "child-secret", nonce: NONCE,
 });
 check("child env has no DATABASE_URL", !("DATABASE_URL" in env) && !Object.keys(env).some((k) => k.toUpperCase() === "DATABASE_URL"));
 check("child env drops DATABASE_CA_CERT (any case)", !Object.keys(env).some((k) => k.toUpperCase() === "DATABASE_CA_CERT"));
@@ -72,6 +99,8 @@ check("child env keeps unrelated vars", env.PATH === "/bin");
 check("child env local-mode contract", env.BAGICHA_LOCAL_MODE === "1" && env.BAGICHA_DB === "pglite" && env.BAGICHA_PGLITE_DIR === "/u/localdb" &&
   env.BAGICHA_CLOUD_URL === "https://a.app" && env.BAGICHA_DEVICE_TOKEN === TOKEN && env.PORT === "5179" && env.NODE_ENV === "production" &&
   env.BAGICHA_DATA_DIR === "/u" && env.ELECTRON_RUN_AS_NODE === "1");
+check("child env carries the launch nonce", env.BAGICHA_LOCAL_NONCE === NONCE);
+check("a parent-supplied BAGICHA_LOCAL_NONCE cannot override it", buildLocalChildEnv({ ...parent, BAGICHA_LOCAL_NONCE: "parent" }, { cloudUrl: "https://a.app", deviceToken: TOKEN, pgliteDir: "/u/l", dataDir: "/u", port: 1, sessionSecret: "s", nonce: NONCE }).BAGICHA_LOCAL_NONCE === NONCE);
 check("server accepts the child env as a valid local-mode config", (() => {
   try { const c = readLocalModeConfig(env); return c.cloudUrl === "https://a.app" && c.deviceToken === TOKEN; } catch { return false; }
 })());
@@ -97,7 +126,9 @@ if (mode === "crash") process.exit(1);
 const delay = mode === "slow" ? Number(process.env.FAKE_DELAY || 0) : 0;
 setTimeout(() => {
   http.createServer((req, res) => {
-    if (req.url === "/api/local/status") { res.setHeader("content-type","application/json"); res.end(JSON.stringify({ localMode: mode === "notlocal" ? false : true })); }
+    if (req.url === "/api/local/status") { res.setHeader("content-type","application/json"); const body = { localMode: mode === "notlocal" ? false : true };
+      if (mode !== "nonce-missing") body.nonce = mode === "nonce-wrong" ? "0".repeat(32) : process.env.BAGICHA_LOCAL_NONCE;
+      res.end(JSON.stringify(body)); }
     else { res.statusCode = 404; res.end("{}"); }
   }).listen(Number(process.env.PORT), "127.0.0.1");
 }, delay);
@@ -114,8 +145,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mk = async (mode: string, extra: Record<string, string> = {}, opts: Partial<ConstructorParameters<typeof LocalServer>[0]> = {}) => {
   const port = await freePort();
   return { port, srv: new LocalServer({
-    execPath: process.execPath, entry: fake, port, stdio: "ignore", backoffScale: 0.01, log: () => {},
-    env: { ...process.env, PORT: String(port), FAKE_MODE: mode, ...extra }, ...opts,
+    execPath: process.execPath, entry: fake, port, nonce: NONCE, stdio: "ignore", backoffScale: 0.01, log: () => {},
+    env: { ...process.env, PORT: String(port), FAKE_MODE: mode, BAGICHA_LOCAL_NONCE: NONCE, ...extra }, ...opts,
   }) };
 };
 
@@ -124,16 +155,23 @@ async function main() {
     const { port, srv } = await mk("ok");
     const r = await srv.start();
     check("healthy child -> start() ok", r.ok === true && srv.isReady());
-    check("probe sees localMode:true", await probeLocalStatus(port));
+    check("probe accepts localMode:true with the right nonce", await probeLocalStatus(port, NONCE));
+    check("probe rejects the same server for a different nonce", !(await probeLocalStatus(port, newLocalNonce())));
     srv.stop();
     await sleep(300);
-    check("stop() frees the port", !(await probeLocalStatus(port, 500)));
+    check("stop() frees the port", !(await probeLocalStatus(port, NONCE, 500)));
   }
   {
     const { port, srv } = await mk("notlocal", {}, { readyTimeoutMs: 800 });
     const r = await srv.start();
     check("localMode:false server -> start() not ok", r.ok === false);
-    check("a server answering localMode:false is not ready", !(await probeLocalStatus(port)));
+    check("a server answering localMode:false is not ready", !(await probeLocalStatus(port, NONCE)));
+    srv.stop();
+  }
+  for (const bad of ["nonce-missing", "nonce-wrong"]) {
+    const { port, srv } = await mk(bad, {}, { readyTimeoutMs: 800 });
+    const r = await srv.start();
+    check(`server with ${bad} -> start() not ok, never ready`, r.ok === false && !srv.isReady() && !(await probeLocalStatus(port, NONCE)));
     srv.stop();
   }
   {
@@ -151,7 +189,7 @@ async function main() {
     const r = await srv.start();
     check("child slower than the limit -> start() reports not ready", r.ok === false && /not ready within/.test((r as any).reason), (r as any).reason);
     await sleep(2500);
-    check("...but is kept warming up and reports ready later", later && (await probeLocalStatus(port)));
+    check("...but is kept warming up and reports ready later", later && (await probeLocalStatus(port, NONCE)));
     srv.stop();
   }
   {

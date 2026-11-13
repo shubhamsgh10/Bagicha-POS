@@ -55,7 +55,7 @@ export interface ElectronAPI {
 
   // ── Local mode (missing in desktop builds before it existed) ─────────────
   localStatus?: () => Promise<LocalModeStatus>;
-  enableLocalMode?: (cfg: { cloudUrl: string; deviceToken: string }) => Promise<LocalModeEnableResult>;
+  enableLocalMode?: (cfg: { deviceToken: string }) => Promise<LocalModeEnableResult>;
   disableLocalMode?: () => Promise<LocalModeEnableResult>;
 
   // ── Biometric attendance device (K30 Pro) ─────────────────────────────────
