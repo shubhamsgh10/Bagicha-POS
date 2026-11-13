@@ -81,6 +81,7 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
+import { registerSyncRoutes } from "./sync/syncRoutes";
 import { priceOrderWithMenu, computeTotalsFromLines, type PricedOrder } from "./services/orderPricing";
 import { computeLineCosts } from "@shared/menuCost";
 import { menuPriceError, menuSizesError } from "@shared/menuValidation";
@@ -274,6 +275,10 @@ export async function registerRoutes(
   const broadcast = (data: any) => {
     void publishRealtime(data);
   };
+
+  // Local-first sync (shop PC): snapshot/pull/device tokens + SYNC_NUDGE on menu/settings/etc. writes.
+  // Registered here, before those routes, so its write-nudge middleware wraps them. Cloud (pg) only.
+  registerSyncRoutes(app, requireAdmin);
 
   // Unauthenticated liveness/diagnostic probes — nothing like this existed before, so an
   // uptime monitor (or a human debugging "is the deployment even up") had no endpoint to
