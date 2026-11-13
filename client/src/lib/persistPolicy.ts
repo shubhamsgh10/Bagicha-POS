@@ -9,6 +9,8 @@
 export const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Root paths (first element of the query key) that may be persisted. */
+// Accepted tradeoff: /api/auth/me and the customer directory (names/phones) are saved unencrypted;
+// shop PC only, encryption at rest planned for phase 3.
 const ALLOWED_ROOTS = new Set<string>([
   "/api/auth/me",
   "/api/menu",
