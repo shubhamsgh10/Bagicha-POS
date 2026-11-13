@@ -1,5 +1,5 @@
-import { pgTable, text, serial, integer, boolean, timestamp, decimal, json, uuid, real, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { pgTable, text, serial, bigserial, integer, boolean, timestamp, decimal, json, uuid, real, index, uniqueIndex, customType, char } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -933,3 +933,29 @@ export const restaurantSettings = pgTable("restaurant_settings", {
   settings:  json("settings").$type<Record<string, unknown>>().notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ── Local-first sync (migration: scripts/migrate-change-log.mjs; SQL in server/sync/changeLogSql.ts) ──
+// change_log is filled by triggers on the synced tables; sync_devices holds the shop PC's token hash.
+// Declared here only so `db:push` never proposes dropping them. Both have RLS on (no policies).
+const xid8 = customType<{ data: string }>({ dataType() { return "xid8"; } });
+
+export const changeLog = pgTable("change_log", {
+  seq:       bigserial("seq", { mode: "number" }).primaryKey(),
+  txid:      xid8("txid").notNull().default(sql`pg_current_xact_id()`),
+  tableName: text("table_name").notNull(),
+  rowId:     text("row_id").notNull(),
+  op:        char("op", { length: 1 }).notNull(),     // I | U | D
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  txidIdx: index("idx_change_log_txid").on(t.txid),
+  changedAtIdx: index("idx_change_log_changed_at").on(t.changedAt),
+})).enableRLS();
+
+export const syncDevices = pgTable("sync_devices", {
+  id:         serial("id").primaryKey(),
+  name:       text("name").notNull(),
+  tokenHash:  text("token_hash").notNull().unique(),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  revokedAt:  timestamp("revoked_at", { withTimezone: true }),
+}).enableRLS();
