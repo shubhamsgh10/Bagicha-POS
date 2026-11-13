@@ -42,8 +42,12 @@ const no: [string, readonly unknown[]][] = [
 ];
 for (const [n, k] of no) check(`does not persist ${n}`, !shouldPersistQuery(k, "success"));
 
-check("does not persist error status", !shouldPersistQuery(["/api/menu"], "error"));
-check("does not persist pending status", !shouldPersistQuery(["/api/menu"], "pending"));
+check("does not persist error status with no data", !shouldPersistQuery(["/api/menu"], "error", false));
+check("does not persist pending status", !shouldPersistQuery(["/api/menu"], "pending", false));
+// Offline: a failed refetch flips a loaded query to "error" but keeps its data — it must stay
+// saved, or a second restart during the same outage comes up empty.
+check("keeps saved data through a failed refetch", shouldPersistQuery(["/api/menu"], "error", true));
+check("failed refetch still respects the allow-list", !shouldPersistQuery(["/api/reports/sales"], "error", true));
 check("max age is 24h", PERSIST_MAX_AGE_MS === 24 * 60 * 60 * 1000);
 check("buster differs per version", persistBuster("1.0.41") !== persistBuster("1.0.42"));
 

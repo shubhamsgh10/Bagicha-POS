@@ -25,8 +25,10 @@ const ALLOWED_ROOTS = new Set<string>([
   "/api/orders/customers",
 ]);
 
-export function shouldPersistQuery(queryKey: readonly unknown[], status: string): boolean {
-  if (status !== "success") return false;
+// `hasData`: a failed refetch (offline) turns a loaded query into "error" but keeps its data;
+// that data must stay saved or a second restart during the same outage comes up empty.
+export function shouldPersistQuery(queryKey: readonly unknown[], status: string, hasData = status === "success"): boolean {
+  if (status !== "success" && !(status === "error" && hasData)) return false;
   const root = queryKey[0];
   if (typeof root !== "string" || !ALLOWED_ROOTS.has(root)) return false;
   // Whole order history is large and rarely needed offline.

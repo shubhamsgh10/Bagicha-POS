@@ -12,7 +12,7 @@ export const persistOptions: Omit<PersistQueryClientOptions, "queryClient"> = {
   persister,
   maxAge: PERSIST_MAX_AGE_MS,
   buster: persistBuster(CACHE_VERSION),
-  dehydrateOptions: { shouldDehydrateQuery: (q) => shouldPersistQuery(q.queryKey, q.state.status) },
+  dehydrateOptions: { shouldDehydrateQuery: (q) => shouldPersistQuery(q.queryKey, q.state.status, q.state.data !== undefined) },
 };
 
 /** Wipes the saved copy (logout). Never throws. */
