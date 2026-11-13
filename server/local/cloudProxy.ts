@@ -13,6 +13,8 @@ export interface CloudProxyOptions {
   /** The local principal for a freshly authenticated cloud user, or null if that row isn't synced (yet). */
   loadPrincipal: (kind: "user" | "staff", id: number) => Promise<any | null>;
   fetchImpl?: typeof fetch;
+  /** Vercel Deployment Protection bypass secret (sent as x-vercel-protection-bypass; never to the browser, never logged). */
+  bypassSecret?: string;
   /** Abort for the cloud round trip. Default 60 s (reports and prints can be slow). */
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -115,6 +117,7 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
           const timer = setTimeout(() => ac.abort(), LOGOUT_CLOUD_TIMEOUT_MS);
           try {
             const h: Record<string, string> = { cookie: oldCookie, "content-type": "application/json" };
+            if (opts.bypassSecret) h["x-vercel-protection-bypass"] = opts.bypassSecret;
             const up = await doFetch(`${opts.cloudUrl}${path}`, { method: "POST", headers: h, body: "{}", redirect: "manual", signal: ac.signal });
             if (up.status >= 200 && up.status < 300) {
               cloudBody = Buffer.from(await up.arrayBuffer());
@@ -142,6 +145,7 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
       }
       const cookie = cookieHeader(jar);
       if (cookie) headers.cookie = cookie;
+      if (opts.bypassSecret) headers["x-vercel-protection-bypass"] = opts.bypassSecret;
       const body = await requestBody(req);
       if (body) headers["content-length"] = String(body.length);
 

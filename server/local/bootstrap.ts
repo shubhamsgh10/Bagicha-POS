@@ -33,6 +33,7 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
     client: localClient,
     cloudUrl: cfg.cloudUrl,
     deviceToken: cfg.deviceToken,
+    bypassSecret: cfg.cloudBypass,
     onApplied: async (tables) => {
       if (tables.includes("users") || tables.includes("staff_members")) forgetAllPrincipals();
       if (tables.includes("tables")) forgetTableSections();
@@ -69,6 +70,7 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
 
   const proxy = createCloudProxy({
     cloudUrl: rt.cfg.cloudUrl,
+    bypassSecret: rt.cfg.cloudBypass,
     worker: rt.worker,
     loadPrincipal: async (kind, id) => {
       if (kind === "user") return (await storage.getUser(id)) ?? null;

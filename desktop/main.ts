@@ -146,6 +146,7 @@ async function startLocalMode(settings: LocalHostSettings): Promise<boolean> {
     const env = buildLocalChildEnv(process.env, {
       cloudUrl: settings.cloudUrl,
       deviceToken: settings.deviceToken,
+      cloudBypassSecret: settings.cloudBypassSecret,
       pgliteDir: path.join(userData, "localdb"),
       dataDir: userData,
       port: EMBEDDED_PORT,

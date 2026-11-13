@@ -11,6 +11,8 @@ export interface SyncWorkerOptions {
   client: PGlite;
   /** No trailing slash. */
   cloudUrl: string;
+  /** Vercel Deployment Protection bypass secret (never logged). */
+  bypassSecret?: string;
   deviceToken: string;
   fetchImpl?: typeof fetch;
   pullIntervalMs?: number;
@@ -75,7 +77,10 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
     const t = setTimeout(() => ac.abort(), timeoutMs);
     try {
       const res = await doFetch(`${cloudUrl}${path}`, {
-        headers: { Authorization: `Bearer ${deviceToken}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${deviceToken}`, Accept: "application/json",
+          ...(opts.bypassSecret ? { "x-vercel-protection-bypass": opts.bypassSecret } : {}),
+        },
         signal: ac.signal,
       });
       if (!res.ok) {

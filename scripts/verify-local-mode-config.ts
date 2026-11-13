@@ -13,6 +13,7 @@ import {
   isReadyStatusBody,
   parseLocalHostSettings,
   buildLocalChildEnv,
+  parseBypassSecret,
   decideAfterExit,
   readyTimedOut,
 } from "../desktop/localMode";
@@ -105,6 +106,31 @@ check("server accepts the child env as a valid local-mode config", (() => {
   try { const c = readLocalModeConfig(env); return c.cloudUrl === "https://a.app" && c.deviceToken === TOKEN; } catch { return false; }
 })());
 check("parent env untouched", parent.DATABASE_URL === "postgres://prod" && parent.BACKGROUND_JOBS === "on");
+
+// ---- Vercel protection bypass secret ----------------------------------------------
+check("bypass secret trimmed and accepted", parseBypassSecret("  abc123XYZ  ") === "abc123XYZ");
+for (const bad of ["a b", "a\tb", "a\nb", "a\u0001b", "x".repeat(257), "", "   ", 5, null]) {
+  check(`bypass secret ${JSON.stringify(bad)} rejected`, parseBypassSecret(bad) === null);
+}
+check("256-char bypass secret accepted", parseBypassSecret("x".repeat(256)) === "x".repeat(256));
+check("host config without cloudBypassSecret -> none", parseLocalHostSettings({ localMode: true, cloudUrl: "https://a.app", deviceToken: TOKEN }).settings?.cloudBypassSecret === undefined);
+check("host config with cloudBypassSecret -> parsed", parseLocalHostSettings({ localMode: true, cloudUrl: "https://a.app", deviceToken: TOKEN, cloudBypassSecret: " sec " }).settings?.cloudBypassSecret === "sec");
+check("invalid cloudBypassSecret -> local mode off with a problem", (() => { const r = parseLocalHostSettings({ localMode: true, cloudUrl: "https://a.app", deviceToken: TOKEN, cloudBypassSecret: "a b" }); return !r.enabled && !!r.problem && !r.problem.includes("a b"); })());
+const envB = buildLocalChildEnv({ ...parent, BAGICHA_CLOUD_BYPASS: "from-parent" }, { cloudUrl: "https://a.app", deviceToken: TOKEN, cloudBypassSecret: "sec", pgliteDir: "/u/l", dataDir: "/u", port: 1, sessionSecret: "s", nonce: NONCE });
+check("child env passes BAGICHA_CLOUD_BYPASS", envB.BAGICHA_CLOUD_BYPASS === "sec");
+check("a parent BAGICHA_CLOUD_BYPASS is not inherited when none configured", !("BAGICHA_CLOUD_BYPASS" in buildLocalChildEnv({ ...parent, BAGICHA_CLOUD_BYPASS: "from-parent" }, { cloudUrl: "https://a.app", deviceToken: TOKEN, pgliteDir: "/u/l", dataDir: "/u", port: 1, sessionSecret: "s", nonce: NONCE })));
+check("server reads BAGICHA_CLOUD_BYPASS into its config", (() => { try { return readLocalModeConfig(envB).cloudBypass === "sec" && readLocalModeConfig(env).cloudBypass === undefined; } catch { return false; } })());
+// local:enable only ever writes localMode + deviceToken (main.ts merges into the file): a hand-edited cloudUrl / secret survive.
+check("resolveEnableConfig keeps the hand-edited cloudUrl and never returns the secret", (() => {
+  const r = resolveEnableConfig({ deviceToken: TOKEN }, { cloudUrl: "https://preview.vercel.app", cloudBypassSecret: "sec" }, "https://prod.app");
+  return r.ok && r.cloudUrl === "https://preview.vercel.app" && !JSON.stringify(r).includes("sec");
+})());
+check("the enable merge leaves cloudUrl and cloudBypassSecret in the file", (() => {
+  const file = { cloudUrl: "https://preview.vercel.app", cloudBypassSecret: "sec", DATABASE_URL: "x" };
+  const merged: any = { ...file, localMode: true, deviceToken: TOKEN }; // exactly the patch main.ts writes
+  return merged.cloudUrl === file.cloudUrl && merged.cloudBypassSecret === "sec";
+})());
+check("main.ts writes only localMode + deviceToken on enable", /writeHostConfigFile\(\{ localMode: true, deviceToken: v\.deviceToken \}\)/.test(fs.readFileSync(path.join(process.cwd(), "desktop", "main.ts"), "utf8")));
 
 // ---- fallback rules ---------------------------------------------------------------
 check("not ready before 45 s", !readyTimedOut(1000, 1000 + 44_999));

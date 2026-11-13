@@ -9,6 +9,8 @@ export interface LocalHostSettings {
   /** Origin only, no trailing slash. */
   cloudUrl: string;
   deviceToken: string;
+  /** Optional Vercel Deployment Protection bypass secret (never logged, never sent to the renderer). */
+  cloudBypassSecret?: string;
 }
 
 export const LOCAL_READY_TIMEOUT_MS = 45_000;
@@ -65,6 +67,14 @@ export function resolveEnableConfig(input: unknown, existingConfig: unknown, api
   return { ok: true, cloudUrl: url, deviceToken: deviceToken.toLowerCase() };
 }
 
+/** Bypass secret rule: a single token, no whitespace / control characters, at most 256 chars. null = invalid. */
+export function parseBypassSecret(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const v = input.trim();
+  if (!v || v.length > 256 || /[\s\u0000-\u001f\u007f]/.test(v)) return null;
+  return v;
+}
+
 /**
  * Local settings out of a parsed host-config.json. `cloudUrl` comes from the file when a human set one,
  * else `apiBaseEnv` (build-baked). `enabled` is false for any incomplete/invalid trio.
@@ -78,7 +88,13 @@ export function parseLocalHostSettings(file: unknown, apiBaseEnv = ""): { enable
   if (!isValidDeviceToken(f.deviceToken)) {
     return { enabled: false, settings: null, problem: "host-config.json: localMode is on but deviceToken is missing or invalid" };
   }
-  return { enabled: true, settings: { localMode: true, cloudUrl, deviceToken: f.deviceToken.toLowerCase() } };
+  const settings: LocalHostSettings = { localMode: true, cloudUrl, deviceToken: f.deviceToken.toLowerCase() };
+  if (f.cloudBypassSecret !== undefined && f.cloudBypassSecret !== null && f.cloudBypassSecret !== "") {
+    const bypass = parseBypassSecret(f.cloudBypassSecret);
+    if (!bypass) return { enabled: false, settings: null, problem: "host-config.json: cloudBypassSecret is invalid (no spaces or control characters, max 256 characters)" };
+    settings.cloudBypassSecret = bypass;
+  }
+  return { enabled: true, settings };
 }
 
 /** Fresh per-launch secret the local server echoes from /api/local/status so a stray listener cannot pass the probe. */
@@ -104,12 +120,14 @@ export function isReadyStatusBody(body: unknown, nonce: string): boolean {
 /** Env keys the local server must never inherit (compared case-insensitively, as Windows does). */
 const STRIPPED_KEYS = [
   "DATABASE_URL", "DATABASE_CA_CERT", "BACKGROUND_JOBS", "SESSION_SECRET", "HOST",
-  "BAGICHA_EMBEDDED", "PRINT_BENCH", "VITE_DEV_SERVER_URL", "BAGICHA_LOCAL_NONCE",
+  "BAGICHA_EMBEDDED", "PRINT_BENCH", "VITE_DEV_SERVER_URL", "BAGICHA_LOCAL_NONCE", "BAGICHA_CLOUD_BYPASS",
 ];
 
 export interface LocalChildEnvInput {
   cloudUrl: string;
   deviceToken: string;
+  /** Optional Vercel protection bypass secret; passed as BAGICHA_CLOUD_BYPASS (never logged). */
+  cloudBypassSecret?: string;
   pgliteDir: string;
   dataDir: string;
   port: string | number;
@@ -139,6 +157,7 @@ export function buildLocalChildEnv(parent: NodeJS.ProcessEnv, o: LocalChildEnvIn
     BAGICHA_PGLITE_DIR: o.pgliteDir,
     BAGICHA_CLOUD_URL: o.cloudUrl,
     BAGICHA_DEVICE_TOKEN: o.deviceToken,
+    ...(o.cloudBypassSecret ? { BAGICHA_CLOUD_BYPASS: o.cloudBypassSecret } : {}),
     BAGICHA_DATA_DIR: o.dataDir,
     PORT: String(o.port),
     HOST: "127.0.0.1",

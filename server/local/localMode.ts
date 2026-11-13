@@ -7,6 +7,8 @@ export interface LocalModeConfig {
   /** No trailing slash. */
   cloudUrl: string;
   deviceToken: string;
+  /** Optional Vercel Deployment Protection bypass secret. */
+  cloudBypass?: string;
 }
 
 export function isLocalMode(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -27,5 +29,6 @@ export function readLocalModeConfig(env: NodeJS.ProcessEnv = process.env): Local
   if (problems.length) {
     throw new Error(`BAGICHA_LOCAL_MODE=1 needs: ${problems.join("; ")}`);
   }
-  return { pgliteDir, cloudUrl, deviceToken };
+  const cloudBypass = (env.BAGICHA_CLOUD_BYPASS ?? "").trim();
+  return { pgliteDir, cloudUrl, deviceToken, ...(cloudBypass ? { cloudBypass } : {}) };
 }

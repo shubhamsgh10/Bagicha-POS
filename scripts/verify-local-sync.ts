@@ -29,6 +29,7 @@ function listen(app: http.RequestListener): Promise<{ server: http.Server; url: 
   });
 }
 const TOKEN = "t".repeat(64);
+const BYPASS = "bypass-secret-123";
 
 async function main() {
   // ───────────────────────── stub cloud ─────────────────────────
@@ -114,7 +115,7 @@ async function main() {
   const lq = async (sql: string, params: any[] = []) => (await local.query<any>(sql, params)).rows;
   const applied: string[][] = [];
   const worker = createSyncWorker({
-    client: local, cloudUrl: cloudSrv.url, deviceToken: TOKEN, pullIntervalMs: 150, requestTimeoutMs: 2000, snapshotTimeoutMs: 5000,
+    client: local, cloudUrl: cloudSrv.url, deviceToken: TOKEN, bypassSecret: BYPASS, pullIntervalMs: 150, requestTimeoutMs: 2000, snapshotTimeoutMs: 5000,
     onApplied: (t) => { applied.push(t); }, log: () => {},
   });
   check("before start: no snapshot, no coverage", !worker.status().hasSnapshot && worker.coverageStart() === null);
@@ -122,6 +123,9 @@ async function main() {
   check("start() takes the first snapshot", worker.status().hasSnapshot && worker.status().online && (await lq(`SELECT count(*)::int AS n FROM users`))[0].n === 1);
   check("snapshot strips secrets (users.pin NULL, password '')", (await lq(`SELECT pin, password FROM users`))[0].pin === null && (await lq(`SELECT password FROM users`))[0].password === "");
   check("onApplied saw all synced tables after the snapshot", applied[0]?.length === SYNC_TABLES.length);
+  check("snapshot request carries x-vercel-protection-bypass", seen.filter((x) => x.path.startsWith("/api/sync/snapshot")).every((x) => x.headers["x-vercel-protection-bypass"] === BYPASS) && seen.some((x) => x.path.startsWith("/api/sync/snapshot")));
+  await sleep(400);
+  check("pull requests carry x-vercel-protection-bypass", seen.some((x) => x.path.startsWith("/api/sync/pull")) && seen.filter((x) => x.path.startsWith("/api/sync/pull")).every((x) => x.headers["x-vercel-protection-bypass"] === BYPASS));
   const cov = worker.coverageStart();
   check("coverageStart is ~3 days back", !!cov && Date.now() - cov.getTime() > 2.9 * 86400_000 && Date.now() - cov.getTime() < 3 * 86400_000);
 
@@ -188,7 +192,7 @@ async function main() {
     } catch (e) { done(e); }
   });
   const proxy = createCloudProxy({
-    cloudUrl: cloudSrv.url, worker, log: () => {},
+    cloudUrl: cloudSrv.url, worker, bypassSecret: BYPASS, log: () => {},
     loadPrincipal: async (kind, id) => {
       if (kind === "user") { const r = await lq(`SELECT id, username, role FROM users WHERE id=$1`, [id]); return r[0] ?? null; }
       const r = await lq(`SELECT id, name FROM staff_members WHERE id=$1`, [id]);
@@ -243,6 +247,8 @@ async function main() {
   seen.length = 0;
   const wr = await call("POST", "/api/orders", { orderNumber: "ZZTEST-W", notes: "from shop pc" }, { "idempotency-key": "k-123" });
   const writeSeen = seen.find((s) => s.path === "/api/orders")!;
+  check("proxied request carries x-vercel-protection-bypass", writeSeen.headers["x-vercel-protection-bypass"] === BYPASS);
+  check("the bypass secret never reaches the browser", !wr.text.includes(BYPASS) && ![...wr.headers.entries()].some(([, v]) => v.includes(BYPASS)));
   check("write forwarded with the cloud cookie and idempotency key", wr.status === 201 && wr.json?.echoedKey === "k-123" && String(writeSeen.headers.cookie).includes("connect.sid=cloud-sess-1"));
   check("cloud response headers pass (Idempotent-Replayed)", wr.headers.get("idempotent-replayed") === "false");
   const list = await call("GET", "/api/orders?open=true");
@@ -265,7 +271,7 @@ async function main() {
   const lo = await call("POST", "/api/auth/logout", {});
   check("logout is forwarded and signs out locally", lo.status === 200 && (await call("GET", "/api/auth/me")).json === null);
   const logoutSeen = seen.find((x) => x.path === "/api/auth/logout");
-  check("logout to the cloud carries the old cookie", !!logoutSeen && String(logoutSeen.headers.cookie).includes("connect.sid=cloud-sess-2"));
+  check("logout to the cloud carries the old cookie and the bypass header", !!logoutSeen && String(logoutSeen.headers.cookie).includes("connect.sid=cloud-sess-2") && logoutSeen.headers["x-vercel-protection-bypass"] === BYPASS);
 
   // not-yet-synced principal
   const gh = await call("POST", "/api/auth/login", { username: "ghost", password: "x" });
