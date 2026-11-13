@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
+import { clearPersistedCache } from "@/lib/queryPersistence";
 
 interface AuthUser {
   id: number;
@@ -22,6 +23,8 @@ export function useAuth() {
 
   const logout = async () => {
     await apiRequest("POST", "/api/auth/logout");
+    // Desktop app: wipe the saved screen data so the next person to sign in never sees it.
+    await clearPersistedCache();
     // Hard-reload: unmounts all components before they can refetch with an expired session.
     // Reloads the current URL (not a hardcoded "/login" — there is no such route; App.tsx shows
     // the Login panel purely from isAuthenticated state) so this also works under the Electron
