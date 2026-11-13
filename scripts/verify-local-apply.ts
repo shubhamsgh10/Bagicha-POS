@@ -20,7 +20,7 @@ function check(name: string, ok: boolean, detail = "") {
 async function main() {
   // ── drift check: committed generated schema == fresh generation ──
   const fresh = await renderLocalSchemaFile();
-  const committed = fs.readFileSync(LOCAL_SCHEMA_FILE, "utf8");
+  const committed = fs.readFileSync(LOCAL_SCHEMA_FILE, "utf8").split("\r\n").join("\n");
   check("schema.generated.ts matches a fresh generation (run scripts/gen-local-schema.ts if not)", fresh === committed);
   check("generated statements equal schemaStatements()", JSON.stringify(LOCAL_SCHEMA_STATEMENTS) === JSON.stringify(await schemaStatements()));
 
