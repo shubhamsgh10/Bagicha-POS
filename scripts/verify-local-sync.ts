@@ -261,8 +261,11 @@ async function main() {
   // card login (staff) + logout
   const cl = await call("POST", "/api/auth/card-login", { kind: "staff", id: 1, pin: "4321" });
   check("card-login (staff) signs in locally as the staff principal", cl.status === 200 && (await call("GET", "/api/auth/me")).json?.username === "Ravi");
+  seen.length = 0;
   const lo = await call("POST", "/api/auth/logout", {});
   check("logout is forwarded and signs out locally", lo.status === 200 && (await call("GET", "/api/auth/me")).json === null);
+  const logoutSeen = seen.find((x) => x.path === "/api/auth/logout");
+  check("logout to the cloud carries the old cookie", !!logoutSeen && String(logoutSeen.headers.cookie).includes("connect.sid=cloud-sess-2"));
 
   // not-yet-synced principal
   const gh = await call("POST", "/api/auth/login", { username: "ghost", password: "x" });
@@ -274,6 +277,31 @@ async function main() {
   const sid = (await lq(`SELECT sid FROM local_sessions WHERE sess->'passport' IS NOT NULL LIMIT 1`))[0]?.sid;
   const got: any = await new Promise((resolve) => store2.get(sid, (_e, s) => resolve(s)));
   check("sessions survive in PGlite (a fresh store reads the signed-in session)", got?.passport?.user === 1);
+
+  // cloud down: logout still signs out locally and answers 200
+  check("signed in again before the cloud-down logout test", (await call("GET", "/api/auth/me")).json?.username === "boss");
+  const proxyDown = createCloudProxy({
+    cloudUrl: "http://127.0.0.1:1", worker, log: () => {}, timeoutMs: 1000,
+    loadPrincipal: async () => null,
+  });
+  const downApp = express();
+  downApp.use(session({ secret: "test", resave: false, saveUninitialized: false, store: new PgliteSessionStore(local), cookie: { httpOnly: true, secure: false, sameSite: "lax", maxAge: 86400000 } }));
+  downApp.use(passport.initialize());
+  downApp.use(passport.session());
+  downApp.get("/api/auth/me", (req, res) => res.json(req.isAuthenticated() ? { id: (req.user as any).id } : null));
+  downApp.use("/api", (req, res, next) => proxyDown(req, res, next));
+  const downSrv = await listen(downApp);
+  const signedIn = await fetch(localSrv.url + "/api/auth/me", { headers: { cookie: browser } }).then((r) => r.json());
+  const loDown = await fetch(downSrv.url + "/api/auth/logout", { method: "POST", headers: { "content-type": "application/json", cookie: browser }, body: "{}" });
+  const loDownJson: any = await loDown.json().catch(() => null);
+  const afterCookie = (loDown.headers as any).getSetCookie().map((c: string) => c.split(";")[0]).join("; ");
+  const meAfter = await fetch(downSrv.url + "/api/auth/me", { headers: { cookie: afterCookie || browser } }).then((r) => r.json());
+  check("logout with the cloud unreachable answers 200 {success:true}", signedIn?.username === "boss" && loDown.status === 200 && loDownJson?.success === true, `${loDown.status} ${JSON.stringify(loDownJson)}`);
+  check("...and /api/auth/me is null afterwards", meAfter === null, JSON.stringify(meAfter) + " cookie=" + afterCookie);
+  const sidRow = (await lq(`SELECT count(*)::int AS n FROM local_sessions WHERE sess->'passport'->>'user' = '1'`))[0].n;
+  check("...the local session no longer holds the user", sidRow === 0, `rows=${sidRow}`);
+  downSrv.server.close();
+  (downSrv.server as any).closeAllConnections?.();
 
   // cloud down
   await new Promise<void>((r) => cloudSrv.server.close(() => r()));

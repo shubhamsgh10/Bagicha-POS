@@ -93,6 +93,7 @@ function login(req: Request, principal: any): Promise<void> {
 
 export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
   const doFetch = opts.fetchImpl ?? fetch;
+  const LOGOUT_CLOUD_TIMEOUT_MS = 5_000;
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const log = opts.log ?? ((m: string) => console.log(`[local-proxy] ${m}`));
 
@@ -101,6 +102,38 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
       const path = req.originalUrl.split("?")[0];
       const search = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
       const jar = (req.session as any)?.cloudCookies as CookieJar | undefined;
+
+      // Logout signs out LOCALLY first (this drops the cloud cookie jar with the session), then tells the
+      // cloud best-effort with the old cookies. A down cloud must never leave the person signed in.
+      if (req.method === "POST" && path === LOGOUT_PATH) {
+        const oldCookie = cookieHeader(jar);
+        await logout(req);
+        let cloudBody: Buffer | null = null;
+        let cloudType: string | null = null;
+        if (oldCookie) {
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), LOGOUT_CLOUD_TIMEOUT_MS);
+          try {
+            const h: Record<string, string> = { cookie: oldCookie, "content-type": "application/json" };
+            const up = await doFetch(`${opts.cloudUrl}${path}`, { method: "POST", headers: h, body: "{}", redirect: "manual", signal: ac.signal });
+            if (up.status >= 200 && up.status < 300) {
+              cloudBody = Buffer.from(await up.arrayBuffer());
+              cloudType = up.headers.get("content-type");
+            } else {
+              log(`logout at the cloud answered ${up.status} (signed out locally anyway)`);
+            }
+          } catch (err: any) {
+            log(`logout: cloud unreachable (${err?.name === "AbortError" ? "timeout" : err?.message ?? err}); signed out locally anyway`);
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+        if (cloudBody) {
+          if (cloudType) res.setHeader("content-type", cloudType);
+          return res.status(200).end(cloudBody);
+        }
+        return res.status(200).json({ success: true });
+      }
 
       const headers: Record<string, string> = {};
       for (const h of FORWARD_REQUEST_HEADERS) {
@@ -171,11 +204,6 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
         }
         await login(req, principal); // regenerates the session...
         if (nextJar) (req.session as any).cloudCookies = nextJar; // ...so the cloud cookies go in after
-        return sendUpstream();
-      }
-
-      if (req.method === "POST" && path === LOGOUT_PATH) {
-        await logout(req);
         return sendUpstream();
       }
 
