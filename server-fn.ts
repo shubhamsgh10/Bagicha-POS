@@ -108,6 +108,8 @@ app.use(passport.session());
 
 const ready = (async () => {
   await initSettings();
+  // Clients probe /api/local/status to detect shop-PC local mode; the cloud is never local.
+  app.all("/api/local/*", (_req, res) => res.status(404).json({ localMode: false }));
   // Refuse (503) rather than serve from built-in defaults if this instance never managed to
   // read the real settings — a cold instance on defaults priced orders at 18% and found "no
   // printer". Must precede every route. See server/settingsCache.ts.

@@ -154,6 +154,10 @@ app.use((req, res, next) => {
     await local.installLocalGate(app, runtime, requireAuth);
   } else {
     await initSettings();
+    // Clients probe /api/local/status to detect local mode. Answer it here: an unknown /api path
+    // otherwise falls through to Vite in dev, whose /api proxy points back at this same server
+    // and loops until the port range is exhausted (crashed the dev server).
+    app.all("/api/local/*", (_req, res) => res.status(404).json({ localMode: false }));
   }
   // Refuse (503) rather than serve from built-in defaults if the real settings never loaded.
   // Must precede every route. See server/settingsCache.ts.
