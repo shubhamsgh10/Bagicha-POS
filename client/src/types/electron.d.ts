@@ -11,6 +11,8 @@ import type {
   AttendanceTestResult,
   AttendanceStatus,
   PrintStationConfig,
+  LocalModeStatus,
+  LocalModeEnableResult,
 } from "@shared/electron/ipc";
 
 export interface ElectronAPI {
@@ -50,6 +52,11 @@ export interface ElectronAPI {
     orderId?: number;
     error?: string;
   }>>;
+
+  // ── Local mode (missing in desktop builds before it existed) ─────────────
+  localStatus?: () => Promise<LocalModeStatus>;
+  enableLocalMode?: (cfg: { cloudUrl: string; deviceToken: string }) => Promise<LocalModeEnableResult>;
+  disableLocalMode?: () => Promise<LocalModeEnableResult>;
 
   // ── Biometric attendance device (K30 Pro) ─────────────────────────────────
   attendance: {

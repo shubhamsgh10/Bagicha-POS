@@ -31,7 +31,28 @@ export const IPC = {
   // ── Print Station config (durable, file-backed — see printStationConfig.ts) ──
   PRINT_STATION_CONFIG_GET: "print-station-config:get",
   PRINT_STATION_CONFIG_SET: "print-station-config:set",
+
+  // -- Local mode (shop PC runs its own server + local copy - desktop/localMode.ts) --
+  LOCAL_STATUS: "local:status",
+  LOCAL_ENABLE: "local:enable",
+  LOCAL_DISABLE: "local:disable",
 } as const;
+
+// -- Local mode ---------------------------------------------------------------
+
+export interface LocalModeStatus {
+  /** The window is currently served by the local server on this PC. */
+  active: boolean;
+  /** host-config.json asks for local mode (valid cloud URL + device token). */
+  configured: boolean;
+  /** Why it is not active although configured, or why it was dropped for this run. */
+  reason?: string;
+}
+
+export interface LocalModeEnableResult {
+  ok: boolean;
+  error?: string;
+}
 
 // ── Print Station config ────────────────────────────────────────────────────
 
