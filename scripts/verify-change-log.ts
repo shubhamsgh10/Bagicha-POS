@@ -89,6 +89,18 @@ async function main() {
   const uRows = await q(fetchRowsSql("users"), [[uid]]);
   check("fetchRowsSql(users) strips secrets", uRows.length === 1 && !("totp_secret" in uRows[0].j) && uRows[0].j.password === "");
 
+  // attendance device token / comm key inside restaurant_settings never leave the server
+  await q(`DELETE FROM restaurant_settings`);
+  await q(`INSERT INTO restaurant_settings (id, settings) VALUES (1, $1::json)`,
+    [JSON.stringify({ taxRate: 5, attendanceDevice: { enabled: true, ip: "10.0.0.5", token: "DEVTOKENSECRET", commKey: 4321 } })]);
+  const rsRow = (await q(fetchRowsSql("restaurant_settings"), [[1]]))[0].j;
+  check("settings attendance token blanked", rsRow.settings.attendanceDevice.token === "" && !JSON.stringify(rsRow).includes("DEVTOKENSECRET"));
+  check("settings comm key blanked", rsRow.settings.attendanceDevice.commKey === 0 && !JSON.stringify(rsRow).includes("4321"));
+  check("other settings untouched", rsRow.settings.taxRate === 5 && rsRow.settings.attendanceDevice.ip === "10.0.0.5");
+  await q(`UPDATE restaurant_settings SET settings = $1::json WHERE id = 1`, [JSON.stringify({ taxRate: 5 })]);
+  const rsNoDevice = (await q(fetchRowsSql("restaurant_settings"), [[1]]))[0].j;
+  check("settings without attendanceDevice unchanged", rsNoDevice.settings.taxRate === 5 && !("attendanceDevice" in rsNoDevice.settings));
+
   // snapshot selectors
   await q(`DELETE FROM orders`); await q(`DELETE FROM order_items`); await q(`DELETE FROM kot_tickets`);
   const old = `now() - interval '10 days'`;

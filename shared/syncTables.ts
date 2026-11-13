@@ -15,6 +15,16 @@ export const SECRET_FILLS: Record<string, Record<string, string>> = {
   users: { password: "" },
 };
 
+/** Secrets nested inside a json column, blanked in place (path → replacement json). The attendance
+ *  device token/comm key live inside restaurant_settings.settings; GET /api/settings hides them from
+ *  non-owners and they must never reach a synced PC (its agent caches its own token). */
+export const NESTED_SECRETS: Record<string, Array<{ path: string[]; value: string }>> = {
+  restaurant_settings: [
+    { path: ["settings", "attendanceDevice", "token"], value: '""' },
+    { path: ["settings", "attendanceDevice", "commKey"], value: "0" },
+  ],
+};
+
 /** Orders created within this many days are in the first snapshot (plus every open one). */
 export const SNAPSHOT_ORDER_DAYS = 3;
 /** A pull with more changes than this tells the device to re-snapshot instead. */

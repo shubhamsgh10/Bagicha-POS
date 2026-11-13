@@ -1,6 +1,6 @@
 // SQL text shared by scripts/migrate-change-log.mjs, scripts/verify-change-log.ts (PGlite) and
 // the sync routes, so the three can't drift. Pure strings — no imports from db.
-import { SYNC_TABLES, SECRET_COLUMNS, SECRET_FILLS, SNAPSHOT_ORDER_DAYS } from "../../shared/syncTables";
+import { SYNC_TABLES, SECRET_COLUMNS, SECRET_FILLS, NESTED_SECRETS, SNAPSHOT_ORDER_DAYS } from "../../shared/syncTables";
 
 export const CHANGE_LOG_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS change_log (
@@ -63,6 +63,10 @@ export function rowJsonSql(table: string, alias = "t"): string {
   for (const c of SECRET_COLUMNS[table] ?? []) expr += ` - '${c}'`;
   const fills = SECRET_FILLS[table];
   if (fills) expr += ` || '${JSON.stringify(fills)}'::jsonb`;
+  // jsonb_set only replaces a path whose parent exists, so rows without attendanceDevice are unchanged.
+  for (const s of NESTED_SECRETS[table] ?? []) {
+    expr = `jsonb_set(${expr}, '{${s.path.join(",")}}', '${s.value}'::jsonb, false)`;
+  }
   return expr;
 }
 
