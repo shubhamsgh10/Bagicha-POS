@@ -85,7 +85,7 @@ const sessionMiddleware = session({
   resave: false,
   saveUninitialized: false,
   store: new PgSession({
-    pool,
+    pool: pool!,
     tableName: "sessions",
     createTableIfMissing: true,
     // No `UPDATE sessions SET expire = …` on every request. With rolling:false (the default) the
