@@ -8,6 +8,15 @@ import { dbSslConfig, stripSslParams } from "./dbSsl";
 const { Pool } = pkg;
 type Db = NodePgDatabase<typeof schema>;
 
+// Shop-PC local mode must NEVER reach the shared cloud database: it requires PGlite and drops
+// DATABASE_URL (which `-r dotenv/config` may have loaded from .env) before anything can use it.
+if (process.env.BAGICHA_LOCAL_MODE === "1") {
+  if (process.env.BAGICHA_DB !== "pglite") {
+    throw new Error("BAGICHA_LOCAL_MODE=1 requires BAGICHA_DB=pglite (refusing to open the cloud database)");
+  }
+  delete process.env.DATABASE_URL;
+}
+
 // BAGICHA_DB=pglite runs the same server code on an in-process Postgres (PGlite) for the
 // local-first shop PC. Unset = the shared cloud database on DATABASE_URL, as before.
 const USE_PGLITE = process.env.BAGICHA_DB === "pglite";

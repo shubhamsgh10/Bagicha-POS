@@ -4,7 +4,9 @@ import passport from "passport";
 import helmet from "helmet";
 import MemoryStore from "memorystore";
 import * as Sentry from "@sentry/node";
-import { registerRoutes } from "./routes";
+import { registerRoutes, requireAuth } from "./routes";
+import { localClient } from "./db";
+import { PgliteSessionStore } from "./local/sessionStore";
 import { initSettings, settingsGuard } from "./settingsStore";
 import { resolveSessionSecret } from "./sessionSecret";
 import { serverTiming } from "./serverTiming";
@@ -25,6 +27,9 @@ const MemoryStoreSession = MemoryStore(session);
 const app = express();
 
 const isProduction = process.env.NODE_ENV === "production";
+// Shop-PC local mode (BAGICHA_LOCAL_MODE=1): reads from PGlite, everything else forwarded to the cloud.
+// All of it lives in server/local/* and is loaded lazily; with the variable unset none of it runs.
+const localMode = process.env.BAGICHA_LOCAL_MODE === "1";
 
 // Fail fast if the session secret is missing in production (before any work).
 resolveSessionSecret();
@@ -90,13 +95,15 @@ const sessionMiddleware = session({
   secret: resolveSessionSecret(),
   resave: false,
   saveUninitialized: false,
-  store: new MemoryStoreSession({
-    checkPeriod: 86400000, // prune expired entries every 24h
-  }),
+  store: localMode && localClient
+    ? new PgliteSessionStore(localClient) // survives a restart of the local server
+    : new MemoryStoreSession({
+        checkPeriod: 86400000, // prune expired entries every 24h
+      }),
   cookie: {
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     httpOnly: true,
-    secure: isProduction,
+    secure: isProduction && !localMode, // local mode is plain http://localhost
     sameSite: "lax",
   },
 });
@@ -139,7 +146,15 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  await initSettings();
+  if (localMode) {
+    // Loads the local copy (taking the first snapshot if there is none), initialises settings from
+    // it, then mounts the read gate + cloud proxy. Must precede settingsGuard and every route.
+    const local = await import("./local/bootstrap");
+    const runtime = await local.bootLocalMode();
+    await local.installLocalGate(app, runtime, requireAuth);
+  } else {
+    await initSettings();
+  }
   // Refuse (503) rather than serve from built-in defaults if the real settings never loaded.
   // Must precede every route. See server/settingsCache.ts.
   app.use("/api", settingsGuard);
@@ -187,9 +202,14 @@ app.use((req, res, next) => {
 
   server.listen({
     port,
-    host: "0.0.0.0",
+    // Local mode holds the person's cloud session: loopback only.
+    host: localMode ? (process.env.HOST || "127.0.0.1") : "0.0.0.0",
   }, () => {
-    log(`serving on port ${port}`);
+    log(`serving on port ${port}${localMode ? " (local mode)" : ""}`);
+    if (localMode) {
+      console.log("[jobs] Local mode: background jobs, WhatsApp, outbound queue and print-station code never run here.");
+      return;
+    }
     // Background jobs run only when asked for (BACKGROUND_JOBS=on) — see server/backgroundJobs.ts.
     const jobs = backgroundJobsDecision(process.env);
     if (!jobs.on) {
