@@ -160,3 +160,46 @@ so the switch is contained to that file.
 - Raw `db.execute` result shape (`.rows`) must match between drivers (12 call sites).
 - PGlite performance and data-dir size on the shop PC.
 - Bill-number interleaving vs GST expectations (owner/accountant).
+
+## Phase 1 results (2026-11-14)
+
+Harness: `scripts/spike-pglite.ts` (manual, not in `test:pure`). Runs the real `storage` and `settingsStore` on in-memory PGlite 0.5.13 with `BAGICHA_DB=pglite`, no `.env`, `DATABASE_URL` deleted, `pool === null` asserted, schema built from `shared/schema.ts` (47 statements).
+
+**Result: 25/25 checks PASS, no hangs, no failures.**
+
+| Check | Result |
+|---|---|
+| Pool never created / PGlite client created | PASS |
+| Seed via storage (category, inventory, 2 menu items incl. sizes + inventoryLinks, table) | PASS |
+| `initSettings` seeds the missing settings row; consecutive `incrementBillCounter` | PASS |
+| 20 concurrent `incrementBillCounter` -> 20 distinct, span 19 | PASS |
+| `saveSettings` concurrent with 10 `incrementKotCounter` -> counter +10, not rolled back | PASS |
+| `createOrderWithItems` (order + 2 items + KOT) | PASS |
+| `replaceOrderItems` with KOT ticket | PASS |
+| `reconcileOrderInventory`: stock = 100 - 3 x 2.5; two concurrent runs leave it unchanged | PASS |
+| Two concurrent `settleOrderIfUnpaid` -> exactly one winner | PASS |
+| `findOrders`, `queryFingerprint` via `db.execute`, `getOpenTabsByCustomer`, `getDashboardStats`, `kotTicketsQuery`, `getOpenOrderStats` | PASS |
+
+Timings (ms, one run, in-memory, includes the 10 s hang guard that never fired):
+
+| Step | ms |
+|---|---|
+| seed (5 inserts) | 11.5 |
+| initSettings + 2 counters | 13.1 |
+| 20 concurrent counters | 21.8 |
+| saveSettings + 10 KOT counters | 33.3 |
+| createOrderWithItems | 15.2 |
+| replaceOrderItems | 15.4 |
+| reconcileOrderInventory x3 | 25.7 |
+| 2 concurrent settles | 8.2 |
+| reads (6 queries) | 51.7 |
+| getOrderById, avg of 50 sequential | 1.36 per call |
+| getMenuRowsForOrder, avg of 50 sequential | 1.45 per call |
+
+Compare ~35 ms per round trip to Supabase from the dev machine: a local read is about 25x cheaper and a whole order save about 15 ms. Not yet measured: on-disk data dir (`BAGICHA_PGLITE_DIR`) speed, cold start time, data-dir growth.
+
+**Hang-risk scan (transactions that use global `db` or a non-tx storage method inside the callback):** none found. Every `db.transaction` in `server/storage.ts` (576, 698, 1037, 1180, 1223, 1258, 2061), `server/settingsStore.ts` (449), `couponService.ts:192` and `loyaltyService.ts:134` uses only `tx`; the two `this.recordStockMovement(...)` calls inside transactions (storage.ts 581-ish and 705) pass `tx`. `advisoryXactLock*` only builds SQL. Keep this rule for new code: never call a storage method without passing `tx` inside a transaction.
+
+**Driver-shape differences:** `db.execute()` on PGlite returns `{ rows, fields, command, affectedRows, rowCount }` (not an array), so every existing `.rows` access works unchanged (storage.ts 481, 586, 660, 857; settingsStore.ts 397; dbEtag.ts). `.rowCount` is present too. The remaining difference is `server/db.ts` exporting `pool` as `null` in local mode: any code importing `pool` must null-check (a grep found no `pool.query/connect` outside `db.ts`, `dbSsl.ts`, `settingsCache.ts` comments). `db.ts` needs top-level await, which `tsc` rejects without a target (handled with `@ts-ignore`; tsx/esbuild ESM run it).
+
+**Verdict:** the plan holds. The real storage layer, atomic counters (single-statement UPDATE...RETURNING), `saveSettings` FOR UPDATE, advisory locks, concurrency guards (`settleOrderIfUnpaid`, reconcile idempotency) and the ETag fingerprint all behave correctly on PGlite and are fast. PGlite serializes everything through one connection, which is correct for a single shop PC. Phase 3 must: (1) keep the "tx only inside transactions" rule (a violation deadlocks instead of merely being slow); (2) null-check `pool`; (3) run the migrations/seed path for the on-disk dir (the spike built the schema from `shared/schema.ts` each run); (4) measure the on-disk dir and cold start; (5) still exercise the routes/session/Pusher stack and the Baileys/background workers, which this spike did not touch.
