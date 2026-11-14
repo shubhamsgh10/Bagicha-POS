@@ -4,9 +4,12 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 import * as E from "../shared/print/escpos.js";
 import { formatISTDateTime } from "../shared/print/formatDate.js";
-import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig, type PrintStationConfig } from "../shared/electron/ipc.js";
+import { IPC, type PrintJob, type PrintTestPayload, type AttendanceDeviceConfig, type PrintStationConfig, type LocalModeStatus, type LocalModeEnableResult } from "../shared/electron/ipc.js";
+import { buildLocalChildEnv, newLocalNonce, parseLocalHostSettings, resolveEnableConfig, type LocalHostSettings } from "./localMode.js";
+import { LocalServer } from "./localServer.js";
 import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
@@ -53,11 +56,164 @@ let mainWindow: BrowserWindow | null = null;
 const IS_EMBEDDED = process.env.BAGICHA_EMBEDDED === "1";
 const EMBEDDED_PORT = process.env.BAGICHA_PORT || "5179";
 const EMBEDDED_URL = `http://localhost:${EMBEDDED_PORT}`;
+// Local mode loads the exact address the readiness probe and the child's bind use.
+const LOCAL_URL = `http://127.0.0.1:${EMBEDDED_PORT}`;
 
 let serverProc: ChildProcess | null = null;
 let serverStopping = false;
 let serverRestarts = 0;
 let embeddedReady = false;
+
+// -- Local mode (thin client + its own server and local copy of the data) ------
+// host-config.json { localMode, cloudUrl, deviceToken } makes THIS PC run the bundled server in
+// local mode (server/local/*, reads from PGlite, writes forwarded to the cloud) and load the window
+// from it. The host (embedded) build ignores it. If the local server cannot start or keeps crashing
+// the window falls back to the normal cloud client for that run - the shop is never stuck.
+let localServer: LocalServer | null = null;
+let localActive = false;
+let localPending = false;
+let localReason: string | undefined;
+/** Per-launch secret shared with the local server child (BAGICHA_LOCAL_NONCE); never logged. */
+let localNonce = "";
+
+function hostConfigPath(): string {
+  return path.join(app.getPath("userData"), "host-config.json");
+}
+
+function readHostConfigFile(): Record<string, unknown> {
+  try {
+    const p = hostConfigPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+    }
+  } catch (e) {
+    console.warn("[electron] host-config.json read failed:", e);
+  }
+  return {};
+}
+
+/** Merges `patch` into host-config.json (other fields untouched); atomic, owner-only where the OS allows. */
+function writeHostConfigFile(patch: Record<string, unknown>): void {
+  const next = { ...readHostConfigFile(), ...patch };
+  const p = hostConfigPath();
+  const tmp = `${p}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { encoding: "utf-8", mode: 0o600 });
+  fs.renameSync(tmp, p);
+}
+
+/** Random secret for the local server's session cookies, created once and kept in userData (never logged). */
+function localSessionSecret(): string {
+  const p = path.join(app.getPath("userData"), "local-session-secret");
+  try {
+    const existing = fs.readFileSync(p, "utf-8").trim();
+    if (existing.length >= 32) return existing;
+  } catch { /* create below */ }
+  const secret = crypto.randomBytes(32).toString("hex");
+  fs.writeFileSync(p, secret, { encoding: "utf-8", mode: 0o600 });
+  return secret;
+}
+
+/** Local mode applies to the thin-client build only (not the host build); dev needs BAGICHA_LOCAL_DEV=1. */
+function localModeAllowed(): boolean {
+  return !IS_EMBEDDED && (!isDev || process.env.BAGICHA_LOCAL_DEV === "1");
+}
+
+function localSettings(): { settings: LocalHostSettings | null; problem?: string } {
+  const r = parseLocalHostSettings(readHostConfigFile(), API_BASE_ENV);
+  return { settings: r.enabled ? r.settings : null, problem: r.problem };
+}
+
+function dropLocalMode(reason: string): void {
+  console.warn(`[electron] local mode off for this run: ${reason}`);
+  localActive = false;
+  localReason = reason;
+  printerCache = null; // the cloud session is a different cookie jar
+  try { localServer?.stop(); } catch { /* ignore */ }
+  localServer = null;
+}
+
+/** Starts the local server child; true when the window should load it. Never throws. */
+async function startLocalMode(settings: LocalHostSettings): Promise<boolean> {
+  try {
+    const entry = path.join(app.getAppPath(), "dist", "index.js");
+    if (!fs.existsSync(entry)) {
+      dropLocalMode("this build has no server bundle (dist/index.js)");
+      return false;
+    }
+    const userData = app.getPath("userData");
+    localNonce = newLocalNonce();
+    const env = buildLocalChildEnv(process.env, {
+      cloudUrl: settings.cloudUrl,
+      deviceToken: settings.deviceToken,
+      cloudBypassSecret: settings.cloudBypassSecret,
+      pgliteDir: path.join(userData, "localdb"),
+      dataDir: userData,
+      port: EMBEDDED_PORT,
+      sessionSecret: localSessionSecret(),
+      nonce: localNonce,
+    });
+    localServer = new LocalServer({ execPath: process.execPath, entry, env, port: Number(EMBEDDED_PORT), nonce: localNonce });
+    localServer.onGaveUp = (reason) => {
+      dropLocalMode(reason);
+      loadThinClient();
+    };
+    localServer.onReadyLater = () => {
+      localReason = "the local server finished starting after the time limit - restart the app to use it";
+      console.log(`[electron] ${localReason}`);
+    };
+    console.log(`[electron] starting local server on ${LOCAL_URL}...`);
+    const res = await localServer.start();
+    if (!res.ok) {
+      // A server still warming up (first snapshot) is left running in the background; anything else is stopped.
+      if (/not ready within/.test(res.reason)) { localActive = false; localReason = res.reason; }
+      else dropLocalMode(res.reason);
+      return false;
+    }
+    localActive = true;
+    localReason = undefined;
+    console.log("[electron] local server ready");
+    return true;
+  } catch (e: any) {
+    dropLocalMode(e?.message ?? String(e));
+    return false;
+  }
+}
+
+/** The normal cloud client (file:// + baked API URL), or the dev server in dev. */
+function loadThinClient(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (isDev) {
+    void mainWindow.loadURL(DEV_URL).catch((e) => console.error("[electron] loadURL failed:", e));
+    return;
+  }
+  try {
+    void mainWindow.loadFile(resolveIndexHtml());
+  } catch (e) {
+    console.error("[electron] loadFile failed:", e);
+  }
+}
+
+function isTrustedSender(e: Electron.IpcMainInvokeEvent): boolean {
+  const url = e.senderFrame?.url ?? "";
+  if (url.startsWith("file://")) return true;
+  try {
+    const origin = new URL(url).origin;
+    if ((localActive || localPending) && origin === new URL(LOCAL_URL).origin) return true;
+    return origin === new URL(EMBEDDED_URL).origin || (isDev && origin === new URL(DEV_URL).origin);
+  } catch {
+    return false;
+  }
+}
+
+function relaunchSoon(): void {
+  // Let the IPC reply reach the renderer, stop the child (app.exit skips will-quit), then restart.
+  setTimeout(() => {
+    try { localServer?.stop(); } catch { /* ignore */ }
+    app.relaunch();
+    app.exit(0);
+  }, 300);
+}
 
 /** DB creds: userData/host-config.json (admin-editable) overrides build-injected values. */
 function resolveHostConfig(): { DATABASE_URL?: string; SESSION_SECRET?: string } {
@@ -217,6 +373,7 @@ function stopEmbeddedServer(): void {
 
 /** Where to load printer settings (session cookies must match this origin). */
 function resolveApiBase(): string {
+  if (localActive) return LOCAL_URL; // the local server holds the session cookie
   if (isDev) return new URL(DEV_URL).origin;
   if (IS_EMBEDDED) return EMBEDDED_URL;
   if (API_BASE_ENV) return API_BASE_ENV.replace(/\/$/, "");
@@ -385,8 +542,16 @@ async function createWindow() {
     revealWindow();
   });
 
-  const remoteUrl = isDev ? DEV_URL : IS_EMBEDDED && embeddedReady ? EMBEDDED_URL : null;
-  if (remoteUrl) {
+  const remoteUrl = localActive ? LOCAL_URL : isDev ? DEV_URL : IS_EMBEDDED && embeddedReady ? EMBEDDED_URL : null;
+  if (localPending) {
+    // Local server still starting (first start may download a snapshot): show a plain page, not a blank window.
+    const splash =
+      "<body style='margin:0;display:flex;align-items:center;justify-content:center;height:100vh;" +
+      "font-family:system-ui,sans-serif;background:#f8fafc;color:#334155'><div style='text-align:center'>" +
+      "<div style='font-size:22px;font-weight:600'>Bagicha POS</div>" +
+      "<div style='margin-top:8px;font-size:14px'>Starting this PC's local server...</div></div></body>";
+    void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splash)}`);
+  } else if (remoteUrl) {
     mainWindow
       .loadURL(remoteUrl)
       .then(() => {
@@ -442,10 +607,22 @@ if (!gotLock) {
     if (IS_EMBEDDED) {
       embeddedReady = await startEmbeddedServer();
     }
+    const local = localModeAllowed() ? localSettings() : { settings: null as LocalHostSettings | null, problem: undefined as string | undefined };
+    if (local.problem) { localReason = local.problem; console.warn(`[electron] ${local.problem}`); }
+    localPending = !!local.settings;
     createWindow();
     initUpdater();
     // Pre-warm printer cache and PowerShell session (non-blocking)
-    getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
+    if (local.settings) {
+      void startLocalMode(local.settings).then((ok) => {
+        localPending = false;
+        if (ok) void mainWindow?.loadURL(LOCAL_URL).catch((e) => console.error("[electron] loadURL failed:", e));
+        else loadThinClient();
+        getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
+      });
+    } else {
+      getPrinters().catch((e) => console.warn("[electron] printer cache warm:", e));
+    }
     warmPrinterSession().catch((e) => console.warn("[electron] printer session warm:", e));
     // Initialize print log and queue (loads persisted jobs from disk)
     printLog = new PrintLog(app.getPath("userData"));
@@ -482,6 +659,7 @@ if (!gotLock) {
 
 app.on("will-quit", () => {
   stopEmbeddedServer();
+  try { localServer?.stop(); } catch { /* ignore */ }
   closePrinterSession();
   void attendanceAgent?.stop();
 });
@@ -491,6 +669,42 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle(IPC.APP_VERSION, () => app.getVersion());
+
+// -- Local mode ----------------------------------------------------------------
+
+ipcMain.handle(IPC.LOCAL_STATUS, (): LocalModeStatus => {
+  const configured = localModeAllowed() && !!localSettings().settings;
+  return { active: localActive, configured, ...(localReason ? { reason: localReason } : {}) };
+});
+
+ipcMain.handle(IPC.LOCAL_ENABLE, (e, input: unknown): LocalModeEnableResult => {
+  if (!isTrustedSender(e)) return { ok: false, error: "Not allowed from this page" };
+  if (!localModeAllowed()) return { ok: false, error: "Local mode is available in the installed shop PC app only" };
+  // The renderer sends only { deviceToken }; the cloud URL comes from host-config.json (hand-edited) or the baked API base.
+  const v = resolveEnableConfig(input, readHostConfigFile(), API_BASE_ENV);
+  if (!v.ok) return { ok: false, error: v.error };
+  try {
+    // cloudUrl is deliberately not written: it is re-resolved at every start (parseLocalHostSettings).
+    writeHostConfigFile({ localMode: true, deviceToken: v.deviceToken });
+  } catch (err: any) {
+    return { ok: false, error: `Could not save the setting: ${err?.message ?? err}` };
+  }
+  console.log("[electron] local mode enabled - restarting");
+  relaunchSoon();
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.LOCAL_DISABLE, (e): LocalModeEnableResult => {
+  if (!isTrustedSender(e)) return { ok: false, error: "Not allowed from this page" };
+  try {
+    writeHostConfigFile({ localMode: false, deviceToken: "" });
+  } catch (err: any) {
+    return { ok: false, error: `Could not save the setting: ${err?.message ?? err}` };
+  }
+  console.log("[electron] local mode disabled - restarting");
+  relaunchSoon();
+  return { ok: true };
+});
 
 // Stall breaker (packages/api-client/stallBreaker.ts): the renderer found its API connection dead
 // (no answer, and a check request on the same connection silent too). Closing the session's

@@ -24,6 +24,9 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   "perf.slow_handler":    { label: "Slow Handler",   color: "bg-amber-100 text-amber-800" },
   // The desktop stall breaker reset a dead connection and retried (POST /api/perf/stall-reset).
   "perf.stall_reset":     { label: "Connection Reset", color: "bg-amber-100 text-amber-800" },
+  // Shop PC sync device tokens (Admin -> Shop PC Sync).
+  "sync.device_create":   { label: "Sync Device Added",   color: "bg-sky-100 text-sky-800" },
+  "sync.device_revoke":   { label: "Sync Device Revoked", color: "bg-red-100 text-red-800" },
   "order.payment":        { label: "Payment",        color: "bg-green-100 text-green-800" },
   "order.write_off":      { label: "Write-off",      color: "bg-red-100 text-red-800" },
   // Not red: the amount collected is unchanged by construction (shared/paymentEdit.ts) —

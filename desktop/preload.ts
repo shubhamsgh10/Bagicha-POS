@@ -13,6 +13,8 @@ import {
   type AttendanceTestResult,
   type AttendanceStatus,
   type PrintStationConfig,
+  type LocalModeStatus,
+  type LocalModeEnableResult,
 } from "../shared/electron/ipc.js";
 
 const electronAPI = {
@@ -68,6 +70,16 @@ const electronAPI = {
 
   setPrintStationConfig: (cfg: PrintStationConfig): Promise<boolean> =>
     ipcRenderer.invoke(IPC.PRINT_STATION_CONFIG_SET, cfg),
+
+  // ── Local mode (this PC runs its own server + local copy of the data) ────────
+
+  /** Is the window served by the local server? Falls back to the cloud client when it cannot start. */
+  localStatus: (): Promise<LocalModeStatus> => ipcRenderer.invoke(IPC.LOCAL_STATUS),
+  /** Save the device token and relaunch into local mode. The app picks the cloud URL itself, never the page. */
+  enableLocalMode: (cfg: { deviceToken: string }): Promise<LocalModeEnableResult> =>
+    ipcRenderer.invoke(IPC.LOCAL_ENABLE, cfg),
+  /** Turn local mode off and relaunch as the normal cloud client. */
+  disableLocalMode: (): Promise<LocalModeEnableResult> => ipcRenderer.invoke(IPC.LOCAL_DISABLE),
 
   // ── Biometric attendance device (K30 Pro) ────────────────────────────────────
 

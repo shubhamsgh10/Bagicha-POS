@@ -8,6 +8,7 @@ import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
 import { applyCsrfGuard } from "./server/csrf";
+import { replayMiddleware } from "./server/sync/replay";
 import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
 import { serverTiming } from "./server/serverTiming";
@@ -85,7 +86,7 @@ const sessionMiddleware = session({
   resave: false,
   saveUninitialized: false,
   store: new PgSession({
-    pool,
+    pool: pool!,
     tableName: "sessions",
     createTableIfMissing: true,
     // No `UPDATE sessions SET expire = …` on every request. With rolling:false (the default) the
@@ -105,9 +106,14 @@ app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
+// Shop-PC replay (device token + X-Bagicha-Replay): acts as the named user for ONE request, no session.
+// Right after passport so it overrides req.user, before settingsGuard and every route (see server/sync/replay.ts).
+app.use(replayMiddleware);
 
 const ready = (async () => {
   await initSettings();
+  // Clients probe /api/local/status to detect shop-PC local mode; the cloud is never local.
+  app.all("/api/local/*", (_req, res) => res.status(404).json({ localMode: false }));
   // Refuse (503) rather than serve from built-in defaults if this instance never managed to
   // read the real settings — a cold instance on defaults priced orders at 18% and found "no
   // printer". Must precede every route. See server/settingsCache.ts.

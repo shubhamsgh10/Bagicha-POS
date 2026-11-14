@@ -23,6 +23,8 @@ import Staff from "@/pages/Staff";
 import MyAttendance from "@/pages/MyAttendance";
 import KOT from "@/pages/KOT";
 import PrintStation from "@/pages/PrintStation";
+import SyncProblems from "@/pages/SyncProblems";
+import { useLocalSync } from "@/hooks/useLocalSync";
 import PublicFeedback from "@/pages/PublicFeedback";
 import { BottomNav } from "@/components/BottomNav";
 import { UpdateNotification } from "@/components/UpdateNotification";
@@ -66,6 +68,8 @@ const pageVariants = {
 const pageTrans = { duration: 0.42, ease: [0.22, 1, 0.36, 1] as const };
 
 function Router() {
+  // Shop-PC local mode only: the cloud answers 404 to the probe, so this is false there and /sync does not exist.
+  const isLocalMode = useLocalSync().localMode;
   const { isAuthenticated, isLoading } = useAuth();
   const [location, navigate] = useLocation();
   const search = useSearch(); // tracks window.location.search reactively
@@ -224,6 +228,7 @@ function Router() {
                       <Route path="/customers"      component={CustomerDashboard} />
                       <Route path="/kot"            component={KOT} />
                       <Route path="/print-station"  component={PrintStation} />
+                      {isLocalMode && <Route path="/sync" component={SyncProblems} />}
                       <Route component={NotFound} />
                     </Switch>
                   </motion.div>

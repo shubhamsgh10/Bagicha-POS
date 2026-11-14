@@ -407,8 +407,24 @@ async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number
   return next;
 }
 
+/**
+ * A counter lease (server/sync/leases.ts) advanced the DB counter by a whole block in its own
+ * transaction. Keeps this instance's cached copy roughly warm, exactly like issueCounter does
+ * (patch, not set; the DB stays the source of truth for issuance).
+ */
+export function noteCounterAdvanced(field: "billCounter" | "kotCounter", value: number): void {
+  cache.patch((current) => ({ ...current, [field]: value }));
+}
+
+// Shop-PC local mode (server/local/localNumbers.ts) takes bill / KOT numbers from the blocks the cloud
+// leased to this PC instead of the row-locked UPDATE (which would collide with the cloud's own numbers).
+let localCounterIssuer: ((field: "billCounter" | "kotCounter") => Promise<number>) | null = null;
+export function setLocalCounterIssuer(fn: ((field: "billCounter" | "kotCounter") => Promise<number>) | null): void {
+  localCounterIssuer = fn;
+}
+
 function nextCounter(field: "billCounter" | "kotCounter"): Promise<number> {
-  return issueCounter(field);
+  return localCounterIssuer ? localCounterIssuer(field) : issueCounter(field);
 }
 
 export function incrementBillCounter(): Promise<number> {

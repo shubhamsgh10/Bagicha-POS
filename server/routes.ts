@@ -81,6 +81,7 @@ import multer from "multer";
 import { registerPublicGrowthRoutes, registerGrowthRoutes } from "./growthRoutes";
 import { registerWhatsAppRoutes, registerPublicWhatsAppRoutes } from "./whatsappRoutes";
 import { registerStaffRoutes } from "./staffRoutes";
+import { registerSyncRoutes } from "./sync/syncRoutes";
 import { priceOrderWithMenu, computeTotalsFromLines, type PricedOrder } from "./services/orderPricing";
 import { computeLineCosts } from "@shared/menuCost";
 import { menuPriceError, menuSizesError } from "@shared/menuValidation";
@@ -91,6 +92,9 @@ import { isKotSkipped } from "@shared/kotStations";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { cachedPrincipal, forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
+import { hashPassword, verifyPassword } from "./passwordHash";
+import { replayNow, type ReplayContext } from "./sync/replay";
+import { acceptReplayNumbers, cloudRunner, isUniqueViolation } from "./sync/leases";
 import { sendWithDbEtag, tableFingerprint, queryFingerprint } from "./dbEtag";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
@@ -113,27 +117,7 @@ const upload = multer({
   },
 });
 
-// Password hashing helpers using Node's built-in crypto
-function hashPassword(password: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    crypto.scrypt(password, salt, 64, (err, derived) => {
-      if (err) reject(err);
-      else resolve(`${salt}:${derived.toString("hex")}`);
-    });
-  });
-}
-
-function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const [salt, key] = hash.split(":");
-    if (!salt || !key) return resolve(false);
-    crypto.scrypt(password, salt, 64, (err, derived) => {
-      if (err) reject(err);
-      else resolve(key === derived.toString("hex"));
-    });
-  });
-}
+// Password hashing helpers live in ./passwordHash (shared with the shop-PC auth blobs).
 
 // Passport local strategy
 passport.use(new LocalStrategy(async (username, password, done) => {
@@ -274,6 +258,10 @@ export async function registerRoutes(
   const broadcast = (data: any) => {
     void publishRealtime(data);
   };
+
+  // Local-first sync (shop PC): snapshot/pull/device tokens + SYNC_NUDGE on menu/settings/etc. writes.
+  // Registered here, before those routes, so its write-nudge middleware wraps them. Cloud (pg) only.
+  registerSyncRoutes(app, requireAdmin);
 
   // Unauthenticated liveness/diagnostic probes — nothing like this existed before, so an
   // uptime monitor (or a human debugging "is the deployment even up") had no endpoint to
@@ -1621,7 +1609,7 @@ export async function registerRoutes(
 
   // Same effect as PUT /api/orders/:id/move-table (relocates an active order to another
   // table) — gated the same way.
-  app.post("/api/tables/:id/shift", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.post("/api/tables/:id/shift", requireAuth, requestKeys, requireElevation("manager"), async (req, res) => {
     try {
       const fromTableId = parseInt(req.params.id);
       const { toTableId } = req.body;
@@ -2073,7 +2061,13 @@ export async function registerRoutes(
     try {
       // `print`/`auto`/`markBilled` are print directives for the step AFTER the save — they must
       // never reach createOrderWithItems as order columns.
-      const { items, print: _print, auto: _auto, markBilled: _markBilled, ...orderInfo } = req.body;
+      // clientId / clientOrderNumber / clientKotNumber are replay-only (validated against the device's
+      // leases below) and `id` is never a client choice: none of them may reach the INSERT as a column.
+      const {
+        items, print: _print, auto: _auto, markBilled: _markBilled,
+        clientId: _clientId, clientOrderNumber: _clientOrderNumber, clientKotNumber: _clientKotNumber, id: _bodyId,
+        ...orderInfo
+      } = req.body;
       const lineItems = Array.isArray(items) ? items : [];
       // A table holds one running order. Creating a second one (two phones opening the same free
       // table, or a stale Tables page) silently re-pointed the table at the new order and left the
@@ -2151,9 +2145,22 @@ export async function registerRoutes(
       const kitchenLines = lineItems.filter(
         (item: any) => !isKotSkipped(Number(item.menuItemId), menuById.get(Number(item.menuItemId))?.categoryId, kotSkip),
       );
+      // Replayed from a shop PC: the order id / ORD number / KOT number printed offline are final, so
+      // they are used verbatim, but ONLY inside a block leased to that device (server/sync/leases.ts).
+      // Anything outside, or malformed, is a 409. A value that was not sent is cloud-issued as usual.
+      const needsKotNumber = lineItems.length === 0 || kitchenLines.length > 0;
+      const replayCtx: ReplayContext | undefined = (req as any).replay;
+      let replayNums: { id?: number; billNo?: number; kotNo?: number } = {};
+      if (replayCtx) {
+        const accepted = await acceptReplayNumbers(cloudRunner(), replayCtx.deviceId, req.body, needsKotNumber);
+        if (!accepted.ok) return res.status(409).json({ error: accepted.message, code: accepted.code });
+        replayNums = accepted;
+      }
       const [billNo, kotNo] = await Promise.all([
-        incrementBillCounter(),
-        lineItems.length === 0 || kitchenLines.length > 0 ? incrementKotCounter() : Promise.resolve(null),
+        replayNums.billNo !== undefined ? Promise.resolve(replayNums.billNo) : incrementBillCounter(),
+        needsKotNumber
+          ? (replayNums.kotNo !== undefined ? Promise.resolve(replayNums.kotNo) : incrementKotCounter())
+          : Promise.resolve(null),
       ]);
       const orderNumber = `ORD${String(billNo).padStart(4, "0")}`;
       const actor = req.user as any;
@@ -2203,6 +2210,7 @@ export async function registerRoutes(
       const created = await storage.createOrderWithItems(
         {
           ...orderInfo,
+          ...(replayNums.id !== undefined ? { id: replayNums.id } : {}),
           orderNumber,
           totalAmount: priced.total.toFixed(2),
           taxAmount: priced.tax.toFixed(2),
@@ -2273,7 +2281,8 @@ export async function registerRoutes(
 
       // ── CRM: log ORDER_PLACED event + update segmentation (fire-and-forget) ──
       const crmKey = (order.customerPhone?.trim() || order.customerName?.trim());
-      if (crmKey) {
+      // (Shop-PC local mode: customers / CRM rows are cloud-owned; the replayed request does this.)
+      if (crmKey && process.env.BAGICHA_LOCAL_MODE !== "1") {
         const crmName = order.customerName ?? crmKey;
         logOrderPlaced(
           crmKey, crmName, order.customerPhone,
@@ -2311,6 +2320,12 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Create order error:", error);
       await inventoryDone;
+      // A replayed order whose id / ORD number / KOT number already exists (the leased value was used
+      // before): a conflict the shop PC must see, never a 500.
+      if ((req as any).replay && isUniqueViolation(error)) {
+        return res.status(409).json({ error: "That order id, order number or KOT number is already in use.", code: "duplicate_number" });
+      }
+      if ((error as any)?.code === "LEASE_EXHAUSTED") return res.status(503).json({ error: (error as any).message, message: (error as any).message, code: "LEASE_EXHAUSTED" });
       res.status(500).json({ error: "Failed to create order" });
     }
   });
@@ -2549,8 +2564,16 @@ export async function registerRoutes(
       // ticket is inserted inside it — the counter and the ticket used to be two more round trips
       // after the commit, in front of the print. A number burnt by a failed save is a gap, the same
       // as POST /api/orders.
+      // Replayed from a shop PC: the KOT number printed offline, accepted only inside the device's lease.
+      let replayKotNo: number | undefined;
+      const itemsReplay: ReplayContext | undefined = (req as any).replay;
+      if (itemsReplay && ticketLines.length > 0) {
+        const accepted = await acceptReplayNumbers(cloudRunner(), itemsReplay.deviceId, { clientKotNumber: req.body?.clientKotNumber }, true);
+        if (!accepted.ok) return res.status(409).json({ error: accepted.message, code: accepted.code });
+        replayKotNo = accepted.kotNo;
+      }
       const kotNumberPromise = ticketLines.length > 0
-        ? incrementKotCounter().then((n) => String(n).padStart(3, "0"))
+        ? (replayKotNo !== undefined ? Promise.resolve(replayKotNo) : incrementKotCounter()).then((n) => String(n).padStart(3, "0"))
         : null;
       kotNumberPromise?.catch(() => {}); // awaited inside the transaction; never an unhandled rejection
 
@@ -2710,13 +2733,17 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Update order items error:", error);
       await inventoryDone;
+      if ((req as any).replay && isUniqueViolation(error)) {
+        return res.status(409).json({ error: "That KOT number is already in use.", code: "duplicate_number" });
+      }
+      if ((error as any)?.code === "LEASE_EXHAUSTED") return res.status(503).json({ error: (error as any).message, message: (error as any).message, code: "LEASE_EXHAUSTED" });
       res.status(500).json({ error: "Failed to update order items" });
     }
   });
 
   // Deliberately narrow: money/payment/identity fields are NOT settable here — see
   // shared/orderMutation.ts's orderUpdateAllowlist for why.
-  app.put("/api/orders/:id", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const parsed = orderUpdateAllowlist.safeParse(req.body);
@@ -2855,7 +2882,7 @@ export async function registerRoutes(
         paymentBreakdown: Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, String(v)])),
         // The day the money was received — drives the Tables card / Reports counting and the
         // "correct a payment" window. A due (isDue) collected nothing yet, so it gets no paid day.
-        paidAt: isDue ? null : new Date(),
+        paidAt: isDue ? null : replayNow(req), // the PC's action time on a replay (X-Replay-At), else now
       };
       if (notes) updateData.notes = notes;
       if (customerName) updateData.customerName = customerName;
@@ -2948,7 +2975,11 @@ export async function registerRoutes(
       const bounded = (p: Promise<unknown>, ms: number) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
       const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
       const after: Array<Promise<unknown>> = [];
-      if (!isDue) {
+      // Shop-PC local mode: loyalty points, the settlement WhatsApp and the feedback request are
+      // cloud-owned (synced tables, WhatsApp driver) and happen once, when this settle is replayed.
+      if (process.env.BAGICHA_LOCAL_MODE === "1") {
+        // nothing
+      } else if (!isDue) {
         if (key) {
           after.push(quiet("loyalty earn", earnPointsForOrder(
             key,
@@ -2987,7 +3018,7 @@ export async function registerRoutes(
   // Deliberately NOT a re-settle — POST /api/orders/:id/payment fires loyalty
   // points, the customer WhatsApp message and feedback scheduling exactly once, and none of
   // that should re-fire because a label was corrected.
-  app.post("/api/orders/:id/payment-method", requireAuth, requireFreshPin("manager"), async (req, res) => {
+  app.post("/api/orders/:id/payment-method", requireAuth, requestKeys, requireFreshPin("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
@@ -2999,7 +3030,7 @@ export async function registerRoutes(
       const plan = planPaymentEdit(
         existing as any,
         { cash: Number(cash), upi: Number(upi), reason: String(reason ?? "") },
-        todayBusinessDate(),
+        businessDateOf(replayNow(req)), // "today" = the day the PC ran the action when replayed (X-Replay-At)
       );
       if (!plan.ok) {
         return res.status(400).json({ error: plan.message, code: plan.code });
@@ -3055,7 +3086,7 @@ export async function registerRoutes(
   // Always PIN-gated (requireFreshPin: a logged-in admin/manager must still type a PIN) and audited
   // with WHO approved. Changes payment fields only — no table/KOT/loyalty/WhatsApp/feedback side
   // effects, which belong to a bill being paid at the table, not to an old tab being cleared.
-  app.post("/api/orders/:id/settle-due", requireAuth, requireFreshPin("manager"), async (req, res) => {
+  app.post("/api/orders/:id/settle-due", requireAuth, requestKeys, requireFreshPin("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
@@ -3083,6 +3114,7 @@ export async function registerRoutes(
           shortfallAmount: plan.shortfallAmount,
         } as any,
         (existing as any).updatedAt,
+        replayNow(req),
       );
       if (!updated) {
         // Settled/changed by someone else between our read and our write (or Reports' bulk "Mark all
@@ -3230,7 +3262,7 @@ export async function registerRoutes(
   });
 
   // ── Bill requested — set table to "billed" when staff prints customer bill ───
-  app.post("/api/orders/:id/bill-requested", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/bill-requested", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3294,7 +3326,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Hold Order ──────────────────────────────────────────────────
-  app.put("/api/orders/:id/hold", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/hold", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3327,7 +3359,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Recall Held Order ─────────────────────────────────────────
-  app.put("/api/orders/:id/recall", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/recall", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3410,7 +3442,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Move Table ──────────────────────────────────────────────────
-  app.put("/api/orders/:id/move-table", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.put("/api/orders/:id/move-table", requireAuth, requestKeys, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { newTableName } = req.body;
@@ -3702,7 +3734,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/kot/:id", requireAuth, async (req, res) => {
+  app.put("/api/kot/:id", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;

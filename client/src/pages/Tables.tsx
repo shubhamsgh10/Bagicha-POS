@@ -186,7 +186,7 @@ export default function Tables() {
 
   const shiftMutation = useMutation({
     mutationFn: ({ fromId, toId }: any) =>
-      apiRequest("POST", `/api/tables/${fromId}/shift`, { toTableId: toId }),
+      apiRequest("POST", `/api/tables/${fromId}/shift`, { toTableId: toId }, { idempotent: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({ title: "Order shifted" });

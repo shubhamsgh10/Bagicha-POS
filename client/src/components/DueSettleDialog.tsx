@@ -45,7 +45,7 @@ export function DueSettleDialog({ order, items, onClose }: Props) {
       const res = await apiRequest("POST", `/api/orders/${order.id}/settle-due`, {
         payments: p.payments,
         allowShortfall: p.allowShortfall,
-      });
+      }, { idempotent: true });
       return res.json();
     },
     onSuccess: () => {
