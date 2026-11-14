@@ -2281,7 +2281,8 @@ export async function registerRoutes(
 
       // ── CRM: log ORDER_PLACED event + update segmentation (fire-and-forget) ──
       const crmKey = (order.customerPhone?.trim() || order.customerName?.trim());
-      if (crmKey) {
+      // (Shop-PC local mode: customers / CRM rows are cloud-owned; the replayed request does this.)
+      if (crmKey && process.env.BAGICHA_LOCAL_MODE !== "1") {
         const crmName = order.customerName ?? crmKey;
         logOrderPlaced(
           crmKey, crmName, order.customerPhone,
@@ -2324,6 +2325,7 @@ export async function registerRoutes(
       if ((req as any).replay && isUniqueViolation(error)) {
         return res.status(409).json({ error: "That order id, order number or KOT number is already in use.", code: "duplicate_number" });
       }
+      if ((error as any)?.code === "LEASE_EXHAUSTED") return res.status(503).json({ error: (error as any).message, message: (error as any).message, code: "LEASE_EXHAUSTED" });
       res.status(500).json({ error: "Failed to create order" });
     }
   });
@@ -2734,6 +2736,7 @@ export async function registerRoutes(
       if ((req as any).replay && isUniqueViolation(error)) {
         return res.status(409).json({ error: "That KOT number is already in use.", code: "duplicate_number" });
       }
+      if ((error as any)?.code === "LEASE_EXHAUSTED") return res.status(503).json({ error: (error as any).message, message: (error as any).message, code: "LEASE_EXHAUSTED" });
       res.status(500).json({ error: "Failed to update order items" });
     }
   });
@@ -2972,7 +2975,11 @@ export async function registerRoutes(
       const bounded = (p: Promise<unknown>, ms: number) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
       const key = (order as any).customerPhone?.trim() || (order as any).customerName?.trim();
       const after: Array<Promise<unknown>> = [];
-      if (!isDue) {
+      // Shop-PC local mode: loyalty points, the settlement WhatsApp and the feedback request are
+      // cloud-owned (synced tables, WhatsApp driver) and happen once, when this settle is replayed.
+      if (process.env.BAGICHA_LOCAL_MODE === "1") {
+        // nothing
+      } else if (!isDue) {
         if (key) {
           after.push(quiet("loyalty earn", earnPointsForOrder(
             key,

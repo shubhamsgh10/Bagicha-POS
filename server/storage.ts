@@ -315,6 +315,11 @@ export interface IStorage {
   deleteStaffMember(id: number): Promise<void>;
 }
 
+let localOrderIdIssuer: (() => Promise<number>) | null = null;
+export function setLocalOrderIdIssuer(fn: (() => Promise<number>) | null): void {
+  localOrderIdIssuer = fn;
+}
+
 export class DatabaseStorage implements IStorage {
   // Users
   async getUser(id: number): Promise<User | undefined> {
@@ -1034,9 +1039,13 @@ export class DatabaseStorage implements IStorage {
     items: Array<Omit<InsertOrderItem, "orderId">>,
     kot?: Omit<InsertKotTicket, "orderId">,
   ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }> {
+    // Shop-PC local mode: the id comes from the block leased by the cloud (taken BEFORE the transaction:
+    // PGlite has one connection, so a query issued inside it from outside would wait on it forever).
+    const leasedId = localOrderIdIssuer && (order as any).id === undefined ? await localOrderIdIssuer() : undefined;
     return await db.transaction(async (tx) => {
       const [newOrder] = await tx.insert(orders).values({
         ...(order as any),
+        ...(leasedId !== undefined ? { id: leasedId } : {}),
         updatedAt: new Date(),
       }).returning();
       // RETURNING the rows costs no extra round trip and hands the print step that follows the

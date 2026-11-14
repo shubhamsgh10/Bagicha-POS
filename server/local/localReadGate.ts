@@ -1,61 +1,59 @@
-// Pure: which requests the shop PC's local server answers from its own database. Everything else
-// (writes, login, reports, printing, auth/context, pusher auth, any GET not listed) is forwarded to
-// the cloud unchanged.
+// Pure: how the shop PC's local server treats each /api request (phase 4: everything local that can
+// be). The local copy holds the full order history and 21 business tables, so EVERY GET is answered
+// locally except a short list of things the PC has no data for (WhatsApp, automation, CRM, Razorpay,
+// feedback, digests, 2FA, backups, coupon redemptions) or that only mean something at the cloud
+// (device management, Pusher/realtime config). Writes: the replay list runs locally and is queued for
+// the cloud; print plumbing runs locally; everything else needs the internet.
+import { isReplayable } from "../../shared/replayRules";
 
-const LOCAL_PATHS = new Set([
-  "/api/auth/me",
-  "/api/menu",
-  "/api/categories",
-  "/api/tables",
-  "/api/settings",
-  "/api/live-status",
-  "/api/kot",
-  "/api/orders/customers",
-  "/api/orders/hold",
-]);
+/** GET prefixes the PC cannot answer: proxied while online, "Needs internet" (503 ONLINE_ONLY) offline. */
+export const CLOUD_ONLY_GET_PREFIXES = [
+  "/api/whatsapp", "/api/automation", "/api/crm", "/api/razorpay", "/api/feedback", "/api/digest",
+  "/api/sync/", "/api/pusher", "/api/realtime", "/api/auth/2fa", "/api/admin/backups", "/api/coupons/redemptions",
+] as const;
 
-function hasValue(query: Record<string, unknown>, key: string): boolean {
-  const v = query[key];
-  if (Array.isArray(v)) return v.some((x) => String(x).length > 0);
-  return v !== undefined && v !== null && String(v).length > 0 && String(v) !== "false";
+function norm(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
-function firstString(v: unknown): string | null {
-  const x = Array.isArray(v) ? v[0] : v;
-  return typeof x === "string" && x.length > 0 ? x : null;
+export function isCloudOnlyGet(path: string): boolean {
+  const p = norm(path);
+  return CLOUD_ONLY_GET_PREFIXES.some((x) => (x.endsWith("/") ? p.startsWith(x) : p === x || p.startsWith(x + "/")));
 }
 
-/**
- * `path` is the full request path (no query string), e.g. "/api/orders/42".
- *
- * `coverageStart`: the local copy only holds orders created after (snapshot time - the snapshot
- * window), so a date-ranged order list that starts before that would silently come back short —
- * those requests proxy. `undefined` = don't check (pure tests). `null` = unknown, treat the dated
- * lists as not covered.
- */
-export function isLocalRead(
-  method: string,
-  path: string,
-  query: Record<string, unknown> = {},
-  coverageStart?: Date | null,
-): boolean {
+/** GET /api/auth/context: the cloud's answer (it sees the shop's public address) while online, the local one offline. */
+export function isCloudFirstGet(path: string): boolean {
+  return norm(path) === "/api/auth/context";
+}
+
+/** Is this request answered by the local routes from the local database? (GET only.) */
+export function isLocalRead(method: string, path: string, _query: Record<string, unknown> = {}, _coverageStart?: Date | null): boolean {
   if (method.toUpperCase() !== "GET") return false;
-  const p = path.length > 1 ? path.replace(/\/+$/, "") : path;
-  if (LOCAL_PATHS.has(p)) return true;
-  if (p === "/api/orders") {
-    // Open / unpaid / due sets and "changed since" deltas are complete locally (every open order is
-    // in the snapshot and every later change is pulled).
-    if (hasValue(query, "open") || hasValue(query, "unpaid") || hasValue(query, "due") || hasValue(query, "updatedSince")) return true;
-    const start = firstString(query.startDate);
-    if (!start) return false; // endDate alone / nothing = whole history
-    if (coverageStart === undefined) return true;
-    const t = new Date(start).getTime();
-    return coverageStart !== null && Number.isFinite(t) && t >= coverageStart.getTime();
-  }
-  return /^\/api\/orders\/\d+$/.test(p);
+  return !isCloudOnlyGet(path) && !isCloudFirstGet(path);
 }
 
 /** The local server's own endpoints (never proxied). */
 export function isLocalOnly(path: string): boolean {
   return path === "/api/local" || path.startsWith("/api/local/");
+}
+
+export type WriteClass =
+  | "login"        // cloud first (online), local verification when offline
+  | "verify-pin"   // always local (also tells the cloud, best effort, while online)
+  | "logout"       // always through the proxy: it signs out locally even when the cloud is unreachable
+  | "replay"       // runs locally and is appended to the outbox
+  | "local"        // runs locally, not replayed (print plumbing)
+  | "quiet"        // telemetry: dropped quietly when offline, forwarded when online
+  | "online-only"; // forwarded while online, 503 ONLINE_ONLY offline
+
+export function classifyWrite(method: string, path: string): WriteClass {
+  const m = method.toUpperCase();
+  const p = norm(path);
+  if (m === "POST" && (p === "/api/auth/login" || p === "/api/auth/card-login" || p === "/api/auth/staff-pin-login")) return "login";
+  if (m === "POST" && p === "/api/auth/verify-pin") return "verify-pin";
+  if (m === "POST" && p === "/api/auth/logout") return "logout";
+  if (isReplayable(m, p)) return "replay";
+  if (p.startsWith("/api/print/")) return "local";
+  if (p.startsWith("/api/perf/")) return "quiet";
+  return "online-only";
 }

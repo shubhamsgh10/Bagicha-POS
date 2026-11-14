@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { BagichaLogo } from "./BagichaLogo";
 import { RoleSwitcher } from "./RoleSwitcher";
+import { SyncBadge } from "./SyncBadge";
 import bagichaLogoImg from "@assets/Bagicha Logo.png";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import {
@@ -145,6 +146,8 @@ export function TopNav() {
 
         {/* Spacer on mobile */}
         <div className="flex-1 md:hidden" />
+
+        <SyncBadge className="mr-1 shrink-0" />
 
         {/* Role Switcher */}
         <RoleSwitcher

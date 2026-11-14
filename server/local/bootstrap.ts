@@ -1,17 +1,31 @@
 // Wires local mode into server/index.ts. Imported lazily (await import) and only when
 // BAGICHA_LOCAL_MODE=1, so the cloud bundle's behaviour is untouched.
+//
+// Phase 4 (offline writes): reads come from PGlite, the replay-list writes run locally through the
+// normal routes and are queued in the outbox, sign-in / PIN checks use the synced verifiers, number
+// leases supply ids / bill / KOT numbers, and a background replayer re-sends the outbox to the cloud.
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import { readLocalModeConfig, type LocalModeConfig } from "./localMode";
 import { ensureLocalSchema } from "./localSchema";
 import { createSyncWorker, type SyncWorker } from "./syncWorker";
-import { createCloudProxy } from "./cloudProxy";
-import { isLocalOnly, isLocalRead } from "./localReadGate";
+import { createCloudProxy, createCloudCaller } from "./cloudProxy";
+import { classifyWrite, isCloudFirstGet, isCloudOnlyGet, isLocalOnly } from "./localReadGate";
 import { getCursor } from "./applyChanges";
+import { createLeaseManager, type LeaseManager } from "./localNumbers";
+import { createReplayer, type Replayer } from "./replayWorker";
+import { createOutboxCapture } from "./outboxCapture";
+import { createLocalAuth } from "./localAuth";
+import { listProblems, retryProblem, discardProblem } from "./outbox";
 
 export interface LocalRuntime {
   cfg: LocalModeConfig;
   worker: SyncWorker;
+  leases: LeaseManager;
+  replayer: Replayer;
+  schemaBlocked: boolean;
 }
+
+const ONLINE_ONLY_BODY = { message: "Needs internet", error: "Needs internet", code: "ONLINE_ONLY" };
 
 export async function bootLocalMode(): Promise<LocalRuntime> {
   const cfg = readLocalModeConfig();
@@ -21,19 +35,60 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
   if (pool !== null) throw new Error("local mode must never open a cloud database pool");
   if (!localClient) throw new Error("local mode needs BAGICHA_DB=pglite");
 
-  const { recreated } = await ensureLocalSchema(localClient);
-  if (recreated) console.log("[local] local database schema (re)built");
+  const schema = await ensureLocalSchema(localClient);
+  if (schema.recreated) console.log("[local] local database schema (re)built");
+  if (schema.blocked) console.error("[local] SCHEMA BLOCKED: unsynced actions are waiting; serving the existing local database as is.");
 
   const settings = await import("../settingsStore");
+  const storageMod = await import("../storage");
   const { forgetAllPrincipals } = await import("../principalCache");
   const { forgetTableSections } = await import("../tableSections");
+  const { publishRealtime } = await import("../realtime/publisher");
   let settingsReady = false;
+
+  const authHeaders = (): Record<string, string> => ({
+    Authorization: `Bearer ${cfg.deviceToken}`,
+    "Content-Type": "application/json",
+    ...(cfg.cloudBypass ? { "x-vercel-protection-bypass": cfg.cloudBypass } : {}),
+  });
+
+  // Number leases: bill / KOT numbers and order ids come from blocks the cloud promised this PC.
+  let workerRef: SyncWorker | null = null;
+  const leases = createLeaseManager({
+    client: localClient,
+    isOnline: () => workerRef?.status().online ?? false,
+    onCounter: (field, value) => settings.noteCounterAdvanced(field, value),
+    requestLease: async (kind) => {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 10_000);
+      try {
+        const res = await fetch(`${cfg.cloudUrl}/api/sync/lease`, { method: "POST", headers: authHeaders(), body: JSON.stringify({ kind }), signal: ac.signal });
+        if (!res.ok) throw new Error(`cloud answered ${res.status}`);
+        return (await res.json()) as { start: number; end: number };
+      } finally {
+        clearTimeout(t);
+      }
+    },
+  });
+  settings.setLocalCounterIssuer((field) => leases.take(field === "billCounter" ? "bill_counter" : "kot_counter"));
+  storageMod.setLocalOrderIdIssuer(() => leases.take("order_id"));
+
+  const replayer = createReplayer({
+    client: localClient,
+    cloudUrl: cfg.cloudUrl,
+    deviceToken: cfg.deviceToken,
+    bypassSecret: cfg.cloudBypass,
+    onOrderRefreshed: () => { void publishRealtime({ type: "ORDER_UPDATE" }); void publishRealtime({ type: "TABLE_UPDATE" }); },
+  });
 
   const worker = createSyncWorker({
     client: localClient,
     cloudUrl: cfg.cloudUrl,
     deviceToken: cfg.deviceToken,
     bypassSecret: cfg.cloudBypass,
+    beforePull: () => replayer.drain(),
+    afterCycle: () => leases.refillIfLow(),
+    schemaBlocked: () => !!schema.blocked,
     onApplied: async (tables) => {
       if (tables.includes("users") || tables.includes("staff_members")) forgetAllPrincipals();
       if (tables.includes("tables")) forgetTableSections();
@@ -45,10 +100,11 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
       }
     },
   });
+  workerRef = worker;
 
   const hadSnapshot = (await getCursor(localClient)) !== null;
   if (hadSnapshot) {
-    // Already have a copy: serve it at once, catch up in the background.
+    // Already have a copy: serve it at once, catch up (and replay anything waiting) in the background.
     await settings.initSettings();
     settingsReady = true;
     void worker.start();
@@ -59,14 +115,20 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
       console.warn(`[local] first snapshot failed (${worker.status().lastError}); retrying in the background. Local reads answer 503 until it lands.`);
     }
   }
-  return { cfg, worker };
+  return { cfg, worker, leases, replayer, schemaBlocked: !!schema.blocked };
 }
 
 /** Mounts the local gate (+ /api/local/*) on /api. Call after session + passport, before settingsGuard and the routes. */
 export async function installLocalGate(app: Express, rt: LocalRuntime, requireAuth: RequestHandler): Promise<void> {
-  const { db } = await import("../db");
+  const { db, localClient } = await import("../db");
+  const client = localClient!;
   const { storage } = await import("../storage");
+  const { requireManagerOrAdmin } = await import("../routes");
+  const { requireFreshPin } = await import("../elevation");
+  const { requestKeys } = await import("../requestKeys");
   const { sql } = await import("drizzle-orm");
+
+  const online = () => rt.worker.status().online;
 
   const proxy = createCloudProxy({
     cloudUrl: rt.cfg.cloudUrl,
@@ -80,21 +142,47 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
         : null;
     },
   });
+  const cloudCall = createCloudCaller({ cloudUrl: rt.cfg.cloudUrl, bypassSecret: rt.cfg.cloudBypass });
+  const auth = createLocalAuth({ client, storage: storage as any, isOnline: online, cloudCall, viaCloud: proxy });
+  const capture = createOutboxCapture({ client, wake: () => rt.worker.requestPull() });
 
-  app.get("/api/local/status", (_req, res) => {
+  // ── the local server's own endpoints ──
+  app.get("/api/local/status", async (_req, res) => {
     // nonce: the desktop supervisor only trusts a server that echoes its per-launch secret.
-    res.json({ localMode: true, nonce: process.env.BAGICHA_LOCAL_NONCE, ...rt.worker.status() });
+    res.json({ localMode: true, nonce: process.env.BAGICHA_LOCAL_NONCE, ...(await rt.worker.fullStatus()) });
   });
   app.post("/api/local/sync-now", requireAuth, async (_req, res) => {
     await rt.worker.pullNow(1500);
     res.status(204).end();
+  });
+  app.get("/api/local/problems", requireAuth, async (_req, res) => {
+    res.json(await listProblems(client));
+  });
+  app.post("/api/local/problems/:seq/retry", requireAuth, async (req, res) => {
+    const n = await retryProblem(client, Number(req.params.seq));
+    if (!n) return res.status(404).json({ message: "Nothing to retry" });
+    rt.worker.requestPull();
+    res.json({ requeued: n });
+  });
+  // Giving up on a refused action is a money decision: manager/admin AND a PIN typed just now.
+  app.post("/api/local/problems/:seq/discard", requireAuth, requireManagerOrAdmin, requireFreshPin("manager"), async (req, res) => {
+    const seq = Number(req.params.seq);
+    const row = (await listProblems(client)).find((p) => p.seq === seq);
+    const n = await discardProblem(client, seq);
+    if (!n) return res.status(404).json({ message: "Nothing to discard" });
+    if (row?.orderId != null && online()) await rt.replayer.refreshOrder(row.orderId, true).catch(() => {});
+    res.json({ discarded: n });
   });
 
   app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
     try {
       const path = req.originalUrl.split("?")[0];
       if (req.method === "OPTIONS" || isLocalOnly(path)) return next();
-      if (isLocalRead(req.method, path, req.query as Record<string, unknown>, rt.worker.coverageStart())) {
+
+      // ── reads ──
+      if (req.method === "GET" || req.method === "HEAD") {
+        if (isCloudFirstGet(path)) return online() ? proxy(req, res, next) : next();
+        if (isCloudOnlyGet(path)) return online() ? proxy(req, res, next) : res.status(503).json(ONLINE_ONLY_BODY);
         if (!rt.worker.status().hasSnapshot) {
           if (path === "/api/auth/me") return res.json(null); // nobody can be signed in on an empty copy
           return res.status(503).json({
@@ -102,18 +190,52 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
             code: "LOCAL_NOT_SYNCED",
           });
         }
-        // A single order that is not in the local copy (older than the snapshot window) lives in the cloud.
+        // A single order missing locally (created moments ago on a phone): the cloud has it, if reachable.
         const m = /^\/api\/orders\/(\d+)$/.exec(path);
-        if (m) {
+        if (m && online()) {
           const r: any = await db.execute(sql`SELECT 1 AS x FROM orders WHERE id = ${Number(m[1])} LIMIT 1`);
-          const rows = r.rows ?? r;
-          if (!rows.length) return proxy(req, res, next);
+          if (!(r.rows ?? r).length) return proxy(req, res, next);
         }
         return next();
       }
-      return proxy(req, res, next);
+
+      // ── writes ──
+      switch (classifyWrite(req.method, path)) {
+        case "login": {
+          const handlers = path === "/api/auth/login" ? auth.login : path === "/api/auth/card-login" ? auth.cardLogin : auth.staffPinLogin;
+          return runChain(handlers, req, res, next);
+        }
+        case "verify-pin":
+          // Same order as the cloud route: auth, one-time key, limiter, handler.
+          return runChain([requireAuth, requestKeys as RequestHandler, ...auth.verifyPin], req, res, next);
+        case "logout":
+          return proxy(req, res, next);
+        case "replay":
+          if (!rt.worker.status().hasSnapshot) {
+            return res.status(503).json({ message: "This shop PC is still downloading its first copy of the data", code: "LOCAL_NOT_SYNCED" });
+          }
+          return capture(req, res, next);
+        case "local":
+          return next();
+        case "quiet":
+          return online() ? proxy(req, res, next) : res.status(204).end();
+        default:
+          return online() ? proxy(req, res, next) : res.status(503).json(ONLINE_ONLY_BODY);
+      }
     } catch (err) {
       next(err);
     }
   });
+}
+
+/** Runs express handlers in order; the last one answers (a handler calling next() moves on, an error aborts). */
+function runChain(handlers: RequestHandler[], req: Request, res: Response, done: NextFunction): void {
+  let i = 0;
+  const step = (err?: unknown) => {
+    if (err) return done(err);
+    const h = handlers[i++];
+    if (!h) return done();
+    try { Promise.resolve(h(req, res, step)).catch(step); } catch (e) { step(e); }
+  };
+  step();
 }

@@ -27,6 +27,7 @@ const PASS_RESPONSE_HEADERS = [
 ];
 const LOGIN_PATHS = new Set(["/api/auth/login", "/api/auth/card-login", "/api/auth/staff-pin-login", "/api/auth/2fa/complete"]);
 const LOGOUT_PATH = "/api/auth/logout";
+const FALLBACK_TIMEOUT_MS = 4_000;
 
 type CookieJar = Record<string, string>;
 
@@ -150,7 +151,8 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
       if (body) headers["content-length"] = String(body.length);
 
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      // A request with an offline fallback (sign-in) must not hang for a minute on a dead connection.
+      const timer = setTimeout(() => ac.abort(), (req as any).localFallback ? FALLBACK_TIMEOUT_MS : timeoutMs);
       let upstream: globalThis.Response;
       let buf: Buffer;
       try {
@@ -164,7 +166,11 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
         buf = Buffer.from(await upstream.arrayBuffer());
       } catch (err: any) {
         log(`${req.method} ${path} -> cloud unreachable (${err?.name === "AbortError" ? "timeout" : err?.message ?? err})`);
-        return res.status(502).json({ message: "Cloud unreachable", error: "Cloud unreachable", code: "CLOUD_UNREACHABLE" });
+        // A request the local server can answer on its own (offline sign-in) takes over...
+        const fallback = (req as any).localFallback as RequestHandler | undefined;
+        if (fallback) return fallback(req, res, next);
+        // ...everything else is simply not possible without the internet.
+        return res.status(503).json({ message: "Needs internet", error: "Needs internet", code: "ONLINE_ONLY" });
       } finally {
         clearTimeout(timer);
       }
@@ -217,6 +223,14 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
       // session is still signed in: sign out locally too, or the app would sit on a screen where
       // every write fails.
       if (status === 401 && typeof req.isAuthenticated === "function" && req.isAuthenticated()) {
+        // A session that signed in OFFLINE has no cloud login at all: that is not "the cloud forgot
+        // you", so keep the local sign-in and tell the person what is needed.
+        if (!jar || Object.keys(jar).length === 0) {
+          return res.status(401).json({
+            message: "Sign out and sign in again while online to use this",
+            code: "CLOUD_SESSION_NEEDED",
+          });
+        }
         await logout(req);
         return sendUpstream();
       }
@@ -227,6 +241,32 @@ export function createCloudProxy(opts: CloudProxyOptions): RequestHandler {
       return sendUpstream();
     } catch (err) {
       next(err);
+    }
+  };
+}
+
+/**
+ * A one-off call to the cloud AS the signed-in person (their cloud cookies), used for best-effort
+ * side calls such as granting the cloud session a PIN elevation. Never throws; null = unreachable/no cloud login.
+ */
+export function createCloudCaller(opts: { cloudUrl: string; bypassSecret?: string; fetchImpl?: typeof fetch }) {
+  const doFetch = opts.fetchImpl ?? fetch;
+  return async (req: Request, method: string, path: string, body: unknown, timeoutMs = 3000): Promise<{ status: number; json: any } | null> => {
+    const cookie = cookieHeader((req.session as any)?.cloudCookies);
+    if (!cookie) return null;
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const headers: Record<string, string> = { cookie, "content-type": "application/json" };
+      if (opts.bypassSecret) headers["x-vercel-protection-bypass"] = opts.bypassSecret;
+      const res = await doFetch(`${opts.cloudUrl}${path}`, { method, headers, body: JSON.stringify(body ?? {}), redirect: "manual", signal: ac.signal });
+      let json: any = null;
+      try { json = await res.json(); } catch { /* ignore */ }
+      return { status: res.status, json };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(t);
     }
   };
 }

@@ -9,8 +9,8 @@ import session from "express-session";
 import passport from "passport";
 import { PGlite } from "@electric-sql/pglite";
 import { schemaStatements } from "./lib/pgliteSchema";
-import { migrationStatements, snapshotSelectSql, fetchRowsSql } from "../server/sync/changeLogSql";
-import { SYNC_TABLES } from "../shared/syncTables";
+import { migrationStatements, snapshotPageSql, fetchRowsSql } from "../server/sync/changeLogSql";
+import { SYNC_TABLES_V2 as SYNC_TABLES, SYNC_TABLES_V2 } from "../shared/syncTables";
 import { ensureLocalSchema } from "../server/local/localSchema";
 import { createSyncWorker } from "../server/local/syncWorker";
 import { createCloudProxy, mergeSetCookies, cookieHeader } from "../server/local/cloudProxy";
@@ -57,10 +57,13 @@ async function main() {
   });
   const deviceAuth: express.RequestHandler = (req, res, next) =>
     req.headers.authorization === `Bearer ${TOKEN}` ? next() : res.status(401).json({ message: "bad device token" });
-  cloud.get("/api/sync/snapshot", deviceAuth, async (_req, res) => {
-    const tables: Record<string, unknown[]> = {};
-    for (const t of SYNC_TABLES) tables[t] = (await cq(snapshotSelectSql(t))).map((r) => r.j);
-    res.json({ cursor: `${version}:${version}:`, tables });
+  // Protocol v2 (paged): ?v=2&begin=1 -> cursor + tables; ?v=2&table=T&after=ID&limit=N -> rows + next.
+  cloud.get("/api/sync/snapshot", deviceAuth, async (req, res) => {
+    if (req.query.begin === "1") return res.json({ cursor: `${version}:${version}:`, tables: Array.from(SYNC_TABLES_V2), pageSize: 1000 });
+    const table = String(req.query.table);
+    const limit = Number(req.query.limit ?? 1000);
+    const got = await cq(snapshotPageSql(table), [req.query.after ? String(req.query.after) : null, limit]);
+    res.json({ table, rows: got.map((r) => r.j), next: got.length === limit ? String(got[got.length - 1].id) : null });
   });
   cloud.get("/api/sync/pull", deviceAuth, async (req, res) => {
     if (cloudBehaviour.mode === "error500") return res.status(500).json({ message: "boom" });
@@ -105,7 +108,7 @@ async function main() {
     res.status(201).setHeader("Idempotent-Replayed", "false");
     res.json({ id: row.id, echoedKey: req.headers["idempotency-key"] ?? null });
   });
-  cloud.get("/api/reports/sales", (req, res) => res.json({ sales: 123, cookie: req.headers.cookie ?? null }));
+  cloud.get("/api/crm/segments", (req, res) => res.json({ sales: 123, cookie: req.headers.cookie ?? null }));
   const cloudSrv = await listen(cloud);
 
   // ───────────────────────── worker ─────────────────────────
@@ -255,8 +258,8 @@ async function main() {
   check("read-your-writes: the new order is in the LOCAL copy the moment the write returns", list.json?.some((o: any) => o.id === wr.json.id && o.notes === "from shop pc"), JSON.stringify(list.json));
 
   // unlisted GET proxies with the cloud cookie
-  const rep = await call("GET", "/api/reports/sales");
-  check("an unlisted GET proxies, carrying the cloud cookie", rep.json?.sales === 123 && String(rep.json?.cookie).includes("cloud-sess-1"));
+  const rep = await call("GET", "/api/crm/segments");
+  check("a cloud-only GET proxies, carrying the cloud cookie", rep.json?.sales === 123 && String(rep.json?.cookie).includes("cloud-sess-1"));
 
   // cloud session expired while the local one is alive
   cloudBehaviour.mode = "expired401";
@@ -313,7 +316,7 @@ async function main() {
   await new Promise<void>((r) => cloudSrv.server.close(() => r()));
   (cloudSrv.server as any).closeAllConnections?.();
   const down = await call("POST", "/api/orders", { orderNumber: "ZZTEST-D" });
-  check("cloud unreachable -> 502 CLOUD_UNREACHABLE", down.status === 502 && down.json?.code === "CLOUD_UNREACHABLE" && down.json?.error === "Cloud unreachable", JSON.stringify(down.json));
+  check("cloud unreachable -> 503 ONLINE_ONLY (Needs internet)", down.status === 503 && down.json?.code === "ONLINE_ONLY" && down.json?.message === "Needs internet", JSON.stringify(down.json));
   check("local reads keep working with the cloud down", (await call("GET", "/api/orders?open=true")).status === 200);
   await worker.pullNow(500);
   check("worker reports offline", !worker.status().online);

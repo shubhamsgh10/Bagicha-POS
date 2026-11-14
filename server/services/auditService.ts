@@ -42,6 +42,9 @@ export async function logAudit(
   entityId?: string | number | null,
   metadata?: Record<string, unknown> | null,
 ): Promise<void> {
+  // Shop-PC local mode: the cloud records the audit row when the action is replayed (with replayedBy).
+  // A local row would collide with the cloud's own ids in the synced audit_logs table.
+  if (process.env.BAGICHA_LOCAL_MODE === "1") return;
   try {
     const actor = getActorFromReq(req);
     // A request replayed by a shop PC (server/sync/replay.ts) says so on every audit row it writes.

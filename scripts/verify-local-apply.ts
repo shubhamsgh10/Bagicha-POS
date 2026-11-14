@@ -115,7 +115,7 @@ async function main() {
   check("a bad row rolls back the whole batch", threw && (await getCursor(local)) === "300:300:" && (await lq(`SELECT notes FROM orders WHERE id=$1`, [oid]))[0].notes === "less spicy");
 
   let refused = false;
-  try { await applyChanges(local, { cursor: "x", changes: [{ table: "audit_logs", id: 1, row: null }] }); } catch { refused = true; }
+  try { await applyChanges(local, { cursor: "x", changes: [{ table: "print_jobs", id: 1, row: null }] }); } catch { refused = true; }
   check("a non-synced table is refused", refused);
 
   // ── schema change handling ──

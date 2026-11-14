@@ -2,10 +2,10 @@
 // (requestPull / pullNow) and after every forwarded write. One cycle at a time; requests that
 // arrive during a cycle just schedule exactly one more.
 import type { PGlite } from "@electric-sql/pglite";
-import { SYNC_TABLES } from "../../shared/syncTables";
-import { applyChanges, applySnapshot, getCursor, type PullResponse, type SnapshotResponse } from "./applyChanges";
+import { SYNC_TABLES_V2, SNAPSHOT_ORDER_DAYS } from "../../shared/syncTables";
+import { applyChangesDetailed, applySnapshot, getCursor, upsertRows, type PullResponse, type SnapshotResponse } from "./applyChanges";
 import { getMeta, setMeta } from "./localSchema";
-import { SNAPSHOT_ORDER_DAYS } from "../../shared/syncTables";
+import { counts, pendingSkipSets } from "./outbox";
 
 export interface SyncWorkerOptions {
   client: PGlite;
@@ -22,6 +22,16 @@ export interface SyncWorkerOptions {
   snapshotTimeoutMs?: number;
   /** Called after rows were applied, with the tables touched. Must not throw (errors are logged). */
   onApplied?: (tables: string[]) => void | Promise<void>;
+  /**
+   * Runs at the start of every cycle that already has a snapshot: replays the outbox to the cloud.
+   * A rejection (cloud unreachable) fails the cycle, i.e. the PC counts as offline. Pulls then skip
+   * the orders whose entries are still pending.
+   */
+  beforePull?: () => Promise<void>;
+  /** Called after each successful cycle (lease refills etc.). Must not throw. */
+  afterCycle?: () => void | Promise<void>;
+  /** A schema change was refused because unsynced actions exist (shown in status). */
+  schemaBlocked?: () => boolean;
   log?: (msg: string) => void;
 }
 
@@ -31,6 +41,11 @@ export interface SyncStatus {
   lastPullAt: string | null;
   lastError: string | null;
   online: boolean;
+  /** A cycle (replay + pull) is running right now. */
+  syncing: boolean;
+  outboxPending: number;
+  problems: number;
+  schemaBlocked: boolean;
 }
 
 export interface SyncWorker {
@@ -41,6 +56,8 @@ export interface SyncWorker {
   /** Resolves when a cycle that STARTED after this call has finished, or after timeoutMs. Never rejects. */
   pullNow(timeoutMs: number): Promise<void>;
   status(): SyncStatus;
+  /** status() plus the outbox counts (reads the local database). */
+  fullStatus(): Promise<SyncStatus>;
   /** Orders created before this are not in the local copy (null = unknown). */
   coverageStart(): Date | null;
 }
@@ -63,6 +80,8 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
   let lastError: string | null = null;
   let online = false;
   let failures = 0;
+  let syncing = false;
+  let lastCounts = { pending: 0, problems: 0 };
 
   let stopped = false;
   let running = false;
@@ -99,23 +118,59 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
     try { await opts.onApplied(tables); } catch (e: any) { log(`onApplied failed: ${e?.message ?? e}`); }
   }
 
+  /** Protocol v2: take the cursor first, then page every table by id; the pull that follows heals anything that moved meanwhile. */
   async function snapshot() {
-    const snap = await cloudGet<SnapshotResponse>("/api/sync/snapshot", snapTimeout);
+    const begin = await cloudGet<{ cursor: string; tables: string[]; pageSize?: number }>("/api/sync/snapshot?v=2&begin=1", reqTimeout);
+    if (typeof begin?.cursor !== "string" || !Array.isArray(begin.tables)) throw new Error("malformed snapshot start");
+    const tables: Record<string, unknown[]> = {};
+    for (const t of SYNC_TABLES_V2) {
+      const rows: unknown[] = [];
+      let after: string | null = null;
+      for (;;) {
+        const q: string = `/api/sync/snapshot?v=2&table=${encodeURIComponent(t)}&limit=${begin.pageSize ?? 1000}${after ? `&after=${encodeURIComponent(after)}` : ""}`;
+        const page: { rows: unknown[]; next: string | null } = await cloudGet(q, snapTimeout);
+        for (const r of page.rows) rows.push(r);
+        if (!page.next) break;
+        after = String(page.next);
+      }
+      tables[t] = rows;
+    }
+    const snap: SnapshotResponse = { cursor: begin.cursor, tables };
     await applySnapshot(client, snap);
     cursor = snap.cursor;
     snapshotAt = new Date().toISOString();
     await setMeta(client, "snapshot_at", snapshotAt);
-    const counts = SYNC_TABLES.map((t) => `${t}=${snap.tables[t]?.length ?? 0}`).join(" ");
-    log(`snapshot applied (${counts})`);
-    await notifyApplied(Array.from(SYNC_TABLES));
+    await setMeta(client, "tables_dirty", null);
+    const c = SYNC_TABLES_V2.map((t) => `${t}=${snap.tables[t]?.length ?? 0}`).join(" ");
+    log(`snapshot applied (${c})`);
+    await notifyApplied(Array.from(SYNC_TABLES_V2));
+  }
+
+  /** Re-reads the `tables` table (a pull skipped some rows while their orders had pending edits). */
+  async function resyncTables() {
+    const rows: unknown[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const q: string = `/api/sync/snapshot?v=2&table=tables&limit=1000${after ? `&after=${encodeURIComponent(after)}` : ""}`;
+      const page: { rows: unknown[]; next: string | null } = await cloudGet(q, reqTimeout);
+      for (const r of page.rows) rows.push(r);
+      if (!page.next) break;
+      after = String(page.next);
+    }
+    await upsertRows(client, "tables", rows);
+    await setMeta(client, "tables_dirty", null);
+    log("tables re-synced after the outbox drained");
+    await notifyApplied(["tables"]);
   }
 
   async function cycle() {
     if (!cursor) cursor = await getCursor(client);
     if (!cursor) return snapshot();
+    // Replay first: the pull below must not overwrite orders the cloud has not heard about yet.
+    if (opts.beforePull) await opts.beforePull();
     let pull: PullResponse | { reset: true };
     try {
-      pull = await cloudGet(`/api/sync/pull?cursor=${encodeURIComponent(cursor)}`, reqTimeout);
+      pull = await cloudGet(`/api/sync/pull?v=2&cursor=${encodeURIComponent(cursor)}`, reqTimeout);
     } catch (e) {
       if (e instanceof HttpError && e.status === 400) { // cloud can't read our cursor: start over
         log("cursor rejected by the cloud; taking a fresh snapshot");
@@ -128,10 +183,13 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
       return snapshot();
     }
     const p = pull as PullResponse;
-    const touched = await applyChanges(client, p);
+    const skip = await pendingSkipSets(client);
+    const r = await applyChangesDetailed(client, p, skip);
     cursor = p.cursor;
-    if (p.changes.length) log(`applied ${p.changes.length} change(s) [${touched.join(", ")}]`);
-    if (touched.length) await notifyApplied(touched);
+    if (p.changes.length) log(`applied ${p.changes.length - r.skipped} change(s) [${r.touched.join(", ")}]${r.skipped ? `, kept ${r.skipped} (unsynced local edits)` : ""}`);
+    if (r.skippedTables) await setMeta(client, "tables_dirty", "1");
+    if (r.touched.length) await notifyApplied(r.touched);
+    if ((await getMeta(client, "tables_dirty")) === "1" && (await counts(client)).pending === 0) await resyncTables();
   }
 
   function schedule() {
@@ -144,12 +202,14 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
 
   async function loop() {
     running = true;
+    syncing = true;
     try {
       while (again && !stopped) {
         again = false;
         const n = ++started;
         try {
           await cycle();
+          if (opts.afterCycle) { try { await opts.afterCycle(); } catch (e: any) { log(`afterCycle failed: ${e?.message ?? e}`); } }
           online = true;
           lastError = null;
           failures = 0;
@@ -167,6 +227,7 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
       }
     } finally {
       running = false;
+      syncing = false;
       schedule();
     }
   }
@@ -213,7 +274,14 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
       return new Date(new Date(snapshotAt).getTime() - SNAPSHOT_ORDER_DAYS * 86_400_000 + 3_600_000);
     },
     status() {
-      return { cursor, hasSnapshot: cursor !== null, lastPullAt, lastError, online };
+      return {
+        cursor, hasSnapshot: cursor !== null, lastPullAt, lastError, online, syncing,
+        outboxPending: lastCounts.pending, problems: lastCounts.problems, schemaBlocked: opts.schemaBlocked?.() ?? false,
+      };
+    },
+    async fullStatus() {
+      lastCounts = await counts(client).catch(() => lastCounts);
+      return this.status();
     },
   };
 }
