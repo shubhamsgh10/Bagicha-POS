@@ -44,12 +44,15 @@ export async function logAudit(
 ): Promise<void> {
   try {
     const actor = getActorFromReq(req);
+    // A request replayed by a shop PC (server/sync/replay.ts) says so on every audit row it writes.
+    const replayedBy = (req as any).replay?.deviceId;
+    const meta = replayedBy != null ? { ...(metadata ?? {}), replayedBy } : (metadata ?? null);
     await db.insert(auditLogs).values({
       ...actor,
       action,
       entityType,
       entityId: entityId != null ? String(entityId) : null,
-      metadata: metadata ?? null,
+      metadata: meta,
       ip: getIp(req),
     });
   } catch {

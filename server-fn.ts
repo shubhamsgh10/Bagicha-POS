@@ -8,6 +8,7 @@ import { pool } from "./server/db";
 import { registerRoutes } from "./server/routes";
 import { applyCors } from "./server/cors";
 import { applyCsrfGuard } from "./server/csrf";
+import { replayMiddleware } from "./server/sync/replay";
 import { initSettings, settingsGuard } from "./server/settingsStore";
 import { resolveSessionSecret } from "./server/sessionSecret";
 import { serverTiming } from "./server/serverTiming";
@@ -105,6 +106,9 @@ app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
+// Shop-PC replay (device token + X-Bagicha-Replay): acts as the named user for ONE request, no session.
+// Right after passport so it overrides req.user, before settingsGuard and every route (see server/sync/replay.ts).
+app.use(replayMiddleware);
 
 const ready = (async () => {
   await initSettings();

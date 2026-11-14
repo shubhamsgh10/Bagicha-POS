@@ -20,6 +20,7 @@ import { seedDefaultRules } from "./services/crm/automationRuleEngine";
 import { startDailyScheduler } from "./services/dailyScheduler";
 import { applyCors } from "./cors";
 import { applyCsrfGuard } from "./csrf";
+import { replayMiddleware } from "./sync/replay";
 import { backgroundJobsDecision } from "./backgroundJobs";
 
 const MemoryStoreSession = MemoryStore(session);
@@ -111,6 +112,10 @@ app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
+// Shop-PC replay (device token + X-Bagicha-Replay): acts as the named user for ONE request, no session.
+// Right after passport so it overrides req.user, before settingsGuard and every route. Cloud only: the
+// local server never accepts replays.
+if (!localMode) app.use(replayMiddleware);
 
 app.use((req, res, next) => {
   const start = Date.now();

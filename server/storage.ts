@@ -186,7 +186,7 @@ export interface IStorage {
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
   updateOrderIfState(id: number, patch: Partial<InsertOrder>, expected: { status: string; paymentStatus: string }): Promise<Order | undefined>;
-  settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
+  settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date, paidAt?: Date): Promise<Order | undefined>;
   getOrdersCollectedBetween(startDate: Date, endDate: Date): Promise<Order[]>;
   deleteOrder(id: number): Promise<void>;
   mergeOrders(params: {
@@ -1128,12 +1128,15 @@ export class DatabaseStorage implements IStorage {
   // due at once, or the Reports "Mark all paid" button landing in between, must not both succeed and
   // record two different payments. The loser gets undefined and is told to reopen the order.
   // Stamps paidAt = now: THIS is the moment the money was received, whatever day the order was billed.
-  async settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined> {
+  // `paidAt` overrides the stamp only for a request replayed from a shop PC (the PC's action time, so a
+  // due settled offline at 11 pm is that day's money); updatedAt is ALWAYS the real now, because the
+  // order-history delta sync (updatedSince) and the replay base check both rely on it moving forward.
+  async settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date, paidAt?: Date): Promise<Order | undefined> {
     const now = new Date();
     const [updated] = await db.update(orders).set({
       ...(patch as any),
       paymentStatus: "paid",
-      paidAt: now,
+      paidAt: paidAt ?? now,
       updatedAt: now,
     }).where(and(
       eq(orders.id, id),
