@@ -407,6 +407,15 @@ async function issueCounter(field: "billCounter" | "kotCounter"): Promise<number
   return next;
 }
 
+/**
+ * A counter lease (server/sync/leases.ts) advanced the DB counter by a whole block in its own
+ * transaction. Keeps this instance's cached copy roughly warm, exactly like issueCounter does
+ * (patch, not set; the DB stays the source of truth for issuance).
+ */
+export function noteCounterAdvanced(field: "billCounter" | "kotCounter", value: number): void {
+  cache.patch((current) => ({ ...current, [field]: value }));
+}
+
 function nextCounter(field: "billCounter" | "kotCounter"): Promise<number> {
   return issueCounter(field);
 }

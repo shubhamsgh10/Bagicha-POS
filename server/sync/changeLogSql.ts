@@ -1,6 +1,8 @@
 // SQL text shared by scripts/migrate-change-log.mjs, scripts/verify-change-log.ts (PGlite) and
 // the sync routes, so the three can't drift. Pure strings — no imports from db.
-import { SYNC_TABLES, SECRET_COLUMNS, SECRET_FILLS, NESTED_SECRETS, SNAPSHOT_ORDER_DAYS } from "../../shared/syncTables";
+import {
+  SYNC_TABLES, PHASE4_NEW_TABLES, UUID_ID_TABLES, SECRET_COLUMNS, SECRET_FILLS, NESTED_SECRETS, SNAPSHOT_ORDER_DAYS,
+} from "../../shared/syncTables";
 
 export const CHANGE_LOG_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS change_log (
@@ -93,22 +95,91 @@ export function snapshotSelectSql(table: string): string {
   return rows(`ORDER BY id`);
 }
 
-/** Fetch current rows by id (all synced tables have an integer id). Param $1: int[]. */
+const UUID_TABLES = new Set<string>(UUID_ID_TABLES);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** SQL array type of a table's id column. */
+export function idArrayType(table: string): string {
+  return UUID_TABLES.has(table) ? "uuid[]" : "int[]";
+}
+
+/** Fetch current rows by id (integer serial, or uuid for customers_master). Param $1: id array. */
 export function fetchRowsSql(table: string): string {
-  return `SELECT t.id AS id, ${rowJsonSql(table)} AS j FROM ${table} t WHERE t.id = ANY($1::int[])`;
+  return `SELECT t.id AS id, ${rowJsonSql(table)} AS j FROM ${table} t WHERE t.id = ANY($1::${idArrayType(table)})`;
 }
 
 export interface ChangeRow { seq: string | number; table_name: string; row_id: string; op: string }
 
-/** Keep the last op per (table,row), in seq order. */
-export function collapseChanges(rows: ChangeRow[]): Array<{ table: string; id: number; op: string }> {
-  const last = new Map<string, { table: string; id: number; op: string }>();
+/** Keep the last op per (table,row), in seq order. uuid tables keep their id as a string. */
+export function collapseChanges(rows: ChangeRow[]): Array<{ table: string; id: number | string; op: string }> {
+  const last = new Map<string, { table: string; id: number | string; op: string }>();
   for (const r of rows) {
-    const id = Number(r.row_id);
-    if (!Number.isInteger(id)) continue;
+    let id: number | string;
+    if (UUID_TABLES.has(r.table_name)) {
+      if (!UUID_RE.test(r.row_id)) continue;
+      id = r.row_id.toLowerCase();
+    } else {
+      id = Number(r.row_id);
+      if (!Number.isInteger(id)) continue;
+    }
     const k = `${r.table_name}:${id}`;
     last.delete(k); // re-insert so ordering follows the latest change
     last.set(k, { table: r.table_name, id, op: r.op });
   }
   return Array.from(last.values());
 }
+
+/** One page of a v2 snapshot: rows after id $1 (NULL = from the start), at most $2, ordered by id. */
+export function snapshotPageSql(table: string): string {
+  return `SELECT t.id AS id, ${rowJsonSql(table)} AS j FROM ${table} t
+          WHERE ($1::text IS NULL OR t.id > $1::${UUID_TABLES.has(table) ? "uuid" : "int"})
+          ORDER BY t.id LIMIT $2::int`;
+}
+
+// ───────────────────────── Phase 4 ─────────────────────────
+/** Number blocks handed to a shop PC so its offline orders carry final ids / bill numbers / KOT numbers. */
+export const DEVICE_LEASES_DDL: string[] = [
+  `CREATE TABLE IF NOT EXISTS device_leases (
+     id serial PRIMARY KEY,
+     device_id integer NOT NULL,
+     kind text NOT NULL,
+     start_value bigint NOT NULL,
+     end_value bigint NOT NULL,
+     next_value bigint NOT NULL,
+     issued_at timestamptz NOT NULL DEFAULT now(),
+     exhausted_at timestamptz
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_device_leases_device_kind ON device_leases (device_id, kind, start_value)`,
+  `ALTER TABLE device_leases ENABLE ROW LEVEL SECURITY`,
+];
+
+/** Everything scripts/migrate-sync-phase4.mjs runs: device_leases, then triggers on the new synced tables. */
+export function phase4MigrationStatements(): string[] {
+  const out = [...DEVICE_LEASES_DDL, CHANGE_LOG_FUNCTION];
+  for (const t of PHASE4_NEW_TABLES) out.push(...triggerDdl(t));
+  return out;
+}
+
+/** Undoes phase 4 only (the phase-3 change_log / sync_devices / 9 triggers stay). */
+export const PHASE4_ROLLBACK_SQL: string[] = [
+  ...PHASE4_NEW_TABLES.map((t) => `DROP TRIGGER IF EXISTS change_log_capture ON ${t}`),
+  `DROP TABLE IF EXISTS device_leases`,
+];
+
+// Lease issuance. Each runs INSIDE a transaction the caller opened (see server/sync/leases.ts).
+/** Serialises every writer of orders for the length of the transaction (see leases.ts for why). */
+export const LOCK_ORDERS_SQL = `LOCK TABLE orders IN SHARE ROW EXCLUSIVE MODE`;
+/** Issued-lease cap check. $1 device, $2 kind. */
+export const LEASE_RATE_SQL = `SELECT count(*)::int AS n FROM device_leases WHERE device_id = $1 AND kind = $2 AND issued_at > now() - interval '1 hour'`;
+/** Reserves ids [start, start+size-1]: takes the next id, then moves the sequence to the block's end. $1 size. */
+export const ORDER_ID_BLOCK_SQL = `WITH first AS (SELECT nextval(pg_get_serial_sequence('orders','id')) AS s)
+  SELECT s::bigint AS start_value, setval(pg_get_serial_sequence('orders','id'), s + $1::bigint - 1)::bigint AS end_value FROM first`;
+/** Advances a settings counter by $2 and returns the NEW value (the block is (value-size, value]). $1 field. */
+export const COUNTER_BLOCK_SQL = `UPDATE restaurant_settings
+  SET settings = jsonb_set(settings::jsonb, ARRAY[$1::text], to_jsonb(COALESCE((settings ->> $1::text)::int, 0) + $2::int))::json, updated_at = NOW()
+  WHERE id = 1 RETURNING (settings ->> $1::text)::int AS value`;
+export const INSERT_LEASE_SQL = `INSERT INTO device_leases (device_id, kind, start_value, end_value, next_value)
+  VALUES ($1, $2, $3, $4, $3) RETURNING id, kind, start_value, end_value`;
+/** Does one of the device's leases of this kind contain $3? $1 device, $2 kind. */
+export const IN_LEASE_SQL = `SELECT 1 FROM device_leases WHERE device_id = $1 AND kind = $2 AND start_value <= $3::bigint AND end_value >= $3::bigint LIMIT 1`;
+/** The order's updated_at at microsecond precision, as text. $1 id. */
+export const ORDER_UPDATED_AT_SQL = `SELECT to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS u FROM orders WHERE id = $1`;

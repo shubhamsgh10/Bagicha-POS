@@ -39,17 +39,30 @@ export async function revokeDevice(id: number): Promise<boolean> {
 
 export interface SyncDevice { id: number; lastSeenAt: Date | null }
 
-/** `Authorization: Bearer <token>`; 401 unless it matches a non-revoked device. */
-export async function requireDeviceToken(req: Request, res: Response, next: NextFunction) {
-  const m = /^Bearer\s+([0-9a-f]{64})$/i.exec(req.headers.authorization ?? "");
-  if (!m) return res.status(401).json({ message: "Device token required" });
+/** Not 401: the database could not be asked, so callers answer 503 and the device retries. */
+export class DeviceAuthUnavailable extends Error {}
+
+const BEARER_RE = /^Bearer\s+([0-9a-f]{64})$/i;
+
+/**
+ * The non-revoked device a `Authorization: Bearer <64 hex>` header belongs to, or null. The token is
+ * looked up by its sha256 (a unique-indexed column), so no secret is compared byte by byte in JS; the
+ * stored hash is also re-compared with timingSafeEqual. Throws DeviceAuthUnavailable on a DB error.
+ * Shared by requireDeviceToken and the replay middleware, so the two can never accept different things.
+ */
+export async function authenticateDevice(authorization: string | undefined): Promise<SyncDevice | null> {
+  const m = BEARER_RE.exec(authorization ?? "");
+  if (!m) return null;
+  const hash = hashToken(m[1].toLowerCase());
   try {
     const { rows } = await cloudPool().query(
-      `SELECT id, last_seen_at FROM sync_devices WHERE token_hash = $1 AND revoked_at IS NULL`,
-      [hashToken(m[1])],
+      `SELECT id, last_seen_at, token_hash FROM sync_devices WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [hash],
     );
-    if (rows.length === 0) return res.status(401).json({ message: "Invalid or revoked device token" });
-    (req as any).syncDevice = { id: rows[0].id, lastSeenAt: rows[0].last_seen_at } as SyncDevice;
+    if (rows.length === 0) return null;
+    const stored = Buffer.from(String(rows[0].token_hash), "utf8");
+    const given = Buffer.from(hash, "utf8");
+    if (stored.length !== given.length || !crypto.timingSafeEqual(stored, given)) return null;
     // At most once a minute; awaited so a pull right after the snapshot sees it, never fails the request.
     await cloudPool()
       .query(
@@ -58,9 +71,22 @@ export async function requireDeviceToken(req: Request, res: Response, next: Next
         [rows[0].id],
       )
       .catch(() => {});
-    next();
+    return { id: rows[0].id, lastSeenAt: rows[0].last_seen_at };
   } catch (err) {
     console.error("[sync] device auth failed:", err);
+    throw new DeviceAuthUnavailable("Sync unavailable");
+  }
+}
+
+/** `Authorization: Bearer <token>`; 401 unless it matches a non-revoked device. */
+export async function requireDeviceToken(req: Request, res: Response, next: NextFunction) {
+  if (!BEARER_RE.test(req.headers.authorization ?? "")) return res.status(401).json({ message: "Device token required" });
+  try {
+    const device = await authenticateDevice(req.headers.authorization);
+    if (!device) return res.status(401).json({ message: "Invalid or revoked device token" });
+    (req as any).syncDevice = device;
+    next();
+  } catch {
     res.status(503).json({ message: "Sync unavailable" });
   }
 }

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, bigserial, integer, boolean, timestamp, decimal, json, uuid, real, index, uniqueIndex, customType, char } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, bigserial, integer, boolean, timestamp, decimal, json, uuid, real, index, uniqueIndex, customType, char, bigint } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -959,3 +959,18 @@ export const syncDevices = pgTable("sync_devices", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   revokedAt:  timestamp("revoked_at", { withTimezone: true }),
 }).enableRLS();
+
+// Number blocks leased to a shop PC for offline work (scripts/migrate-sync-phase4.mjs; SQL in
+// server/sync/changeLogSql.ts, logic in server/sync/leases.ts). Declared so `db:push` never drops it. RLS on.
+export const deviceLeases = pgTable("device_leases", {
+  id:         serial("id").primaryKey(),
+  deviceId:   integer("device_id").notNull(),
+  kind:       text("kind").notNull(),                    // order_id | bill_counter | kot_counter
+  startValue: bigint("start_value", { mode: "number" }).notNull(),
+  endValue:   bigint("end_value", { mode: "number" }).notNull(),
+  nextValue:  bigint("next_value", { mode: "number" }).notNull(),
+  issuedAt:   timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+  exhaustedAt: timestamp("exhausted_at", { withTimezone: true }),
+}, (t) => ({
+  deviceKindIdx: index("idx_device_leases_device_kind").on(t.deviceId, t.kind, t.startValue),
+})).enableRLS();
