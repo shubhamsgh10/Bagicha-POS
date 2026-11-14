@@ -59,7 +59,9 @@ export const SNAPSHOT_PAGE_MAX = 2000;
 /** Kinds of numbers/ids a device is leased (device_leases.kind). */
 export const LEASE_KINDS = ["order_id", "bill_counter", "kot_counter"] as const;
 export type LeaseKind = typeof LEASE_KINDS[number];
-export const LEASE_DEFAULT_SIZE = 200;
+// Small on purpose (owner's choice, 2026-11-14): every block makes phone orders skip past it in
+// the shared bill series, and an abandoned block is a gap of up to this many bill numbers.
+export const LEASE_DEFAULT_SIZE = 30;
 export const LEASE_MAX_SIZE = 1000;
 /** A device may be issued at most this many leases of one kind per hour (guards runaway burning of bill numbers). */
 export const LEASE_MAX_PER_HOUR = 20;

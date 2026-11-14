@@ -6,7 +6,8 @@ import { LEASE_KINDS, LEASE_DEFAULT_SIZE, type LeaseKind } from "../../shared/sy
 import { noteIssued } from "./outbox";
 
 /** Refill when fewer than this share of the default block is left. */
-export const LEASE_REFILL_BELOW = Math.floor(LEASE_DEFAULT_SIZE * 0.25);
+// Top up at half a block, so the PC holds 15–45 numbers: enough for a typical offline hour.
+export const LEASE_REFILL_BELOW = Math.ceil(LEASE_DEFAULT_SIZE * 0.5);
 
 export class LeaseExhaustedError extends Error {
   readonly status = 503;

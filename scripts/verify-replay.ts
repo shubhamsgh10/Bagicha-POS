@@ -17,7 +17,7 @@ import { planPaymentEdit } from "../shared/paymentEdit";
 import { businessDateOf } from "../shared/businessDay";
 import { migrationStatements, phase4MigrationStatements, PHASE4_ROLLBACK_SQL, fetchRowsSql, collapseChanges, snapshotPageSql } from "../server/sync/changeLogSql";
 import { bodyHashInput, type KeyFingerprint } from "../shared/requestKeys";
-import { PHASE4_NEW_TABLES, SYNC_TABLES_V2, LEASE_MAX_PER_HOUR } from "../shared/syncTables";
+import { PHASE4_NEW_TABLES, SYNC_TABLES_V2, LEASE_MAX_PER_HOUR, LEASE_DEFAULT_SIZE } from "../shared/syncTables";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -371,7 +371,7 @@ async function main() {
   let capped = "";
   try { for (let i = 0; i < LEASE_MAX_PER_HOUR + 2; i++) await tx(() => leases.issueLeaseIn(runner, 3, "kot_counter", 1)); } catch (e: any) { capped = e?.code ?? ""; }
   check("lease issuance is rate limited per device and kind", capped === "lease_rate_limited");
-  check("lease size is clamped", leases.clampLeaseSize(undefined) === 200 && leases.clampLeaseSize(5000) === 1000 && leases.clampLeaseSize(-3) === 200 && leases.clampLeaseSize(7.9) === 7);
+  check("lease size is clamped", leases.clampLeaseSize(undefined) === LEASE_DEFAULT_SIZE && leases.clampLeaseSize(5000) === 1000 && leases.clampLeaseSize(-3) === LEASE_DEFAULT_SIZE && leases.clampLeaseSize(7.9) === 7);
 
   // rollback
   for (const s of PHASE4_ROLLBACK_SQL) await db.exec(s);
