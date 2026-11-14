@@ -394,7 +394,7 @@ export default function POS() {
       await apiRequest("PUT", `/api/orders/${activeOrderId}/move-table`, {
         newTableId: newTable.id,
         newTableName: newTable.name,
-      });
+      }, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       setShowMoveDialog(false);
       navigate("/tables");
@@ -431,7 +431,7 @@ export default function POS() {
     setActionLoading(true);
     try {
       if (!(await saveCartBeforeOrderAction())) return;
-      await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {});
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {}, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({ title: "Order placed on hold" });
       setShowHoldConfirm(false);
@@ -1900,7 +1900,7 @@ export default function POS() {
                   key={o.id}
                   onClick={async () => {
                     try {
-                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
+                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {}, { idempotent: true });
                     } catch (err: any) {
                       toast({ title: "Could not recall the order", description: describeApiError(err).message, variant: "destructive" });
                       queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });

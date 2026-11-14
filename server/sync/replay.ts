@@ -19,9 +19,11 @@ import type { NextFunction, Request, Response } from "express";
 import {
   REPLAY_HEADER, REPLAY_ACTOR_HEADER, REPLAY_APPROVER_HEADER, REPLAY_BASE_HEADER, REPLAY_AT_HEADER,
   replayFlagSet, parsePrincipalRef, parseReplayAt, isReplayable, baseTargetFor, baseMatches,
-  normalizeTimestamp, type PrincipalRef,
+  normalizeTimestamp, isKeyedReplayRoute, type PrincipalRef,
 } from "../../shared/replayRules";
+import crypto from "crypto";
 import { ROLE_LEVEL, type PinApprover } from "../elevation";
+import { bodyHashInput, keyPath, isValidIdempotencyKey, type KeyFingerprint } from "../../shared/requestKeys";
 import { authenticateDevice, DeviceAuthUnavailable, type SyncDevice } from "./deviceAuth";
 
 export interface ReplayApprover extends PinApprover { level: number }
@@ -50,8 +52,11 @@ export interface ReplayDeps {
   orderUpdatedAt(orderId: number): Promise<string | null>;
   orderIdOfTable(tableId: number): Promise<number | null>;
   orderIdOfKot(kotId: number): Promise<number | null>;
-  /** Has this Idempotency-Key been claimed already (a retry of an applied request)? */
-  requestKeySeen(key: string): Promise<boolean>;
+  /**
+   * Is there a request_keys row for this key whose actor + method + path + body hash equal this
+   * request's? Only then is it a true retry of an already-applied request (see the base check below).
+   */
+  requestKeyMatches(key: string, fp: KeyFingerprint): Promise<boolean>;
   now?(): number;
 }
 
@@ -141,8 +146,19 @@ export function makeReplayMiddleware(deps: ReplayDeps) {
           else if (target.kind === "kot") orderId = await deps.orderIdOfKot(target.id);
           else orderId = Number.isInteger(Number((req.body as any)?.orderId)) ? Number((req.body as any).orderId) : null;
           if (orderId !== null) {
+            // The base check is skipped ONLY for a genuine retry: the route mounts requestKeys (so the key
+            // is really enforced) AND the stored key row is for exactly this actor + method + path + body.
+            // A key reused on another path/body (or on a route that ignores keys) never skips the check.
             const key = req.headers["idempotency-key"];
-            const seen = typeof key === "string" && key ? await deps.requestKeySeen(key) : false;
+            let seen = false;
+            if (typeof key === "string" && isValidIdempotencyKey(key) && isKeyedReplayRoute(req.method, url)) {
+              seen = await deps.requestKeyMatches(key, {
+                actorId: ctx.actor,
+                method: req.method,
+                path: keyPath(req.originalUrl || req.url || ""),
+                bodyHash: crypto.createHash("sha256").update(bodyHashInput(req.body)).digest("hex"),
+              });
+            }
             if (!seen) {
               const current = await deps.orderUpdatedAt(orderId);
               if (current !== null && !baseMatches(current, ctx.base)) {
@@ -184,8 +200,13 @@ export async function replayMiddleware(req: Request, res: Response, next: NextFu
       orderUpdatedAt: async (id) => (await q(`SELECT to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS u FROM orders WHERE id = $1`, [id]))[0]?.u ?? null,
       orderIdOfTable: async (id) => (await q(`SELECT current_order_id AS o FROM tables WHERE id = $1`, [id]))[0]?.o ?? null,
       orderIdOfKot: async (id) => (await q(`SELECT order_id AS o FROM kot_tickets WHERE id = $1`, [id]))[0]?.o ?? null,
-      requestKeySeen: async (key) => {
-        try { return (await q(`SELECT 1 FROM request_keys WHERE key = $1`, [key])).length > 0; } catch { return false; }
+      requestKeyMatches: async (key, fp) => {
+        try {
+          return (await q(
+            `SELECT 1 FROM request_keys WHERE key = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND body_hash = $5`,
+            [key, fp.actorId, fp.method, fp.path, fp.bodyHash],
+          )).length > 0;
+        } catch { return false; }
       },
     });
   }

@@ -1609,7 +1609,7 @@ export async function registerRoutes(
 
   // Same effect as PUT /api/orders/:id/move-table (relocates an active order to another
   // table) — gated the same way.
-  app.post("/api/tables/:id/shift", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.post("/api/tables/:id/shift", requireAuth, requestKeys, requireElevation("manager"), async (req, res) => {
     try {
       const fromTableId = parseInt(req.params.id);
       const { toTableId } = req.body;
@@ -2740,7 +2740,7 @@ export async function registerRoutes(
 
   // Deliberately narrow: money/payment/identity fields are NOT settable here — see
   // shared/orderMutation.ts's orderUpdateAllowlist for why.
-  app.put("/api/orders/:id", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const parsed = orderUpdateAllowlist.safeParse(req.body);
@@ -3011,7 +3011,7 @@ export async function registerRoutes(
   // Deliberately NOT a re-settle — POST /api/orders/:id/payment fires loyalty
   // points, the customer WhatsApp message and feedback scheduling exactly once, and none of
   // that should re-fire because a label was corrected.
-  app.post("/api/orders/:id/payment-method", requireAuth, requireFreshPin("manager"), async (req, res) => {
+  app.post("/api/orders/:id/payment-method", requireAuth, requestKeys, requireFreshPin("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
@@ -3079,7 +3079,7 @@ export async function registerRoutes(
   // Always PIN-gated (requireFreshPin: a logged-in admin/manager must still type a PIN) and audited
   // with WHO approved. Changes payment fields only — no table/KOT/loyalty/WhatsApp/feedback side
   // effects, which belong to a bill being paid at the table, not to an old tab being cleared.
-  app.post("/api/orders/:id/settle-due", requireAuth, requireFreshPin("manager"), async (req, res) => {
+  app.post("/api/orders/:id/settle-due", requireAuth, requestKeys, requireFreshPin("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid order id" });
@@ -3255,7 +3255,7 @@ export async function registerRoutes(
   });
 
   // ── Bill requested — set table to "billed" when staff prints customer bill ───
-  app.post("/api/orders/:id/bill-requested", requireAuth, async (req, res) => {
+  app.post("/api/orders/:id/bill-requested", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3319,7 +3319,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Hold Order ──────────────────────────────────────────────────
-  app.put("/api/orders/:id/hold", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/hold", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3352,7 +3352,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Recall Held Order ─────────────────────────────────────────
-  app.put("/api/orders/:id/recall", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id/recall", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const order = await storage.getOrderById(id);
@@ -3435,7 +3435,7 @@ export async function registerRoutes(
   });
 
   // ── Table Action: Move Table ──────────────────────────────────────────────────
-  app.put("/api/orders/:id/move-table", requireAuth, requireElevation("manager"), async (req, res) => {
+  app.put("/api/orders/:id/move-table", requireAuth, requestKeys, requireElevation("manager"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { newTableName } = req.body;
@@ -3727,7 +3727,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/kot/:id", requireAuth, async (req, res) => {
+  app.put("/api/kot/:id", requireAuth, requestKeys, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;

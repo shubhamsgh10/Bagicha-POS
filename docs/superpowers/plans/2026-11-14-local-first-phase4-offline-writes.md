@@ -209,3 +209,9 @@ Local writes appended to the outbox, as the method and path of the original requ
 5. A conflict case from a "phone" edit.
 6. Clean up the `ZZTEST` rows, the sequence and counters, revoke the lease ranges (leftover unused lease numbers are a gap in bill numbers — note for the owner).
 7. Build installer `1.0.42-localfirst.3`.
+
+## Accepted trade-offs
+
+- **The device token may act as any user.** It is admin-issued and revocable; every replayed action is audited with `replayedBy = device id` and the real actor/approver. Only the replay list is accepted, and only with an existing actor (and an existing manager/admin approver when a PIN is asserted).
+- **PIN/password verifiers on the PC are brute-forceable offline.** The local `local_auth` table holds scrypt hashes (PINs are 4-6 digits, so the keyspace is tiny). This is the price of an offline PIN. On-disk encryption of the local database is planned; until then treat the PC's disk as sensitive. Online rate limits do not apply to an attacker who has copied the files.
+- **The base check is skipped only for a true retry:** the route mounts requestKeys and the stored key row matches actor + method + path + body hash (`server/sync/replay.ts`).

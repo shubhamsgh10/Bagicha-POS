@@ -16,6 +16,7 @@ import { grantElevation, hasElevation, hasFreshPin, freshPinApprover } from "../
 import { planPaymentEdit } from "../shared/paymentEdit";
 import { businessDateOf } from "../shared/businessDay";
 import { migrationStatements, phase4MigrationStatements, PHASE4_ROLLBACK_SQL, fetchRowsSql, collapseChanges, snapshotPageSql } from "../server/sync/changeLogSql";
+import { bodyHashInput, type KeyFingerprint } from "../shared/requestKeys";
 import { PHASE4_NEW_TABLES, SYNC_TABLES_V2, LEASE_MAX_PER_HOUR } from "../shared/syncTables";
 
 let failures = 0;
@@ -133,7 +134,8 @@ async function main() {
     const orderUpdated: Record<number, string> = { 50: "2026-11-14T10:00:00.123456" };
     let authCalls = 0;
     let authMode: "ok" | "none" | "down" = "ok";
-    const seenKeys = new Set<string>();
+    // key -> the request it was claimed for ("actor|method|path|bodyhash"); the fake matcher compares like the SQL does.
+    const seenKeys = new Map<string, KeyFingerprint>();
     const mw = makeReplayMiddleware({
       authenticate: async () => {
         authCalls++;
@@ -145,7 +147,10 @@ async function main() {
       orderUpdatedAt: async (id) => orderUpdated[id] ?? null,
       orderIdOfTable: async (id) => (id === 3 ? 50 : null),
       orderIdOfKot: async (id) => (id === 4 ? 50 : null),
-      requestKeySeen: async (k) => seenKeys.has(k),
+      requestKeyMatches: async (k, fp) => {
+        const s = seenKeys.get(k);
+        return !!s && s.actorId === fp.actorId && s.method === fp.method && s.path === fp.path && s.bodyHash === fp.bodyHash;
+      },
       now: () => NOW,
     });
     const run = async (method: string, url: string, headers: Record<string, string>, body: any = {}) => {
@@ -213,9 +218,21 @@ async function main() {
     check("bad base gives 400", !r.nexted && r.status === 400);
     r = await run("PUT", "/api/orders/51/items", { ...good, "X-Replay-Base": "2026-01-01T00:00:00" });
     check("base on an order that does not exist falls through to the route's 404", r.nexted);
-    seenKeys.add("idem-1");
-    r = await run("PUT", "/api/orders/50/items", { ...good, "X-Replay-Base": "2026-01-01T00:00:00", "Idempotency-Key": "idem-1" });
-    check("base is not re-checked for a retry whose Idempotency-Key already ran", r.nexted);
+    const h = (b: unknown) => crypto.createHash("sha256").update(bodyHashInput(b)).digest("hex");
+    seenKeys.set("idem-12345", { actorId: "u:3", method: "PUT", path: "/api/orders/50/items", bodyHash: h({}) });
+    const retryHdr = { ...good, "X-Replay-Base": "2026-01-01T00:00:00", "Idempotency-Key": "idem-12345" };
+    r = await run("PUT", "/api/orders/50/items", retryHdr);
+    check("base is not re-checked for a true retry (same key, actor, method, path, body)", r.nexted);
+    r = await run("PUT", "/api/orders/50/items?x=1", retryHdr);
+    check("a query string does not change the fingerprint", r.nexted);
+    r = await run("PUT", "/api/orders/50/items", retryHdr, { items: [{ menuItemId: 1 }] });
+    check("same key with a different body: base check still runs (409)", !r.nexted && r.status === 409 && r.json.code === "conflict");
+    r = await run("POST", "/api/orders/50/payment", retryHdr);
+    check("same key on a different path: base check still runs (409)", !r.nexted && r.status === 409);
+    r = await run("PUT", "/api/orders/50/items", { ...retryHdr, "X-Replay-Actor": "u:2" });
+    check("same key from a different actor: base check still runs (409)", !r.nexted && r.status === 409);
+    r = await run("PUT", "/api/orders/50/items", { ...retryHdr, "Idempotency-Key": "bad key!" });
+    check("an invalid key never skips the base check", !r.nexted && r.status === 409);
     r = await run("PUT", "/api/orders/50/items", { ...good, "X-Replay-Base": "2026-01-01T00:00:00", "Idempotency-Key": "idem-2" });
     check("an unseen key still gets the base check", !r.nexted && r.status === 409);
     r = await run("POST", "/api/tables/3/shift", { ...good, "X-Replay-Base": "2026-01-01T00:00:00" });

@@ -98,7 +98,7 @@ export default function KOT() {
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) =>
-      apiRequest("PUT", `/api/kot/${id}`, { status }),
+      apiRequest("PUT", `/api/kot/${id}`, { status }, { idempotent: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kot"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });

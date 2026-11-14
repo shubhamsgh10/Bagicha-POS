@@ -78,6 +78,14 @@ export function isReplayable(method: string, path: string): boolean {
   return false;
 }
 
+/**
+ * Routes that mount the requestKeys middleware (server/requestKeys.ts). Every replay-list route does
+ * (scripts/verify-keyed-routes.ts locks it), so this is the replay list itself.
+ */
+export function isKeyedReplayRoute(method: string, path: string): boolean {
+  return isReplayable(method, path);
+}
+
 export type BaseTarget =
   | { kind: "order"; id: number }
   | { kind: "table"; id: number }
