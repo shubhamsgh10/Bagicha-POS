@@ -90,6 +90,7 @@ import { orderEditBlock, isNoopItemsSave, kitchenTicketLines, discountNeedsAppro
 import { buildSpecialInstructions } from "@shared/orderItemText";
 import { isKotSkipped } from "@shared/kotStations";
 import { ROLE_LEVEL, grantElevation, hasElevation, requireElevation, requireFreshPin, freshPinApprover } from "./elevation";
+import { requireAuth, requireAdmin, requireManagerOrAdmin } from "./authGuards";
 import { requireUserAccount, sanitizeUser } from "./selfScope";
 import { cachedPrincipal, forgetPrincipal, userPrincipalKey, staffPrincipalKey } from "./principalCache";
 import { hashPassword, verifyPassword } from "./passwordHash";
@@ -154,11 +155,10 @@ passport.deserializeUser(async (key: any, done) => {
   }
 });
 
-// Middleware to require authentication
-export function requireAuth(req: any, res: any, next: any) {
-  if (req.isAuthenticated()) return next();
-  res.status(401).json({ message: "Unauthorized" });
-}
+// requireAuth / requireAdmin / requireManagerOrAdmin live in ./authGuards (see the comment there:
+// a route module importing them from ./routes deadlocks the bundled server). Re-exported here so
+// existing importers keep working; route modules must import them from ./authGuards.
+export { requireAuth, requireAdmin, requireManagerOrAdmin };
 
 function safeEqual(a: string, b: string): boolean {
   if (!a || !b || a.length !== b.length) return false;
@@ -177,20 +177,6 @@ export function requireDeviceAuth(req: any, res: any, next: any) {
   if (token && provided && safeEqual(provided, token)) return next();
   if (req.isAuthenticated?.() && req.user?.role === "admin") return next();
   return res.status(401).json({ message: "Device authentication required" });
-}
-
-// Middleware to require admin role
-export function requireAdmin(req: any, res: any, next: any) {
-  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
-  if (req.user?.role !== "admin") return res.status(403).json({ message: "Admin access required" });
-  next();
-}
-
-// Manager OR admin — gates staff/payroll data so staff-tier (PIN) sessions can't read salaries/roster.
-export function requireManagerOrAdmin(req: any, res: any, next: any) {
-  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
-  if (req.user?.role !== "admin" && req.user?.role !== "manager") return res.status(403).json({ message: "Manager access required" });
-  next();
 }
 
 // Privileged-action elevation helpers live in ./elevation (pure, unit-tested).

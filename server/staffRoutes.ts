@@ -8,7 +8,7 @@ import { db } from "./db";
 import { orders, users, staffMembers } from "../shared/schema";
 import { gte, lte, and, sql, count, ne } from "drizzle-orm";
 import { businessDayRange } from "../shared/businessDay";
-import { requireAuth, requireManagerOrAdmin } from "./routes";
+import { requireAuth, requireManagerOrAdmin } from "./authGuards";
 import { storage } from "./storage";
 import { personPageKey } from "../shared/pageAccess";
 
