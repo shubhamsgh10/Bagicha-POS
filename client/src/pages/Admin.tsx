@@ -28,7 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, User as UserIcon, KeyRound, Users, ShieldCheck, ShoppingCart,
+  Loader2, User as UserIcon, KeyRound, Users, ShieldCheck, ShoppingCart, MonitorSmartphone,
 } from "lucide-react";
 import {
   DEFAULT_CART_PERMISSIONS,
@@ -37,6 +37,7 @@ import {
   type CartPermissions,
 } from "@/hooks/usePermission";
 import type { User } from "@shared/schema";
+import SyncDevicesCard from "@/components/SyncDevicesCard";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -865,6 +866,7 @@ export default function Admin() {
           {isAdmin && <TabsTrigger value="accounts"><Users className="w-4 h-4 mr-1.5" />Accounts</TabsTrigger>}
           {isAdmin && <TabsTrigger value="role-permissions"><ShieldCheck className="w-4 h-4 mr-1.5" />Role Permissions</TabsTrigger>}
           {isAdmin && <TabsTrigger value="cart-permissions"><ShoppingCart className="w-4 h-4 mr-1.5" />Cart Actions</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="shop-pc-sync"><MonitorSmartphone className="w-4 h-4 mr-1.5" />Shop PC Sync</TabsTrigger>}
           <TabsTrigger value="profile"><UserIcon className="w-4 h-4 mr-1.5" />Profile</TabsTrigger>
           <TabsTrigger value="password"><KeyRound className="w-4 h-4 mr-1.5" />Password</TabsTrigger>
         </TabsList>
@@ -905,6 +907,12 @@ export default function Admin() {
         )}
 
         {/* Profile Tab */}
+        {isAdmin && (
+          <TabsContent value="shop-pc-sync" className="mt-6">
+            <SyncDevicesCard />
+          </TabsContent>
+        )}
+
         <TabsContent value="profile" className="mt-6">
           <div className="rounded-2xl p-5"
             style={{

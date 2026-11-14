@@ -576,7 +576,7 @@ export default function Orders() {
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) =>
-      apiRequest("PUT", `/api/orders/${id}`, { status }),
+      apiRequest("PUT", `/api/orders/${id}`, { status }, { idempotent: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       toast({ title: "Order status updated" });

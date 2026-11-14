@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { apiUrl } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import {
   RealtimeContext,
@@ -16,12 +17,45 @@ const MAX_DELAY = 30_000;
 const ORDER_REFRESH_DELAY_MS = 1_500;
 let orderRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Shop-PC local mode (the server answers reads from its own copy, see server/local/*). Probed once
+// on mount via GET /api/local/status; a cloud deployment answers 404 and nothing below runs.
+// In local mode a cloud change (a phone's order, a menu edit) only shows up after the local server
+// has pulled it, so each such event first asks the local server to sync, and the refetch waits for it.
+let localMode = false;
+let pendingLocalSync: Promise<void> | null = null;
+
+async function probeLocalMode() {
+  try {
+    const res = await fetch(apiUrl("/api/local/status"), { credentials: "include" });
+    if (!res.ok) return;
+    const body = await res.json();
+    localMode = body?.localMode === true;
+  } catch {
+    /* cloud mode / offline: stay in cloud mode */
+  }
+}
+
+function syncLocalNow(): Promise<void> {
+  if (!pendingLocalSync) {
+    pendingLocalSync = fetch(apiUrl("/api/local/sync-now"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-Requested-With": "fetch" },
+    })
+      .then(() => undefined, () => undefined) // never blocks the refresh
+      .finally(() => { pendingLocalSync = null; });
+  }
+  return pendingLocalSync;
+}
+
 function scheduleOrderRefresh() {
   if (orderRefreshTimer) return;
   orderRefreshTimer = setTimeout(() => {
     orderRefreshTimer = null;
     // Only queries currently on screen refetch; the rest are just marked stale.
-    queryClient.invalidateQueries({ predicate: (q) => isOrderDerivedKey(q.queryKey) });
+    const refresh = () => queryClient.invalidateQueries({ predicate: (q) => isOrderDerivedKey(q.queryKey) });
+    if (localMode && pendingLocalSync) pendingLocalSync.then(refresh, refresh);
+    else refresh();
   }, ORDER_REFRESH_DELAY_MS);
 }
 
@@ -29,7 +63,10 @@ function scheduleOrderRefresh() {
 // once. Not on the first connect of the page (the data was just loaded).
 let hasConnectedOnce = false;
 function onRealtimeConnected() {
-  if (hasConnectedOnce) queryClient.invalidateQueries();
+  if (hasConnectedOnce) {
+    if (localMode) void syncLocalNow().then(() => queryClient.invalidateQueries());
+    else queryClient.invalidateQueries();
+  }
   hasConnectedOnce = true;
 }
 
@@ -42,12 +79,23 @@ function subscribe(listener: (m: RealtimeMessage) => void): () => void {
 }
 
 function handleMessage(msg: RealtimeMessage, setLastMessage: (m: RealtimeMessage | null) => void) {
+  if (localMode && (isOrderEvent(msg.type) || msg.type === "SYNC_NUDGE")) void syncLocalNow();
   if (isOrderEvent(msg.type)) scheduleOrderRefresh(); // and still delivered to listeners below
   Array.from(listeners).forEach((l) => {
     try { l(msg); } catch (err) { console.error("[realtime] listener failed:", err); }
   });
 
-  if (msg.type === "CACHE_BUST") {
+  if (msg.type === "SYNC_NUDGE") {
+    // Published by the cloud after a menu / category / table / settings / account write. Only the
+    // shop PC's local copy cares: once it has pulled, the screens re-read.
+    if (localMode) {
+      void syncLocalNow().then(() => {
+        for (const root of ["/api/categories", "/api/menu", "/api/tables", "/api/settings"]) {
+          queryClient.invalidateQueries({ queryKey: [root] });
+        }
+      });
+    }
+  } else if (msg.type === "CACHE_BUST") {
     queryClient.invalidateQueries();
   } else if (msg.type === "MENU_UPDATE") {
     // Category/menu-item CRUD (incl. drag-reorder) has no other freshness signal for an
@@ -79,6 +127,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("Connecting");
   const { isAuthenticated } = useAuth();
 
+  // Once per page load: is this the shop PC's local server? (404 on the cloud = no.)
+  useEffect(() => { void probeLocalMode(); }, []);
+
   const pusherKey = import.meta.env.VITE_PUSHER_KEY as string | undefined;
   const pusherCluster = (import.meta.env.VITE_PUSHER_CLUSTER as string | undefined) || "ap2";
   const pusherChannel = (import.meta.env.VITE_PUSHER_CHANNEL as string | undefined) || "private-bagicha-pos";
@@ -105,6 +156,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       "ATTENDANCE_UPDATE",
       "CACHE_BUST",
       "MENU_UPDATE",
+      "SYNC_NUDGE",
       "WA_MESSAGE",
       "WA_STATUS",
       "WA_CONVERSATION_UPDATE",

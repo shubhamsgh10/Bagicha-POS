@@ -23,6 +23,17 @@ export interface PinApprover {
   role: string;
 }
 
+/**
+ * A replayed request (server/sync/replay.ts) carries the manager/admin who typed the PIN on the shop
+ * PC. It is honoured PER REQUEST only: `req.replay` exists solely when the middleware validated a
+ * device token, and nothing here ever touches the session. Level = the approver's real role level.
+ */
+function replayApproval(req: any): { level: number; approver: PinApprover } | null {
+  const a = req?.replay?.approver;
+  if (!a || typeof a.level !== "number") return null;
+  return { level: a.level, approver: { id: a.id, name: a.name, role: a.role } };
+}
+
 export function grantElevation(req: any, level: number, now: number = Date.now(), approver?: PinApprover): void {
   if (!req.session) return;
   req.session.elevatedLevel = level;
@@ -33,6 +44,8 @@ export function grantElevation(req: any, level: number, now: number = Date.now()
 export function hasElevation(req: any, minRole: "manager" | "admin", now: number = Date.now()): boolean {
   const need = ROLE_LEVEL[minRole] ?? 1;
   if ((ROLE_LEVEL[req.user?.role] ?? 0) >= need) return true;
+  const ra = replayApproval(req);
+  if (ra && ra.level >= need) return true;
   const until = Number(req.session?.elevatedUntil ?? 0);
   const lvl = Number(req.session?.elevatedLevel ?? 0);
   return now < until && lvl >= need;
@@ -47,6 +60,8 @@ export function hasElevation(req: any, minRole: "manager" | "admin", now: number
  */
 export function hasFreshPin(req: any, minRole: "manager" | "admin", now: number = Date.now()): boolean {
   const need = ROLE_LEVEL[minRole] ?? 1;
+  const ra = replayApproval(req);
+  if (ra && ra.level >= need) return true;
   const until = Number(req.session?.elevatedUntil ?? 0);
   const lvl = Number(req.session?.elevatedLevel ?? 0);
   return now < until && lvl >= need;
@@ -54,6 +69,8 @@ export function hasFreshPin(req: any, minRole: "manager" | "admin", now: number 
 
 /** The person whose PIN opened the still-open window, or null (expired, or no approver was recorded). */
 export function freshPinApprover(req: any, now: number = Date.now()): PinApprover | null {
+  const ra = replayApproval(req);
+  if (ra) return ra.approver;
   if (!(now < Number(req.session?.elevatedUntil ?? 0))) return null;
   return (req.session?.elevatedBy as PinApprover | null | undefined) ?? null;
 }

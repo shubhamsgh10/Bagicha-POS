@@ -13,7 +13,8 @@ import { getAutomationConfig, setCustomerPref } from "../automationStore";
 import { getSettings } from "../../settingsStore";
 import { logCustomerEvent } from "../crm/eventService";
 import { publishRealtime } from "../../realtime/publisher";
-import { getDriver } from "./driverManager";
+// getDriver is imported lazily in sendBotReply: driverManager imports this module (handleInbound),
+// and a static import back made a cycle that deadlocks the bundled server once db.ts has a top-level await.
 import { decide } from "./botService";
 import {
   getOrCreateConversation,
@@ -127,6 +128,7 @@ async function sendBotReply(
   text: string,
   intent: string,
 ): Promise<void> {
+  const { getDriver } = await import("./driverManager");
   const driver = getDriver();
   if (!driver || driver.getState() !== "connected") return;
 

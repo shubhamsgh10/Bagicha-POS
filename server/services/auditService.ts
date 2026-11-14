@@ -42,14 +42,21 @@ export async function logAudit(
   entityId?: string | number | null,
   metadata?: Record<string, unknown> | null,
 ): Promise<void> {
+  // Shop-PC local mode: the cloud records the audit row when the action is replayed (with replayedBy).
+  // A local row would collide with the cloud's own ids in the synced audit_logs table.
+  if (process.env.BAGICHA_LOCAL_MODE === "1") return;
   try {
     const actor = getActorFromReq(req);
+    // A request replayed by a shop PC (server/sync/replay.ts) says so on every audit row it writes.
+    const replayedBy = (req as any).replay?.deviceId;
+    const overrideOf = (req as any).replay?.override;
+    const meta = replayedBy != null ? { ...(metadata ?? {}), replayedBy, ...(overrideOf ? { overrideOf: `device-outbox:${overrideOf}` } : {}) } : (metadata ?? null);
     await db.insert(auditLogs).values({
       ...actor,
       action,
       entityType,
       entityId: entityId != null ? String(entityId) : null,
-      metadata: metadata ?? null,
+      metadata: meta,
       ip: getIp(req),
     });
   } catch {

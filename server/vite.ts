@@ -2,13 +2,10 @@ import express, { type Express } from "express";
 import { inspect } from "util";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import { nanoid } from "nanoid";
 
 const viteConfigPath = path.resolve(import.meta.dirname, "..", "vite.config.ts");
 
-const viteLogger = createLogger();
 
 export { getLogBuffer } from "./logBuffer";
 import { pushLog } from "./logBuffer";
@@ -41,6 +38,11 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // Dev-only packages, loaded only here: the packaged desktop app runs dist/index.js (local mode)
+  // without devDependencies, and a top-level import crashed it at startup.
+  const { createServer: createViteServer, createLogger } = await import("vite");
+  const { nanoid } = await import("nanoid");
+  const viteLogger = createLogger();
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },

@@ -32,6 +32,17 @@ const keyed: Array<[string, string, string]> = [
   [routes, "post", "/api/orders/:id/payment"],
   [routes, "post", "/api/auth/verify-pin"],
   [routes, "put", "/api/orders/:id/cancel"],
+  // Every other route on the shop PC's replay list (shared/replayRules.ts isReplayable): a replayed
+  // entry whose answer was lost must replay the stored answer, not hit a false base conflict.
+  [routes, "put", "/api/orders/:id/hold"],
+  [routes, "put", "/api/orders/:id/recall"],
+  [routes, "post", "/api/orders/:id/bill-requested"],
+  [routes, "put", "/api/orders/:id"],
+  [routes, "put", "/api/orders/:id/move-table"],
+  [routes, "post", "/api/tables/:id/shift"],
+  [routes, "put", "/api/kot/:id"],
+  [routes, "post", "/api/orders/:id/settle-due"],
+  [routes, "post", "/api/orders/:id/payment-method"],
   [printRoutes, "post", "/api/print/kot"],
   [printRoutes, "post", "/api/print/bill"],
   [printRoutes, "post", "/api/print/jobs/:id/claim"],
@@ -58,6 +69,29 @@ checks.push(["PinGuard sends verify-pin with a one-time key",
 const pos = read("client/src/pages/POS.tsx");
 checks.push(["POS sends Cancel Order with a one-time key",
   /apiRequest\(\s*"PUT",\s*`\/api\/orders\/\$\{activeOrderId\}\/cancel`,[^;]*\{\s*idempotent:\s*true\s*\}/.test(pos)]);
+
+// The other replay-list callers send keys too (so a stalled/lost answer retries instead of conflicting).
+const callers: Array<[string, RegExp]> = [
+  ["client/src/components/DueSettleDialog.tsx", /settle-due`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/components/PaymentMethodDialog.tsx", /payment-method`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/POS.tsx", /move-table`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/POS.tsx", /\/hold`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/POS.tsx", /\/recall`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/KOT.tsx", /\/api\/kot\/\$\{id\}`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/Orders.tsx", /\/api\/orders\/\$\{id\}`,\s*\{\s*status\s*\},\s*\{\s*idempotent:\s*true\s*\}/s],
+  ["client/src/pages/Tables.tsx", /shift`[^;]*\{\s*idempotent:\s*true\s*\}/s],
+];
+for (const [file, re] of callers) checks.push([`${file} sends a one-time key (${re.source.slice(0, 24)}…)`, re.test(read(file))]);
+
+// Every route on the replay list must mount requestKeys (server/sync/replay.ts skips the base check only for a true keyed retry).
+{
+  const mounted = new Set(keyed.map(([, m, p]) => `${m} ${p}`));
+  for (const rp of ["post /api/orders", "put /api/orders/:id/items", "put /api/orders/:id", "post /api/orders/:id/payment", "put /api/orders/:id/cancel",
+    "put /api/orders/:id/hold", "put /api/orders/:id/recall", "put /api/orders/:id/move-table", "post /api/tables/:id/shift", "post /api/print/kot",
+    "post /api/print/bill", "post /api/orders/:id/bill-requested", "put /api/kot/:id", "post /api/orders/:id/settle-due", "post /api/orders/:id/payment-method"]) {
+    checks.push([`replay-list route ${rp} is keyed`, mounted.has(rp)]);
+  }
+}
 
 let failed = 0;
 for (const [name, ok] of checks) {

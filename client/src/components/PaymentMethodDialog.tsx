@@ -102,7 +102,7 @@ export function PaymentMethodDialog({ open, onOpenChange, order }: Props) {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/orders/${order.id}/payment-method`, { cash, upi, reason });
+      const res = await apiRequest("POST", `/api/orders/${order.id}/payment-method`, { cash, upi, reason }, { idempotent: true });
       return res.json();
     },
     onSuccess: () => {

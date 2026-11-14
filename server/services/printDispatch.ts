@@ -14,6 +14,7 @@ import {
 import { toPrintJob, toBrowserPayload } from "@shared/print/generators";
 import { nonEscPosPrinterMessage, supportsRawEscPos } from "@shared/print/printerCapabilities";
 import { storage } from "../storage";
+import { shouldDispatchPrint } from "../../shared/replayRules";
 import { publishRealtime, publishRealtimeMany } from "../realtime/publisher";
 import {
   executePrintStep,
@@ -107,6 +108,15 @@ export function instrumentJson(res: any, timer: StageTimer, label: string): void
     console.log(timer.toLogLine(label));
     return original(body);
   };
+}
+
+/**
+ * A request replayed by a shop PC (server/sync/replay.ts sets `req.replay`) must COMMIT print state
+ * (kotPrintCount, lastKotSnapshot, billPrintCount, billed table, audit rows) but never put anything
+ * on paper: the PC printed it when the action first ran, offline. See shouldDispatchPrint below.
+ */
+export function isReplayRequest(req: Request): boolean {
+  return !shouldDispatchPrint(req);
 }
 
 /**
@@ -338,6 +348,19 @@ export async function runKotPrint(p: {
   // Everything on the order is on the skip list → no ticket at all (Bill's silent catch-up stays silent).
   if (!isDelta && newItems.length === 0 && currentSnapshot.length > 0) {
     return { ok: true, body: { printed: false, reason: "no_delta" } };
+  }
+
+  // Replayed from a shop PC: claim (commit) the delta, then stop. No ticket is built, no direct
+  // send, no print_jobs row, no PRINT_JOB broadcast. A reprint only leaves its audit trace.
+  if (isReplayRequest(req)) {
+    if (!(await timer.time("commit", claimKot))) {
+      return { ok: true, body: { printed: false, reason: "no_delta" } };
+    }
+    if (reprint) {
+      const num = orderKotTickets.length > 0 ? orderKotTickets[0].kotNumber : String((order.kotPrintCount ?? 0) + 1);
+      await logAudit(req, "kot.reprint", "order", orderId, { kotNumber: num });
+    }
+    return { ok: true, body: { printed: false, reason: "replayed_no_dispatch", isDelta, reprint, orderId } };
   }
 
   const printer = printers.find((pr) => pr.id === kotSettings.kotPrinterId);
@@ -811,6 +834,21 @@ async function runBillAfterCatchUp(
   // the "** DUPLICATE **" watermark, so this new audit signal and that watermark can
   // never disagree.
   const isReprint = (order.billPrintCount ?? 0) > 0;
+
+  // Replayed from a shop PC: commit the print count (and the reprint audit row, and the table flip
+  // the original request asked for) but build and send nothing: no print_jobs row, no PRINT_JOB
+  // broadcast, no direct send. The PC already printed this bill when the action first ran offline.
+  if (isReplayRequest(req)) {
+    await timer.time("commit", () =>
+      db.update(orders).set({ billPrintCount: sql`${orders.billPrintCount} + 1` }).where(eq(orders.id, orderId)),
+    );
+    if (isReprint) await logAudit(req, "bill.reprint", "order", orderId, {});
+    const body: Record<string, unknown> = { printed: false, replayed: true, reason: "replayed_no_dispatch" };
+    if (kotCatchUp) body.kotCatchUp = kotCatchUp;
+    // "on_send" waits for a print that did go out; on a replay the original request already decided to flip.
+    if (p.markBilled) await timer.time("mark_billed", () => markTableBilled(order));
+    return { ok: true, body };
+  }
 
   // Per-section bill routing. Prefer the explicit marker stamped at creation
   // (orders.posSectionId, set by the quick-POS); fall back to the all-items-in-one-

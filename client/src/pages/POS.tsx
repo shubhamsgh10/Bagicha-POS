@@ -27,6 +27,7 @@ import { SectionActionBar } from "@/components/section-pos/SectionActionBar";
 import { SectionOpenOrdersButton } from "@/components/section-pos/SectionOpenOrdersButton";
 import { PinGuard } from "@/components/PinGuard";
 import { RoleSwitcher } from "@/components/RoleSwitcher";
+import { SyncBadge } from "@/components/SyncBadge";
 import { useActiveRoleContext } from "@/context/ActiveRoleContext";
 import { usePermission } from "@/hooks/usePermission";
 import { useLocation } from "wouter";
@@ -394,7 +395,7 @@ export default function POS() {
       await apiRequest("PUT", `/api/orders/${activeOrderId}/move-table`, {
         newTableId: newTable.id,
         newTableName: newTable.name,
-      });
+      }, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       setShowMoveDialog(false);
       navigate("/tables");
@@ -431,7 +432,7 @@ export default function POS() {
     setActionLoading(true);
     try {
       if (!(await saveCartBeforeOrderAction())) return;
-      await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {});
+      await apiRequest("PUT", `/api/orders/${activeOrderId}/hold`, {}, { idempotent: true });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({ title: "Order placed on hold" });
       setShowHoldConfirm(false);
@@ -1900,7 +1901,7 @@ export default function POS() {
                   key={o.id}
                   onClick={async () => {
                     try {
-                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {});
+                      await apiRequest("PUT", `/api/orders/${o.id}/recall`, {}, { idempotent: true });
                     } catch (err: any) {
                       toast({ title: "Could not recall the order", description: describeApiError(err).message, variant: "destructive" });
                       queryClient.invalidateQueries({ queryKey: ["/api/orders/hold"] });
@@ -2061,14 +2062,17 @@ export default function POS() {
           })()}
           orderNumber={activeOrderId ? serialNum(activeOrderId) : undefined}
           roleSwitcher={
-            <RoleSwitcher
-              activeRole={activeRole}
-              loginRole={loginRole}
-              secondsLeft={secondsLeft}
-              isElevated={isElevated}
-              onElevate={elevateRole}
-              onRevert={revertRole}
-            />
+            <div className="flex items-center gap-1.5">
+              <SyncBadge />
+              <RoleSwitcher
+                activeRole={activeRole}
+                loginRole={loginRole}
+                secondsLeft={secondsLeft}
+                isElevated={isElevated}
+                onElevate={elevateRole}
+                onRevert={revertRole}
+              />
+            </div>
           }
           searchQuery={searchQuery}
           onSearchChange={v => { setSearchQuery(v); setMobileTab("menu"); }}
@@ -2144,6 +2148,7 @@ export default function POS() {
             <div className="w-px h-5 bg-gray-200 mx-1 hidden sm:block" />
 
             {/* Role Switcher — outside overflow container so dropdown isn't clipped */}
+            <SyncBadge />
             <RoleSwitcher
               activeRole={activeRole}
               loginRole={loginRole}

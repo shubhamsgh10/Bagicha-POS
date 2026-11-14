@@ -186,7 +186,7 @@ export interface IStorage {
   settleOrderIfUnpaid(id: number, order: Partial<InsertOrder>): Promise<Order | undefined>;
   repaymentMethodIfUnchanged(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
   updateOrderIfState(id: number, patch: Partial<InsertOrder>, expected: { status: string; paymentStatus: string }): Promise<Order | undefined>;
-  settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined>;
+  settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date, paidAt?: Date): Promise<Order | undefined>;
   getOrdersCollectedBetween(startDate: Date, endDate: Date): Promise<Order[]>;
   deleteOrder(id: number): Promise<void>;
   mergeOrders(params: {
@@ -313,6 +313,11 @@ export interface IStorage {
   createStaffMember(data: InsertStaffMember): Promise<StaffMember>;
   updateStaffMember(id: number, data: Partial<InsertStaffMember>): Promise<StaffMember>;
   deleteStaffMember(id: number): Promise<void>;
+}
+
+let localOrderIdIssuer: (() => Promise<number>) | null = null;
+export function setLocalOrderIdIssuer(fn: (() => Promise<number>) | null): void {
+  localOrderIdIssuer = fn;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1034,9 +1039,13 @@ export class DatabaseStorage implements IStorage {
     items: Array<Omit<InsertOrderItem, "orderId">>,
     kot?: Omit<InsertKotTicket, "orderId">,
   ): Promise<{ order: Order; items: OrderItem[]; kotTicket: KotTicket | null }> {
+    // Shop-PC local mode: the id comes from the block leased by the cloud (taken BEFORE the transaction:
+    // PGlite has one connection, so a query issued inside it from outside would wait on it forever).
+    const leasedId = localOrderIdIssuer && (order as any).id === undefined ? await localOrderIdIssuer() : undefined;
     return await db.transaction(async (tx) => {
       const [newOrder] = await tx.insert(orders).values({
         ...(order as any),
+        ...(leasedId !== undefined ? { id: leasedId } : {}),
         updatedAt: new Date(),
       }).returning();
       // RETURNING the rows costs no extra round trip and hands the print step that follows the
@@ -1128,12 +1137,15 @@ export class DatabaseStorage implements IStorage {
   // due at once, or the Reports "Mark all paid" button landing in between, must not both succeed and
   // record two different payments. The loser gets undefined and is told to reopen the order.
   // Stamps paidAt = now: THIS is the moment the money was received, whatever day the order was billed.
-  async settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date): Promise<Order | undefined> {
+  // `paidAt` overrides the stamp only for a request replayed from a shop PC (the PC's action time, so a
+  // due settled offline at 11 pm is that day's money); updatedAt is ALWAYS the real now, because the
+  // order-history delta sync (updatedSince) and the replay base check both rely on it moving forward.
+  async settleDueIfStillDue(id: number, patch: Partial<InsertOrder>, expectedUpdatedAt: Date, paidAt?: Date): Promise<Order | undefined> {
     const now = new Date();
     const [updated] = await db.update(orders).set({
       ...(patch as any),
       paymentStatus: "paid",
-      paidAt: now,
+      paidAt: paidAt ?? now,
       updatedAt: now,
     }).where(and(
       eq(orders.id, id),
