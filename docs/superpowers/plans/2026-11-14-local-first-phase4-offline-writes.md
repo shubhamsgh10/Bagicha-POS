@@ -46,9 +46,9 @@
    - WhatsApp send / e-bill
    - coupon and loyalty redeem
    - menu/category/table/inventory/staff/settings admin writes
-   - due settle and payment-method correction (money corrections stay cloud-only for now)
-
    All of these still work online (proxied as in phase 3).
+
+   (Due settle and payment-method correction were moved to the replay list at the owner's request, 2026-11-14.)
 9. **Offline login.**
    - Snapshot and pull rows for `users` / `staff_members` carry `_auth: { pw?: <users.password scrypt hash as stored>, pin?: <scrypt(pin) with random salt, "salt:hash"> }`, computed in JS on the cloud.
    - Plaintext PINs never leave the cloud. Local mode stores `_auth` in a local-only table `local_auth(kind, id, pw, pin)`.
@@ -79,6 +79,12 @@ Local writes appended to the outbox, as the method and path of the original requ
 - `POST /api/print/bill`
 - `POST /api/orders/:id/bill-requested`
 - `PUT /api/kot/:id`
+- `POST /api/orders/:id/settle-due` (manager PIN; carries `X-Replay-Approver`)
+- `POST /api/orders/:id/payment-method` (manager PIN; carries `X-Replay-Approver`)
+
+**Action time on replay.** Every replayed request carries `X-Replay-At: <ISO time the action ran on the PC>`.
+- The cloud uses it, instead of "now", for business-date rules: `planPaymentEdit`'s "money received today" check, and `paid_at` / `updated_at` stamps where the route sets "now" for the action, so a due settled offline at 11 pm is still that day's money.
+- It is accepted only if it's not in the future (+2 min skew) and not older than 48 h; otherwise "now" is used.
 
 `POST /api/auth/verify-pin` is not replayed; its approval rides on the request it unlocked. Anything else that writes in local mode is either proxied (online) or returns ONLINE_ONLY (offline).
 
