@@ -81,6 +81,7 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
   let online = false;
   let failures = 0;
   let syncing = false;
+  let lastReplayError: string | null = null;
   let lastCounts = { pending: 0, problems: 0 };
 
   let stopped = false;
@@ -167,7 +168,13 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
     if (!cursor) cursor = await getCursor(client);
     if (!cursor) return snapshot();
     // Replay first: the pull below must not overwrite orders the cloud has not heard about yet.
-    if (opts.beforePull) await opts.beforePull();
+    if (opts.beforePull) {
+      try { await opts.beforePull(); lastReplayError = null; } catch (e: any) {
+        if (!e?.deferred) throw e; // network failure: the cloud is unreachable
+        lastReplayError = e?.message ?? String(e);
+        log(`replay deferred: ${lastReplayError}`);
+      }
+    }
     let pull: PullResponse | { reset: true };
     try {
       pull = await cloudGet(`/api/sync/pull?v=2&cursor=${encodeURIComponent(cursor)}`, reqTimeout);
@@ -275,7 +282,7 @@ export function createSyncWorker(opts: SyncWorkerOptions): SyncWorker {
     },
     status() {
       return {
-        cursor, hasSnapshot: cursor !== null, lastPullAt, lastError, online, syncing,
+        cursor, hasSnapshot: cursor !== null, lastPullAt, lastError: lastError ?? lastReplayError, online, syncing,
         outboxPending: lastCounts.pending, problems: lastCounts.problems, schemaBlocked: opts.schemaBlocked?.() ?? false,
       };
     },

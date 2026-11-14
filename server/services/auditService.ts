@@ -49,7 +49,8 @@ export async function logAudit(
     const actor = getActorFromReq(req);
     // A request replayed by a shop PC (server/sync/replay.ts) says so on every audit row it writes.
     const replayedBy = (req as any).replay?.deviceId;
-    const meta = replayedBy != null ? { ...(metadata ?? {}), replayedBy } : (metadata ?? null);
+    const overrideOf = (req as any).replay?.override;
+    const meta = replayedBy != null ? { ...(metadata ?? {}), replayedBy, ...(overrideOf ? { overrideOf: `device-outbox:${overrideOf}` } : {}) } : (metadata ?? null);
     await db.insert(auditLogs).values({
       ...actor,
       action,

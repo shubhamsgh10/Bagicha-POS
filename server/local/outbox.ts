@@ -38,6 +38,7 @@ export interface OutboxRow {
   attempts: number;
   lastError: string | null;
   lastCode: string | null;
+  override: boolean;
   createdAt: string;
 }
 
@@ -45,7 +46,7 @@ function mapRow(r: any): OutboxRow {
   return {
     seq: Number(r.seq), orderId: r.order_id ?? null, method: r.method, path: r.path, body: r.body, idemKey: r.idem_key,
     actor: r.actor, approver: r.approver ?? null, base: r.base ?? null, numbers: r.numbers ?? null, status: r.status,
-    attempts: Number(r.attempts), lastError: r.last_error ?? null, lastCode: r.last_code ?? null,
+    attempts: Number(r.attempts), lastError: r.last_error ?? null, lastCode: r.last_code ?? null, override: !!r.override,
     createdAt: new Date(r.created_at).toISOString(),
   };
 }
@@ -112,15 +113,32 @@ export async function markProblem(client: PGlite, row: OutboxRow, message: strin
   return r.rows.map((x) => Number(x.seq));
 }
 
-/** Re-queue a problem entry and every later problem entry of the same order. */
-export async function retryProblem(client: PGlite, seq: number): Promise<number> {
+/**
+ * Re-queue a problem entry and every later problem entry of the same order. The entry keeps its ORIGINAL
+ * base: a retry never lets an old edit slip past the cloud's version check. The one exception is an
+ * explicit conflict override, which takes `freshBase` (the order's CURRENT cloud version, fetched by the
+ * caller) so the cloud still refuses it if the order changed yet again in between.
+ */
+export async function retryProblem(client: PGlite, seq: number, override?: { freshBase: string }): Promise<number> {
   const r = await client.query<{ order_id: number | null }>(`SELECT order_id FROM local_outbox WHERE seq=$1 AND status='problem'`, [seq]);
   if (!r.rows.length) return 0;
   const oid = r.rows[0].order_id;
   const u = oid === null
-    ? await client.query(`UPDATE local_outbox SET status='pending', attempts=0, last_error=NULL, last_code=NULL, base=NULL, updated_at=now() WHERE seq=$1 RETURNING seq`, [seq])
-    : await client.query(`UPDATE local_outbox SET status='pending', attempts=0, last_error=NULL, last_code=NULL, base=NULL, updated_at=now() WHERE order_id=$1 AND status='problem' AND seq >= $2 RETURNING seq`, [oid, seq]);
+    ? await client.query(`UPDATE local_outbox SET status='pending', attempts=0, last_error=NULL, last_code=NULL, updated_at=now() WHERE seq=$1 RETURNING seq`, [seq])
+    : await client.query(`UPDATE local_outbox SET status='pending', attempts=0, last_error=NULL, last_code=NULL, updated_at=now() WHERE order_id=$1 AND status='problem' AND seq >= $2 RETURNING seq`, [oid, seq]);
+  if (override) await client.query(`UPDATE local_outbox SET base=$2, override=true WHERE seq=$1`, [seq, override.freshBase]);
   return u.rows.length;
+}
+
+export async function getProblem(client: PGlite, seq: number): Promise<OutboxRow | null> {
+  const r = await client.query(`SELECT * FROM local_outbox WHERE seq=$1 AND status='problem'`, [seq]);
+  return r.rows.length ? mapRow(r.rows[0]) : null;
+}
+
+export async function recordLocalAudit(client: PGlite, a: { actor: string | null; approver: string | null; action: string; seq: number | null; orderId: number | null; detail?: unknown }): Promise<void> {
+  await client.query(
+    `INSERT INTO local_audit (actor, approver, action, outbox_seq, order_id, detail) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
+    [a.actor, a.approver, a.action, a.seq, a.orderId, JSON.stringify(a.detail ?? null)]);
 }
 
 /** Give up on a problem entry (and the later problem entries of its order, which can no longer be applied on top of it). */

@@ -38,9 +38,19 @@ export interface Replayer {
   drain(): Promise<void>;
   /** Replaces one order's local rows from the cloud. `allowDelete`: a cloud "deleted" answer removes the local rows too. */
   refreshOrder(orderId: number, allowDelete: boolean): Promise<void>;
+  /** The order's CURRENT cloud updated_at (null = not on the cloud). Rejects when the cloud is unreachable. */
+  currentCloudBase(orderId: number): Promise<string | null>;
 }
 
-export class ReplayStop extends Error {}
+/**
+ * The cloud answered but cannot take this entry right now (5xx / 408 / 429 / the token refused). The
+ * outbox is left as is and retried next cycle, but the cloud IS reachable, so the sync cycle carries
+ * on and pulls (a pull skips the orders that still have pending entries).
+ */
+export class ReplayDeferred extends Error {
+  readonly deferred = true;
+}
+export class ReplayStop extends ReplayDeferred {}
 
 /** The body the cloud gets: the original request plus the numbers this PC printed on paper. */
 export function replayBody(row: OutboxRow): unknown {
@@ -147,6 +157,7 @@ export function createReplayer(opts: ReplayerOptions): Replayer {
     };
     if (row.approver) headers["X-Replay-Approver"] = row.approver;
     if (base) headers["X-Replay-Base"] = base;
+    if (row.override) headers["X-Replay-Override"] = String(row.seq);
     let r: { status: number; json: any };
     let sendPath = row.path;
     try {
@@ -175,7 +186,7 @@ export function createReplayer(opts: ReplayerOptions): Replayer {
     }
     if (r.status >= 500 || r.status === 408 || r.status === 429) {
       await noteAttempt(client, row.seq, message);
-      throw new Error(`cloud answered ${r.status}: ${message}`);
+      throw new ReplayDeferred(`cloud answered ${r.status}: ${message}`);
     }
     const held = await markProblem(client, row, message, code);
     log(`entry ${row.seq} ${row.method} ${row.path} refused (${r.status}${code ? " " + code : ""}): ${message}; ${held.length} held`);
@@ -204,5 +215,10 @@ export function createReplayer(opts: ReplayerOptions): Replayer {
       return draining;
     },
     refreshOrder,
+    async currentCloudBase(orderId: number) {
+      const r = await call("GET", `/api/sync/order/${orderId}`, {}, undefined);
+      if (r.status !== 200 || !r.json) throw new Error(`cloud answered ${r.status}`);
+      return r.json.deleted ? null : (typeof r.json.order?.updated_at === "string" ? r.json.order.updated_at : null);
+    },
   };
 }

@@ -7,6 +7,8 @@ export const REPLAY_ACTOR_HEADER = "x-replay-actor";
 export const REPLAY_APPROVER_HEADER = "x-replay-approver";
 export const REPLAY_BASE_HEADER = "x-replay-base";
 export const REPLAY_AT_HEADER = "x-replay-at";
+/** A person on the shop PC chose to apply their version over a newer cloud one (value = the PC outbox seq). */
+export const REPLAY_OVERRIDE_HEADER = "x-replay-override";
 
 export interface PrincipalRef { kind: "u" | "sm"; id: number }
 

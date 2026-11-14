@@ -19,11 +19,14 @@ export const LOCAL_AUX_STATEMENTS: string[] = [
      seq bigserial PRIMARY KEY, order_id integer, method text NOT NULL, path text NOT NULL, body jsonb,
      idem_key text NOT NULL, actor text NOT NULL, approver text, base text, numbers jsonb,
      status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, last_error text, last_code text,
+     override boolean NOT NULL DEFAULT false,
      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS idx_local_outbox_status ON local_outbox (status, seq)`,
   `CREATE TABLE IF NOT EXISTS local_leases (
      id serial PRIMARY KEY, kind text NOT NULL, start_value bigint NOT NULL, end_value bigint NOT NULL,
      next_value bigint NOT NULL, issued_at timestamptz NOT NULL DEFAULT now())`,
+  // This PC's own audit trail for decisions made on the Sync screen (the synced audit_logs table is cloud-owned).
+  `CREATE TABLE IF NOT EXISTS local_audit (id serial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), actor text, approver text, action text NOT NULL, outbox_seq bigint, order_id integer, detail jsonb)`,
   `CREATE TABLE IF NOT EXISTS local_order_meta (order_id integer PRIMARY KEY, cloud_updated_at text NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS local_auth (kind text NOT NULL, id integer NOT NULL, pw text, pin text, PRIMARY KEY (kind, id))`,
 ];

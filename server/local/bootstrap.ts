@@ -15,7 +15,7 @@ import { createLeaseManager, type LeaseManager } from "./localNumbers";
 import { createReplayer, type Replayer } from "./replayWorker";
 import { createOutboxCapture } from "./outboxCapture";
 import { createLocalAuth } from "./localAuth";
-import { listProblems, retryProblem, discardProblem } from "./outbox";
+import { listProblems, retryProblem, discardProblem, getProblem, recordLocalAudit } from "./outbox";
 
 export interface LocalRuntime {
   cfg: LocalModeConfig;
@@ -70,6 +70,7 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
       }
     },
   });
+  await leases.init();
   settings.setLocalCounterIssuer((field) => leases.take(field === "billCounter" ? "bill_counter" : "kot_counter"));
   storageMod.setLocalOrderIdIssuer(() => leases.take("order_id"));
 
@@ -124,7 +125,7 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
   const client = localClient!;
   const { storage } = await import("../storage");
   const { requireManagerOrAdmin } = await import("../routes");
-  const { requireFreshPin } = await import("../elevation");
+  const { requireFreshPin, freshPinApprover } = await import("../elevation");
   const { requestKeys } = await import("../requestKeys");
   const { sql } = await import("drizzle-orm");
 
@@ -158,11 +159,37 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
   app.get("/api/local/problems", requireAuth, async (_req, res) => {
     res.json(await listProblems(client));
   });
-  app.post("/api/local/problems/:seq/retry", requireAuth, async (req, res) => {
-    const n = await retryProblem(client, Number(req.params.seq));
-    if (!n) return res.status(404).json({ message: "Nothing to retry" });
+  // Retry and Discard are decisions about money: manager/admin AND a PIN typed just now. A retry
+  // re-sends the entry with its ORIGINAL replay base, so an old edit can never slip past the cloud's
+  // version check. A conflict (the cloud moved on) only goes again as an explicit override
+  // ({override:true}): it takes the order's CURRENT cloud version as its base (so a further change in
+  // between still refuses it), is written to this PC's local_audit, and replays with X-Replay-Override
+  // so the cloud's audit row carries overrideOf.
+  app.post("/api/local/problems/:seq/retry", requireAuth, requireManagerOrAdmin, requireFreshPin("manager"), async (req, res) => {
+    const seq = Number(req.params.seq);
+    const row = await getProblem(client, seq);
+    if (!row) return res.status(404).json({ message: "Nothing to retry" });
+    const actor = (req.user as any)?._isStaffMember ? `sm:${(req.user as any).id}` : `u:${(req.user as any)?.id}`;
+    const approver = freshPinApprover(req)?.id ?? null;
+    let override: { freshBase: string } | undefined;
+    if (row.lastCode === "conflict") {
+      if (req.body?.override !== true) {
+        return res.status(409).json({
+          message: `The cloud has a newer version of order #${row.orderId}. Retrying replaces the cloud's changes with this action - confirm the override to continue.`,
+          code: "override_required",
+        });
+      }
+      if (row.orderId === null || !online()) return res.status(503).json(ONLINE_ONLY_BODY);
+      let freshBase: string | null;
+      try { freshBase = await rt.replayer.currentCloudBase(row.orderId); } catch { return res.status(503).json(ONLINE_ONLY_BODY); }
+      if (!freshBase) return res.status(409).json({ message: `Order #${row.orderId} no longer exists in the cloud`, code: "gone" });
+      override = { freshBase };
+    }
+    const n = await retryProblem(client, seq, override);
+    if (override) await recordLocalAudit(client, { actor, approver, action: "sync.conflict_override", seq, orderId: row.orderId, detail: { path: row.path, method: row.method, base: override.freshBase } });
+    else await recordLocalAudit(client, { actor, approver, action: "sync.retry", seq, orderId: row.orderId, detail: { path: row.path, method: row.method } });
     rt.worker.requestPull();
-    res.json({ requeued: n });
+    res.json({ requeued: n, override: !!override });
   });
   // Giving up on a refused action is a money decision: manager/admin AND a PIN typed just now.
   app.post("/api/local/problems/:seq/discard", requireAuth, requireManagerOrAdmin, requireFreshPin("manager"), async (req, res) => {
@@ -170,6 +197,11 @@ export async function installLocalGate(app: Express, rt: LocalRuntime, requireAu
     const row = (await listProblems(client)).find((p) => p.seq === seq);
     const n = await discardProblem(client, seq);
     if (!n) return res.status(404).json({ message: "Nothing to discard" });
+    await recordLocalAudit(client, {
+      actor: (req.user as any)?._isStaffMember ? `sm:${(req.user as any).id}` : `u:${(req.user as any)?.id}`,
+      approver: freshPinApprover(req)?.id ?? null, action: "sync.discard", seq, orderId: row?.orderId ?? null,
+      detail: { path: row?.path, method: row?.method, error: row?.lastError },
+    });
     if (row?.orderId != null && online()) await rt.replayer.refreshOrder(row.orderId, true).catch(() => {});
     res.json({ discarded: n });
   });

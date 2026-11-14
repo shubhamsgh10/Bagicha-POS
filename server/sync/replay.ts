@@ -17,7 +17,7 @@
 // device token, which a browser page does not have.
 import type { NextFunction, Request, Response } from "express";
 import {
-  REPLAY_HEADER, REPLAY_ACTOR_HEADER, REPLAY_APPROVER_HEADER, REPLAY_BASE_HEADER, REPLAY_AT_HEADER,
+  REPLAY_OVERRIDE_HEADER, REPLAY_HEADER, REPLAY_ACTOR_HEADER, REPLAY_APPROVER_HEADER, REPLAY_BASE_HEADER, REPLAY_AT_HEADER,
   replayFlagSet, parsePrincipalRef, parseReplayAt, isReplayable, baseTargetFor, baseMatches,
   normalizeTimestamp, isKeyedReplayRoute, type PrincipalRef,
 } from "../../shared/replayRules";
@@ -36,6 +36,8 @@ export interface ReplayContext {
   /** When the action ran on the PC (validated, see parseReplayAt), or null = use "now". */
   at: Date | null;
   approver: ReplayApprover | null;
+  /** Set when the PC replays an entry as an explicit override of a cloud conflict (audited as overrideOf). */
+  override: string | null;
 }
 
 /** "Now" for business-date rules and paid_at stamps: the PC's action time on a replay, else the real clock. */
@@ -129,7 +131,9 @@ export function makeReplayMiddleware(deps: ReplayDeps) {
     const nowMs = deps.now ? deps.now() : Date.now();
     const at = parseReplayAt(req.headers[REPLAY_AT_HEADER], nowMs);
 
-    const ctx: ReplayContext = { deviceId: device.id, actor: `${actorRef.kind}:${actorRef.id}`, base: base || null, at, approver };
+    const rawOverride = req.headers[REPLAY_OVERRIDE_HEADER];
+    const override = typeof rawOverride === "string" && /^\d{1,12}$/.test(rawOverride.trim()) ? rawOverride.trim() : null;
+    const ctx: ReplayContext = { deviceId: device.id, actor: `${actorRef.kind}:${actorRef.id}`, base: base || null, at, approver, override };
     const r = req as any;
     r.replay = ctx;
     r.user = actor.principal;

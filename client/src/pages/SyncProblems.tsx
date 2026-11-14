@@ -52,8 +52,11 @@ export default function SyncProblems() {
     queryFn: () => apiJson<Problem[]>("/api/local/problems"),
     refetchInterval: 5000,
   });
-  const [confirming, setConfirming] = useState<Problem | null>(null);
-  const [pinOpen, setPinOpen] = useState(false);
+  // What the PIN pad is for: Retry (needs a PIN), an explicit conflict override (confirm first, then PIN) or Discard.
+  type Pending = { p: Problem; kind: "retry" | "override" | "discard" };
+  const [confirming, setConfirming] = useState<Pending | null>(null);
+  const [pinFor, setPinFor] = useState<Pending | null>(null);
+  const pinOpen = pinFor !== null;
   const [busy, setBusy] = useState<number | null>(null);
 
   const refresh = () => {
@@ -61,11 +64,11 @@ export default function SyncProblems() {
     qc.invalidateQueries({ queryKey: ["/api/local/status"] });
   };
 
-  const retry = async (p: Problem) => {
+  const retry = async (p: Problem, override: boolean) => {
     setBusy(p.seq);
     try {
-      await apiRequest("POST", `/api/local/problems/${p.seq}/retry`, {});
-      toast({ title: "Queued again", description: "It will be sent to the cloud on the next sync." });
+      await apiRequest("POST", `/api/local/problems/${p.seq}/retry`, override ? { override: true } : {});
+      toast({ title: override ? "Override queued" : "Queued again", description: "It will be sent to the cloud on the next sync." });
     } catch (err) {
       toast({ title: "Could not retry", description: describeApiError(err).message, variant: "destructive" });
     } finally {
@@ -78,7 +81,7 @@ export default function SyncProblems() {
     setBusy(p.seq);
     try {
       await apiRequest("POST", `/api/local/problems/${p.seq}/discard`, {});
-      toast({ title: "Discarded", description: "The order was refreshed from the cloud." });
+      toast({ title: "Discarded", description: "The order keeps the cloud's version." });
     } catch (err) {
       toast({ title: "Could not discard", description: describeApiError(err).message, variant: "destructive" });
     } finally {
@@ -117,9 +120,14 @@ export default function SyncProblems() {
             </div>
             <div className="mt-1 text-sm text-red-700">{p.lastError ?? "Refused by the cloud"}</div>
             <div className="mt-2 flex gap-2">
-              <Button size="sm" variant="outline" disabled={busy === p.seq} onClick={() => retry(p)}>Retry</Button>
               {canDiscard && (
-                <Button size="sm" variant="destructive" disabled={busy === p.seq} onClick={() => setConfirming(p)}>Discard</Button>
+                <Button size="sm" variant="outline" disabled={busy === p.seq}
+                  onClick={() => (p.lastCode === "conflict" ? setConfirming({ p, kind: "override" }) : setPinFor({ p, kind: "retry" }))}>
+                  {p.lastCode === "conflict" ? "Apply mine anyway" : "Retry (PIN)"}
+                </Button>
+              )}
+              {canDiscard && (
+                <Button size="sm" variant="destructive" disabled={busy === p.seq} onClick={() => setConfirming({ p, kind: "discard" })}>Discard</Button>
               )}
             </div>
           </div>
@@ -129,24 +137,36 @@ export default function SyncProblems() {
       <Dialog open={!!confirming} onOpenChange={(o) => { if (!o && !pinOpen) setConfirming(null); }}>
         <DialogContent {...lockedDialogProps(pinOpen)}>
           <DialogHeader>
-            <DialogTitle>Discard this action?</DialogTitle>
+            <DialogTitle>{confirming?.kind === "override" ? "Replace the cloud's changes?" : "Discard this action?"}</DialogTitle>
             <DialogDescription>
-              {confirming ? `${describeAction(confirming.method, confirming.path)}${confirming.orderId != null ? ` on #${confirming.orderId}` : ""}` : ""}
-              {" "}will never be sent to the cloud. The order keeps the cloud's version. A manager or admin PIN is needed.
+              {confirming?.kind === "override"
+                ? `The cloud changed order #${confirming.p.orderId} after this was done on the shop PC. Applying it again REPLACES the cloud's changes to order #${confirming.p.orderId} with "${describeAction(confirming.p.method, confirming.p.path)}" as it was done here. This is recorded.`
+                : confirming
+                  ? `${describeAction(confirming.p.method, confirming.p.path)}${confirming.p.orderId != null ? ` on #${confirming.p.orderId}` : ""} will never be sent to the cloud. The order keeps the cloud's version.`
+                  : ""}
+              {" "}A manager or admin PIN is needed.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirming(null)}>Keep it</Button>
-            <Button variant="destructive" onClick={() => setPinOpen(true)}>Discard (PIN)</Button>
+            <Button variant="outline" onClick={() => setConfirming(null)}>Keep as is</Button>
+            <Button variant="destructive" onClick={() => confirming && setPinFor(confirming)}>
+              {confirming?.kind === "override" ? "Replace cloud changes (PIN)" : "Discard (PIN)"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {pinOpen && confirming && (
+      {pinFor && (
         <PinGuard
-          actionLabel="Discard unsynced action"
+          actionLabel={pinFor.kind === "discard" ? "Discard unsynced action" : pinFor.kind === "override" ? "Override the cloud's version" : "Retry unsynced action"}
           requiredRole="manager"
-          onCancel={() => setPinOpen(false)}
-          onSuccess={() => { setPinOpen(false); void discard(confirming); }}
+          onCancel={() => setPinFor(null)}
+          onSuccess={() => {
+            const t = pinFor;
+            setPinFor(null);
+            setConfirming(null);
+            if (t.kind === "discard") void discard(t.p);
+            else void retry(t.p, t.kind === "override");
+          }}
         />
       )}
     </div>
