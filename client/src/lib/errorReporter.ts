@@ -41,9 +41,12 @@ function newErrorId(): string {
 
 function currentRoute(): string | null {
   try {
-    const { pathname, hash, search } = window.location;
-    // Desktop uses hash routing (#/tables); the browser uses the path.
-    return (hash && hash.startsWith("#/") ? hash.slice(1) : pathname + search).slice(0, 200);
+    const { pathname, hash, search, protocol } = window.location;
+    // Desktop uses hash routing (#/tables); the browser uses the path. A desktop page with no hash is
+    // the app's root route "/" — never the file path of index.html (which also leaked the PC's username).
+    if (hash && hash.startsWith("#/")) return hash.slice(1).slice(0, 200);
+    if (protocol === "file:" || (window as any).electronAPI?.isElectron) return "/";
+    return (pathname + search).slice(0, 200);
   } catch {
     return null;
   }

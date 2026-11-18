@@ -79,13 +79,16 @@ export default function Tables() {
   const [shiftFrom, setShiftFrom] = useState<Table | null>(null);
   const [form, setForm] = useState({ name: "", capacity: "4", section: "inner" });
 
-  const { data: tables = [], isLoading } = useQuery<Table[]>({
+  const { data: tablesData, isLoading } = useQuery<Table[] | null>({
     queryKey: ["/api/tables"],
     staleTime: 0,
     refetchOnMount: "always",
     // Fallback only: realtime TABLE/ORDER/KOT events refresh this within ~2s (RealtimeProvider).
     refetchInterval: 15_000,
   });
+  // `?? []`, not a `= []` default: a default covers only undefined, and a null here (an old saved
+  // copy, a 401 under older builds) crashed this page on every start (18 Nov 2026, 8TE7M-EJ99).
+  const tables: Table[] = Array.isArray(tablesData) ? tablesData : [];
 
   // Quick-POS sections (e.g. South Indian counter) — configured in Print Settings → Sections.
   // refetchOnMount:"always" + retry:2 (overriding the app-wide retry:false default) so a

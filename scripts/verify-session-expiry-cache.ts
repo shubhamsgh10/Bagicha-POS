@@ -5,7 +5,7 @@
  * /api/auth/me, and every Reload restored the same pair and crashed again.
  */
 import { QueryClient, dehydrate, hydrate } from "@tanstack/query-core";
-import { persistOptions } from "../client/src/lib/queryPersistence";
+import { persistOptions, deserializeSavedCache } from "../client/src/lib/queryPersistence";
 import { queryClient as appClient } from "../client/src/lib/queryClient";
 import { setApiBaseUrl } from "../packages/api-client";
 
@@ -59,6 +59,31 @@ async function main() {
   check("policy: null settings result is not saved", !shouldSave(fakeQuery(["/api/settings"], null)));
   check("policy: a real tables list is saved", shouldSave(fakeQuery(["/api/tables"], [])));
   check("policy: signed-out auth/me (null) is still saved", shouldSave(fakeQuery(["/api/auth/me"], null)));
+
+  // 5. 18 Nov 2026 (client.error 8TE7M-EJ99): 1.0.43 restored a copy SAVED BY 1.0.42 that held
+  //    tables=null and crashed on start. Restore must filter by today's rules, not trust the file.
+  const legacyBlob = JSON.stringify({
+    timestamp: Date.now(),
+    buster: "whatever",
+    clientState: {
+      mutations: [],
+      queries: [
+        { queryKey: ["/api/auth/me"], queryHash: '["/api/auth/me"]', state: { status: "success", data: { id: 4 }, dataUpdatedAt: 1 } },
+        { queryKey: ["/api/tables"], queryHash: '["/api/tables"]', state: { status: "success", data: null, dataUpdatedAt: 1 } },
+        { queryKey: ["/api/menu"], queryHash: '["/api/menu"]', state: { status: "success", data: [{ id: 1 }], dataUpdatedAt: 1 } },
+        { queryKey: ["/api/reports/x"], queryHash: '["/api/reports/x"]', state: { status: "success", data: [], dataUpdatedAt: 1 } },
+      ],
+    },
+  });
+  const cleaned = deserializeSavedCache(legacyBlob);
+  const keys = cleaned.clientState.queries.map((q) => String(q.queryKey[0]));
+  check("restore drops a saved null tables list", !keys.includes("/api/tables"));
+  check("restore keeps auth/me and real lists", keys.includes("/api/auth/me") && keys.includes("/api/menu"));
+  check("restore drops roots no longer allowed", !keys.includes("/api/reports/x"));
+  const restored2 = new QueryClient();
+  hydrate(restored2, cleaned.clientState);
+  check("after restore, tables is undefined (page default [] applies), not null", restored2.getQueryData(["/api/tables"]) === undefined);
+  check("cache version bumped so 1.0.42/1.0.43 copies are discarded", persistOptions.buster === "bagicha-cache-v1:2");
 }
 
 main()
