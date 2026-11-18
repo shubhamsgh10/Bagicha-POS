@@ -8,6 +8,8 @@ export const IPC = {
   APP_VERSION: "app:version",
   /** renderer → main: close every connection of this window's session (stall breaker, packages/api-client). */
   NET_RESET_CONNECTIONS: "net:reset-connections",
+  /** renderer → main: write a crash / error report to the desktop log file (desktop/diagnosticLog.ts). */
+  LOG_RENDERER_ERROR: "log:renderer-error",
 
   // ── Auto-update (main → renderer: notifications) ──────────────────────────
   UPDATE_STATUS:    "app:update-status",

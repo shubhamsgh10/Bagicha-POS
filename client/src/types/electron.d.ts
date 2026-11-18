@@ -26,6 +26,8 @@ export interface ElectronAPI {
   getVersion: () => Promise<string>;
   /** Close every connection of this window's session (stall breaker). Missing in desktop builds before it existed. */
   resetConnections?: () => Promise<void>;
+  /** Write a crash / error report to the desktop log file. Missing in desktop builds before 1.0.43. */
+  logRendererError?: (report: unknown) => Promise<void>;
 
   // ── Print Station config (durable file, not localStorage) ────────────────
   getPrintStationConfig: () => Promise<PrintStationConfig | null>;

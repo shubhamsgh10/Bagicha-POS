@@ -63,6 +63,9 @@ const electronAPI = {
   /** Close every connection of this window's session (stall breaker — see packages/api-client). */
   resetConnections: (): Promise<void> => ipcRenderer.invoke(IPC.NET_RESET_CONNECTIONS),
 
+  /** Write a crash / error report to %APPDATA%\Bagicha POS\logs\main.log (client/src/lib/errorReporter.ts). */
+  logRendererError: (report: unknown): Promise<void> => ipcRenderer.invoke(IPC.LOG_RENDERER_ERROR, report),
+
   // ── Print Station config (durable file, not localStorage — see desktop/main.ts) ────
 
   getPrintStationConfig: (): Promise<PrintStationConfig | null> =>

@@ -9,6 +9,7 @@ import { RealtimeProvider } from "./hooks/RealtimeProvider";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installSlowRequestReporter } from "./lib/slowRequest";
 import { installStallBreaker } from "./lib/stallReset";
+import { installErrorReporter } from "./lib/errorReporter";
 
 // Every API request >= 4s (or timed out) is reported with the server's own timing — see lib/slowRequest.ts.
 installSlowRequestReporter();
@@ -49,6 +50,15 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   console.error("[unhandledrejection]", event.reason);
   Sentry.captureException(event.reason);
+});
+// Every crash / uncaught error is also reported to the server (Vercel log + `client.error` audit row)
+// and, on the desktop app, written to its log file — see lib/errorReporter.ts.
+installErrorReporter({
+  isSignedIn: () => {
+    const s = queryClient.getQueryState(["/api/auth/me"]);
+    return s?.data === undefined ? null : s.data !== null;
+  },
+  persisted: !!(window as any).electronAPI?.isElectron,
 });
 
 // QueryClientProvider lives here (not inside App) because RealtimeProvider's

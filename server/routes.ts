@@ -100,6 +100,7 @@ import { sendWithDbEtag, tableFingerprint, queryFingerprint } from "./dbEtag";
 import { earnPointsForOrder } from "./services/loyaltyService";
 import { scheduleFeedbackForOrder } from "./services/feedbackService";
 import { logAudit, getAuditLogs, getKotBillActivitySummary } from "./services/auditService";
+import { registerClientErrorRoutes } from "./clientErrorRoutes";
 import { ingestDevicePunches, recomputeShiftSessions } from "./services/deviceAttendanceService";
 import { runBackup, listBackups, isConfigured as backupConfigured } from "./services/backupService";
 import { generateSecret, generateQRDataURL, verifyToken } from "./services/totpService";
@@ -261,6 +262,9 @@ export async function registerRoutes(
       env: process.env.NODE_ENV || "development",
     });
   });
+
+  // Crash / error reports from any client (no auth on purpose) — server/clientErrorRoutes.ts.
+  registerClientErrorRoutes(app);
 
   // Diagnostic only: the POS reports the timeline of any Settle that took >= 4s (shared/settleTiming.ts)
   // so "why was that one slow?" has an answer — a parked request, a cold instance, or a slow handler

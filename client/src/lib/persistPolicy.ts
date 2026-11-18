@@ -27,10 +27,14 @@ const ALLOWED_ROOTS = new Set<string>([
 
 // `hasData`: a failed refetch (offline) turns a loaded query into "error" but keeps its data;
 // that data must stay saved or a second restart during the same outage comes up empty.
-export function shouldPersistQuery(queryKey: readonly unknown[], status: string, hasData = status === "success"): boolean {
+// `isNull`: a null result is never a real list/record - it is what a 401 used to resolve to. Saved,
+// it was restored on every start next to a signed-in /api/auth/me and crashed the screen (17 Nov
+// 2026). Only /api/auth/me may be null ("signed out").
+export function shouldPersistQuery(queryKey: readonly unknown[], status: string, hasData = status === "success", isNull = false): boolean {
   if (status !== "success" && !(status === "error" && hasData)) return false;
   const root = queryKey[0];
   if (typeof root !== "string" || !ALLOWED_ROOTS.has(root)) return false;
+  if (isNull && root !== "/api/auth/me") return false;
   // Whole order history is large and rarely needed offline.
   if (root === "/api/orders" && queryKey[1] === "all") return false;
   return true;

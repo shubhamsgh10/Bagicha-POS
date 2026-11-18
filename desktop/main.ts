@@ -14,6 +14,7 @@ import type { PrinterConfig } from "./types.js";
 import { executePrintJob } from "./print/executor.js";
 import { listUsbDevices } from "./print/usbScan.js";
 import { initUpdater } from "./updater.js";
+import { initDiagnosticLog, watchRenderer } from "./diagnosticLog.js";
 import { warmPrinterSession, closePrinterSession } from "../shared/print/persistentPs.js";
 import { windowsPrinterQueueExists } from "../shared/print/windowsPrinters.js";
 import { PrintQueue } from "./print/printQueue.js";
@@ -514,6 +515,9 @@ async function createWindow() {
     },
   });
 
+  // Crashes, console errors and renderer death go to the log file (desktop/diagnosticLog.ts).
+  watchRenderer(mainWindow.webContents);
+
   // External links (wa.me, payment pages…) open in the system browser, never as an Electron window:
   // a child window inherits this window's preload, so a third-party page got window.electronAPI
   // (raw printing, print-station config, USB scan). about:blank stays in-app — the browser-print
@@ -604,6 +608,7 @@ if (!gotLock) {
       app.setAppUserModelId("com.bagicha.pos");
     }
     console.log("[electron] App ready");
+    initDiagnosticLog();
     if (IS_EMBEDDED) {
       embeddedReady = await startEmbeddedServer();
     }

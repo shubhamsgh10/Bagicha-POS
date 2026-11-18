@@ -2,8 +2,14 @@ import { QueryClient, QueryCache, MutationCache, QueryFunction } from "@tanstack
 import * as Sentry from "@sentry/react";
 import { timedFetch, IDEMPOTENCY_HEADER, newIdempotencyKey } from "./api";
 import { toast } from "@/hooks/use-toast";
+import { recordQueryError } from "./errorReporter";
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+
+/** True for the error throwIfResNotOk raises on a 401 ("401: ..."). */
+export function isUnauthorizedError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("401:");
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -59,9 +65,15 @@ export const queryClient = new QueryClient({
   // live-status, orders every 5s) and a toast per failed poll would spam. Still log/report
   // it somewhere instead of it vanishing entirely (previously: nowhere at all).
   queryCache: new QueryCache({
-    onError: (error) => {
+    onError: (error, query) => {
       console.error("[query error]", error);
       Sentry.captureException(error);
+      recordQueryError(query.queryKey, error); // breadcrumb for the next crash report
+      // The session is gone (expired / signed out elsewhere): re-read /api/auth/me now so the app
+      // shows the sign-in screen instead of waiting out its 5-minute staleTime on stale screens.
+      if (isUnauthorizedError(error) && query.queryKey[0] !== "/api/auth/me") {
+        void queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      }
     },
   }),
   // Most mutations already show their own toast via a local onError. This fallback only
@@ -83,7 +95,12 @@ export const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      queryFn: getQueryFn({ on401: "returnNull" }),
+      // A 401 is an ERROR for every query except /api/auth/me (useAuth asks for "returnNull"
+      // itself). Resolving it as a successful `null` replaced lists with null when the 24 h session
+      // ran out mid-shift: `tables.filter` threw (ErrorBoundary), the desktop persister saved that
+      // null next to a still-signed-in /api/auth/me, and every Reload crashed again (17 Nov 2026).
+      // As an error the last good data stays on screen and queryCache.onError re-checks the session.
+      queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: 30_000,

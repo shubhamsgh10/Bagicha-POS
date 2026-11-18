@@ -24,6 +24,9 @@ export const ACTION_LABELS: Record<string, ActionLabel> = {
   "perf.slow_handler":    { label: "Slow Handler",   color: "bg-amber-100 text-amber-800" },
   // The desktop stall breaker reset a dead connection and retried (POST /api/perf/stall-reset).
   "perf.stall_reset":     { label: "Connection Reset", color: "bg-amber-100 text-amber-800" },
+  // A crash / uncaught error on a client (POST /api/client-errors, client/src/lib/errorReporter.ts).
+  // Read the full stack with scripts/report-client-errors.ts.
+  "client.error":         { label: "App Error",        color: "bg-red-100 text-red-800" },
   // Shop PC sync device tokens (Admin -> Shop PC Sync).
   "sync.device_create":   { label: "Sync Device Added",   color: "bg-sky-100 text-sky-800" },
   "sync.device_revoke":   { label: "Sync Device Revoked", color: "bg-red-100 text-red-800" },
@@ -126,6 +129,14 @@ export function metaSummary(action: string, meta: Record<string, unknown> | null
     const idle = typeof meta.idleMs === "number" ? ` · connection quiet ~${secs(meta.idleMs)} before` : "";
     const hidden = Number(meta.hiddenResets) > 0 ? ` · +${meta.hiddenResets} while minimised` : "";
     return `${meta.method} ${meta.path}: dead connection reset after ${secs(meta.detectMs)}, ${outcome}${idle}${hidden}`;
+  }
+  if (action === "client.error") {
+    const where = meta.electron ? `desktop ${meta.appVersion ?? ""}`.trim() : "browser";
+    const failed = Array.isArray(meta.requests)
+      ? (meta.requests as any[]).filter((r) => r?.s === null || r?.s >= 400).slice(-2).map((r) => `${r.m} ${r.p} ${r.s ?? "no response"}`)
+      : [];
+    const session = meta.signedIn === false ? " · signed out" : "";
+    return `${meta.kind}: ${meta.name ?? "Error"}: ${meta.message} · ${meta.route ?? "?"} · ${where}${session}${failed.length ? ` · recent failed: ${failed.join(", ")}` : ""} · id ${meta.errorId}`;
   }
   if (action === "perf.slow_request") {
     const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "?");
