@@ -10,7 +10,7 @@ import { ensureLocalSchema } from "./localSchema";
 import { createSyncWorker, type SyncWorker } from "./syncWorker";
 import { createCloudProxy, createCloudCaller } from "./cloudProxy";
 import { classifyWrite, isCloudFirstGet, isCloudOnlyGet, isLocalOnly } from "./localReadGate";
-import { getCursor } from "./applyChanges";
+import { getCursor, refreshPinMarkers } from "./applyChanges";
 import { createLeaseManager, type LeaseManager } from "./localNumbers";
 import { createReplayer, type Replayer } from "./replayWorker";
 import { createOutboxCapture } from "./outboxCapture";
@@ -38,6 +38,8 @@ export async function bootLocalMode(): Promise<LocalRuntime> {
   const schema = await ensureLocalSchema(localClient);
   if (schema.recreated) console.log("[local] local database schema (re)built");
   if (schema.blocked) console.error("[local] SCHEMA BLOCKED: unsynced actions are waiting; serving the existing local database as is.");
+  // Login cards / role switcher read "has a PIN" from the pin column; older copies hold NULL there.
+  await refreshPinMarkers(localClient).catch((e) => console.error("[local] could not refresh PIN markers:", e));
 
   const settings = await import("../settingsStore");
   const storageMod = await import("../storage");

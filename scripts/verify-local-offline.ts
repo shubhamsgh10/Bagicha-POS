@@ -28,6 +28,7 @@ import { SYNC_TABLES_V2 } from "../shared/syncTables";
 import { attachAuth } from "../server/sync/authBlob";
 import { hashPassword } from "../server/passwordHash";
 import { baseMatches } from "../shared/replayRules";
+import { LOCAL_PIN_MARKER, refreshPinMarkers } from "../server/local/applyChanges";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -239,8 +240,32 @@ async function main() {
   check("local_auth filled from _auth for 2 users + 1 staff member", auth.length === 3);
   check("local_auth holds only scrypt salt:hash verifiers, never a plaintext PIN",
     auth.every((a) => (!a.pin || /^[0-9a-f]{32}:[0-9a-f]{128}$/.test(a.pin)) && a.pin !== "1111" && a.pin !== "2222" && a.pin !== "3333"));
-  check("users.pin / users.password are NOT stored in the synced tables",
-    (await lq(`SELECT pin, password FROM users ORDER BY id`)).every((u) => u.pin === null && u.password === ""));
+  check("users.pin / users.password are NOT stored in the synced tables (pin holds only the has-a-PIN marker)",
+    (await lq(`SELECT pin, password FROM users ORDER BY id`)).every((u) => u.pin === LOCAL_PIN_MARKER && u.password === ""));
+  check("staff_members.pin holds only the has-a-PIN marker, never the PIN or its hash",
+    (await lq(`SELECT pin FROM staff_members`)).every((s) => s.pin === LOCAL_PIN_MARKER));
+
+  // The login screen's name cards and the role switcher are local reads: they must see who HAS a PIN
+  // (18 Nov 2026: the shop PC showed "No staff accounts found" because the synced pin column is NULL).
+  {
+    const cards = (await new Client().call("GET", "/api/staff-members")).json;
+    check("GET /api/staff-members (login cards) lists the staff member with a PIN, served locally",
+      Array.isArray(cards) && cards.some((c: any) => c.kind === "staff" && c.id === 7 && c.name === "Sam"), JSON.stringify(cards));
+    check("the login cards never carry a PIN or marker", Array.isArray(cards) && cards.every((c: any) => c.pin === undefined));
+    // A copy made before the marker existed (NULL pins) is repaired at boot by refreshPinMarkers.
+    await lq(`UPDATE users SET pin = NULL`);
+    await lq(`UPDATE staff_members SET pin = NULL`);
+    await refreshPinMarkers(localClient!);
+    check("refreshPinMarkers repairs an old copy's NULL pins from local_auth",
+      (await lq(`SELECT pin FROM users`)).every((u) => u.pin === LOCAL_PIN_MARKER) && (await lq(`SELECT pin FROM staff_members`)).every((s) => s.pin === LOCAL_PIN_MARKER));
+    const saved = (await lq(`SELECT pin FROM local_auth WHERE kind = 'staff' AND id = 7`))[0].pin;
+    await lq(`UPDATE local_auth SET pin = NULL WHERE kind = 'staff' AND id = 7`);
+    await refreshPinMarkers(localClient!);
+    check("refreshPinMarkers clears the marker for someone with no PIN verifier",
+      (await lq(`SELECT pin FROM staff_members WHERE id = 7`))[0].pin === null);
+    await lq(`UPDATE local_auth SET pin = $1 WHERE kind = 'staff' AND id = 7`, [saved]);
+    await refreshPinMarkers(localClient!);
+  }
   const seq = await lq(`SELECT last_value::text AS v FROM order_items_id_seq`);
   check("order_items ids start at 1,000,000,000 for rows created on this PC", Number(seq[0].v) >= 999_999_999);
   check("leases for all three kinds were fetched after the first cycle",
@@ -261,6 +286,10 @@ async function main() {
   const mgr = new Client();
   r = await mgr.call("POST", "/api/auth/login", { username: "mgr", password: "mgrpw" });
   check("OFFLINE login verifies the scrypt hash from local_auth", r.status === 200 && r.json?.username === "mgr" && r.json?.password === undefined && r.json?.pin === undefined);
+  {
+    const sr = (await mgr.call("GET", "/api/auth/switchable-roles")).json;
+    check("role switcher (local read) sees which roles have a PIN", Array.isArray(sr?.rolesWithPin) && sr.rolesWithPin.includes("manager") && sr.rolesWithPin.includes("admin"), JSON.stringify(sr));
+  }
   r = await new Client().call("POST", "/api/auth/login", { username: "mgr", password: "nope" });
   check("OFFLINE wrong password is refused", r.status === 401);
   const sam = new Client();

@@ -11,6 +11,15 @@ const SYNC_SET = new Set<string>(SYNC_TABLES_V2);
 /** First id of the rows this PC creates itself (order_items / kot_tickets) until the cloud replaces them. */
 export const LOCAL_TEMP_ID_FLOOR = 1_000_000_000;
 const TEMP_ID_TABLES = new Set<string>(["order_items", "kot_tickets"]);
+/**
+ * What the local users / staff_members `pin` column holds when the person HAS a PIN. The cloud strips
+ * the PIN from synced rows (SECRET_COLUMNS) and sends a scrypt verifier in `_auth` (kept in local_auth),
+ * but the normal routes decide "has a PIN?" from that column: the login cards (`GET /api/staff-members`),
+ * the role switcher (`/api/auth/switchable-roles`), `hasPin` on admin / attendance rows. Left NULL, the
+ * shop PC showed "No staff accounts found". Not a secret and never a valid PIN (PINs are digits), and
+ * every PIN check on this PC goes through localAuth against local_auth, never this column.
+ */
+export const LOCAL_PIN_MARKER = "#pin-set-local";
 const CURSOR_KEY = "sync_cursor";
 const SNAPSHOT_CHUNK = 500;
 
@@ -126,6 +135,23 @@ async function storeAuth(tx: Q, table: string, row: any): Promise<void> {
     `INSERT INTO local_auth (kind, id, pw, pin) VALUES ($1,$2,$3,$4) ON CONFLICT (kind, id) DO UPDATE SET pw = EXCLUDED.pw, pin = EXCLUDED.pin`,
     [kind, id, typeof a.pw === "string" ? a.pw : null, typeof a.pin === "string" ? a.pin : null],
   );
+  // The synced row arrived with `pin` stripped (NULL): record only WHETHER a PIN exists.
+  await tx.query(`UPDATE ${quoteIdent(table)} SET pin = $1 WHERE id = $2`, [typeof a.pin === "string" ? LOCAL_PIN_MARKER : null, id]);
+}
+
+/**
+ * Re-derives the has-a-PIN marker for every local users / staff_members row from local_auth. Run at boot:
+ * copies made before the marker existed (1.0.42-localfirst / 1.0.43) hold NULL for everyone, and only
+ * rows a later pull touches would heal on their own.
+ */
+export async function refreshPinMarkers(client: Pick<PGlite, "query">): Promise<void> {
+  for (const [table, kind] of [["users", "user"], ["staff_members", "staff"]] as const) {
+    await client.query(
+      `UPDATE ${quoteIdent(table)} t SET pin = CASE WHEN EXISTS (SELECT 1 FROM local_auth a WHERE a.kind = $1 AND a.id = t.id AND a.pin IS NOT NULL) THEN $2 ELSE NULL END
+        WHERE pin IS DISTINCT FROM (CASE WHEN EXISTS (SELECT 1 FROM local_auth a WHERE a.kind = $1 AND a.id = t.id AND a.pin IS NOT NULL) THEN $2 ELSE NULL END)`,
+      [kind, LOCAL_PIN_MARKER],
+    );
+  }
 }
 
 async function setBase(tx: Q, orderId: number, updatedAt: unknown): Promise<void> {
