@@ -258,7 +258,11 @@ async function main() {
     const blob = await buildAuthBlob({ password: hashed, pin: "4821" });
     check("_auth.pw is the stored scrypt hash as is", blob.pw === hashed && await verifyPassword("secret-pw", blob.pw!));
     check("_auth.pin verifies with the same scrypt routine", !!blob.pin && await verifyPassword("4821", blob.pin!) && !(await verifyPassword("4822", blob.pin!)));
-    check("_auth never contains the plaintext PIN", !JSON.stringify(blob).includes("4821"));
+    // Hash strings are random hex/base64 and can contain "4821" by chance (it failed the v1.0.42
+    // release that way), so check the PIN isn't stored as-is and appears nowhere outside the hashes.
+    const { pw: _pw, pin: _pin, ...rest } = blob as Record<string, unknown>;
+    check("_auth never contains the plaintext PIN",
+      blob.pin !== "4821" && blob.pw !== "4821" && !JSON.stringify(rest).includes("4821"));
     const blob2 = await buildAuthBlob({ password: hashed, pin: "4821" });
     check("_auth.pin uses a fresh random salt each time", blob.pin !== blob2.pin && blob.pin!.split(":")[0] !== blob2.pin!.split(":")[0]);
     check("no pin / no password gives an empty blob", Object.keys(await buildAuthBlob({ password: null, pin: null })).length === 0);
